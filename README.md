@@ -1,17 +1,17 @@
-# gitcore
+# mailproof
 
 <p align="center">
-  <img src="https://img.shields.io/github/package-json/v/hamr0/gitcore?label=version&color=2a4f8c" alt="version (auto from package.json)">
+  <img src="https://img.shields.io/github/package-json/v/hamr0/mailproof?label=version&color=2a4f8c" alt="version (auto from package.json)">
   <img src="https://img.shields.io/badge/license-Apache%202.0-2a4f8c" alt="license: Apache 2.0">
 </p>
 
 **Email-native multi-party coordination kernel.** Verify a reply, sequence it through a workflow, commit it to a tamper-evident git ledger, trigger the next email.
 
-> ⚠️ **Early WIP.** Being extracted from [gitdone](https://github.com/hamr0/gitdone). Currently at proof-of-concept stage — there is no published API yet. See [`docs/01-product/DESIGN.md`](docs/01-product/DESIGN.md).
+> ⚠️ **Early WIP.** Being extracted from [gitdone](https://github.com/hamr0/gitdone). Currently at proof-of-concept stage — there is no published API yet. See [`docs/`](docs/) ([PRD](docs/01-product/PRD.md), [DESIGN](docs/02-design/DESIGN.md)).
 
 ## The idea
 
-A lot of coordination is just: ask some named people to confirm something, in an order, and prove they did. gitcore does that **entirely over email** — **no app, no login** for participants. They reply from their normal inbox; that's it.
+A lot of coordination is just: ask some named people to confirm something, in an order, and prove they did. mailproof does that **entirely over email** — **no app, no login** for participants. They reply from their normal inbox; that's it.
 
 - **Verify** — each inbound reply is graded by DKIM/DMARC trust level (via [`mailauth`](https://github.com/postalsys/mailauth)); the signer's public key is archived so the reply still verifies after key rotation.
 - **Sequence** — replies advance a workflow of ordered / parallel steps.
@@ -28,7 +28,7 @@ Every inbound reply is committed — *even rejected ones* (wrong sender, failed 
 |---|---|
 | P0 — composition proof (POC) | ✅ `npm run poc` |
 | P1 — lift real modules + tests | ⬜ next |
-| P2 — gitdone depends on gitcore | ⬜ |
+| P2 — gitdone depends on mailproof | ⬜ |
 
 ## Try the POC
 
@@ -38,9 +38,9 @@ npm run poc   # stdlib + git only: runs a 2-step workflow, prints the ledger + o
 
 Requires Node ≥ 22.5. (The POC has no dependencies; the real library will add `mailauth`, `mailparser`, `simple-git`.)
 
-## Design
+## Docs
 
-[`docs/01-product/DESIGN.md`](docs/01-product/DESIGN.md) covers the extraction boundary (what's in gitcore vs. what stays gitdone policy), the locked design decisions, the planned public API, and the phasing.
+Start at [`docs/README.md`](docs/README.md). The [PRD](docs/01-product/PRD.md) covers what mailproof is, who adopts it, and the NO-GO table; [DESIGN](docs/02-design/DESIGN.md) covers the extraction boundary (what's in mailproof vs. what stays gitdone policy), the planned public API, and the phasing; the [decisions log](docs/03-logs/decisions-log.md) records the design forks with rationale.
 
 ## License
 

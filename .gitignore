@@ -1,4 +1,5 @@
 node_modules/
 poc/.data/
 *.log
+.npmrc
 .claude/settings.local.json

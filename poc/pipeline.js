@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// gitcore POC — proves the extracted kernel composes as vanilla code,
+// mailproof POC — proves the extracted kernel composes as vanilla code,
 // decoupled from gitdone's config singleton and crypto policy:
 //
 //   verify (trust classify) → sequence (workflow completion) →
@@ -23,7 +23,7 @@ const DATA = path.join(__dirname, '.data');
 function git(repo, args) {
   return execFileSync(
     'git',
-    ['-C', repo, '-c', 'user.name=gitcore', '-c', 'user.email=gitcore@localhost', ...args],
+    ['-C', repo, '-c', 'user.name=mailproof', '-c', 'user.email=mailproof@localhost', ...args],
     { encoding: 'utf8' },
   );
 }
@@ -119,7 +119,7 @@ function shouldCount(event, step, { trustLevel, participantMatch }) {
 // ---------------------------------------------------------------------------
 function buildRawMessage({ from, to, subject, body }) {
   const date = new Date().toUTCString();
-  const mid = `<${crypto.randomUUID()}@gitcore.local>`;
+  const mid = `<${crypto.randomUUID()}@mailproof.local>`;
   return [
     `From: ${from}`, `To: ${to}`, `Subject: ${subject}`,
     `Date: ${date}`, `Message-ID: ${mid}`,
@@ -136,10 +136,10 @@ function send({ from, to, subject, body }) {
     buildRawMessage({ from, to, subject, body }));
   return { to, subject };
 }
-function stepReplyAddr(eventId, stepId) { return `event+${eventId}-${stepId}@gitcore.local`; }
+function stepReplyAddr(eventId, stepId) { return `event+${eventId}-${stepId}@mailproof.local`; }
 function notifyStep(event, step) {
   return send({
-    from: `gitcore <event+${event.id}@gitcore.local>`,
+    from: `mailproof <event+${event.id}@mailproof.local>`,
     to: step.participant,
     subject: `[${event.title}] your step: ${step.name}`,
     body: `Please reply to this email to confirm "${step.name}".\nReply address: ${stepReplyAddr(event.id, step.id)}`,
@@ -189,7 +189,7 @@ function ingest({ eventId, stepId, sender, auth }) {
 
   for (const s of newlyEligible) out.notified.push(notifyStep(event, s).to);
   if (out.eventComplete) {
-    send({ from: `gitcore <event+${event.id}@gitcore.local>`, to: event.initiator,
+    send({ from: `mailproof <event+${event.id}@mailproof.local>`, to: event.initiator,
       subject: `[${event.title}] complete`, body: `All steps confirmed. The git ledger is your proof.` });
     out.notified.push(event.initiator);
   }
@@ -211,7 +211,7 @@ function show(label, r) {
 
 fs.rmSync(DATA, { recursive: true, force: true });
 
-console.log('\ngitcore POC — sequential workflow: legal → finance\n');
+console.log('\nmailproof POC — sequential workflow: legal → finance\n');
 createEvent({
   id: 'demo1', title: 'Contract sign-off', flow: 'sequential', initiator: 'organiser@acme.com',
   steps: [
