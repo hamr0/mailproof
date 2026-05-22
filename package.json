@@ -1,0 +1,20 @@
+{
+  "name": "gitcore",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Email-native multi-party coordination kernel: DKIM-verified replies, git-committed ledger, scheduled triggers. Extracted from gitdone.",
+  "license": "Apache-2.0",
+  "main": "src/index.js",
+  "scripts": {
+    "poc": "node poc/pipeline.js"
+  },
+  "engines": {
+    "node": ">=22.5"
+  },
+  "_intendedDependencies": {
+    "_comment": "Not installed yet — POC is stdlib + git binary only. P1 lift will add:",
+    "mailauth": "^4.6.0",
+    "mailparser": "^3.6.0",
+    "simple-git": "^3.20.0"
+  }
+}

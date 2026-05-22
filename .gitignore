@@ -1,0 +1,4 @@
+node_modules/
+poc/.data/
+*.log
+.claude/settings.local.json
