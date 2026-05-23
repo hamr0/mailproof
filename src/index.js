@@ -11,9 +11,18 @@
 'use strict';
 
 const { classifyTrust, TRUST_LEVELS } = require('./classifier');
+const {
+  parseAddress, parseEventTag, parseVerifyTag, parseReverifyTag, parseInitiatorCommand,
+} = require('./router');
 
 module.exports = {
   // Verify
   classifyTrust,
   TRUST_LEVELS,
+  // Sequence — address routing
+  parseAddress,
+  parseEventTag,
+  parseVerifyTag,
+  parseReverifyTag,
+  parseInitiatorCommand,
 };

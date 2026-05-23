@@ -18,6 +18,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `src/classifier.js` (`classifyTrust` + `TRUST_LEVELS`), lifted from gitdone as
   a pure function and re-anchored to SPEC §1. First real `src/` module; resolves
   the previously-dangling `main`.
+- **Sequence pillar, module 2: address router.** `src/router.js`
+  (`parseAddress`, `parseEventTag`, `parseVerifyTag`, `parseReverifyTag`,
+  `parseInitiatorCommand`), lifted pure from gitdone and **trimmed to the kernel
+  boundary** (SPEC §2): initiator commands cut to `{stats, remind}`; the policy
+  parsers `parseAttachTag`/`parseRevokeTag` and the `close+`/`bundle+` tags
+  dropped (they stay in gitdone). `tests/unit/router.test.js` proves the trim
+  (dropped tags parse to null / are unexported) and adds `verify+` coverage the
+  origin suite lacked.
 - `src/index.js` — public entry point, re-exporting each pillar as it lands.
 - `tests/unit/classifier.test.js` — 14 behavior tests (every trust level,
   precedence ordering, alignment edges, defensive input), reconciled with
