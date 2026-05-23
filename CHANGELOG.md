@@ -13,6 +13,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **P1 lift begins — verify pillar, module 1: trust classifier.**
+  `src/classifier.js` (`classifyTrust` + `TRUST_LEVELS`), lifted from gitdone as
+  a pure function and re-anchored to SPEC §1. First real `src/` module; resolves
+  the previously-dangling `main`.
+- `src/index.js` — public entry point, re-exporting each pillar as it lands.
+- `tests/unit/classifier.test.js` — 14 behavior tests (every trust level,
+  precedence ordering, alignment edges, defensive input), reconciled with
+  gitdone's characterization fixtures (real mailauth shape).
+- `docs/02-design/SPEC.md` — wire-format authority: trust taxonomy, address
+  grammar, `event.json` / `commit-NNN.json` schemas, tamper-evidence model, and
+  the salted-hash plaintext discipline. Kernel-vs-policy boundary marked throughout.
+- `OPS.md` — operator checklist for the bundled Postfix/opendkim stack
+  (DNS, PTR/FCrDNS, the `master.cf` pipe transport, port-25 ingress/egress).
+- `config.example.env` — `MAILPROOF_*` reference template (env → injected
+  `create()` config).
+
+### Changed
+- `package.json`: added the `test` script (`node --test`), an `exports` map, and
+  shipped `OPS.md` + `config.example.env` in the `files` allowlist.
+
 ## [0.0.1] - 2026-05-22
 
 First release published to npm — **reserves the `mailproof` name**. Pre-library:

@@ -1,8 +1,8 @@
 # mailproof — Product Requirements Document (PRD)
 
-**Status:** Pre-library — P0 (POC) complete, P1 (lift) pending. No `src/`, no published API yet.
+**Status:** Pre-library — P0 (POC) complete; **P1 (lift) in progress** — verify pillar started (`src/classifier.js`, the trust classifier). The full `create()` / `ingest()` API is still pending.
 **Owner:** hamr0
-**Last updated:** 2026-05-22
+**Last updated:** 2026-05-23
 
 > **For future Claude:** This PRD is the canonical source of truth for *what
 > mailproof is and what it deliberately is not*. §8 (the NO-GO table) is the
