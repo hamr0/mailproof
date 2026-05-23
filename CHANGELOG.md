@@ -70,6 +70,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     primitives (incl. `activateEvent`'s pending→active gate + idempotency) in
     `tests/integration/event-store.test.js`. The activated-edit audit commit is
     skipped pending 5b.
+- **Git-ledger pillar, module 5b: per-event git ledger.** `src/gitrepo.js`,
+  `createGitrepo({ dataDir, ots? })` — `initRepoIfNeeded`, `commitReply`,
+  `appendEditCommit`, `loadCommit`, `listCommits`, `syncEventJson`,
+  `nextSequence`, and the pure salted-hash / metadata helpers.
+  - **Zero new dependencies: talks to the `git` binary via stdlib
+    `child_process`, not `simple-git`.** The dependency checklist failed
+    `simple-git` on necessity — gitrepo uses only 5 git ops (a <100-line
+    `execFile` wrapper), `listCommits` reads the filesystem rather than
+    `git log`, and the only consumed behaviors (commit SHA, staged detection)
+    are `rev-parse HEAD` + `diff --cached`. Keeps the ≤3-dep budget for
+    `mailauth` + `mailparser`; consistent with `outbound`→`sendmail`. See the
+    decisions log, "git ledger uses the `git` binary via child_process."
+  - **OTS anchoring is optional and injected:** with no `ots` stamper wired
+    (the default until module 5c), commits are written unanchored
+    (`ots_proof_file: null`) per SPEC §0.2 — no hard `ots` coupling.
+  - **Trimmed to the kernel:** dropped `commitAttach` / `commitRevoke` (policy;
+    their `attach+`/`revoke+` tags were already dropped from the router).
+    Deferred `commitReverify` + `nextReverifySequence` (kernel per PRD §4 but
+    no caller until the verify-side archive-key re-check lands — shipping a
+    writer with no caller is the speculative-code red flag) and
+    `commitCompletion` (the `completion.js` boundary walk, module 6).
+  - Unit/integration split as above; un-skipped the m5a activated-edit audit
+    test (now green against the real ledger).
 - `src/index.js` — public entry point, re-exporting each pillar as it lands.
 - `tests/unit/classifier.test.js` — 14 behavior tests (every trust level,
   precedence ordering, alignment edges, defensive input), reconciled with

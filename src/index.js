@@ -21,6 +21,7 @@ const {
 } = require('./outbound');
 const { createEventStore } = require('./event-store');
 const { withEventMutex } = require('./event-mutex');
+const { createGitrepo } = require('./gitrepo');
 
 module.exports = {
   // Verify
@@ -44,7 +45,8 @@ module.exports = {
   newMessageId,
   rfc5322Date,
   withSignature,
-  // Git ledger — storage (factory-bound to dataDir; gitrepo lands in 5b)
+  // Git ledger — storage (factory-bound to dataDir)
   createEventStore,
   withEventMutex,
+  createGitrepo,
 };

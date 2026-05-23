@@ -206,7 +206,7 @@ test('editEvent: rejects edit on completed event', async () => {
   );
 });
 
-test('editEvent: activated event writes a hashed audit commit', { skip: 'needs gitrepo — module 5b' }, async () => {
+test('editEvent: activated event writes a hashed audit commit', async () => {
   const repo = require('../../src/gitrepo').createGitrepo({ dataDir: tmpDir });
   const ev = await store.createEvent({
     type: 'event', title: 'audit', initiator: 'org@ex.com',
