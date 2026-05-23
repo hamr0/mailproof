@@ -42,6 +42,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `tests/integration/outbound.test.js` drives the real `sendmail(8)`
   child-process path against fake binaries in tmp (no mocks); pure builders
   stay in `tests/unit/outbound.test.js`.
+- **Git-ledger pillar, module 5a: event store + per-event write mutex.**
+  `src/event-store.js` and `src/event-mutex.js`, lifted from gitdone as the
+  stdlib-only half of the storage pillar (gitrepo + simple-git follow in 5b).
+  - **Config injected by a bound factory, not a singleton:**
+    `createEventStore({ dataDir })` names `dataDir` once and returns the bound
+    primitives (`loadEvent`, `createEvent`, `activateEvent`, `editEvent`,
+    `recordStepSendErrors`, `recordProofEmailMessageId`, plus the pure
+    `findStep` / `senderMatchesStep` / `generateEventId` / `generateEventSalt`).
+    This replaces gitdone's `config` singleton. **Why:** banning the singleton
+    moved the single source of truth from *implicit* (ambient `GITDONE_*` env
+    read at import) to *explicit* (the create call); a bound factory preserves
+    that one explicit binding point, where per-call injection of a fixed value
+    would re-fragment `dataDir` across every call site. See the decisions log,
+    "Config injection by bound per-pillar factories."
+  - **Trimmed of gitdone-web magic-link policy:** dropped `confirmActivationLink`
+    and the `activation_ack_token` / `activation_link_clicked_at` fields from
+    `createEvent` (dashboard activation-link mechanics, not kernel). The
+    pending→active gate (`activated_at` / `activateEvent`) is workflow-core and
+    stays. `tests/unit/event-store.test.js` proves the trim (the dropped fields
+    are absent; `confirmActivationLink` is unexported).
+  - `src/event-mutex.js` (`withEventMutex`) lifted with its in-process
+    serialization intact; gitdone-deployment-specific commentary generalized to
+    library terms (cross-process locking is the consumer's concern).
+  - Tests split by type per the Testing Trophy (matching outbound): pure
+    helpers in `tests/unit/event-store.test.js`, the filesystem-backed
+    primitives (incl. `activateEvent`'s pending→active gate + idempotency) in
+    `tests/integration/event-store.test.js`. The activated-edit audit commit is
+    skipped pending 5b.
 - `src/index.js` — public entry point, re-exporting each pillar as it lands.
 - `tests/unit/classifier.test.js` — 14 behavior tests (every trust level,
   precedence ordering, alignment edges, defensive input), reconciled with

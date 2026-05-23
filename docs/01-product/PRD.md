@@ -1,6 +1,6 @@
 # mailproof — Product Requirements Document (PRD)
 
-**Status:** Pre-library — P0 (POC) complete; **P1 (lift) in progress.** Lifted so far: verify (`classifier.js`), sequence routing (`router.js`, trimmed to kernel tags), inbound preprocessing (`prefilter.js`, `envelope.js`), and outbound triggers (`outbound.js`, config-injected). Still pending: the storage/ledger modules (`event-store`, `gitrepo`), the workflow-sequencing engine (the contested `completion.js` subset), and the `create()` / `ingest()` assembly.
+**Status:** Pre-library — P0 (POC) complete; **P1 (lift) in progress.** Lifted so far: verify (`classifier.js`), sequence routing (`router.js`, trimmed to kernel tags), inbound preprocessing (`prefilter.js`, `envelope.js`), outbound triggers (`outbound.js`, config-injected), and the storage pillar's stdlib half (`event-store.js` + `event-mutex.js`, factory-injected `createEventStore({ dataDir })`). Still pending: `gitrepo` (the git ledger; adds `simple-git` — module 5b), the workflow-sequencing engine (the contested `completion.js` subset), and the `create()` / `ingest()` assembly.
 **Owner:** hamr0
 **Last updated:** 2026-05-23
 
@@ -101,6 +101,15 @@ consumer can compose its own pipeline. The API is **prose-only until P1** — th
 authoritative shape is sketched in
 [`../02-design/DESIGN.md`](../02-design/DESIGN.md) and becomes `src/index.js`
 when real code lands.
+
+**Config injection (no singleton).** There is no `config` module. Fixed-per-
+deployment config is bound by **per-pillar factories** — `createEventStore({
+dataDir })`, `createGitrepo({ dataDir })`, … — each naming the value once;
+`create()` composes them and is the single runtime source of truth. Config that
+varies per message (outbound's `domain`/`footer`) is passed per call instead.
+The discriminator is the value's nature (fixed vs. varying), not stylistic
+uniformity. Rationale in the [decisions log](../03-logs/decisions-log.md)
+("Config injection by bound per-pillar factories").
 
 ## 7. Success criteria
 

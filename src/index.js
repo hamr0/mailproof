@@ -19,6 +19,8 @@ const { parseEnvelope } = require('./envelope');
 const {
   sendmail, buildRawMessage, sanitizeSubject, newMessageId, rfc5322Date, withSignature,
 } = require('./outbound');
+const { createEventStore } = require('./event-store');
+const { withEventMutex } = require('./event-mutex');
 
 module.exports = {
   // Verify
@@ -42,4 +44,7 @@ module.exports = {
   newMessageId,
   rfc5322Date,
   withSignature,
+  // Git ledger — storage (factory-bound to dataDir; gitrepo lands in 5b)
+  createEventStore,
+  withEventMutex,
 };
