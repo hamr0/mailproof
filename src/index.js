@@ -14,6 +14,8 @@ const { classifyTrust, TRUST_LEVELS } = require('./classifier');
 const {
   parseAddress, parseEventTag, parseVerifyTag, parseReverifyTag, parseInitiatorCommand,
 } = require('./router');
+const { preFilter, extractHeaderBlock, rawHeader } = require('./prefilter');
+const { parseEnvelope } = require('./envelope');
 
 module.exports = {
   // Verify
@@ -25,4 +27,9 @@ module.exports = {
   parseVerifyTag,
   parseReverifyTag,
   parseInitiatorCommand,
+  // Inbound — preprocessing
+  preFilter,
+  extractHeaderBlock,
+  rawHeader,
+  parseEnvelope,
 };

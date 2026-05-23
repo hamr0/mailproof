@@ -26,6 +26,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dropped (they stay in gitdone). `tests/unit/router.test.js` proves the trim
   (dropped tags parse to null / are unexported) and adds `verify+` coverage the
   origin suite lacked.
+- **Inbound preprocessing, module 3: pre-filter + envelope.** `src/prefilter.js`
+  (`preFilter`, `extractHeaderBlock`, `rawHeader` — the humans-only gate that
+  rejects auto-responders / mailing lists / bulk / system senders before
+  verification) and `src/envelope.js` (`parseEnvelope` — the Postfix pipe-argv
+  helper, aligned to OPS.md §5). Both lifted verbatim (generic, no policy
+  branches, no config deps) with their gitdone characterization tests.
 - `src/index.js` — public entry point, re-exporting each pillar as it lands.
 - `tests/unit/classifier.test.js` — 14 behavior tests (every trust level,
   precedence ordering, alignment edges, defensive input), reconciled with
