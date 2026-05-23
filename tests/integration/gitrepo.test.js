@@ -176,6 +176,49 @@ test('syncEventJson: rejects bad event ids (path-traversal guard)', async () => 
   await assert.rejects(() => repo.syncEventJson('../bad', { id: '../bad' }, 'msg'), /invalid eventId/);
 });
 
+// --- OTS anchoring (injected stamper; covers gitrepo's `if (ots)` branch) ---
+
+test('commitReply with an OTS stamper: anchors the commit and files the proof', async () => {
+  // Fake stamper, like the real `ots stamp`: writes <input>.ots next to the
+  // input and reports its path. Dependency injection, not a mock.
+  const fakeOts = {
+    async stampFile(absPath) {
+      const proof = absPath + '.ots';
+      await fs.writeFile(proof, 'fake-proof-bytes');
+      return { proof_path: proof };
+    },
+  };
+  const anchored = createGitrepo({ dataDir: tmp, ots: fakeOts });
+  const event = { id: 'otsOk', title: 'O', salt: SALT, steps: [{ id: 'step1' }] };
+  const ctx = { eventId: 'otsOk', stepId: 'step1', receivedAt: 'now',
+    envelope: { sender: 'a@example.com' }, from: 'a@example.com',
+    trustLevel: 'verified', participantMatch: true, rawSha256: 'sha256:x', rawSize: 1 };
+
+  const r = await anchored.commitReply('otsOk', event, ctx);
+  assert.equal(r.ots_proof_file, path.join('ots_proofs', 'commit-001.ots'));
+  // The proof landed in the tree and the sidecar was moved (not left behind).
+  const proofAbs = path.join(r.repo_path, r.ots_proof_file);
+  assert.equal(await fs.readFile(proofAbs, 'utf8'), 'fake-proof-bytes');
+  await assert.rejects(() => fs.access(path.join(r.repo_path, r.file + '.ots')));
+  const saved = JSON.parse(await fs.readFile(path.join(r.repo_path, r.file), 'utf8'));
+  assert.equal(saved.ots_proof_file, r.ots_proof_file);
+});
+
+test('commitReply with a failing OTS stamper: records the error, leaves path null', async () => {
+  const failOts = { async stampFile() { return { error: 'calendar down' }; } };
+  const anchored = createGitrepo({ dataDir: tmp, ots: failOts });
+  const event = { id: 'otsFail', title: 'O', salt: SALT, steps: [{ id: 'step1' }] };
+  const ctx = { eventId: 'otsFail', stepId: 'step1', receivedAt: 'now',
+    envelope: { sender: 'a@example.com' }, from: 'a@example.com',
+    trustLevel: 'verified', participantMatch: true, rawSha256: 'sha256:x', rawSize: 1 };
+
+  const r = await anchored.commitReply('otsFail', event, ctx);
+  assert.equal(r.ots_proof_file, null, 'no proof path on stamp failure');
+  const saved = JSON.parse(await fs.readFile(path.join(r.repo_path, r.file), 'utf8'));
+  assert.equal(saved.ots_proof_file, null);
+  assert.equal(saved.ots_archive.error, 'calendar down');
+});
+
 // Byte-strict no-diff invariant: identical bytes → no_change; reordered keys →
 // different bytes → exactly one commit. Pins the byte-strict staged detection
 // so a future refactor that reorders keys can't silently pollute the ledger.

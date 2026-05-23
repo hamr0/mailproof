@@ -22,6 +22,7 @@ const {
 const { createEventStore } = require('./event-store');
 const { withEventMutex } = require('./event-mutex');
 const { createGitrepo } = require('./gitrepo');
+const { createOts } = require('./ots');
 
 module.exports = {
   // Verify
@@ -49,4 +50,6 @@ module.exports = {
   createEventStore,
   withEventMutex,
   createGitrepo,
+  // Git ledger — optional OTS anchoring (factory-bound to otsBin)
+  createOts,
 };

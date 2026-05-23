@@ -93,6 +93,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `commitCompletion` (the `completion.js` boundary walk, module 6).
   - Unit/integration split as above; un-skipped the m5a activated-edit audit
     test (now green against the real ledger).
+- **Git-ledger pillar, module 5c: optional OpenTimestamps anchor.**
+  `src/ots.js`, `createOts({ otsBin })` → `{ stampFile }` — factory-injected
+  (otsBin bound once, matching the storage factories), accept-with-flag
+  (`stampFile` never throws; returns `{ proof_path }` or `{ error }`). Wire it
+  into `createGitrepo({ ots })` to anchor commits; omit it for unanchored.
+  - **Dropped `moveProofIntoTree`** — no caller: `gitrepo` files the proof into
+    its own tree (`fs.rename` in `maybeStamp`), which is the cleaner boundary
+    (ots *stamps*; the ledger owns its layout).
+  - Covered `gitrepo`'s previously-untested `if (ots)` branch via an **injected
+    fake stamper** (dependency injection, not a mock): success anchors the
+    commit and files the proof; a failing stamp records `ots_archive.error`
+    with a null path. The real `ots` happy path needs the client + network and
+    is deployment-verified; the binary-missing error path is tested via a real
+    spawn.
 - `src/index.js` — public entry point, re-exporting each pillar as it lands.
 - `tests/unit/classifier.test.js` — 14 behavior tests (every trust level,
   precedence ordering, alignment edges, defensive input), reconciled with
