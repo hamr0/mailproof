@@ -1,6 +1,6 @@
 # mailproof — Product Requirements Document (PRD)
 
-**Status:** Pre-library — P0 (POC) complete; **P1 (lift) in progress** — verify pillar started (`src/classifier.js`, the trust classifier). The full `create()` / `ingest()` API is still pending.
+**Status:** Pre-library — P0 (POC) complete; **P1 (lift) in progress.** Lifted so far: verify (`classifier.js`), sequence routing (`router.js`, trimmed to kernel tags), inbound preprocessing (`prefilter.js`, `envelope.js`), and outbound triggers (`outbound.js`, config-injected). Still pending: the storage/ledger modules (`event-store`, `gitrepo`), the workflow-sequencing engine (the contested `completion.js` subset), and the `create()` / `ingest()` assembly.
 **Owner:** hamr0
 **Last updated:** 2026-05-23
 

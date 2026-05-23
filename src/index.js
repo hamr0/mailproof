@@ -16,6 +16,9 @@ const {
 } = require('./router');
 const { preFilter, extractHeaderBlock, rawHeader } = require('./prefilter');
 const { parseEnvelope } = require('./envelope');
+const {
+  sendmail, buildRawMessage, sanitizeSubject, newMessageId, rfc5322Date, withSignature,
+} = require('./outbound');
 
 module.exports = {
   // Verify
@@ -32,4 +35,11 @@ module.exports = {
   extractHeaderBlock,
   rawHeader,
   parseEnvelope,
+  // Email triggers — outbound
+  sendmail,
+  buildRawMessage,
+  sanitizeSubject,
+  newMessageId,
+  rfc5322Date,
+  withSignature,
 };

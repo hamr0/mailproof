@@ -32,6 +32,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   verification) and `src/envelope.js` (`parseEnvelope` — the Postfix pipe-argv
   helper, aligned to OPS.md §5). Both lifted verbatim (generic, no policy
   branches, no config deps) with their gitdone characterization tests.
+- **Email-triggers pillar, module 4: outbound send path.** `src/outbound.js`
+  (`sendmail`, `buildRawMessage`, `newMessageId`, `rfc5322Date`,
+  `sanitizeSubject`, `withSignature`), lifted from gitdone with **config
+  injection** (no `GITDONE_SENDMAIL_BIN` / `git-done.com` env defaults — the
+  caller passes `binary` and `domain`) and an **injectable, no-default footer**
+  (gitdone's branded `SIGNATURE_FOOTER`/`SIGNATURE` dropped per PRD §8.6;
+  `noSignature` removed as redundant). First **integration-tier** tests:
+  `tests/integration/outbound.test.js` drives the real `sendmail(8)`
+  child-process path against fake binaries in tmp (no mocks); pure builders
+  stay in `tests/unit/outbound.test.js`.
 - `src/index.js` — public entry point, re-exporting each pillar as it lands.
 - `tests/unit/classifier.test.js` — 14 behavior tests (every trust level,
   precedence ordering, alignment edges, defensive input), reconciled with
