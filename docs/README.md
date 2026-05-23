@@ -6,15 +6,17 @@ mailproof turns a promise made over email into proof: it verifies a reply
 workflow, and triggers the next email. No web UI, no branding, no
 crypto-attestation policy — those stay in `gitdone` on top.
 
-> **Status:** pre-library. P0 (POC) is done; P1 (the real lift) is pending.
-> There is no `src/` or published API yet — see the DESIGN doc.
+> **Status:** P1 lift in progress. `src/` now holds real modules — verify,
+> sequence routing, inbound, outbound, and the full git-ledger storage are
+> lifted (zero runtime deps so far). The `create()` / `ingest()` assembly that
+> makes it a usable library is still pending — see DESIGN.
 
 ## Structure
 
 | Tier | Path | What lives here |
 |------|------|-----------------|
 | **Product** | [`01-product/`](01-product/) | The **PRD** — what we're building, why, who adopts it, and the NO-GO table |
-| **Design** | [`02-design/`](02-design/) | **DESIGN.md** — extraction boundary, locked decisions, planned API, phasing. The SPEC (exact wire formats) lands here in P1 |
+| **Design** | [`02-design/`](02-design/) | **DESIGN.md** — extraction boundary, locked decisions, planned API, phasing; **SPEC.md** — exact wire formats (trust levels, address grammar, commit / event schemas) |
 | **Logs** | [`03-logs/`](03-logs/) | The **decisions log** — design forks, dated, with rationale |
 
 Future tiers (process, ops) and docs (SPEC, `mailproof.context.md`, GUIDE)
@@ -35,14 +37,15 @@ describe a surface that doesn't exist yet.
 If two documents disagree:
 - **Intent / philosophy / scope** → the **PRD** wins; the other doc must be
   brought into alignment.
-- **Mechanism / wire format / byte layout** → the **SPEC** wins once it exists
-  (P1). Until then, **DESIGN.md** is the authority on mechanism.
+- **Mechanism / wire format / byte layout** → the **SPEC**
+  ([`02-design/SPEC.md`](02-design/SPEC.md)) wins; **DESIGN.md** remains the
+  authority on the extraction boundary and phasing.
 
 ## Top-level docs (sibling to this directory)
 
 - [`/README.md`](../README.md) — project pitch and POC entry point
 - [`/CLAUDE.md`](../CLAUDE.md) — guidance for Claude Code working in this repo
 - [`/CHANGELOG.md`](../CHANGELOG.md) — version history (Keep a Changelog + SemVer)
+- [`/OPS.md`](../OPS.md) — Postfix/opendkim/PTR/port-25 operator checklist
 - *(planned, P1+)* `/mailproof.context.md` (dense AI-agent integration guide),
-  `/GUIDE.md` (adopter walkthrough), `/OPS.md` (Postfix/opendkim/PTR/port-25
-  operator checklist)
+  `/GUIDE.md` (adopter walkthrough)

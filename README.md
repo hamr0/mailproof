@@ -7,7 +7,7 @@
 
 **Email-native multi-party coordination kernel.** Verify a reply, sequence it through a workflow, commit it to a tamper-evident git ledger, trigger the next email.
 
-> ⚠️ **Early WIP.** Being extracted from [gitdone](https://github.com/hamr0/gitdone). Currently at proof-of-concept stage — there is no published API yet. See [`docs/`](docs/) ([PRD](docs/01-product/PRD.md), [DESIGN](docs/02-design/DESIGN.md)).
+> ⚠️ **Early WIP — P1 lift in progress.** Being extracted from [gitdone](https://github.com/hamr0/gitdone). Real `src/` modules are landing pillar by pillar (verify, sequence routing, inbound, outbound, and the full git-ledger storage are done); the `create()` / `ingest()` assembly isn't wired yet, so there is no usable published API. See [`docs/`](docs/) ([PRD](docs/01-product/PRD.md), [DESIGN](docs/02-design/DESIGN.md), [SPEC](docs/02-design/SPEC.md)).
 
 ## The idea
 
@@ -27,7 +27,7 @@ Every inbound reply is committed — *even rejected ones* (wrong sender, failed 
 | Phase | State |
 |---|---|
 | P0 — composition proof (POC) | ✅ `npm run poc` |
-| P1 — lift real modules + tests | ⬜ next |
+| P1 — lift real modules + tests | 🔄 in progress — verify, sequence routing, inbound, outbound, git-ledger storage done; sequencing engine + `create()`/`ingest()` assembly pending |
 | P2 — gitdone depends on mailproof | ⬜ |
 
 ## Try the POC
@@ -36,7 +36,7 @@ Every inbound reply is committed — *even rejected ones* (wrong sender, failed 
 npm run poc   # stdlib + git only: runs a 2-step workflow, prints the ledger + outbox, self-asserts
 ```
 
-Requires Node ≥ 22.5. (The POC has no dependencies; the real library will add `mailauth`, `mailparser`, `simple-git`.)
+Requires Node ≥ 22.5. The POC has no dependencies, and the lifted library still has **zero runtime deps** — the git ledger shells out to the `git` binary directly (no `simple-git`). `mailauth` (DKIM/DMARC) and `mailparser` (MIME) arrive when the verify/inbound input wiring lands; the dependency budget is ≤3.
 
 ## Docs
 
