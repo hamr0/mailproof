@@ -7,7 +7,7 @@
 
 **Email-native multi-party coordination kernel.** Verify a reply, sequence it through a workflow, commit it to a tamper-evident git ledger, trigger the next email.
 
-> ⚠️ **Early WIP — P1 lift in progress.** Being extracted from [gitdone](https://github.com/hamr0/gitdone). Real `src/` modules are landing pillar by pillar (verify, sequence routing, inbound, outbound, the full git-ledger storage, the workflow completion engine, and the document notary's verify half are done); the notary's inbound auto-hash capture and the `create()` / `ingest()` assembly land with the m7 parser, so there is no usable published API yet. See [`docs/`](docs/) ([PRD](docs/01-product/PRD.md), [DESIGN](docs/02-design/DESIGN.md), [SPEC](docs/02-design/SPEC.md)).
+> ⚠️ **Early WIP — P1 lift in progress.** Being extracted from [gitdone](https://github.com/hamr0/gitdone). Real `src/` modules are landing pillar by pillar (verify, sequence routing, inbound, outbound, the full git-ledger storage, both sequencing engines — the **events** workflow and the **crypto sign-off** engine — and the document notary's verify half are done); the notary's inbound auto-hash capture and the `create()` / `ingest()` assembly land with the m7 parser, so there is no usable published API yet. See [`docs/`](docs/) ([PRD](docs/01-product/PRD.md), [DESIGN](docs/02-design/DESIGN.md), [SPEC](docs/02-design/SPEC.md)).
 
 ## The idea
 
@@ -27,7 +27,7 @@ Every inbound reply is committed — *even rejected ones* (wrong sender, failed 
 | Phase | State |
 |---|---|
 | P0 — composition proof (POC) | ✅ `npm run poc` |
-| P1 — lift real modules + tests | 🔄 in progress — verify, sequence routing, inbound, outbound, git-ledger storage, workflow completion engine, document-notary verify half done; notary auto-hash capture + `create()`/`ingest()` assembly pending (m7) |
+| P1 — lift real modules + tests | 🔄 in progress — verify, sequence routing, inbound, outbound, git-ledger storage, workflow completion engine, crypto sign-off engine, document-notary verify half done; notary auto-hash capture + `create()`/`ingest()` assembly pending (m7) |
 | P2 — gitdone depends on mailproof | ⬜ |
 
 ## Try the POC

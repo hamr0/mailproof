@@ -168,6 +168,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     factory guards) and `tests/integration/notary.test.js` (real store + per-event
     repo: exact-match, the email layer's match/reject, tampered-doc and
     unknown-event non-matches — no mocks).
+- **Sequence pillar, module 6.7: crypto sign-off engine.** `src/crypto.js`
+  (`shouldCount`, `applyReply`, `isComplete`, `signatures`, `CRYPTO_REASONS`) —
+  mailproof's **second coordination mode** (`type: "crypto"`, PRD §4.2),
+  re-exported as `shouldCountSignoff` / `applySignoff`. Pure (no I/O, no crypto),
+  parallel to `completion.js`.
+  - **One parameterized engine, lifted from gitdone's `shouldCountDeclaration` +
+    `shouldCountAttestation` + the `applyReply` crypto branches and collapsed**
+    per the two-mode pivot: `signers` (allow-list or `open`), `threshold`
+    (1 = single-signer *declaration*, N = count-to-goal), optional single
+    `requiredDocHash` (the "email + doc" two-layer, in the notary's `sha256:`
+    format). A reply counts iff activated/not-archived/not-complete, DKIM-`verified`,
+    **not the initiator**, a matched signer, a *distinct* sender, and (if set) an
+    attachment hash matches; the event locks at distinct count ≥ `threshold`.
+  - **Trust hardcoded to `verified`, NOT per-event configurable** — crypto is the
+    high-assurance mode; a forwarded/authorized reply must never stand as a
+    signature.
+  - **Initiator self-reply is committed for audit but never counts**
+    (`initiator_self_reply`) — anti-self-dealing: the initiator orchestrates and
+    cannot also be a verifier. (Events differ: there the initiator *may* be a
+    counted participant.)
+  - **Sender-identity resolution stays in the orchestrator** (like workflow's
+    `participant_match`): the engine reads precomputed `signer_match` /
+    `is_initiator` booleans and dedups on the salted `sender_hash`, so plaintext
+    never reaches the engine or ledger (SPEC §6).
+  - **Trimmed to the lean mechanism** per §8.2–8.4: dropped `revoke`,
+    `latest`/`accumulating` dedup (distinct-only), multi-doc strict manifests +
+    `reference_docs`, per-attestor progress buckets, and attestor-PII redaction —
+    all stay gitdone policy. Re-anchored to SPEC: machine-code `count_reason`s,
+    camelCase, top-level `status`/`completed_at` (not gitdone's nested
+    `completion`). ~150 lines vs. completion.js's ~500.
+  - Tests: `tests/unit/crypto.test.js` (declaration / distinct-count / initiator
+    exclusion / trust gate / open mode / `requiredDocHash` / lifecycle / purity)
+    including a **provable-trim** test that gitdone's dropped policy fields
+    (`dedup`, `revoked_senders`, `reference_docs`, `mode`) are inert, not honored.
+  - **Router `attest+{id}@` tag + SPEC §2 promotion deferred to m7b assembly**,
+    where the route is exercised end-to-end — m6.7 mirrors how m6 landed
+    (the engine, pure; the router untouched).
 - `src/index.js` — public entry point, re-exporting each pillar as it lands.
 - `tests/unit/classifier.test.js` — 14 behavior tests (every trust level,
   precedence ordering, alignment edges, defensive input), reconciled with

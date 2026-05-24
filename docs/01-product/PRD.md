@@ -143,8 +143,13 @@ that made events one `dependsOn` rule):
 | `requiredDocHash` | optional single hash | the "email + doc" two-layer, via the notary |
 
 A sign-off **counts iff**: DKIM-verified; sender ∈ `signers` (or any sender, if
-open); a *distinct* sender not already counted; and — if set — its attachment
-matches `requiredDocHash`. Complete when distinct count ≥ `threshold`.
+open); the sender is **not the initiator** (anti-self-dealing — the initiator
+orchestrates and may reply, but their reply is committed for audit, never
+counted as a verification); a *distinct* sender not already counted; and — if
+set — its attachment matches `requiredDocHash`. Complete when distinct count ≥
+`threshold`. (Events differ: there the initiator *may* be a counted
+participant.) Trust is hardcoded to `verified` — crypto is all-or-nothing, with
+no per-event trust knob. Engine: `crypto.js` (m6.7).
 
 **Lean by exclusion** (stays gitdone policy, §8): no `revoke`, no
 `latest`/`accumulating` dedup (distinct-only), no multi-doc manifests, no

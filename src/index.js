@@ -27,6 +27,12 @@ const {
   shouldCount, applyReply, isComplete, firstPendingStep,
   stepDepsMet, eligibleSteps, meetsTrust, COUNT_REASONS,
 } = require('./completion');
+const {
+  shouldCount: shouldCountSignoff,
+  applyReply: applySignoff,
+  signatures,
+  CRYPTO_REASONS,
+} = require('./crypto');
 const { createNotary, hashDocument } = require('./notary');
 
 module.exports = {
@@ -66,6 +72,11 @@ module.exports = {
   eligibleSteps,
   meetsTrust,
   COUNT_REASONS,
+  // Sequence — crypto sign-off engine (PRD §4.2; the second coordination mode)
+  shouldCountSignoff,
+  applySignoff,
+  signatures,
+  CRYPTO_REASONS,
   // Verify — document notary (PRD §4.1; factory composes gitrepo + eventStore)
   createNotary,
   hashDocument,

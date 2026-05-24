@@ -13,13 +13,15 @@ deliberately diverges from gitdone, it is called out.
 
 ## 0. Scope
 
-mailproof is the **generic-workflow kernel only**. These formats describe an
-ordered/parallel multi-step confirmation over email. Crypto declaration,
-attestation, strict signing, thresholds, revoke, and reference-doc
-registration are **gitdone policy** layered on top — their wire artifacts
-(`attach`/`revoke` commit kinds, `declaration`/`attestation` event fields,
-`reference_docs`, `revoked_senders`) are **out of scope here** and are noted
-only to mark the boundary.
+mailproof is the **two-mode coordination kernel** (PRD §4.2): an
+ordered/parallel multi-step confirmation (**events**, `type: "workflow"`, §3)
+*and* a verified-signer sign-off (**crypto**, `type: "crypto"`, §3.1). Both
+formats are covered here. The heavy *policy* tail of gitdone's crypto — strict
+multi-doc signing, `revoke`, `latest`/`accumulating` dedup, reference-doc
+registration, attestor-PII redaction — stays gitdone policy; its wire artifacts
+(`attach`/`revoke` commit kinds, `reference_docs`, `revoked_senders`, per-event
+`dedup`/`mode`) are **out of scope here** and are noted only to mark the
+boundary.
 
 ---
 
@@ -86,7 +88,7 @@ exact serialization is an **invariant** (see §5).
 {
   "id": "a1b2c3",                    // alphanumeric; 12-char base36 if generated
   "title": "Contract sign-off",
-  "type": "workflow",               // v1: only "workflow"
+  "type": "workflow",               // "workflow" (this section) | "crypto" (§3.1)
   "flow": "sequential",             // "sequential" (default) | "parallel" | "custom"; expanded to per-step dependsOn at createEvent
   "initiator": "organiser@acme.com",
   "status": "open",                 // "open" | "complete"
@@ -121,6 +123,69 @@ exact serialization is an **invariant** (see §5).
 are committed for audit but never `counted`. *How* an event gets activated is
 the consumer's policy (gitdone uses a magic link); the kernel only reads the
 timestamp.
+
+---
+
+## 3.1 `event.json` — crypto sign-off state
+
+The second mode (`type: "crypto"`, PRD §4.2). Same file location, atomic write,
+and serialization invariant as §3, and the same lifecycle fields
+(`activated_at`/`archived_at`/`status`/`completed_at`/`salt`). It has **no
+`steps`**; instead a flat signer/threshold shape. Engine: `src/crypto.js`.
+
+```jsonc
+{
+  "id": "c1d2e3",
+  "title": "Series A board consent",
+  "type": "crypto",
+  "initiator": "counsel@example.com", // orchestrates; a self-reply NEVER counts
+  "status": "open",                   // "open" | "complete"
+  "salt": "9f3a…",                    // 32-byte hex, PUBLIC (§6)
+  "created_at": "2026-05-22T20:27:04.210Z",
+  "activated_at": null,
+  "completed_at": null,
+  "archived_at": null,
+
+  "signers": ["a@example.com", "b@example.com"], // allow-list, lowercased
+  "open": false,                      // true ⇒ ANY verified sender may sign (a shared address)
+  "threshold": 2,                     // distinct signatures to complete; 1 = single-signer declaration
+  "requiredDocHash": "sha256:…",      // optional; a counting reply must attach a file whose sha256 matches (notary format) | null
+
+  "signatures": [                     // the distinct count-to-threshold record (non-PII, §6)
+    {
+      "sender_hash": "sha256:…",      // salted; the dedup key
+      "sender_domain": "example.com",
+      "commit_sequence": 4,           // the commit-NNN (§4) that counted this signer
+      "received_at": "2026-05-22T20:27:04.235Z",
+      "trust_level": "verified"
+    }
+  ]
+}
+```
+
+**A reply COUNTS as a signature iff** (machine-code `count_reason`s, §4): the
+event is activated, not archived, not complete; `trust_level === "verified"`
+(**hardcoded** — crypto is all-or-nothing, no per-event `minTrust`); the sender
+is **not** the initiator (`initiator_self_reply` — anti-self-dealing); the
+sender is a signer (or `open`); the sender is **distinct** from those already in
+`signatures` (`already_signed`); and, if `requiredDocHash` is set, some
+attachment's sha256 matches (`doc_hash_mismatch`). The event locks
+(`status:"complete"` + `completed_at`) when `signatures.length ≥ threshold`.
+
+**Signer-identity resolution is the orchestrator's**, mirroring workflow's
+`participant_match`: it compares the plaintext sender against
+`signers`/`open`/`initiator` at ingest and passes the engine precomputed
+`signer_match` / `is_initiator` booleans (plaintext never reaches the engine or
+ledger). The engine dedups on the commit's salted `sender_hash`.
+
+**crypto count_reasons:** `event_not_activated`, `event_archived`,
+`already_complete`, `unverified_trust`, `initiator_self_reply`, `not_a_signer`,
+`already_signed`, `doc_hash_mismatch`.
+
+**gitdone-only crypto fields (policy, NOT core):** `mode`, `dedup`,
+`reference_docs`, `revoked_senders`, `attestor_progress` (strict multi-doc
+signing, dedup variants, revoke, per-attestor buckets). The kernel **ignores
+them if present** — distinct-count-to-threshold is the only rule.
 
 ---
 
