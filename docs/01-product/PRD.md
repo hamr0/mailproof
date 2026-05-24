@@ -2,7 +2,7 @@
 
 **Status:** Pre-library — P0 (POC) complete; **P1 (lift) in progress.** Lifted so far: verify (`classifier.js`), sequence routing (`router.js`, trimmed to kernel tags), inbound preprocessing (`prefilter.js`, `envelope.js`), outbound triggers (`outbound.js`, config-injected), and the full storage/ledger pillar (`event-store.js` + `event-mutex.js` + `gitrepo.js` + optional `ots.js`, factory-injected `createEventStore`/`createGitrepo`/`createOts`; the git ledger talks to the `git` binary via `child_process` — **zero runtime deps**, no `simple-git`). Still pending: the workflow-sequencing engine (the contested `completion.js` subset) and the `create()` / `ingest()` assembly.
 **Owner:** hamr0
-**Last updated:** 2026-05-23
+**Last updated:** 2026-05-24
 
 > **For future Claude:** This PRD is the canonical source of truth for *what
 > mailproof is and what it deliberately is not*. §8 (the NO-GO table) is the
