@@ -7,7 +7,7 @@
 
 **Email-native multi-party coordination kernel.** Verify a reply, sequence it through a workflow, commit it to a tamper-evident git ledger, trigger the next email.
 
-> ⚠️ **Early WIP — P1 lift in progress.** Being extracted from [gitdone](https://github.com/hamr0/gitdone). Real `src/` modules are landing pillar by pillar (verify, sequence routing, inbound, outbound, and the full git-ledger storage are done); the `create()` / `ingest()` assembly isn't wired yet, so there is no usable published API. See [`docs/`](docs/) ([PRD](docs/01-product/PRD.md), [DESIGN](docs/02-design/DESIGN.md), [SPEC](docs/02-design/SPEC.md)).
+> ⚠️ **Early WIP — P1 lift in progress.** Being extracted from [gitdone](https://github.com/hamr0/gitdone). Real `src/` modules are landing pillar by pillar (verify, sequence routing, inbound, outbound, the full git-ledger storage, and the workflow completion engine are done); the document notary and the `create()` / `ingest()` assembly aren't wired yet, so there is no usable published API. See [`docs/`](docs/) ([PRD](docs/01-product/PRD.md), [DESIGN](docs/02-design/DESIGN.md), [SPEC](docs/02-design/SPEC.md)).
 
 ## The idea
 
@@ -27,7 +27,7 @@ Every inbound reply is committed — *even rejected ones* (wrong sender, failed 
 | Phase | State |
 |---|---|
 | P0 — composition proof (POC) | ✅ `npm run poc` |
-| P1 — lift real modules + tests | 🔄 in progress — verify, sequence routing, inbound, outbound, git-ledger storage done; sequencing engine + `create()`/`ingest()` assembly pending |
+| P1 — lift real modules + tests | 🔄 in progress — verify, sequence routing, inbound, outbound, git-ledger storage, workflow completion engine done; document notary + `create()`/`ingest()` assembly pending |
 | P2 — gitdone depends on mailproof | ⬜ |
 
 ## Try the POC
