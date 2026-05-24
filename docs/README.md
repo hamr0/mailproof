@@ -2,9 +2,10 @@
 
 Email-native multi-party coordination **kernel**, extracted from `gitdone`.
 mailproof turns a promise made over email into proof: it verifies a reply
-(DKIM/DMARC), commits it to a tamper-evident git ledger, sequences it through a
-workflow, and triggers the next email. No web UI, no branding, no
-crypto-attestation policy — those stay in `gitdone` on top.
+(DKIM/DMARC), commits it to a tamper-evident git ledger, sequences it through
+one of two generic modes — an **events** workflow or a **crypto sign-off** — and
+triggers the next email. The web UI, branding, and the heavy attestation policy
+tail stay in `gitdone` on top.
 
 > **Status:** P1 lift in progress. `src/` now holds real modules — verify,
 > sequence routing, inbound, outbound, the full git-ledger storage, the workflow

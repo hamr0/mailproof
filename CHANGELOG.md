@@ -179,6 +179,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (DNS, PTR/FCrDNS, the `master.cf` pipe transport, port-25 ingress/egress).
 - `config.example.env` — `MAILPROOF_*` reference template (env → injected
   `create()` config).
+- **Identity pivot: two generic coordination modes (PRD §1, §4.2).** A design
+  conversation widened mailproof from "generic workflow only" to **events** +
+  **crypto sign-off**, both on the DKIM-verified-email + notary substrate —
+  "gitdone's engine, public." Crypto is **one parameterized engine**: `signers`
+  (explicit email list *or* open via a shared `attest+{id}@`-style address — the
+  "link" is an email address, **not** a web link/app/webhook), `threshold`
+  (1 = single-signer declaration; N = count-to-goal), optional single
+  `requiredDocHash`. **Lean by exclusion** — `revoke`, `latest`/`accumulating`
+  dedup, multi-doc manifests, attestor-PII redaction, and the magic-link/web flow
+  stay `gitdone` policy. This **supersedes** the "generic workflow only" decision
+  and narrows NO-GO §8.2–8.4/§8.12; the m6 events engine is unchanged, crypto is
+  an additive engine (m6.7) and `ingest()` routes by `type`. See the decisions log.
 - **Scope locked: document-notary primitive (PRD §4.1).** A design conversation
   on using attachments for verification resolved to a minimal kernel notary —
   mandatory SHA-256 auto-hashing of inbound attachments + a read-only

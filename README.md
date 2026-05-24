@@ -14,7 +14,7 @@
 A lot of coordination is just: ask some named people to confirm something, in an order, and prove they did. mailproof does that **entirely over email** — **no app, no login** for participants. They reply from their normal inbox; that's it.
 
 - **Verify** — each inbound reply is graded by DKIM/DMARC trust level (via [`mailauth`](https://github.com/postalsys/mailauth)); the signer's public key is archived so the reply still verifies after key rotation.
-- **Sequence** — replies advance a workflow of ordered / parallel steps.
+- **Sequence** — replies advance one of two generic modes: an **events** workflow (ordered / parallel steps among named participants) or a **crypto sign-off** (verified signers — one, several named, or open via a shared address — counted toward a threshold, optionally bound to a hashed document).
 - **Git ledger** — every reply is committed to a per-event git repo. The commit chain *is* the tamper-evident, offline-verifiable proof: clone it and check it with stock `git`, forever, even if the service disappears.
 - **Email triggers** — composes and sends the next notification / reminder through your own MTA (Postfix + opendkim). Self-hosted: more config, full control, no third-party mail dependency.
 

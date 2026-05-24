@@ -24,16 +24,23 @@
 
 It verifies — via DKIM/DMARC — that a reply genuinely came from the party who
 claims to have sent it, commits that fact to a tamper-evident,
-offline-verifiable **git** ledger, sequences it through a workflow, and triggers
-the next email. The verification is grounded in email *by construction*, so the
-inbox is both the interface and the trust anchor. On top of that proof, mailproof
-is the **generic mechanism — never the policy** — for coordinating any
-multi-party interaction between people or bots. Take away email and you take
-away the proof.
+offline-verifiable **git** ledger, and triggers the next email. The verification
+is grounded in email *by construction*, so the inbox is both the interface and
+the trust anchor. Take away email and you take away the proof.
 
-It is a standalone vanilla-JS library extracted from `gitdone`. No web UI, no
-branding, no crypto-attestation policy — those stay in `gitdone` as a consumer
-on top.
+On that substrate — DKIM-verified email plus a docs-hashing notary — mailproof
+offers **two generic coordination modes** (mechanism, never domain policy):
+- **Events** — register and coordinate ordered/parallel/mixed steps among
+  *named* participants.
+- **Crypto sign-off** — collect DKIM-verified sign-offs from one designated
+  signer, a set of named signers, or open signers (anyone, via a shared
+  address), counted toward a threshold; each sign-off optionally bound to a
+  hashed document.
+
+It is a standalone vanilla-JS library extracted from `gitdone`. What stays in
+`gitdone` is *product policy*, not mechanism: the web UI, branding,
+hosting/auth, and the heavy attestation tail (`revoke`, multi-doc manifests,
+alternate dedup rules).
 
 ## 2. The problem it solves
 
@@ -71,7 +78,7 @@ modules lifted in P1 (boundary in [`../02-design/DESIGN.md`](../02-design/DESIGN
 | Pillar | Responsibility |
 |---|---|
 | **Verify** | Classify an inbound reply's trust level from DKIM/DMARC (+ durable archive-key reverify); verify an attached document against the ledger (§4.1). |
-| **Sequence** | Route the reply to its event/step and advance an ordered/parallel/mixed workflow. |
+| **Sequence** | Route the reply and advance it — either an **events** workflow (ordered/parallel/mixed steps) or a **crypto sign-off** (signers → threshold). See §4.2. |
 | **Git ledger** | Commit every reply to a per-event git repo as a hash-chained `commit-NNN.json`, including the SHA-256 of every attachment (§4.1); optional OTS anchoring. |
 | **Email triggers** | Build and send the next notification (bundled Postfix/sendmail); reminders/nudges/bounce handling. |
 
@@ -115,6 +122,33 @@ yet):**
   sender and return hashes/ids, never filenames, to avoid metadata leak.
 - **Retrieval-gating** ("this doc unlocks action X") — the consumer's policy on
   top of `verifyDocument`, never kernel.
+
+### 4.2 Two coordination modes
+
+Both modes are generic mechanisms on the same substrate (verify + ledger +
+notary + triggers); a consumer picks the mode per event via `type`.
+
+**Events** (`type: "workflow"`) — named participants complete
+ordered/parallel/mixed steps under one `dependsOn` eligibility model; a step may
+set `requires_attachment` (hashed by the notary). Engine: `completion.js` (m6).
+
+**Crypto sign-off** (`type: "crypto"`) — collect DKIM-verified sign-offs toward
+completion. **One parameterized engine, not three modes** (the same discipline
+that made events one `dependsOn` rule):
+
+| Knob | Values | Covers |
+|---|---|---|
+| `signers` | explicit email list (manually added) **or** open (anyone) | 1 = single-signer *declaration*; N = named multi-signer; open = a shared `attest+{id}@`-style address — the "link" is **just that shared email address**, not a web link/app/webhook |
+| `threshold` | N (1 = declaration) | single-signer vs. count-toward-goal |
+| `requiredDocHash` | optional single hash | the "email + doc" two-layer, via the notary |
+
+A sign-off **counts iff**: DKIM-verified; sender ∈ `signers` (or any sender, if
+open); a *distinct* sender not already counted; and — if set — its attachment
+matches `requiredDocHash`. Complete when distinct count ≥ `threshold`.
+
+**Lean by exclusion** (stays gitdone policy, §8): no `revoke`, no
+`latest`/`accumulating` dedup (distinct-only), no multi-doc manifests, no
+attestor-PII redaction, no web/magic-link flow.
 
 ## 5. Core invariants (must hold; do not silently break)
 
@@ -171,9 +205,9 @@ When a feature request comes in, point at this table.
 | # | Non-goal | Reason |
 |---|---|---|
 | 8.1 | **Non-email channels in the core verify/trigger path** (webhooks, SMS, push) | DKIM/DMARC is what gives cold, third-party, offline verification; webhooks need pre-shared HMAC/mTLS (kills the "any two parties, no setup" property) and SMS has no real origin verification. Email is the trust anchor, not a channel choice. **Carve-out:** a consumer may fire its own side-effect notifications (webhook/Slack/SMS) from mailproof's `ingest()` result — those carry **no mailproof verification guarantee** and are glue on top, not a core channel. |
-| 8.2 | **Crypto declaration / attestation modes** | Stay in `gitdone` as policy on mailproof's hooks. v1 core is generic workflow only. |
-| 8.3 | **Strict signing + `reference_docs` / `attach` enforcement** | Policy, not kernel. Layer it on the hooks. |
-| 8.4 | **`revoke` / threshold / quorum semantics** | Policy on hooks. The core advances steps; quorum rules belong to the consumer. |
+| 8.2 | **gitdone's attestation *policy* tail** (`revoke`, `latest`/`accumulating` dedup, attestor-PII redaction, magic-link/web flow) | The lean crypto sign-off *mechanism* (1/N/open signers + threshold + single-doc gate) is now a core mode (§4.2); only this heavy policy tail stays in gitdone. **Supersedes the original "generic workflow only" scope** — see the decisions log. |
+| 8.3 | **Multi-doc strict-signing manifests + the `attach` / `reference_docs` channel** | Single-document gating (`requiredDocHash`, §4.2) is core; multi-doc manifests, per-attestor progress, and the `attach` channel stay `gitdone` policy. |
+| 8.4 | **`revoke` semantics** (un-counting a signer + recount/reopen) | Threshold/quorum *counting* is now core (the crypto mode's `threshold`, §4.2); reversing a counted signer is policy on the hooks. |
 | 8.5 | **Multi-event `bundle`** | A `gitdone` product feature, not a kernel primitive. |
 | 8.6 | **Branded / templated email bodies** (`[gitdone]`, marketing headers) | Core builds minimal neutral messages. Branding is the consumer's. |
 | 8.7 | **Web dashboard / HTTP server / any UI** | mailproof is a library. Consumers build their own surface. |
@@ -181,7 +215,7 @@ When a feature request comes in, point at this table.
 | 8.9 | **Lifting `receive.js`** (the orchestrator) | App glue. mailproof exposes primitives + optional `createReceiver()` with hooks; each consumer writes thin glue. |
 | 8.10 | **Pluggable third-party mail provider** (SendGrid/SES/Mailgun) | Transport is bundled Postfix/sendmail; opendkim signs outbound at the MTA. Self-hosted = full control, no vendor dep. |
 | 8.11 | **SQL/other DB as the canonical store** | Git ledger is canonical (invariant §5.3). SQL is a read-model the consumer projects; mailproof doesn't ship or own it. |
-| 8.12 | **Domain-specific workflow types** beyond generic ordered/parallel/mixed | v1 is generic workflow only. Domain semantics are policy. |
+| 8.12 | **Domain-specific modes** beyond the two generic ones (events, crypto sign-off) | The two modes are generic mechanisms; domain semantics are the consumer's policy. |
 | 8.13 | **TypeScript source** | JSDoc + shipped `.d.ts`, no build step — matches the family convention (`knowless`, `bareagent`). |
 | 8.14 | **Hosted SaaS** | It's a library. |
 | 8.15 | **Telemetry / phone-home of any kind** | Never. |
