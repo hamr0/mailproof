@@ -139,6 +139,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `requires_attachment`, the two-step→complete transition, input immutability,
     and the `eligibleSteps`/`stepDepsMet` predicates), re-anchored from gitdone's
     characterization suite (domains neutralized to `example.com`).
+- **Verify pillar, module 6.5: document notary (verify half).** `src/notary.js`
+  — `hashDocument(bytes)` (the canonical `sha256:`-prefixed fingerprint) and
+  `createNotary({ gitrepo, eventStore })` → `verifyDocument(eventId, bytes,
+  { email })`. **Net-new** primitive (NOT a gitdone lift — gitdone has only
+  manifest-matching strict signing, which stays policy per §8.3), designed from
+  PRD §4.1.
+  - `verifyDocument` is **read-only over the ledger**: re-hashes a document,
+    scans every committed reply (counted or not — accept-with-flag), and returns
+    `{ found, matches: [{ sequence, received_at, trust_level, counted,
+    sender_domain, sender_match, filename }] }`. With `email`, `sender_match`
+    flags whether the verified sender (salted via `gitrepo.saltedSenderHash`)
+    submitted it — the second layer; without it, `sender_match` is null.
+  - Framed as a **proof-of-participation receipt, not a secret** (PRD §4.1): the
+    DKIM-verified sender is the trust factor; a matching document only adds
+    tamper-evident binding.
+  - **`hashDocument` is the one source of truth for the fingerprint format** — m7's
+    parser will hash inbound attachments through it, so committed
+    `attachments[].sha256` matches what `verifyDocument` recomputes
+    (`verifyDocument` also normalises a bare-hex vs `sha256:`-prefixed value
+    defensively).
+  - **Capture half deferred to m7:** mandatory auto-hashing of inbound
+    attachments needs the parsed bytes, which only exist at the mailparser layer
+    (m7); at commit time the ledger holds attachment metadata, not bytes. Building
+    a capture enforcer now (no byte source) would be the speculative-code red
+    flag — so the parser populates the hashes in m7 and this module reads them.
+  - Tests: `tests/unit/notary.test.js` (pure `hashDocument` format/determinism +
+    factory guards) and `tests/integration/notary.test.js` (real store + per-event
+    repo: exact-match, the email layer's match/reject, tampered-doc and
+    unknown-event non-matches — no mocks).
 - `src/index.js` — public entry point, re-exporting each pillar as it lands.
 - `tests/unit/classifier.test.js` — 14 behavior tests (every trust level,
   precedence ordering, alignment edges, defensive input), reconciled with

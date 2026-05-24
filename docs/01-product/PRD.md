@@ -1,6 +1,6 @@
 # mailproof — Product Requirements Document (PRD)
 
-**Status:** Pre-library — P0 (POC) complete; **P1 (lift) in progress.** Lifted so far: verify (`classifier.js`), sequence routing (`router.js`, trimmed to kernel tags), inbound preprocessing (`prefilter.js`, `envelope.js`), outbound triggers (`outbound.js`, config-injected), and the full storage/ledger pillar (`event-store.js` + `event-mutex.js` + `gitrepo.js` + optional `ots.js`, factory-injected `createEventStore`/`createGitrepo`/`createOts`; the git ledger talks to the `git` binary via `child_process` — **zero runtime deps**, no `simple-git`), and the workflow completion engine (`completion.js` — workflow subset, pure transitions, machine-code `count_reason`s, one `dependsOn` eligibility model). Still pending: the document-notary primitive (auto-hash + `verifyDocument`, §4.1 — m6.5) and the `create()` / `ingest()` assembly (m7).
+**Status:** Pre-library — P0 (POC) complete; **P1 (lift) in progress.** Lifted so far: verify (`classifier.js`), sequence routing (`router.js`, trimmed to kernel tags), inbound preprocessing (`prefilter.js`, `envelope.js`), outbound triggers (`outbound.js`, config-injected), and the full storage/ledger pillar (`event-store.js` + `event-mutex.js` + `gitrepo.js` + optional `ots.js`, factory-injected `createEventStore`/`createGitrepo`/`createOts`; the git ledger talks to the `git` binary via `child_process` — **zero runtime deps**, no `simple-git`), and the workflow completion engine (`completion.js` — workflow subset, pure transitions, machine-code `count_reason`s, one `dependsOn` eligibility model), and the document notary's **verify half** (`notary.js` — `verifyDocument` + the canonical `hashDocument`, §4.1). Still pending: the notary's mandatory inbound **auto-hash capture** (rides with the m7 parser, where attachment bytes exist) and the `create()` / `ingest()` assembly (m7).
 **Owner:** hamr0
 **Last updated:** 2026-05-24
 
@@ -92,6 +92,12 @@ later, offline, by anyone: re-hash the file and check the ledger.
   matching commit(s) with `{ sequence, received_at, trust_level, counted,
   sender_match }`. Answers "did this verified sender submit exactly this
   document, and when?"
+
+**Status:** the verify half (`verifyDocument` + `hashDocument`) is implemented
+(m6.5, `src/notary.js`). The mandatory inbound auto-hash is enforced at the m7
+parse layer, which hashes each attachment through `hashDocument` before it
+reaches the commit — so the stored fingerprint and the verifier agree by
+construction.
 
 **Honest security framing (do not oversell):** the document is a
 **proof-of-participation receipt, not a secret/password.** Email is not a

@@ -7,10 +7,11 @@ workflow, and triggers the next email. No web UI, no branding, no
 crypto-attestation policy — those stay in `gitdone` on top.
 
 > **Status:** P1 lift in progress. `src/` now holds real modules — verify,
-> sequence routing, inbound, outbound, the full git-ledger storage, and the
-> workflow completion engine are lifted (zero runtime deps so far). The document
-> notary (§4.1) and the `create()` / `ingest()` assembly that makes it a usable
-> library are still pending — see DESIGN.
+> sequence routing, inbound, outbound, the full git-ledger storage, the workflow
+> completion engine, and the document notary's verify half (`verifyDocument`,
+> §4.1) are lifted (zero runtime deps so far). The notary's inbound auto-hash
+> capture and the `create()` / `ingest()` assembly that makes it a usable library
+> land with the m7 parser — see DESIGN.
 
 ## Structure
 

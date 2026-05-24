@@ -27,6 +27,7 @@ const {
   shouldCount, applyReply, isComplete, firstPendingStep,
   stepDepsMet, eligibleSteps, meetsTrust, COUNT_REASONS,
 } = require('./completion');
+const { createNotary, hashDocument } = require('./notary');
 
 module.exports = {
   // Verify
@@ -65,4 +66,7 @@ module.exports = {
   eligibleSteps,
   meetsTrust,
   COUNT_REASONS,
+  // Verify — document notary (PRD §4.1; factory composes gitrepo + eventStore)
+  createNotary,
+  hashDocument,
 };
