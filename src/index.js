@@ -23,6 +23,10 @@ const { createEventStore } = require('./event-store');
 const { withEventMutex } = require('./event-mutex');
 const { createGitrepo } = require('./gitrepo');
 const { createOts } = require('./ots');
+const {
+  shouldCount, applyReply, isComplete, firstPendingStep,
+  stepDepsMet, eligibleSteps, meetsTrust, COUNT_REASONS,
+} = require('./completion');
 
 module.exports = {
   // Verify
@@ -52,4 +56,13 @@ module.exports = {
   createGitrepo,
   // Git ledger — optional OTS anchoring (factory-bound to otsBin)
   createOts,
+  // Sequence — workflow completion engine (pure transitions)
+  shouldCount,
+  applyReply,
+  isComplete,
+  firstPendingStep,
+  stepDepsMet,
+  eligibleSteps,
+  meetsTrust,
+  COUNT_REASONS,
 };

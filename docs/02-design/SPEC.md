@@ -87,7 +87,7 @@ exact serialization is an **invariant** (see §5).
   "id": "a1b2c3",                    // alphanumeric; 12-char base36 if generated
   "title": "Contract sign-off",
   "type": "workflow",               // v1: only "workflow"
-  "flow": "sequential",             // "sequential" | "parallel"
+  "flow": "sequential",             // "sequential" (default) | "parallel" | "custom"; expanded to per-step dependsOn at createEvent
   "initiator": "organiser@acme.com",
   "status": "open",                 // "open" | "complete"
   "salt": "9f3a…",                  // 32-byte hex, PUBLIC; salts the commit hashes (§6)
@@ -186,11 +186,18 @@ out of order). Routing and trust never gate the commit; they gate `counted`.
 out-of-band; the kernel makes the decision explicit and durable in the commit,
 because "did this reply count, and why not" is exactly what an auditor reads.
 
-**A reply is `counted` iff all hold:** `participant_match` is true; `trust_level`
-≥ step `minTrust`; the step's `dependsOn` are all complete; and (for
-`sequential` flow) the step is the earliest pending step. Otherwise `counted`
-is false with a `count_reason` (`wrong_participant`, `unverified_trust`,
-`deps_unmet`, `out_of_order`, `already_complete`, `event_not_activated`).
+**A reply is `counted` iff all hold:** the event is activated, not archived, and
+not already complete; `participant_match` is true; the reply names a known,
+not-yet-complete step; `trust_level` ≥ that step's `minTrust`; the step's
+`dependsOn` are all complete; and, if the step sets `requires_attachment`, the
+reply carried an attachment. (`createEvent` expands `flow:'sequential'` into a
+linear `dependsOn` chain, so "earliest pending step" *is* the deps rule — the
+engine has one eligibility model, no second sequential code path.) Otherwise
+`counted` is false with a machine-code `count_reason`: `event_not_activated`,
+`event_archived`, `already_complete`, `wrong_participant`, `no_step`,
+`unknown_step`, `unverified_trust`, `deps_unmet`, `out_of_order` (deps unmet
+under `sequential` flow), or `missing_attachment`. Matching a *specific*
+document hash is the notary's `verifyDocument` (§4.1), never a completion gate.
 
 **Other kernel commit kinds:** `event_edit` (participant/deadline/title change
 as a before/after audit record; participant changes stored as salted

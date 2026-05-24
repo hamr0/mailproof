@@ -107,6 +107,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     with a null path. The real `ots` happy path needs the client + network and
     is deployment-verified; the binary-missing error path is tested via a real
     spawn.
+- **Sequence pillar, module 6: workflow completion engine.** `src/completion.js`
+  (`shouldCount`, `applyReply`, `isComplete`, `firstPendingStep`, `stepDepsMet`,
+  `eligibleSteps`, `meetsTrust`, `COUNT_REASONS`), lifted from gitdone's
+  `completion.js` as **pure** state transitions (no I/O; `applyReply` returns a
+  new event, never mutates).
+  - **Trimmed to the workflow subset** per the §8 NO-GO table: dropped crypto
+    declaration/attestation (§8.2), strict signing + `reference_docs` (§8.3),
+    and revoke/threshold/dedup (§8.4) — `shouldCountDeclaration`,
+    `shouldCountAttestation`, `applyDedup`, `applyRevoke`, the strict-signing
+    matchers, and the attestor-progress/redaction machinery all stay in gitdone
+    as policy on the hooks. The engine is **one `dependsOn` eligibility model** —
+    no sequential/parallel code-path split.
+  - **Re-anchored to SPEC** (not a verbatim lift): machine-code `count_reason`s
+    via the exported `COUNT_REASONS` taxonomy (SPEC §4) instead of gitdone's
+    English prose; **per-step `minTrust`** (gitdone used a per-event
+    `min_trust_level`); top-level `status`/`completed_at` (not gitdone's nested
+    `completion` object); camelCase `dependsOn`/`minTrust`; `type: "workflow"`.
+    Trust ordering is **imported from `classifier.js`** (`TRUST_LEVELS`), not
+    redefined — one source of truth.
+  - `flow` (`sequential` default / `parallel` / `custom`) is stored for audit
+    and affects only the reason label (`out_of_order` under sequential vs.
+    `deps_unmet`); `createEvent` expands `sequential` into a linear `dependsOn`
+    chain (wired in m7), so the engine never branches on flow for eligibility.
+  - Document-hash *verification* is the notary (PRD §4.1, m6.5), explicitly **not**
+    in this engine; `requires_attachment` here is only the generic "carried an
+    attachment" gate. The completion ledger commit (`commitCompletion`) and
+    cascade notifications are orchestration, wired in m7.
+  - `tests/unit/completion.test.js` — 18 pure tests covering the full decision
+    tree (every `count_reason`, the sequential/parallel/custom flow split,
+    `requires_attachment`, the two-step→complete transition, input immutability,
+    and the `eligibleSteps`/`stepDepsMet` predicates), re-anchored from gitdone's
+    characterization suite (domains neutralized to `example.com`).
 - `src/index.js` — public entry point, re-exporting each pillar as it lands.
 - `tests/unit/classifier.test.js` — 14 behavior tests (every trust level,
   precedence ordering, alignment edges, defensive input), reconciled with
