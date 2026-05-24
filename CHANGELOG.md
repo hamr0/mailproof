@@ -118,6 +118,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (DNS, PTR/FCrDNS, the `master.cf` pipe transport, port-25 ingress/egress).
 - `config.example.env` — `MAILPROOF_*` reference template (env → injected
   `create()` config).
+- **Scope locked: document-notary primitive (PRD §4.1).** A design conversation
+  on using attachments for verification resolved to a minimal kernel notary —
+  mandatory SHA-256 auto-hashing of inbound attachments + a read-only
+  `verifyDocument(doc)` lookup — framed as a *proof-of-participation receipt, not
+  a secret*. Distinct from gitdone's strict-signing (§8.3, still policy): the
+  notary records and verifies, it never gates workflow completion. Outbound-doc
+  hashing, `listDocuments`, and retrieval-gating are **deferred** (built only on
+  a concrete need); **document-as-login / second factor is NO-GO** (§8.8). See
+  the decisions log.
 
 ### Changed
 - `package.json`: added the `test` script (`node --test`), an `exports` map, and

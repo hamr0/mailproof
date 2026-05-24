@@ -1,6 +1,6 @@
 # mailproof — Product Requirements Document (PRD)
 
-**Status:** Pre-library — P0 (POC) complete; **P1 (lift) in progress.** Lifted so far: verify (`classifier.js`), sequence routing (`router.js`, trimmed to kernel tags), inbound preprocessing (`prefilter.js`, `envelope.js`), outbound triggers (`outbound.js`, config-injected), and the full storage/ledger pillar (`event-store.js` + `event-mutex.js` + `gitrepo.js` + optional `ots.js`, factory-injected `createEventStore`/`createGitrepo`/`createOts`; the git ledger talks to the `git` binary via `child_process` — **zero runtime deps**, no `simple-git`). Still pending: the workflow-sequencing engine (the contested `completion.js` subset) and the `create()` / `ingest()` assembly.
+**Status:** Pre-library — P0 (POC) complete; **P1 (lift) in progress.** Lifted so far: verify (`classifier.js`), sequence routing (`router.js`, trimmed to kernel tags), inbound preprocessing (`prefilter.js`, `envelope.js`), outbound triggers (`outbound.js`, config-injected), and the full storage/ledger pillar (`event-store.js` + `event-mutex.js` + `gitrepo.js` + optional `ots.js`, factory-injected `createEventStore`/`createGitrepo`/`createOts`; the git ledger talks to the `git` binary via `child_process` — **zero runtime deps**, no `simple-git`). Still pending: the workflow-sequencing engine (the `completion.js` workflow subset — m6), the document-notary primitive (auto-hash + `verifyDocument`, §4.1 — m6.5), and the `create()` / `ingest()` assembly (m7).
 **Owner:** hamr0
 **Last updated:** 2026-05-24
 
@@ -70,10 +70,45 @@ modules lifted in P1 (boundary in [`../02-design/DESIGN.md`](../02-design/DESIGN
 
 | Pillar | Responsibility |
 |---|---|
-| **Verify** | Classify an inbound reply's trust level from DKIM/DMARC (+ durable archive-key reverify). |
+| **Verify** | Classify an inbound reply's trust level from DKIM/DMARC (+ durable archive-key reverify); verify an attached document against the ledger (§4.1). |
 | **Sequence** | Route the reply to its event/step and advance an ordered/parallel/mixed workflow. |
-| **Git ledger** | Commit every reply to a per-event git repo as a hash-chained `commit-NNN.json`; optional OTS anchoring. |
+| **Git ledger** | Commit every reply to a per-event git repo as a hash-chained `commit-NNN.json`, including the SHA-256 of every attachment (§4.1); optional OTS anchoring. |
 | **Email triggers** | Build and send the next notification (bundled Postfix/sendmail); reminders/nudges/bounce handling. |
+
+### 4.1 Document notary — now, and what's deferred
+
+mailproof extends "turn a promise into proof" to **attached documents**. When an
+inbound reply carries an attachment, its SHA-256 is recorded — **automatically,
+not optionally** — in the same tamper-evident commit as the verified sender and
+timestamp. A document that passed through the system is therefore provable
+later, offline, by anyone: re-hash the file and check the ledger.
+
+**Now (v1 kernel):**
+- **Auto-hash inbound attachments.** Every attachment on every committed reply
+  is fingerprinted (SHA-256) into `commit-NNN.json`. Mandatory — *if a doc is
+  used, it is hashed.* (Hashing is always on; whether to *use* a doc as a
+  verification layer is the consumer's choice.)
+- **`verifyDocument(doc)`** — a read-only lookup: re-hash a file, return the
+  matching commit(s) with `{ sequence, received_at, trust_level, counted,
+  sender_match }`. Answers "did this verified sender submit exactly this
+  document, and when?"
+
+**Honest security framing (do not oversell):** the document is a
+**proof-of-participation receipt, not a secret/password.** Email is not a
+confidential channel and inboxes get compromised, so a document that travelled
+by email is a weak secret in *either* direction. The **DKIM-verified sender is
+the trust factor**; the document adds tamper-evident *binding/context* ("about
+this specific recorded exchange"), never independent auth strength.
+
+**Deferred — built only when a concrete consumer needs them (not NO-GO, just not
+yet):**
+- **Outbound-attachment hashing** — recording docs the system *sends*, so "a doc
+  you received before" is matchable. Small extension; no caller exists yet.
+- **`listDocuments({ sender })`** — the inverse lookup (which docs are on record
+  for a verified sender). Trivial to add later; must gate behind a verified
+  sender and return hashes/ids, never filenames, to avoid metadata leak.
+- **Retrieval-gating** ("this doc unlocks action X") — the consumer's policy on
+  top of `verifyDocument`, never kernel.
 
 ## 5. Core invariants (must hold; do not silently break)
 
@@ -136,7 +171,7 @@ When a feature request comes in, point at this table.
 | 8.5 | **Multi-event `bundle`** | A `gitdone` product feature, not a kernel primitive. |
 | 8.6 | **Branded / templated email bodies** (`[gitdone]`, marketing headers) | Core builds minimal neutral messages. Branding is the consumer's. |
 | 8.7 | **Web dashboard / HTTP server / any UI** | mailproof is a library. Consumers build their own surface. |
-| 8.8 | **Login / manage auth** (e.g. knowless-based) | Consumer concern, out of the kernel. |
+| 8.8 | **Login / auth, incl. "document-as-login / second factor"** | Consumer concern, out of the kernel. A document sent over email is a weak, clunky factor — it lives in the same inbox an attacker would compromise, and it's strictly worse than TOTP/passkeys; the DKIM-verified sender is *already* the factor. mailproof records and verifies documents (§4.1); it does **not** become an identity/auth provider. |
 | 8.9 | **Lifting `receive.js`** (the orchestrator) | App glue. mailproof exposes primitives + optional `createReceiver()` with hooks; each consumer writes thin glue. |
 | 8.10 | **Pluggable third-party mail provider** (SendGrid/SES/Mailgun) | Transport is bundled Postfix/sendmail; opendkim signs outbound at the MTA. Self-hosted = full control, no vendor dep. |
 | 8.11 | **SQL/other DB as the canonical store** | Git ledger is canonical (invariant §5.3). SQL is a read-model the consumer projects; mailproof doesn't ship or own it. |
