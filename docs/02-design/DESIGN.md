@@ -41,13 +41,20 @@ await core.createEvent({ title, flow: 'sequential', initiator,
 const result = await core.ingest(rawEmailBuffer, envelope);
 //   → { routed, trustLevel, committedSeq, counted, completedStep, eventComplete, notified }
 
+// crypto sign-off mode (PRD §4.2): same substrate, routed by `type`.
+await core.createEvent({ title, type: 'crypto', initiator,
+  signers: ['a@x.com', 'b@x.com'], open: false, threshold: 2,
+  requiredDocHash: 'sha256:…' /* optional */ });
+
 core.loadEvent(id);  core.listCommits(id);  core.stats();
 await core.sweep();  // call from a cron / systemd timer
 ```
-Lower-level pieces (`classifyTrust`, `buildRawMessage`, `commitReply`, …) are
-exported too, so a consumer can compose its own pipeline.
+Lower-level pieces (`classifyTrust`, `buildRawMessage`, `commitReply`,
+`applySignoff`, …) are exported too, so a consumer can compose its own pipeline.
 
-Deps: `mailauth`, `mailparser`, `simple-git` (+ optional `ots` binary). Node ≥22.5. Apache-2.0.
+Deps: `mailauth`, `mailparser` (+ optional `ots` binary). The git ledger uses
+the `git` binary via `child_process`, **not** `simple-git` (decisions log,
+2026-05-23), so the runtime-dep budget is ≤2. Node ≥22.5. Apache-2.0.
 
 ## Phasing
 - **P0 — POC (this commit):** stdlib + `git` binary only. Prove verify→sequence→git→email composes as vanilla code, decoupled from gitdone's config singleton and crypto branches. `poc/pipeline.js`. *Never shipped — rewritten in P1.*
