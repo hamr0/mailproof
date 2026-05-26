@@ -7,13 +7,14 @@ one of two generic modes — an **events** workflow or a **crypto sign-off** —
 triggers the next email. The web UI, branding, and the heavy attestation policy
 tail stay in `gitdone` on top.
 
-> **Status:** P1 lift in progress. `src/` now holds real modules — verify,
-> sequence routing, inbound, outbound, the full git-ledger storage, both
-> sequencing engines (the workflow events engine and the crypto sign-off engine),
-> and the document notary's verify half (`verifyDocument`, §4.1) are lifted (zero
-> runtime deps so far). The notary's inbound auto-hash capture and the `create()`
-> / `ingest()` assembly that makes it a usable library land with the m7 parser —
-> see DESIGN.
+> **Status:** P1 lift in progress. `src/` now holds real modules — verify, the
+> inbound decoder (DKIM/DMARC auth + MIME parse, m7a — mailproof's first 2 runtime
+> deps, `mailauth` + `mailparser`), sequence routing, inbound preprocessing,
+> outbound, the full git-ledger storage, both sequencing engines (the workflow
+> events engine and the crypto sign-off engine), and the document notary
+> (`verifyDocument` + the now-wired inbound auto-hash capture, §4.1) are lifted.
+> Only the `create()` / `ingest()` assembly that makes it a usable library
+> remains (m7b) — see DESIGN.
 
 ## Structure
 

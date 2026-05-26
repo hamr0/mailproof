@@ -52,5 +52,8 @@
     "LICENSE",
     "NOTICE"
   ],
-  "dependencies": {}
+  "dependencies": {
+    "mailauth": "^4.13.3",
+    "mailparser": "^3.9.8"
+  }
 }

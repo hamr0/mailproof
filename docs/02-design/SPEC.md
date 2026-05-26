@@ -232,8 +232,11 @@ out of order). Routing and trust never gate the commit; they gate `counted`.
   "sender_hash": "sha256:…",        // salted (§6); NO plaintext sender
   "sender_domain": "acme.com",      // domain is non-PII, kept plaintext
   "message_id_hash": "sha256:…",    // salted hash of the RFC-5322 Message-ID
-  "raw_sha256": "…",                // sha256 of the raw RFC-822 bytes
+  "raw_sha256": "sha256:…",         // notary hashDocument of the raw RFC-822 bytes
   "raw_size": 4096,
+  "attachments": [                  // one entry per inbound attachment (may be [])
+    { "filename": "doc.pdf", "size": 8192, "sha256": "sha256:…" }
+  ],
 
   "dkim": { },                      // auth result fragments, structured
   "spf": { },
@@ -250,6 +253,12 @@ out of order). Routing and trust never gate the commit; they gate `counted`.
 `trust_level` + `participant_match` and lets the orchestrator decide counting
 out-of-band; the kernel makes the decision explicit and durable in the commit,
 because "did this reply count, and why not" is exactly what an auditor reads.
+
+**`attachments` is the notary capture half.** `parseMessage` (m7a) hashes every
+inbound attachment's bytes through `hashDocument`, so each `sha256` is
+`sha256:`-prefixed and byte-identical to what `verifyDocument` (§4.1) recomputes
+and to a crypto event's `requiredDocHash` (§3.1). Hashing is unconditional; the
+bytes themselves are never persisted (only the fingerprint, filename, and size).
 
 **A reply is `counted` iff all hold:** the event is activated, not archived, and
 not already complete; `participant_match` is true; the reply names a known,

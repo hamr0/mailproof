@@ -205,6 +205,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Router `attest+{id}@` tag + SPEC §2 promotion deferred to m7b assembly**,
     where the route is exercised end-to-end — m6.7 mirrors how m6 landed
     (the engine, pure; the router untouched).
+- **Verify + inbound pillar, module 7a: inbound decoder + the first external
+  deps.** `src/parse.js` (`authenticateMessage`, `parseMessage`) — the two
+  primitives gitdone composed inline in `bin/receive.js` (the orchestrator,
+  **not lifted**), extracted as standalone functions.
+  - **First 2 runtime deps: `mailauth` (DKIM/DMARC/ARC) + `mailparser` (MIME).**
+    Both passed the AGENT_RULES External Dependency Checklist: DKIM/MIME of
+    untrusted input is security-critical (a vetted lib is *required*, never
+    hand-rolled), both are actively maintained by the Nodemailer author, and
+    they are the same packages gitdone already ships — **no new supply-chain
+    surface**. Budget 2 of ≤3 (the git ledger still uses the `git` binary, not
+    `simple-git`). MIT-licensed.
+  - `authenticateMessage(raw, envelope, { mtaHostname, resolver })` is a thin
+    wrapper that **pins `trustReceived: false`** (mailproof never trusts
+    pre-existing `Received`/`Authentication-Results` headers — forged headers
+    are the attack) and injects `mtaHostname`/`resolver` as config (no env
+    singleton). Its result feeds `classifyTrust` (m1).
+  - `parseMessage(raw)` → `{ from:{address,name}, messageId, attachments, rawSha256 }`.
+    **This is the notary's CAPTURE half** (deferred from m6.5): every inbound
+    attachment is auto-hashed through `notary.hashDocument`, so committed
+    `attachments[].sha256` is byte-identical to what `verifyDocument` recomputes
+    — one fingerprint format across the kernel.
+  - **Boundary correction:** the stash labelled this a `verify.js` lift, but
+    `verify.js` is gitdone's `verify+{id}@` *endpoint* (forwarded-email report +
+    reverify-against-archived-PEM); that endpoint, DSN bounce handling, and
+    durable `dkim-archive` reverify are **deferred** to later modules.
+  - Tests: `tests/unit/parse.test.js` — `parseMessage` over a fixture with a
+    base64 attachment (asserts the notary-hashed sha256, size, `from`,
+    `messageId`) and `authenticateMessage` run **offline** via an injected
+    no-DNS resolver (asserts the result shape and that nothing authenticates →
+    `classifyTrust` returns `unverified`). No network, no mocks of the deps.
 - `src/index.js` — public entry point, re-exporting each pillar as it lands.
 - `tests/unit/classifier.test.js` — 14 behavior tests (every trust level,
   precedence ordering, alignment edges, defensive input), reconciled with
