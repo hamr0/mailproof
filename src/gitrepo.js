@@ -91,6 +91,7 @@ function buildCommitMetadata(seq, ctx, event) {
   const salt = (event && event.salt) || null;
   return {
     schema_version: 2,
+    kind: 'reply',
     event_id: ctx.eventId,
     step_id: ctx.stepId || null,
     sequence: seq,
@@ -103,6 +104,12 @@ function buildCommitMetadata(seq, ctx, event) {
     message_id_hash: saltedMessageIdHash(ctx.messageId, salt),
     trust_level: ctx.trustLevel,
     participant_match: ctx.participantMatch,
+    // Accept-with-flag (SPEC §4): every reply is committed; `counted` records
+    // whether it advanced state, `count_reason` why not (null when counted).
+    // The orchestrator (ingest) computes these from the engine's decision
+    // before the commit is written; invariant: counted ⇒ count_reason null.
+    counted: !!ctx.counted,
+    count_reason: ctx.counted ? null : (ctx.count_reason || null),
     attachments: ctx.attachments || [],
     dkim: ctx.dkim || null,
     spf: ctx.spf || null,
@@ -274,6 +281,46 @@ function createGitrepo({ dataDir, ots = null } = {}) {
     };
   }
 
+  // Write the one-shot completion record (SPEC §4): `commits/completion.json`,
+  // committed once when the event reaches `complete`. Idempotent — a second
+  // call returns { alreadyWritten } without a new commit. Records the
+  // `completed_at` and the `triggering_commit_sequence` (the reply that tipped
+  // it). gitdone's per-mode `event_mode` is dropped — the two-mode model has no
+  // `mode`; `event_type` ("workflow" | "crypto") is enough.
+  async function commitCompletion(eventId, event, completionCtx = {}) {
+    const { root } = await initRepoIfNeeded(eventId, event);
+    const rel = path.join('commits', 'completion.json');
+    const abs = path.join(root, rel);
+    if (await readFileSafe(abs)) return { alreadyWritten: true, file: rel };
+
+    const metadata = {
+      schema_version: 1,
+      kind: 'completion',
+      event_id: eventId,
+      event_type: event.type || null,
+      completed_at: completionCtx.completedAt || null,
+      triggering_commit_sequence: completionCtx.triggeringSequence != null
+        ? completionCtx.triggeringSequence : null,
+      summary: completionCtx.summary || null,
+      ots_proof_file: null,
+    };
+    const filesToAdd = [rel];
+
+    await writeJson(abs, metadata);
+    await maybeStamp(abs, root, path.join('ots_proofs', 'completion.ots'), metadata, filesToAdd);
+
+    await git(root, ['add', ...filesToAdd]);
+    await git(root, ['commit', '-m', `completion: ${eventId} complete`]);
+
+    return {
+      alreadyWritten: false,
+      sha: await git(root, ['rev-parse', 'HEAD']),
+      file: rel,
+      ots_proof_file: metadata.ots_proof_file,
+      repo_path: root,
+    };
+  }
+
   // Load a committed reply by sequence number (null if missing/unparseable).
   async function loadCommit(eventId, sequence) {
     if (!EVENT_ID_RE.test(eventId)) throw new Error(`invalid eventId: ${eventId}`);
@@ -339,6 +386,7 @@ function createGitrepo({ dataDir, ots = null } = {}) {
     nextSequence,
     commitReply,
     appendEditCommit,
+    commitCompletion,
     loadCommit,
     listCommits,
     syncEventJson,

@@ -50,6 +50,23 @@ test('buildCommitMetadata: omits plaintext (sender/subject/body/message_id)', ()
   assert.match(m.message_id_hash, /^sha256:[a-f0-9]{64}$/);
 });
 
+test('buildCommitMetadata: kind=reply and accept-with-flag counted/count_reason', () => {
+  const base = { eventId: 'x', receivedAt: 'now', envelope: { sender: 'a@example.com' }, from: null };
+  const counted = repo.buildCommitMetadata(1, { ...base, counted: true, count_reason: 'ignored_when_counted' }, { salt: 's' });
+  assert.equal(counted.kind, 'reply');
+  assert.equal(counted.counted, true);
+  assert.equal(counted.count_reason, null, 'count_reason is null when counted (invariant)');
+
+  const rejected = repo.buildCommitMetadata(2, { ...base, counted: false, count_reason: 'unverified_trust' }, { salt: 's' });
+  assert.equal(rejected.counted, false);
+  assert.equal(rejected.count_reason, 'unverified_trust');
+
+  // Defensive defaults: absent flag → not counted, no reason (never undefined).
+  const bare = repo.buildCommitMetadata(3, base, { salt: 's' });
+  assert.equal(bare.counted, false);
+  assert.equal(bare.count_reason, null);
+});
+
 test('normaliseMessageId: strips brackets and lowercases', () => {
   assert.equal(repo.normaliseMessageId('<ABC@Example.com>'), 'abc@example.com');
   assert.equal(repo.normaliseMessageId(null), null);

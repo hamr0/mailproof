@@ -103,6 +103,10 @@ test('commitReply: writes commit-NNN.json (v2 schema), no plaintext, increments'
   assert.match(saved.sender_hash, /^sha256:[a-f0-9]{64}$/);
   assert.equal(saved.trust_level, 'verified');
   assert.equal(saved.attachments.length, 1);
+  // Accept-with-flag fields persist through the real write path (SPEC §4).
+  assert.equal(saved.kind, 'reply');
+  assert.equal(saved.counted, false, 'ctx omitted counted → false, not undefined');
+  assert.equal(saved.count_reason, null);
 
   const r2 = await repo.commitReply('testD', event, ctx);
   assert.equal(r2.sequence, 2);
@@ -110,6 +114,40 @@ test('commitReply: writes commit-NNN.json (v2 schema), no plaintext, increments'
 
   // Git history: initial + 2 replies.
   assert.equal(await commitCount(r.repo_path), 3);
+});
+
+test('commitCompletion: writes commits/completion.json once, idempotent', async () => {
+  const event = { id: 'testCompl', title: 'C', type: 'workflow', salt: SALT, steps: [{ id: 's1' }] };
+  // Need a repo first (a reply establishes it).
+  await repo.commitReply('testCompl', event, {
+    eventId: 'testCompl', stepId: 's1', receivedAt: '2026-04-18T00:00:00Z',
+    envelope: { sender: 'a@example.com' }, from: 'a@example.com',
+    trustLevel: 'verified', participantMatch: true, counted: true,
+    rawSha256: 'sha256:aa', rawSize: 10,
+  });
+  const commitsBefore = await commitCount(path.join(tmp, 'repos', 'testCompl'));
+
+  const r = await repo.commitCompletion('testCompl', event, {
+    completedAt: '2026-04-18T01:00:00Z', triggeringSequence: 1,
+  });
+  assert.equal(r.alreadyWritten, false);
+  assert.match(r.file, /^commits\/completion\.json$/);
+  assert.match(r.sha, /^[0-9a-f]+$/);
+
+  const saved = JSON.parse(await fs.readFile(path.join(r.repo_path, r.file), 'utf8'));
+  assert.equal(saved.kind, 'completion');
+  assert.equal(saved.event_type, 'workflow');
+  assert.equal(saved.event_mode, undefined, 'gitdone event_mode dropped (no mode in two-mode model)');
+  assert.equal(saved.completed_at, '2026-04-18T01:00:00Z');
+  assert.equal(saved.triggering_commit_sequence, 1);
+  assert.equal(await commitCount(r.repo_path), commitsBefore + 1);
+
+  // Idempotent: a second call writes nothing and adds no commit.
+  const r2 = await repo.commitCompletion('testCompl', event, {
+    completedAt: '2026-04-18T02:00:00Z', triggeringSequence: 1,
+  });
+  assert.equal(r2.alreadyWritten, true);
+  assert.equal(await commitCount(r.repo_path), commitsBefore + 1, 'no new commit on second call');
 });
 
 test('loadCommit: returns null when commit missing', async () => {

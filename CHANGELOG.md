@@ -235,6 +235,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `messageId`) and `authenticateMessage` run **offline** via an injected
     no-DNS resolver (asserts the result shape and that nothing authenticates →
     `classifyTrust` returns `unverified`). No network, no mocks of the deps.
+- **Assembly prep, module 7b-1: accept-with-flag commit fields + `commitCompletion`.**
+  The storage slice the `ingest()` pipeline (m7b) needs, landed first because it
+  is independent of the pipeline wiring.
+  - `buildCommitMetadata` now emits `kind: "reply"` and the **accept-with-flag**
+    pair `counted` / `count_reason` (SPEC §4) — previously omitted. Invariant
+    enforced in one place: `counted ⇒ count_reason: null`; an absent flag
+    defaults to `counted: false` (never `undefined`). The orchestrator computes
+    these from the engine's decision before the commit is written.
+  - `commitCompletion(eventId, event, { completedAt, triggeringSequence, summary? })`
+    **lifted from gitdone** (deferred since m5b): writes the one-shot
+    `commits/completion.json`, idempotent (a second call is a no-op), OTS-stamped
+    via the same `maybeStamp` path as replies. gitdone's per-mode `event_mode`
+    is **dropped** (the two-mode model has no `mode`; `event_type` suffices).
+  - Tests: `tests/unit/gitrepo.test.js` (kind/counted/count_reason incl. the
+    invariant + defensive default) and `tests/integration/gitrepo.test.js`
+    (real repo: completion.json written once, idempotent, `event_mode` absent).
 - `src/index.js` — public entry point, re-exporting each pillar as it lands.
 - `tests/unit/classifier.test.js` — 14 behavior tests (every trust level,
   precedence ordering, alignment edges, defensive input), reconciled with
