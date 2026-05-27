@@ -255,6 +255,24 @@ function createEventStore({ dataDir } = {}) {
     }
   }
 
+  // Enumerate the event IDs on disk (the {id}.json basenames in events/), so a
+  // batch pass — sweep()'s overdue/archive scan (m7d) — can walk every event.
+  // Returns [] when the events dir doesn't exist yet. IDs are filtered through
+  // the same allowlist loadEvent enforces, so a stray non-event file is skipped.
+  async function listEventIds() {
+    let files;
+    try {
+      files = await fs.readdir(eventsDir);
+    } catch (err) {
+      if (err.code === 'ENOENT') return [];
+      throw err;
+    }
+    return files
+      .filter((f) => f.endsWith('.json'))
+      .map((f) => f.slice(0, -5))
+      .filter((id) => EVENT_ID_RE.test(id));
+  }
+
   // Persist a new event. The caller supplies the validated event shape; this
   // adds {id, created_at, salt, activated_at} and writes atomically. Events
   // are created pending (activated_at: null); a reply doesn't count until the
@@ -399,6 +417,7 @@ function createEventStore({ dataDir } = {}) {
 
   return {
     loadEvent,
+    listEventIds,
     findStep,
     senderMatchesStep,
     createEvent,

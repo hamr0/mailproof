@@ -439,6 +439,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     fully-confirmed-proof path stays deployment-verified (needs ~1h of Bitcoin
     confirmations). **225 → 237, 0 fail. The 9-point gitdone-rebuild checklist is
     now fully covered — OTS-proof verification was the last gap.**
+- **Triggers pillar widens — m7d-1: time-driven occasions (`sweep()`).** The
+  trigger pillar grows from "fire the next email on an inbound reply" to also
+  emitting the occasions that fall out of the passage of TIME, executing the
+  locked occasions-are-kernel / bodies-are-policy boundary (decisions-log
+  2026-05-27). `create()` returns a new `sweep({ now? })` — a consumer-scheduled
+  scan (the schedule is the consumer's) that derives and emits two occasions:
+  - **`overdue`** — an active event idle past `overdueDays` (default 14) past its
+    reference clock: ONE neutral nudge to the initiator, idempotent via
+    `event.nudged_overdue_at` (bookkeeping only — not mirrored to the repo).
+  - **`archived`** — idle past `archiveDays` (default 45): a STATE TRANSITION
+    (`archived_at` + `archive_reason: 'auto_stale'`) persisted to the master JSON
+    **and mirrored into the per-event ledger**, plus a neutral notice to the
+    initiator. `sweep()` returns `{ overdue, archived, notified }`.
+  - **Shared notifier (`src/notify.js`, `createNotifier` → `deliver`).** The
+    notification seam was extracted out of `ingest.js` so **every** occasion —
+    workflow `advance` / crypto `ack` / `completion` *and* `overdue` / `archived`
+    (and the m7d occasions to come) — fires through ONE `deliver`, with
+    `composeNotification(ctx)` (keyed by `kind`) the single body hook. One source
+    of truth for occasion→email; ingest's behaviour is unchanged.
+  - **Ported from gitdone's `app/src/sweep.js`**, trimmed to the kernel boundary:
+    the `config` singleton becomes injected `overdueDays`/`archiveDays`; the send
+    goes through `deliver` instead of a bespoke binary; predicates re-anchored to
+    mailproof's shape (`type==='workflow'`, `status==='complete'`). **Deferred to
+    m7d-2** (activation lifecycle): the pending-activation TTL-delete + about-to-
+    expire reminder passes. **Divergence** (simpler, justified in the module
+    header): archive takes precedence over a same-tick overdue — no point nudging
+    an event being archived — one fewer wasted email than gitdone's two
+    independent passes.
+  - New `eventStore.listEventIds()` (enumerate events for the scan). The pure
+    `referenceClockMs`/`isActive` are re-exported.
+  - Tests: `tests/unit/sweep.test.js` (7 — the pure clock + active-cohort
+    predicates) and `tests/integration/sweep.test.js` (8 — overdue-once +
+    idempotency, archive transition persisted + ledger-mirrored, archive-over-
+    overdue precedence, deadline-driven reference clock, not-yet-due no-op,
+    `composeNotification` body override, custom thresholds) against the real
+    store + ledger + a fake capture transport. **237 → 252, 0 fail.**
 - `src/index.js` — public entry point, re-exporting each pillar as it lands.
 - `tests/unit/classifier.test.js` — 14 behavior tests (every trust level,
   precedence ordering, alignment edges, defensive input), reconciled with

@@ -51,50 +51,16 @@ function createIngest({
   parseAttestTag,
   preFilter,         // prefilter.js
   extractHeaderBlock,
-  // Trigger pillar (Commit C): build + send neutral notifications.
-  buildRawMessage,   // outbound.js
-  sendmail,
-  newMessageId,
-  sanitizeSubject,
+  // Trigger pillar: the shared neutral-notification seam (notify.js). ingest
+  // emits advance / ack / completion through the same deliver() that sweep and
+  // the other m7d occasions use; composeNotification lives inside it.
+  deliver,
   domain = null,
-  sendmailBin = null,
-  // Optional hook: composeNotification(ctx) → body string. Branding is a kernel
-  // NO-GO (PRD §8.6), so the body needs a consumer seam; a neutral default is
-  // used when the hook is absent or returns falsy.
-  composeNotification = null,
   mtaHostname = null,
   resolver = null,
 } = {}) {
   const { loadEvent, findStep, senderMatchesStep, writeEventAtomic } = eventStore;
   const { commitReply, commitCompletion, syncEventJson, saltedSenderHash } = gitrepo;
-
-  // Build + submit ONE neutral notification. The From is the plus-tagged reply
-  // address so the recipient's reply routes straight back to the right
-  // event/step. Auto-Submitted marks it machine-generated (and our own
-  // prefilter would drop any auto-reply to it). Best-effort: a hook throw or a
-  // transport failure yields an {ok:false} entry, never an exception — the
-  // ledger transition already happened and must not be undone by a send.
-  async function deliver({ kind, to, replyAddress, subject, defaultBody, ctx }) {
-    if (!to) return null;
-    let body = defaultBody;
-    if (composeNotification) {
-      try {
-        const custom = composeNotification({ ...ctx, kind, to, replyAddress });
-        if (custom) body = custom;
-      } catch { /* hook failure → neutral default */ }
-    }
-    const rawMessage = buildRawMessage({
-      from: replyAddress,
-      to,
-      subject: sanitizeSubject(subject),
-      body,
-      messageId: newMessageId(domain),
-      domain,
-      autoSubmitted: 'auto-generated',
-    });
-    const res = await sendmail({ from: replyAddress, rawMessage, binary: sendmailBin, to: [to] });
-    return { kind, to, ok: !!res.ok, reason: res.reason || null };
-  }
 
   // raw: RFC-822 bytes (Buffer). envelope: the parseEnvelope shape
   // ({ sender, recipient, clientIp, clientHelo }). Returns a result summary

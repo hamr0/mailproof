@@ -1,7 +1,7 @@
 # mailproof — Integration Guide
 
 > For AI assistants and developers wiring mailproof into a project.
-> Pre-library (P1 — m7b assembly + m7c verify surface) | Node.js >= 22.5 | 2 deps (`mailauth`, `mailparser`) | Apache-2.0
+> Pre-library (P1 — m7b assembly + m7c verify surface + m7d-1 sweep) | Node.js >= 22.5 | 2 deps (`mailauth`, `mailparser`) | Apache-2.0
 
 ## What this is
 
@@ -84,8 +84,10 @@ const core = create({
   mtaHostname: 'mx.app.example',     // this MTA's hostname, passed to mailauth as `mta`.
   resolver: customDnsResolver,       // custom mailauth DNS resolver. Absent ⇒ system resolver.
                                      //   (tests inject an offline stub; verify+ will re-check archived keys)
-  composeNotification: (ctx) => '…', // body of the neutral notifications ingest() triggers.
+  composeNotification: (ctx) => '…', // body of the neutral notifications ingest()/sweep() trigger.
                                      //   Absent/falsy ⇒ a neutral default body. See § Triggers.
+  overdueDays: 14,                   // sweep(): idle days before the `overdue` nudge (default 14).
+  archiveDays: 45,                   // sweep(): idle days before auto-archive + `archived` (default 45).
 });
 ```
 
@@ -97,6 +99,7 @@ the same `dataDir`. There are no env-var defaults (that's the consumer's glue).
 | Method | Purpose |
 |---|---|
 | `ingest(raw, envelope)` | The inbound pipeline. `raw` = RFC-822 Buffer; `envelope` = `{ sender, recipient, clientIp, clientHelo }`. Returns the result summary (below). |
+| `sweep({ now? })` | The time-driven pass (run it on your own schedule). Scans every event and emits the `overdue` (idle nudge) + `archived` (auto-archive transition) occasions through the same notifier. Returns `{ overdue, archived, notified }`. Thresholds via `create()`'s `overdueDays`/`archiveDays` (14/45). |
 | `createEvent(partial)` | Create + persist an event (both modes). Created **pending** (`activated_at: null`). |
 | `activateEvent(id)` | Mark activated. Idempotent (`{ event, alreadyActive }`). **Replies don't count until activated.** |
 | `editEvent(id, patch)` | Patch a non-finalised event; writes an audit commit if activated. |
@@ -235,18 +238,22 @@ secret. The notary records and verifies; it never gates completion (that's
 
 ## Triggers + the `composeNotification` hook
 
-On a **counted** reply, `ingest` sends the next neutral email(s) via
-`sendmailBin`, *after* releasing the event lock, and reports them in `notified`:
+Every occasion mailproof derives fires through ONE notifier (`deliver`), with
+`composeNotification` the single body hook. On a **counted** reply, `ingest`
+sends the next neutral email(s) via `sendmailBin`, *after* releasing the event
+lock, and reports them in `notified`:
 
 - workflow → ping the participant(s) of every newly-eligible step (`kind:'advance'`)
 - crypto → ack the verified signer (`kind:'ack'`)
 - both → notify the `initiator` on the completing edge (`kind:'completion'`)
 
+`sweep()` adds the **time-driven** occasions, to the initiator: `kind:'overdue'`
+(idle past `overdueDays`) and `kind:'archived'` (auto-archived past `archiveDays`).
 Non-counting replies send nothing. Each message's `From` is the plus-tagged
 reply address so the recipient's reply routes straight back.
 
 ```js
-composeNotification({ kind, mode, eventId, event, to, replyAddress, step?, signatureCount? }) {
+composeNotification({ kind, mode?, eventId, event, to, replyAddress, step?, signatureCount?, daysOver?, daysIdle? }) {
   return `Your custom body for ${kind}`; // return falsy → neutral default; a throw → default
 }
 ```

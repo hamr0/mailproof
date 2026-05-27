@@ -41,6 +41,8 @@ const { createNotary, hashDocument } = require('./notary');
 const {
   createVerifier, findMatch, reverifyDkim, resolveUpgrade, pickSigner,
 } = require('./verifier');
+const { createNotifier } = require('./notify');
+const { createSweep, referenceClockMs, isActive } = require('./sweep');
 const { create } = require('./create');
 
 module.exports = {
@@ -109,4 +111,10 @@ module.exports = {
   reverifyDkim,
   resolveUpgrade,
   pickSigner,
+  // Email triggers — the shared neutral-notification seam (m7d; deliver())
+  createNotifier,
+  // Email triggers — time-driven occasions: overdue nudge + auto-archive (m7d-1)
+  createSweep,
+  referenceClockMs,
+  isActive,
 };

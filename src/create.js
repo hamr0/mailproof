@@ -18,7 +18,9 @@ const { createGitrepo } = require('./gitrepo');
 const { createOts } = require('./ots');
 const { createNotary } = require('./notary');
 const { createVerifier } = require('./verifier');
+const { createNotifier } = require('./notify');
 const { createIngest } = require('./ingest');
+const { createSweep } = require('./sweep');
 const completion = require('./completion');
 const crypto = require('./crypto');
 const { parseMessage, authenticateMessage, summariseAuth } = require('./parse');
@@ -47,10 +49,16 @@ const {
 //                 the system resolver (absent); tests inject an offline stub and
 //                 the future verify+ endpoint re-checks against an archived key.
 //   composeNotification(ctx) → body — optional hook for the body of the neutral
-//                 notifications ingest() triggers (branding is a NO-GO §8.6, so
-//                 the body needs a consumer seam). Neutral default if omitted.
+//                 notifications ingest()/sweep() trigger (branding is a NO-GO
+//                 §8.6, so the body needs a consumer seam; keyed by `kind`).
+//                 Neutral default if omitted.
+//   overdueDays — sweep(): idle days past an active event's reference clock
+//                 before the `overdue` nudge fires (optional; default 14).
+//   archiveDays — sweep(): idle days before an active event auto-archives and
+//                 emits the `archived` occasion (optional; default 45).
 function create({
   dataDir, domain, sendmailBin, otsBin, mtaHostname, resolver, composeNotification,
+  overdueDays, archiveDays,
 } = {}) {
   if (!dataDir) throw new Error('create: dataDir required');
   if (!domain) throw new Error('create: domain required');
@@ -68,6 +76,14 @@ function create({
   // resolver as the base for the DKIM re-check.
   const verifier = createVerifier({ gitrepo, eventStore, resolver });
 
+  // The shared trigger seam (m7d): one notifier turns every kernel-derived
+  // occasion into an outbound neutral email, with composeNotification as the
+  // single body hook. ingest() and sweep() both fire through its deliver().
+  const { deliver } = createNotifier({
+    buildRawMessage, sendmail, newMessageId, sanitizeSubject,
+    domain, sendmailBin, composeNotification,
+  });
+
   // The inbound pipeline, closing over the bound pillars + decoders + engines.
   const ingest = createIngest({
     eventStore,
@@ -84,20 +100,24 @@ function create({
     parseAttestTag,
     preFilter,
     extractHeaderBlock,
-    buildRawMessage,
-    sendmail,
-    newMessageId,
-    sanitizeSubject,
+    deliver,
     domain,
-    sendmailBin,
-    composeNotification,
     mtaHostname,
     resolver,
+  });
+
+  // The time-driven pipeline (m7d-1): a consumer-scheduled scan that emits the
+  // overdue + archived occasions through the same deliver(). Thresholds are
+  // injected here (defaults 14/45 days).
+  const { sweep } = createSweep({
+    eventStore, gitrepo, deliver, domain, overdueDays, archiveDays,
   });
 
   return {
     // Inbound — verify→route→commit→advance pipeline (accept-with-flag)
     ingest,
+    // Time-driven — overdue nudge + auto-archive occasions (m7d-1)
+    sweep,
     // Sequence — create / activate / edit events (both modes; routed by `type`)
     createEvent: eventStore.createEvent,
     activateEvent: eventStore.activateEvent,
