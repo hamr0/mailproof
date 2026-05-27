@@ -475,6 +475,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     overdue precedence, deadline-driven reference clock, not-yet-due no-op,
     `composeNotification` body override, custom thresholds) against the real
     store + ledger + a fake capture transport. **237 → 252, 0 fail.**
+- **Triggers pillar — m7d-2: organiser-action occasions (activation + edit).**
+  `create()`'s `activateEvent`/`editEvent` are now bound wrappers that run the
+  (pure) store transition, then emit the resulting occasion through the shared
+  `deliver`, appending `notified` to the return:
+  - **`activation`** — on the FIRST `activateEvent`, ping every initially-eligible
+    participant (workflow: `eligibleSteps`) / listed signer (crypto). Idempotent
+    (a re-activate notifies no one). Open crypto events have no roster, so they
+    notify no one — the initiator distributes the `attest+` link themselves.
+  - **`reassigned`** — on `editEvent`, ping a participant moved ONTO a currently-
+    eligible step of an ACTIVATED event. A blocked step's new owner is pinged
+    later via `advance`; a pending event's edits and non-participant edits ping
+    no one.
+  - **Boundary refinement (supersedes m7d-1's "deferred to m7d-2" line):** the
+    pending-activation TTL-delete and about-to-expire reminder are NOT lifted —
+    they presuppose the magic-link self-activation UX mailproof dropped, so they
+    are consumer policy (whole-event deletion is the consumer's lever per the
+    privacy decision; a draft-idle reminder is composable on `listEventIds` +
+    the shared notifier). Recorded in the decisions log.
+  - Tests: `tests/integration/activation-edit.test.js` (7 — sequential/parallel/
+    crypto/open activation, idempotency, eligible/blocked/pending/non-participant
+    edit re-notify). **252 → 259, 0 fail.**
+
+### Fixed
+- **`editEvent` completeness guard reads top-level `status`.** It refused edits
+  on a complete event via `event.completion.status` — gitdone's nested shape,
+  which mailproof never writes (the completion/crypto engines and `sweep`'s
+  `isActive` use top-level `status === 'complete'`). The guard never fired on a
+  real completed event; the test passed only because it built the event with the
+  legacy shape. Now reads `event.status` (the engines' field) — one source of
+  truth, and a prerequisite for m7d-2's edit-renotify not firing on a done event.
 - `src/index.js` — public entry point, re-exporting each pillar as it lands.
 - `tests/unit/classifier.test.js` — 14 behavior tests (every trust level,
   precedence ordering, alignment edges, defensive input), reconciled with

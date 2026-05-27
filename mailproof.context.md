@@ -101,8 +101,8 @@ the same `dataDir`. There are no env-var defaults (that's the consumer's glue).
 | `ingest(raw, envelope)` | The inbound pipeline. `raw` = RFC-822 Buffer; `envelope` = `{ sender, recipient, clientIp, clientHelo }`. Returns the result summary (below). |
 | `sweep({ now? })` | The time-driven pass (run it on your own schedule). Scans every event and emits the `overdue` (idle nudge) + `archived` (auto-archive transition) occasions through the same notifier. Returns `{ overdue, archived, notified }`. Thresholds via `create()`'s `overdueDays`/`archiveDays` (14/45). |
 | `createEvent(partial)` | Create + persist an event (both modes). Created **pending** (`activated_at: null`). |
-| `activateEvent(id)` | Mark activated. Idempotent (`{ event, alreadyActive }`). **Replies don't count until activated.** |
-| `editEvent(id, patch)` | Patch a non-finalised event; writes an audit commit if activated. |
+| `activateEvent(id)` | Mark activated + fire the `activation` kickoff to initially-eligible participants/signers (once). `{ event, alreadyActive, notified }`. **Replies don't count until activated.** |
+| `editEvent(id, patch)` | Patch a non-finalised event; writes an audit commit if activated; re-notifies (`reassigned`) a participant moved onto a currently-eligible step. Returns `{ event, prev, changes, commitSequence, notified }`. |
 | `loadEvent(id)` | Read the event JSON (the master record). |
 | `listCommits(id)` | The per-event commit ledger (every reply, counted or not). |
 | `loadCommit(id, seq)` | One `commit-NNN.json`. |
@@ -249,8 +249,12 @@ lock, and reports them in `notified`:
 
 `sweep()` adds the **time-driven** occasions, to the initiator: `kind:'overdue'`
 (idle past `overdueDays`) and `kind:'archived'` (auto-archived past `archiveDays`).
-Non-counting replies send nothing. Each message's `From` is the plus-tagged
-reply address so the recipient's reply routes straight back.
+`activateEvent`/`editEvent` add the **organiser-action** occasions: `kind:'activation'`
+(first activation → ping initially-eligible participants / listed signers) and
+`kind:'reassigned'` (a participant moved onto a currently-eligible step). Both
+append a `notified` array to their return. Non-counting replies send nothing.
+Each message's `From` is the plus-tagged reply address so the recipient's reply
+routes straight back.
 
 ```js
 composeNotification({ kind, mode?, eventId, event, to, replyAddress, step?, signatureCount?, daysOver?, daysIdle? }) {

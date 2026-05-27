@@ -113,15 +113,87 @@ function create({
     eventStore, gitrepo, deliver, domain, overdueDays, archiveDays,
   });
 
+  // Organiser-action occasions (m7d-2). The store's activate/edit stay pure; the
+  // bound versions below run the transition, then emit the resulting occasions
+  // through the same deliver(). Both append `notified` to the store's return.
+
+  // Ping every initially-eligible participant (workflow) / listed signer
+  // (crypto) that an activated event is waiting on. (Open crypto events have no
+  // roster — the initiator distributes the attest+ link themselves.)
+  async function notifyActivation(ev) {
+    const out = [];
+    const eventId = ev.id;
+    const title = ev.title || eventId;
+    if (ev.type === 'crypto') {
+      for (const signer of (Array.isArray(ev.signers) ? ev.signers : [])) {
+        const r = await deliver({
+          kind: 'activation', to: signer,
+          replyAddress: `attest+${eventId}@${domain}`,
+          subject: `Signature requested: ${title}`,
+          defaultBody: `Your signature is requested on "${title}". Reply to this email to sign.`,
+          ctx: { mode: 'crypto', eventId, event: ev },
+        });
+        if (r) out.push(r);
+      }
+    } else {
+      for (const step of completion.eligibleSteps(ev)) {
+        if (!step.participant) continue;
+        const r = await deliver({
+          kind: 'activation', to: step.participant,
+          replyAddress: `event+${eventId}-${step.id}@${domain}`,
+          subject: `Action needed: ${title}`,
+          defaultBody: `A step is ready for you in "${title}". Reply to this email to confirm your part.`,
+          ctx: { mode: 'workflow', eventId, event: ev, step },
+        });
+        if (r) out.push(r);
+      }
+    }
+    return out;
+  }
+
+  // Activate, then — only on the FIRST transition — fire the activation kickoff.
+  async function activateEvent(eventId, opts) {
+    const res = await eventStore.activateEvent(eventId, opts);
+    const notified = res.alreadyActive ? [] : await notifyActivation(res.event);
+    return { ...res, notified };
+  }
+
+  // Edit, then re-notify only a participant reassigned ONTO a currently-eligible
+  // step of an ACTIVATED event: a blocked step's new owner is pinged later via
+  // `advance` when it becomes eligible, and a pending event's replies wouldn't
+  // count yet, so neither warrants a kickoff here.
+  async function editEvent(eventId, patch, opts) {
+    const res = await eventStore.editEvent(eventId, patch, opts);
+    const notified = [];
+    const ev = res.event;
+    if (ev && ev.activated_at && ev.type === 'workflow') {
+      const eligibleIds = new Set(completion.eligibleSteps(ev).map((s) => s.id));
+      for (const c of res.changes) {
+        if (c.field !== 'participant' || !c.to || !eligibleIds.has(c.step_id)) continue;
+        const step = eventStore.findStep(ev, c.step_id);
+        const r = await deliver({
+          kind: 'reassigned', to: c.to,
+          replyAddress: `event+${eventId}-${c.step_id}@${domain}`,
+          subject: `Action needed: ${ev.title || eventId}`,
+          defaultBody: `A step in "${ev.title || eventId}" has been assigned to you. Reply to this email to confirm your part.`,
+          ctx: { mode: 'workflow', eventId, event: ev, step },
+        });
+        if (r) notified.push(r);
+      }
+    }
+    return { ...res, notified };
+  }
+
   return {
     // Inbound — verify→route→commit→advance pipeline (accept-with-flag)
     ingest,
     // Time-driven — overdue nudge + auto-archive occasions (m7d-1)
     sweep,
-    // Sequence — create / activate / edit events (both modes; routed by `type`)
+    // Sequence — create / activate / edit events (both modes; routed by `type`).
+    // activate/edit emit the activation + reassigned occasions (m7d-2).
     createEvent: eventStore.createEvent,
-    activateEvent: eventStore.activateEvent,
-    editEvent: eventStore.editEvent,
+    activateEvent,
+    editEvent,
     // Read model — event JSON + the per-event commit ledger
     loadEvent: eventStore.loadEvent,
     listCommits: gitrepo.listCommits,
