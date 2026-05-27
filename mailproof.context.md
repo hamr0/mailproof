@@ -218,8 +218,12 @@ plaintext, never the raw address. With `otsBin` set, each commit also gets an
 `.ots` OpenTimestamps proof. Each accepted reply also **archives the signer's
 DKIM public key** (PEM) on its commit, so `core.verify()` re-checks the signature
 offline — even after the signer rotates DNS — and `core.reverify()` can upgrade a
-contested commit's trust against it. *(Verifying the `.ots` proofs themselves is
-the one remaining m7c slice, m7c-4.)*
+contested commit's trust against it. With `otsBin` set, `createOts()` also
+exposes `upgradeProof(abs)` (folds the Bitcoin attestation into a pending `.ots`
+once the calendars have it; the file's sha256 changing = "now anchored") and
+`readBlockHeight(abs)` (reads the anchored block via `ots info`, offline) — so
+the `.ots` proofs are verifiable, not just stored. *(Driving these across an
+event + emitting a `proof_anchored` notification is m7d.)*
 
 ## The notary (documents, both ways)
 

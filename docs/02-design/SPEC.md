@@ -296,7 +296,13 @@ re-verification against an archived PEM; never mutates the target commit).
    file is OTS-stamped (`commit-NNN.ots`), anchoring its existence to Bitcoin.
    This is **accept-with-flag**: stamp failure is recorded in the commit
    (`ots_archive.error`) and never blocks delivery. The kernel works fully
-   without OTS.
+   without OTS. The initial stamp is a *calendar-pending* commitment; the
+   Bitcoin attestation is folded in later by `createOts().upgradeProof(abs)`
+   (runs `ots upgrade` in place — the proof file's sha256 *changing* is the
+   authoritative "now anchored" signal, never `ots verify`). The anchored block
+   is read offline with `readBlockHeight(abs)` (`ots info`, no network). Driving
+   the upgrade across an event's proofs and recording the anchored state into
+   the ledger (the `proof_anchored` occasion) is the consumer's scheduler.
 3. **Serialization invariant.** Every writer of `event.json` MUST emit
    `JSON.stringify(event, null, 2) + '\n'`. The repo's no-op-sync check is
    **byte-strict**: identical bytes ⇒ no commit. Any drift (indent, key order,

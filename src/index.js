@@ -26,7 +26,7 @@ const {
 const { createEventStore } = require('./event-store');
 const { withEventMutex } = require('./event-mutex');
 const { createGitrepo } = require('./gitrepo');
-const { createOts } = require('./ots');
+const { createOts, parseOtsBlockHeight } = require('./ots');
 const {
   shouldCount, applyReply, isComplete, firstPendingStep,
   stepDepsMet, eligibleSteps, meetsTrust, COUNT_REASONS,
@@ -81,8 +81,10 @@ module.exports = {
   createEventStore,
   withEventMutex,
   createGitrepo,
-  // Git ledger — optional OTS anchoring (factory-bound to otsBin)
+  // Git ledger — optional OTS anchoring + Bitcoin-anchor upgrade/read (m7c-4;
+  // factory-bound to otsBin). parseOtsBlockHeight is the pure `ots info` parser.
   createOts,
+  parseOtsBlockHeight,
   // Sequence — workflow completion engine (pure transitions)
   shouldCount,
   applyReply,

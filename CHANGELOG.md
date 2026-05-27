@@ -413,6 +413,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   initiator, with the ledger showing `counted` `[true,false,false,true]`. The
   m7c verification surface is now complete bar **m7c-4** (OTS-proof verification,
   skip-gated on the `ots` binary). 223 → 225, 0 fail.
+- **Verify pillar, m7c-4: OTS-proof verification (Bitcoin-anchor upgrade/read).**
+  `createOts` gains `upgradeProof(abs)` and `readBlockHeight(abs)`, plus the pure
+  `parseOtsBlockHeight` (re-exported from `src/index.js`) — **ported from
+  gitdone's `bin/ots-upgrade.js` worker**, trimmed to the kernel primitive.
+  `upgradeProof` runs `ots upgrade` in place and treats the proof file's sha256
+  *changing* as the authoritative "now anchored in Bitcoin" signal
+  (`{ ok, changed, anchored, pending, exit, block_height? }`); `readBlockHeight`
+  reads which block via `ots info` (local parse, **no network**).
+  - **Follows gitdone's proven design:** we do NOT shell out to `ots verify`
+    (which masks pending state by querying calendars live) — the upgraded `.ots`
+    carries the Bitcoin attestation offline, so the upgrade-changed-the-file
+    signal is the trust anchor. `ots upgrade`'s non-zero exit on a still-pending
+    proof is modelled as `{ pending: true }`, **not** an error (accept-with-flag).
+  - **Left in the worker (policy/glue → m7d):** the `$dataDir/repos/*` walk, the
+    per-repo git-commit batching, `patchCommitJsonAnchored` (writing `ots_anchored`
+    into the ledger), the `.anchored-notified` sentinel, and `notifyProofAnchored`.
+    The event-level "upgrade an event's proofs + record anchored + emit the
+    `proof_anchored` occasion" is m7d, riding the `composeNotification` seam.
+  - Tests: `tests/unit/ots.test.js` (8 — the pure parser across every
+    opentimestamps-client output shape + null/degenerate cases) and 4 added to
+    `tests/integration/ots.test.js` (binary-missing → `{error}`/`null`, never
+    throws; + real-`ots` smoke tests, skip-gated on the client, asserting a
+    non-proof input reports `pending`/`null` and leaves the file untouched). The
+    fully-confirmed-proof path stays deployment-verified (needs ~1h of Bitcoin
+    confirmations). **225 → 237, 0 fail. The 9-point gitdone-rebuild checklist is
+    now fully covered — OTS-proof verification was the last gap.**
 - `src/index.js` — public entry point, re-exporting each pillar as it lands.
 - `tests/unit/classifier.test.js` — 14 behavior tests (every trust level,
   precedence ordering, alignment edges, defensive input), reconciled with
