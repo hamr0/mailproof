@@ -222,9 +222,12 @@ test('editEvent: rejects invalid email', async () => {
 });
 
 test('editEvent: rejects edit on completed event', async () => {
+  // A real completed event carries top-level status:'complete' (set by the
+  // completion/crypto engines) — NOT gitdone's nested completion.status, which
+  // mailproof never writes. The guard must read the same field the engines do.
   const ev = await store.createEvent({
     type: 'workflow', title: 'done', initiator: 'org@ex.com',
-    completion: { status: 'complete', completed_at: '2026-01-01T00:00:00Z' },
+    status: 'complete', completed_at: '2026-01-01T00:00:00Z',
     steps: [{ id: 's', name: 'do', participant: 'a@ex.com', status: 'complete' }],
   });
   await assert.rejects(

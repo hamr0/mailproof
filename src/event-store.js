@@ -329,7 +329,7 @@ function createEventStore({ dataDir } = {}) {
     return withEventMutex(eventId, async () => {
       const event = await loadEvent(eventId);
       if (!event) throw Object.assign(new Error(`editEvent: ${eventId} not found`), { code: 'NOT_FOUND' });
-      if (event.completion && event.completion.status === 'complete') {
+      if (event.status === 'complete') {
         throw Object.assign(new Error('editEvent: event is complete'), { code: 'EVENT_COMPLETE' });
       }
       if (event.archived_at) {
