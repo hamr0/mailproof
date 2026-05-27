@@ -350,6 +350,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     neutral default, graceful `ok:false` when `sendmailBin` is absent). New
     `verifiedSigner` helper (one keypair/resolver signing many senders @one
     domain). 198 → 203, 0 fail.
+- **`mailproof.context.md`** — the dense AI-assistant/developer integration guide
+  (modeled on knowless's): both modes, `create()` options, the `create()` return
+  surface + `ingest()` result shape, the accept-with-flag invariant, trust levels,
+  the `composeNotification` hook, the four-pillar architecture, the
+  what's-NOT-in-mailproof policy boundary, gotchas, and constraints.
 - `src/index.js` — public entry point, re-exporting each pillar as it lands.
 - `tests/unit/classifier.test.js` — 14 behavior tests (every trust level,
   precedence ordering, alignment edges, defensive input), reconciled with
