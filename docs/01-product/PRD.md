@@ -234,19 +234,33 @@ mailproof stores **no plaintext personal data at rest** — only per-event salte
 controller re-link a *guessed* address, so GDPR still applies — mailproof does
 not claim the data is out of scope. What the design *does* give the operator:
 
-- **Data-protection-by-design/default (Art. 25) + security of processing
-  (Art. 32):** minimization + salting + tamper-evident integrity are textbook.
-- **A lawful basis to *retain* (Art. 6):** an audit of who-signed-what rests on
-  legitimate interest (6(1)(f)) and/or contract (6(1)(b)) / legal obligation.
-- **Resistance to an erasure demand (Art. 17(3)(b)/(e)):** the right to be
-  forgotten **does not apply** where processing is necessary for a legal
-  obligation or for the establishment, exercise, or defence of legal claims — a
-  non-repudiable sign-off record plausibly sits there. So the records **can be
-  kept** for as long as that purpose subsists (with storage-limitation, Art.
-  5(1)(e), satisfied by a documented retention policy).
-- **Art. 11:** mailproof cannot, from the store alone, enumerate who is in it
-  (no directly-identifying data), which relaxes some subject-rights mechanics
-  unless the subject supplies the identifying address.
+- **Data-protection-by-design/default (Art. 25(1)) + security of processing
+  (Art. 32(1)):** both articles name **pseudonymisation** *verbatim* as an
+  example technical measure (32(1) pairs "the pseudonymisation and encryption of
+  personal data"). Salting at rest + minimization + tamper-evident integrity is
+  squarely what they ask for.
+- **A lawful basis to *retain* (Art. 6(1)):** an audit of who-signed-what rests
+  on legitimate interest (6(1)(f), subject to its balancing test) and/or
+  contract (6(1)(b)) / legal obligation (6(1)(c)).
+- **Resistance to an erasure demand (Art. 17(3)):** the right to erasure
+  expressly does **not** apply where processing is necessary for "compliance
+  with a legal obligation" (17(3)(b)) or "for the establishment, exercise or
+  defence of legal claims" (17(3)(e), quoted verbatim). A non-repudiable
+  sign-off record plausibly sits there — so the records **can be kept** for as
+  long as that purpose subsists, with storage-limitation (Art. 5(1)(e))
+  satisfied by a documented retention policy.
+- **Art. 11(1)–(2):** if the controller is "not in a position to identify the
+  data subject" from the data alone, it need not acquire extra data just to
+  comply, and Arts. 15–20 do not apply unless the subject supplies identifying
+  information. mailproof stores no directly-identifying data — it cannot
+  enumerate who is in the ledger without a candidate address.
+
+> **Grounded in** Regulation (EU) 2016/679 (GDPR) — Art. 4(5) (pseudonymisation),
+> 5(1)(c)/(e), 6(1), 11, 17(1)/(3)(b)/(e), 25(1), 32(1); Recital 26 (pseudonymous
+> data attributable via additional information *is* personal data; the
+> "means reasonably likely to be used" identifiability test). Article text
+> verified against the consolidated Regulation (EUR-Lex CELEX 32016R0679),
+> 2026-05-27 — not paraphrased from memory.
 
 **Boundary:** the *operator/consumer is the data controller*, not mailproof and
 not its authors. mailproof is built to *enable* a compliant deployment
