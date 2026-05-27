@@ -252,8 +252,13 @@ lock, and reports them in `notified`:
 `activateEvent`/`editEvent` add the **organiser-action** occasions: `kind:'activation'`
 (first activation → ping initially-eligible participants / listed signers) and
 `kind:'reassigned'` (a participant moved onto a currently-eligible step). Both
-append a `notified` array to their return. Non-counting replies send nothing.
-Each message's `From` is the plus-tagged reply address so the recipient's reply
+append a `notified` array to their return. And an inbound **DSN bounce** (a
+notification that failed permanently downstream) is recognised by `ingest()`,
+routed to the event by its plus-tag return path, recorded as a per-step send
+error, and surfaced to the initiator as `kind:'bounce'` (operational — never
+committed to the ledger; `ingest` returns `{ routed:false, bounce:true, eventId,
+stepId, failedRecipients, notified }`). Non-counting replies send nothing. Each
+message's `From` is the plus-tagged reply address so the recipient's reply
 routes straight back.
 
 ```js

@@ -43,6 +43,9 @@ const {
 } = require('./verifier');
 const { createNotifier } = require('./notify');
 const { createSweep, referenceClockMs, isActive } = require('./sweep');
+const {
+  isDeliveryStatusReport, extractDsn, permanentFailures, parseDeliveryStatusBody,
+} = require('./dsn');
 const { create } = require('./create');
 
 module.exports = {
@@ -117,4 +120,9 @@ module.exports = {
   createSweep,
   referenceClockMs,
   isActive,
+  // Email triggers — inbound bounce (DSN) parser → the `bounce` occasion (m7d-3)
+  isDeliveryStatusReport,
+  extractDsn,
+  permanentFailures,
+  parseDeliveryStatusBody,
 };

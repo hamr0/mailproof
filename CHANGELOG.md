@@ -496,6 +496,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Tests: `tests/integration/activation-edit.test.js` (7 — sequential/parallel/
     crypto/open activation, idempotency, eligible/blocked/pending/non-participant
     edit re-notify). **252 → 259, 0 fail.**
+- **Triggers pillar — m7d-3: inbound bounce (DSN) → the `bounce` occasion.**
+  `src/dsn.js` — an RFC 3464 delivery-status-notification parser (PURE,
+  stdlib-only): `isDeliveryStatusReport` / `extractDsn` / `permanentFailures`
+  (+ `parseDeliveryStatusBody` / `stripAddressType` / `contentTypeOf`). `ingest()`
+  now recognises a DSN from the header block **before** the humans-only prefilter
+  (which would otherwise reject the machine-generated report), routes it to the
+  event/step, records a per-step send error (`recordStepSendErrors`), and emits
+  the `bounce` occasion to the initiator. A bounce is **operational, not a
+  participant reply** — it is *never* committed to the ledger.
+  - **Ported from gitdone's `app/src/dsn.js`**, re-anchored to operate on RAW
+    bytes (gitdone keyed off mailparser's `parsed.headers`, which mailproof's
+    `parseMessage` intentionally doesn't expose; mailparser also folds
+    message/delivery-status into `.text`) — so the parser is self-contained and
+    adds no dependency. **Routing divergence:** mailproof signs outbound mail
+    *from the plus-tag* (`event+{id}-{step}@` / `attest+{id}@`), so a bounce's
+    return path — its inbound envelope recipient — *is* that tag; ingest routes
+    by the address it already parses (VERP-style), rather than gitdone's
+    fixed-sender + body inspection. Only **permanent** failures (Action: failed,
+    or a 5.x status when Action is absent) alert; transient `delayed` (4.x)
+    reports are ignored.
+  - Tests: `tests/unit/dsn.test.js` (10 — the pure parser: detection incl. folded
+    headers, recipient/status/diagnostic extraction, permanent-vs-transient,
+    address-type stripping, multi-recipient blocks) and
+    `tests/integration/ingest-bounce.test.js` (4 — route + step-error + notify +
+    not-committed; transient no-op; untagged/unknown-event reported-not-routed;
+    crypto event notifies without a step error). **259 → 273, 0 fail.**
 
 ### Fixed
 - **`editEvent` completeness guard reads top-level `status`.** It refused edits

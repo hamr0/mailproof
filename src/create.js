@@ -28,6 +28,7 @@ const { classifyTrust } = require('./classifier');
 const { fetchDkimKey, pickSignatureToArchive } = require('./dkim-archive');
 const { parseEventTag, parseAttestTag } = require('./router');
 const { preFilter, extractHeaderBlock } = require('./prefilter');
+const { isDeliveryStatusReport, extractDsn, permanentFailures } = require('./dsn');
 const {
   sendmail, buildRawMessage, newMessageId, sanitizeSubject,
 } = require('./outbound');
@@ -100,6 +101,9 @@ function create({
     parseAttestTag,
     preFilter,
     extractHeaderBlock,
+    isDeliveryStatusReport,
+    extractDsn,
+    permanentFailures,
     deliver,
     domain,
     mtaHostname,

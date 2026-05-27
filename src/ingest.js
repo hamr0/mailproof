@@ -51,6 +51,10 @@ function createIngest({
   parseAttestTag,
   preFilter,         // prefilter.js
   extractHeaderBlock,
+  // Inbound bounce (DSN) parser (dsn.js, m7d-3) — pure.
+  isDeliveryStatusReport,
+  extractDsn,
+  permanentFailures,
   // Trigger pillar: the shared neutral-notification seam (notify.js). ingest
   // emits advance / ack / completion through the same deliver() that sweep and
   // the other m7d occasions use; composeNotification lives inside it.
@@ -59,19 +63,79 @@ function createIngest({
   mtaHostname = null,
   resolver = null,
 } = {}) {
-  const { loadEvent, findStep, senderMatchesStep, writeEventAtomic } = eventStore;
+  const { loadEvent, findStep, senderMatchesStep, writeEventAtomic, recordStepSendErrors } = eventStore;
   const { commitReply, commitCompletion, syncEventJson, saltedSenderHash } = gitrepo;
+
+  // The plus-tagged reply From for an event (workflow → event+, crypto → attest+).
+  const replyBaseFor = (event, eventId) =>
+    `${event && event.type === 'crypto' ? 'attest' : 'event'}+${eventId}@${domain}`;
+
+  // Handle an inbound delivery-status report (a bounce). Routed by the plus-tag
+  // the bounce was delivered to (= our outbound return path), which names the
+  // event/step. A bounce is operational, NOT a participant reply: it is never
+  // committed to the ledger. We record the per-step send error and emit the
+  // `bounce` occasion to the initiator. Never throws.
+  async function handleBounce(buf, envelope) {
+    const eventTag = parseEventTag(envelope.recipient);
+    const attestTag = eventTag ? null : parseAttestTag(envelope.recipient);
+    const eventId = eventTag ? eventTag.eventId : (attestTag ? attestTag.eventId : null);
+    const stepId = eventTag ? eventTag.stepId : null;
+    if (!eventId) return { routed: false, bounce: true, reason: 'no_event_tag' };
+    const event = await loadEvent(eventId);
+    if (!event) return { routed: false, bounce: true, reason: 'unknown_event', eventId };
+
+    const dsn = extractDsn(buf) || { recipients: [] };
+    const failed = permanentFailures(dsn);
+    const failedRecipients = failed.map((f) => f.finalRecipient || f.originalRecipient).filter(Boolean);
+
+    // Record the failure on the workflow step (crypto has no steps). Best-effort.
+    if (stepId && failed.length) {
+      const top = failed[0];
+      try {
+        await recordStepSendErrors(eventId, {
+          [stepId]: {
+            reason: top.diagnostic || top.status || 'delivery failed',
+            code: top.status || null,
+            at: new Date().toISOString(),
+          },
+        });
+      } catch { /* error-flag persistence is best-effort */ }
+    }
+
+    const notified = [];
+    if (failed.length && event.initiator) {
+      const title = event.title || eventId;
+      const who = failedRecipients.length ? ` to ${failedRecipients.join(', ')}` : '';
+      const why = failed[0] && failed[0].diagnostic ? ` The mail server said: ${failed[0].diagnostic}` : '';
+      const r = await deliver({
+        kind: 'bounce',
+        to: event.initiator,
+        replyAddress: replyBaseFor(event, eventId),
+        subject: `Delivery problem: ${title}`,
+        defaultBody: `A notification for "${title}" could not be delivered${who}.${why}`,
+        ctx: { mode: event.type === 'crypto' ? 'crypto' : 'workflow', eventId, event, stepId, failed },
+      });
+      if (r) notified.push(r);
+    }
+    return { routed: false, bounce: true, eventId, stepId, failedRecipients, notified };
+  }
 
   // raw: RFC-822 bytes (Buffer). envelope: the parseEnvelope shape
   // ({ sender, recipient, clientIp, clientHelo }). Returns a result summary
   // (see the file header for accept-with-flag semantics).
   async function ingest(raw, envelope = {}) {
     const buf = Buffer.isBuffer(raw) ? raw : Buffer.from(String(raw || ''));
+    const headerBlock = extractHeaderBlock(buf, MAX_HEADER_BYTES);
+
+    // 0. Delivery-status (bounce) detection — BEFORE the humans-only prefilter,
+    //    which would otherwise reject this machine-generated report. A bounce is
+    //    an operational signal, not a participant reply (see handleBounce).
+    if (isDeliveryStatusReport(headerBlock)) return handleBounce(buf, envelope);
+
     const parsed = await parseMessage(buf);
 
     // 1. Humans-only prefilter — drop auto-responders / lists / bulk / system
     //    senders BEFORE any crypto or ledger work. Not committed (no event).
-    const headerBlock = extractHeaderBlock(buf, MAX_HEADER_BYTES);
     const filter = preFilter(headerBlock, parsed.from.address);
     if (filter.rejected) {
       return { routed: false, rejected: true, reason: filter.reason };
