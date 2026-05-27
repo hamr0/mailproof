@@ -1,7 +1,7 @@
 # mailproof — Integration Guide
 
 > For AI assistants and developers wiring mailproof into a project.
-> Pre-library (P1, m7b assembly complete) | Node.js >= 22.5 | 2 deps (`mailauth`, `mailparser`) | Apache-2.0
+> Pre-library (P1 — m7b assembly + m7c verify surface) | Node.js >= 22.5 | 2 deps (`mailauth`, `mailparser`) | Apache-2.0
 
 ## What this is
 
@@ -105,6 +105,8 @@ the same `dataDir`. There are no env-var defaults (that's the consumer's glue).
 | `loadCommit(id, seq)` | One `commit-NNN.json`. |
 | `verifyDocument(id, bytes, {email?})` | Notary lookup: does this document match a committed attachment? |
 | `hashDocument(bytes)` | The canonical `sha256:…` fingerprint (one source of truth). |
+| `verify(id, bytes, {messageId?, resolver?})` | Offline durable verify: match a forwarded email/doc to a commit (`raw_sha256`→`message_id_hash`→attachment) and re-verify its DKIM against the **archived** key — holds with live DNS down. |
+| `reverify(id, seq, rawEml, {resolver?})` | Re-evaluate a contested commit against its archived key; on a DKIM pass, **upgrade** its recorded trust and persist an immutable `reverify-NNN.json` (the original commit is never rewritten). |
 
 Lower-level pieces are also exported from the package root for consumers that
 compose their own pipeline: `classifyTrust`, `TRUST_LEVELS`, the `router`
@@ -213,8 +215,11 @@ tamper-evidence and the portable, offline-verifiable proof. Each reply →
 `commits/commit-NNN.json`. Identity at rest is **minimized**: the salted
 `sender_hash` + `message_id_hash` (per-event public salt), `sender_domain` in
 plaintext, never the raw address. With `otsBin` set, each commit also gets an
-`.ots` OpenTimestamps proof. *(The portable offline verifier + `verify+` /
-`reverify` endpoints + durable DKIM-key archive are the next milestone, m7c.)*
+`.ots` OpenTimestamps proof. Each accepted reply also **archives the signer's
+DKIM public key** (PEM) on its commit, so `core.verify()` re-checks the signature
+offline — even after the signer rotates DNS — and `core.reverify()` can upgrade a
+contested commit's trust against it. *(Verifying the `.ots` proofs themselves is
+the one remaining m7c slice, m7c-4.)*
 
 ## The notary (documents, both ways)
 

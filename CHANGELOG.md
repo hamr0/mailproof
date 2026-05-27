@@ -401,6 +401,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   upgrades to `verified` against the archived key with live DNS disabled; an
   already-`verified` commit records the attempt without upgrading; missing target
   ⇒ `found:false`). 218 → 223, 0 fail.
+- **m7c-5: kitchen-sink end-to-end proof.** `tests/integration/e2e.test.js` drives
+  a FULL lifecycle of each mode through the public `create()` API against the real
+  ledger + mailauth + a fake capture transport — the "all the pillars compose"
+  proof before the gitdone reconverge. Workflow: two sequential steps advance
+  themselves (advance→completion triggers) to completion, salted-at-rest is
+  asserted (no plaintext sender on the ledger), and step 1's email re-verifies
+  offline. Crypto: an open threshold-2 sign-off counts two distinct verified
+  signers, rejects the initiator's self-reply (`initiator_self_reply`) and a
+  duplicate (`already_signed`), and locks — acking the signer + notifying the
+  initiator, with the ledger showing `counted` `[true,false,false,true]`. The
+  m7c verification surface is now complete bar **m7c-4** (OTS-proof verification,
+  skip-gated on the `ots` binary). 223 → 225, 0 fail.
 - `src/index.js` — public entry point, re-exporting each pillar as it lands.
 - `tests/unit/classifier.test.js` — 14 behavior tests (every trust level,
   precedence ordering, alignment edges, defensive input), reconciled with
