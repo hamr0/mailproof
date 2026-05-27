@@ -39,7 +39,7 @@ const MAX_HEADER_BYTES = 64 * 1024;
 function createIngest({
   eventStore,        // { loadEvent, findStep, senderMatchesStep, writeEventAtomic }
   gitrepo,           // { commitReply, commitCompletion, syncEventJson, saltedSenderHash }
-  workflowEngine,    // completion.js  { shouldCount, applyReply }
+  workflowEngine,    // completion.js  { shouldCount, applyReply, eligibleSteps }
   cryptoEngine,      // crypto.js      { shouldCount, applyReply }
   parseMessage,      // parse.js
   authenticateMessage,
@@ -48,11 +48,50 @@ function createIngest({
   parseAttestTag,
   preFilter,         // prefilter.js
   extractHeaderBlock,
+  // Trigger pillar (Commit C): build + send neutral notifications.
+  buildRawMessage,   // outbound.js
+  sendmail,
+  newMessageId,
+  sanitizeSubject,
+  domain = null,
+  sendmailBin = null,
+  // Optional hook: composeNotification(ctx) → body string. Branding is a kernel
+  // NO-GO (PRD §8.6), so the body needs a consumer seam; a neutral default is
+  // used when the hook is absent or returns falsy.
+  composeNotification = null,
   mtaHostname = null,
   resolver = null,
 } = {}) {
   const { loadEvent, findStep, senderMatchesStep, writeEventAtomic } = eventStore;
   const { commitReply, commitCompletion, syncEventJson, saltedSenderHash } = gitrepo;
+
+  // Build + submit ONE neutral notification. The From is the plus-tagged reply
+  // address so the recipient's reply routes straight back to the right
+  // event/step. Auto-Submitted marks it machine-generated (and our own
+  // prefilter would drop any auto-reply to it). Best-effort: a hook throw or a
+  // transport failure yields an {ok:false} entry, never an exception — the
+  // ledger transition already happened and must not be undone by a send.
+  async function deliver({ kind, to, replyAddress, subject, defaultBody, ctx }) {
+    if (!to) return null;
+    let body = defaultBody;
+    if (composeNotification) {
+      try {
+        const custom = composeNotification({ ...ctx, kind, to, replyAddress });
+        if (custom) body = custom;
+      } catch { /* hook failure → neutral default */ }
+    }
+    const rawMessage = buildRawMessage({
+      from: replyAddress,
+      to,
+      subject: sanitizeSubject(subject),
+      body,
+      messageId: newMessageId(domain),
+      domain,
+      autoSubmitted: 'auto-generated',
+    });
+    const res = await sendmail({ from: replyAddress, rawMessage, binary: sendmailBin, to: [to] });
+    return { kind, to, ok: !!res.ok, reason: res.reason || null };
+  }
 
   // raw: RFC-822 bytes (Buffer). envelope: the parseEnvelope shape
   // ({ sender, recipient, clientIp, clientHelo }). Returns a result summary
@@ -213,10 +252,62 @@ function createIngest({
         completedStep,
         signatureCount,
         eventComplete,
+        // Post-transition state, for building triggers OUTSIDE the lock.
+        postEvent: applied.applied ? applied.event : event,
       };
     });
 
     if (outcome.gone) return { routed: false, reason: 'unknown_event', eventId };
+
+    // 9. Triggers (sent OUTSIDE the lock). Only a COUNTED reply advances the
+    //    chain: workflow pings the participant(s) of every step that just
+    //    became eligible; crypto acks the verified signer. On the completing
+    //    edge, both notify the initiator. Non-counting replies send nothing.
+    const notified = [];
+    if (outcome.counted) {
+      const ev = outcome.postEvent;
+      const title = (ev && ev.title) || eventId;
+
+      if (mode === 'workflow' && outcome.completedStep && !outcome.eventComplete) {
+        const newlyEligible = workflowEngine.eligibleSteps(ev).filter(
+          (s) => s && s.participant && (s.dependsOn || []).includes(outcome.completedStep)
+        );
+        for (const step of newlyEligible) {
+          const r = await deliver({
+            kind: 'advance',
+            to: step.participant,
+            replyAddress: `event+${eventId}-${step.id}@${domain}`,
+            subject: `Action needed: ${title}`,
+            defaultBody: `A step is ready for you in "${title}". Reply to this email to confirm your part.`,
+            ctx: { mode, eventId, event: ev, step },
+          });
+          if (r) notified.push(r);
+        }
+      } else if (mode === 'crypto') {
+        const r = await deliver({
+          kind: 'ack',
+          to: sender,
+          replyAddress: `attest+${eventId}@${domain}`,
+          subject: `Recorded: ${title}`,
+          defaultBody: `Your verified reply to "${title}" has been recorded.`,
+          ctx: { mode, eventId, event: ev, signatureCount: outcome.signatureCount },
+        });
+        if (r) notified.push(r);
+      }
+
+      if (outcome.eventComplete && ev && ev.initiator) {
+        const base = mode === 'workflow' ? `event+${eventId}` : `attest+${eventId}`;
+        const r = await deliver({
+          kind: 'completion',
+          to: ev.initiator,
+          replyAddress: `${base}@${domain}`,
+          subject: `Complete: ${title}`,
+          defaultBody: `"${title}" is now complete.`,
+          ctx: { mode, eventId, event: ev },
+        });
+        if (r) notified.push(r);
+      }
+    }
 
     return {
       routed: true,
@@ -229,8 +320,7 @@ function createIngest({
       completedStep: outcome.completedStep,
       signatureCount: outcome.signatureCount,
       eventComplete: outcome.eventComplete,
-      // The trigger/send layer lands in Commit C; the core sends nothing.
-      notified: [],
+      notified,
     };
   }
 

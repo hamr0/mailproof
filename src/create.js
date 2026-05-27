@@ -24,6 +24,9 @@ const { parseMessage, authenticateMessage } = require('./parse');
 const { classifyTrust } = require('./classifier');
 const { parseEventTag, parseAttestTag } = require('./router');
 const { preFilter, extractHeaderBlock } = require('./prefilter');
+const {
+  sendmail, buildRawMessage, newMessageId, sanitizeSubject,
+} = require('./outbound');
 
 // Compose a bound mailproof instance.
 //   dataDir     — root for {dataDir}/events/*.json + the per-event git repos
@@ -41,7 +44,12 @@ const { preFilter, extractHeaderBlock } = require('./prefilter');
 //   resolver    — a custom DNS resolver for mailauth (optional). Production uses
 //                 the system resolver (absent); tests inject an offline stub and
 //                 the future verify+ endpoint re-checks against an archived key.
-function create({ dataDir, domain, sendmailBin, otsBin, mtaHostname, resolver } = {}) {
+//   composeNotification(ctx) → body — optional hook for the body of the neutral
+//                 notifications ingest() triggers (branding is a NO-GO §8.6, so
+//                 the body needs a consumer seam). Neutral default if omitted.
+function create({
+  dataDir, domain, sendmailBin, otsBin, mtaHostname, resolver, composeNotification,
+} = {}) {
   if (!dataDir) throw new Error('create: dataDir required');
   if (!domain) throw new Error('create: domain required');
 
@@ -67,6 +75,13 @@ function create({ dataDir, domain, sendmailBin, otsBin, mtaHostname, resolver } 
     parseAttestTag,
     preFilter,
     extractHeaderBlock,
+    buildRawMessage,
+    sendmail,
+    newMessageId,
+    sanitizeSubject,
+    domain,
+    sendmailBin,
+    composeNotification,
     mtaHostname,
     resolver,
   });

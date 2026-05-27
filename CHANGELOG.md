@@ -320,6 +320,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     unknown-event + tagless). New TEST-ONLY `tests/helpers/dkim.js` (per-call
     keypair + `signDkim` + matching in-process resolver → `verified` offline).
     191 → 198, 0 fail.
+- **Assembly, module 7b-3 (Commit C): the trigger/send layer + `composeNotification`
+  hook — m7b-3 (and the m7b assembly) COMPLETE.** `ingest()` now closes the
+  email loop: on a COUNTED reply it sends the next neutral notification(s) via the
+  injected `sendmailBin` (real `buildRawMessage` + `sendmail`), OUTSIDE the event
+  lock, and reports them in the result's `notified` array.
+  - **What fires:** workflow → ping the participant(s) of every step that just
+    became eligible (`eligibleSteps` whose `dependsOn` includes the completed
+    step); crypto → ack the verified signer; both → notify the `initiator` on the
+    completing edge. Non-counting replies send nothing. Each message's `From` is
+    the plus-tagged reply address (`event+{id}-{step}@`, `attest+{id}@`) so the
+    recipient's reply routes straight back; `Auto-Submitted: auto-generated` marks
+    it machine-sent. No `proof_email_sent_at` idempotency state is needed — the
+    distinct-only kernel completes an event exactly once (a later reply hits
+    `already_complete`), so the completion notice can't double-fire (gitdone's
+    revoke/reopen re-fire guard stays policy).
+  - **`composeNotification(ctx) → body`** — the ONE optional hook (branding is a
+    NO-GO §8.6, so the body needs a consumer seam). `ctx` carries
+    `{ kind: 'advance'|'ack'|'completion', mode, eventId, event, to, replyAddress,
+    step?|signatureCount? }`; a falsy return (or absent hook, or a throw) falls
+    back to a neutral default body. Subjects are kernel-defaulted. No
+    `onCounted`/`onRejected`/`onCompleted` hooks — redundant with the `ingest()`
+    return value.
+  - `create()` gains the optional `composeNotification` param and threads the
+    outbound builders + `sendmailBin` into `ingest`.
+  - Tests: `tests/integration/ingest-triggers.test.js` drives the real outbound
+    path to a fake capture binary in tmp (workflow advance→completion, crypto
+    ack+completion, no-send on non-counting, `composeNotification` override vs
+    neutral default, graceful `ok:false` when `sendmailBin` is absent). New
+    `verifiedSigner` helper (one keypair/resolver signing many senders @one
+    domain). 198 → 203, 0 fail.
 - `src/index.js` — public entry point, re-exporting each pillar as it lands.
 - `tests/unit/classifier.test.js` — 14 behavior tests (every trust level,
   precedence ordering, alignment edges, defensive input), reconciled with
