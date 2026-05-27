@@ -8,18 +8,19 @@ An **email-native multi-party coordination kernel**, being extracted from the si
 
 ## Project status — read this first
 
-This repo is at the **POC stage**, not a working library. There is **no `src/`, no real modules, and no published API yet.** What exists:
-- `poc/pipeline.js` — a stdlib-only proof that the four pillars compose cleanly (re-implemented stand-ins, **not** the real `gitdone` modules). It is throwaway: per the dev rules, it gets **rewritten in P1, never shipped**.
-- `docs/` — the doc tier (start at `docs/README.md`): `01-product/PRD.md` (what mailproof is, who adopts it, the NO-GO table), `02-design/DESIGN.md` (the authoritative design — extraction boundary mapping each pillar to the `gitdone` source files in `~/PycharmProjects/gitdone/app/src` that will be lifted, locked decisions, planned API, phasing), and `03-logs/decisions-log.md`. **Read the PRD and DESIGN before doing P1 work.**
+This repo is **mid-P1 lift** — the real library is taking shape. `src/` now holds lifted, tested modules: verify (`classifier`), the inbound decoder (`parse` — DKIM/DMARC auth + MIME), sequence routing (`router`), inbound preprocessing (`prefilter`, `envelope`), outbound (`outbound`), the full git-ledger storage (`event-store`, `event-mutex`, `gitrepo`, optional `ots`), **both sequencing engines** (`completion` = workflow events, `crypto` = sign-off), and the document notary (`notary`). ~174 `node --test` tests pass with **2 runtime deps** (`mailauth`, `mailparser`). What remains before a usable published API is the **m7b assembly** — `create()` / `ingest()` composing the pillars (in progress; m7b-1 done).
+- `docs/` — the doc tier (start at `docs/README.md`): `01-product/PRD.md` (what mailproof is, who adopts it, the NO-GO table + GDPR posture), `02-design/DESIGN.md` (extraction boundary, locked decisions, planned API, phasing), `02-design/SPEC.md` (wire formats — the mechanism authority), `03-logs/decisions-log.md`. **Read the PRD, DESIGN, and SPEC before P1 work; the CHANGELOG tracks exactly what has landed.**
+- `poc/pipeline.js` — the original P0 stdlib-only proof the four pillars compose; **superseded** by the real modules, kept only as the P0 artifact (never shipped).
 
-Do not describe mailproof as if the library exists. The real lift (P1) is pending.
+Describe mailproof by what's actually lifted (the PRD status line + CHANGELOG are authoritative) — neither a finished library nor a bare POC.
 
 ## Commands
 
 ```bash
-npm run poc        # node poc/pipeline.js — runs the POC, prints the ledger + outbox, self-asserts
+npm test           # node --test over tests/unit/**/*.test.js + tests/integration/**/*.test.js (~174 tests)
+npm run poc        # node poc/pipeline.js — the original P0 proof (superseded; never shipped)
 ```
-There is no build, lint, or test setup yet. P1 will add deps (`mailauth`, `mailparser`, `simple-git`) and a `node --test` suite (mirroring gitdone's `node --test 'tests/unit/**/*.test.js' 'tests/integration/**/*.test.js'`). Node ≥ 22.5 required.
+Runtime deps: `mailauth` + `mailparser` (2; the git ledger uses the `git` binary via `child_process`, **not** `simple-git`). No build step (vanilla JS, JSDoc + shipped `.d.ts`). Node ≥ 22.5 required.
 
 ## Architecture (the big picture)
 
@@ -30,7 +31,8 @@ The whole design hinges on a clean **boundary** and three **invariants** — und
 - **Git-native storage.** Event state = JSON + a per-event git repo whose commit chain *is* the tamper-evidence and the portable, offline-verifiable proof. SQL consumers project a read-model; they don't replace the ledger.
 
 ### Locked design decisions (do not silently revert — see DESIGN.md)
-- **Generic workflow only** in v1. Crypto declaration/attestation, strict signing, revoke, thresholds stay in `gitdone` as policy on mailproof hooks — do **not** drag them into the core when lifting `completion.js` (extract only its workflow subset).
+- **Two generic coordination modes** — events (`completion.js`, workflow subset) + lean crypto sign-off (`crypto.js`, the parameterized `signers`/`threshold`/`requiredDocHash` engine). *Supersedes the original "generic workflow only" scope* (decisions-log 2026-05-24). The heavy attestation tail stays `gitdone` policy: `revoke`, `latest`/`accumulating` dedup (core is distinct-only), multi-doc strict manifests + `reference_docs`, attestor-PII redaction — do **not** drag these into the core.
+- **Durability-first privacy** — per-record erasure / participant self-revoke is a NO-GO (PRD §8.16); privacy = minimization (salted hashes, no plaintext at rest, SPEC §6) + lawful retention. The only erasure lever is whole-event deletion (destroys the salt). Crypto trust is hardcoded `verified`; the initiator's own reply never counts as a sign-off (anti-self-dealing).
 - **Bundled Postfix/sendmail** transport (self-hosted, opendkim signs outbound at the MTA). Not a pluggable third-party mail provider.
 
 ## Dev rules
