@@ -20,8 +20,9 @@ const { createNotary } = require('./notary');
 const { createIngest } = require('./ingest');
 const completion = require('./completion');
 const crypto = require('./crypto');
-const { parseMessage, authenticateMessage } = require('./parse');
+const { parseMessage, authenticateMessage, summariseAuth } = require('./parse');
 const { classifyTrust } = require('./classifier');
+const { fetchDkimKey, pickSignatureToArchive } = require('./dkim-archive');
 const { parseEventTag, parseAttestTag } = require('./router');
 const { preFilter, extractHeaderBlock } = require('./prefilter');
 const {
@@ -70,7 +71,10 @@ function create({
     cryptoEngine: crypto,
     parseMessage,
     authenticateMessage,
+    summariseAuth,
     classifyTrust,
+    fetchDkimKey,
+    pickSignatureToArchive,
     parseEventTag,
     parseAttestTag,
     preFilter,

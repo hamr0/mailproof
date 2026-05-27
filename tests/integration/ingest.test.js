@@ -209,6 +209,36 @@ test('ingest: anti-self-dealing — the initiators own verified reply is committ
   }
 });
 
+test('ingest: a verified reply records DKIM/auth summaries + archives the signer key on the commit', async () => {
+  const tmp = await tmpDir();
+  try {
+    const { signedEml, resolver } = await verifiedFixture({
+      domain: 'signer.example', selector: 'sel1',
+      from: 'alice@signer.example', to: `attest+cr20@${OPERATOR}`,
+    });
+    const core = create({ dataDir: tmp, domain: OPERATOR, resolver });
+    await core.createEvent({
+      id: 'cr20', type: 'crypto', activated_at: '2026-01-01T00:00:00Z',
+      signers: ['alice@signer.example'], threshold: 1,
+    });
+
+    await core.ingest(signedEml, envOf(`attest+cr20@${OPERATOR}`, 'alice@signer.example'));
+
+    const commit = await core.loadCommit('cr20', 1);
+    // Auth summaries the ledger now records (gitdone parity).
+    assert.equal(commit.dkim.signatures[0].result, 'pass');
+    assert.equal(commit.dkim.signatures[0].aligned, 'signer.example'); // mailauth: the aligned domain
+    assert.equal(commit.dkim.signatures[0].domain, 'signer.example');
+    assert.equal(commit.dkim.signatures[0].selector, 'sel1');
+    // Durable archive: the signer's public key is captured for offline re-verify.
+    assert.match(commit.dkim_key_file, /dkim_keys\/commit-001\.pem/);
+    assert.equal(commit.dkim_archive.lookup, 'sel1._domainkey.signer.example');
+    assert.ok(commit.dkim_archive.fetched_at);
+  } finally {
+    await fs.rm(tmp, { recursive: true, force: true });
+  }
+});
+
 // --- the not-committed paths (no event to attach to) ---
 
 test('ingest: humans-only prefilter drops an auto-submitted reply (routed:false, no commit)', async () => {

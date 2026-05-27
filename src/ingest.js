@@ -43,7 +43,10 @@ function createIngest({
   cryptoEngine,      // crypto.js      { shouldCount, applyReply }
   parseMessage,      // parse.js
   authenticateMessage,
+  summariseAuth,
   classifyTrust,     // classifier.js
+  fetchDkimKey,      // dkim-archive.js — durable offline-verify half
+  pickSignatureToArchive,
   parseEventTag,     // router.js
   parseAttestTag,
   preFilter,         // prefilter.js
@@ -122,9 +125,23 @@ function createIngest({
       return { routed: false, reason: 'unknown_event', eventId };
     }
 
-    // 4. Authenticate (DNS-bound — kept outside the per-event lock) → trust.
+    // 4. Authenticate (DNS-bound — kept outside the per-event lock) → trust +
+    //    the auth summaries the ledger records, plus a durable archive of the
+    //    signer's DKIM public key so the commit re-verifies offline after the
+    //    signer rotates DNS (verify+/reverify, m7c). Best-effort: a failed
+    //    archive is recorded on the commit, never fatal.
     const auth = await authenticateMessage(buf, envelope, { mtaHostname, resolver });
     const trustLevel = classifyTrust(auth);
+    const authSummary = summariseAuth(auth);
+    let dkimArchive = null;
+    const sigToArchive = pickSignatureToArchive(auth);
+    if (sigToArchive && sigToArchive.signingDomain && sigToArchive.selector) {
+      dkimArchive = await fetchDkimKey(
+        sigToArchive.signingDomain,
+        sigToArchive.selector,
+        resolver ? { resolver } : {},
+      );
+    }
     const receivedAt = new Date().toISOString();
 
     // Plaintext sender, lowercased for matching + hashing. Never persisted as
@@ -197,6 +214,11 @@ function createIngest({
         attachments: parsed.attachments,
         counted,
         count_reason: countReason,
+        dkim: authSummary.dkim,
+        spf: authSummary.spf,
+        dmarc: authSummary.dmarc,
+        arc: authSummary.arc,
+        dkimArchive,
         rawSha256: parsed.rawSha256,
         rawSize: buf.length,
       });

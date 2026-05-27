@@ -56,4 +56,34 @@ async function parseMessage(raw) {
   };
 }
 
-module.exports = { authenticateMessage, parseMessage };
+// Reduce a mailauth result to the compact auth summaries the ledger records on
+// each commit (SPEC §4): the DKIM signatures (result/domain/selector/aligned),
+// and the SPF/DMARC/ARC verdicts. Pure — interprets the auth object, no I/O.
+// `classifyTrust` (m1) collapses the same object to ONE trust level; this keeps
+// the detail an auditor needs alongside it.
+function summariseAuth(auth) {
+  const dkimResults = (auth && auth.dkim && auth.dkim.results) || [];
+  const dkim = dkimResults.length === 0 ? { result: 'none' } : {
+    signatures: dkimResults.map((r) => ({
+      result: r.status && r.status.result,
+      comment: (r.status && r.status.comment) || null,
+      domain: r.signingDomain || null,
+      selector: r.selector || null,
+      aligned: (r.status && r.status.aligned) || null,
+      algorithm: r.algo || null,
+      info: r.info || null,
+    })),
+  };
+  const spf = auth && auth.spf ? { result: auth.spf.status && auth.spf.status.result } : null;
+  const dmarc = auth && auth.dmarc ? { result: auth.dmarc.status && auth.dmarc.status.result } : null;
+  const arc = auth && auth.arc ? {
+    result: auth.arc.status && auth.arc.status.result,
+    comment: (auth.arc.status && auth.arc.status.comment) || null,
+    // ARC chain depth = the highest ARC instance number (i=N for the last
+    // seal); mailauth exposes it as `arc.i` (0 when no chain exists).
+    chain_length: (auth.arc.i && Number.isFinite(auth.arc.i)) ? auth.arc.i : 0,
+  } : null;
+  return { dkim, spf, dmarc, arc };
+}
+
+module.exports = { authenticateMessage, parseMessage, summariseAuth };

@@ -355,6 +355,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   surface + `ingest()` result shape, the accept-with-flag invariant, trust levels,
   the `composeNotification` hook, the four-pillar architecture, the
   what's-NOT-in-mailproof policy boundary, gotchas, and constraints.
+- **Verify pillar, m7c-1: durable DKIM-key archive + auth summaries on commit
+  (gitdone parity).** `src/dkim-archive.js` (lifted, generic, config-free):
+  `fetchDkimKey` (resolves `{selector}._domainkey.{domain}` via the INJECTED
+  resolver, extracts `p=`, wraps SPKI in PEM), `pickSignatureToArchive`,
+  `extractPublicKey`, `toPem`. `parse.js` gains pure **`summariseAuth(auth)`** →
+  `{ dkim, spf, dmarc, arc }` (DKIM per-signature result/domain/selector/aligned;
+  SPF/DMARC verdicts; ARC chain depth). `ingest()` now, right after authenticate
+  (still outside the event lock), computes the summaries and best-effort archives
+  the signer's public key, then records both on the commit via the existing
+  `commitReply` ctx (`dkim`/`spf`/`dmarc`/`arc` + `dkimArchive` → `dkim_key_file`
+  + `dkim_archive`). This is what lets a commit re-verify OFFLINE after the signer
+  rotates DNS — the substrate for the `verify+`/`reverify` endpoints (m7c-2/3).
+  Re-exported from `src/index.js`. Tests: `tests/unit/dkim-archive.test.js`
+  (parse/PEM/pick + `fetchDkimKey` via offline resolver, error paths) +
+  `tests/integration/ingest.test.js` (a verified reply records the DKIM summary +
+  archives the key on its commit). 203 → 209, 0 fail.
 - `src/index.js` — public entry point, re-exporting each pillar as it lands.
 - `tests/unit/classifier.test.js` — 14 behavior tests (every trust level,
   precedence ordering, alignment edges, defensive input), reconciled with

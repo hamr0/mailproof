@@ -16,7 +16,10 @@ const {
 } = require('./router');
 const { preFilter, extractHeaderBlock, rawHeader } = require('./prefilter');
 const { parseEnvelope } = require('./envelope');
-const { authenticateMessage, parseMessage } = require('./parse');
+const { authenticateMessage, parseMessage, summariseAuth } = require('./parse');
+const {
+  fetchDkimKey, pickSignatureToArchive, extractPublicKey, toPem,
+} = require('./dkim-archive');
 const {
   sendmail, buildRawMessage, sanitizeSubject, newMessageId, rfc5322Date, withSignature,
 } = require('./outbound');
@@ -58,6 +61,12 @@ module.exports = {
   // Inbound — decoding (mailauth authenticate + mailparser parse; m7a)
   authenticateMessage,
   parseMessage,
+  summariseAuth,
+  // Verify — durable DKIM-key archive (offline re-verify after key rotation; m7c)
+  fetchDkimKey,
+  pickSignatureToArchive,
+  extractPublicKey,
+  toPem,
   // Email triggers — outbound
   sendmail,
   buildRawMessage,
