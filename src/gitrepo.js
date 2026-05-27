@@ -322,6 +322,17 @@ function createGitrepo({ dataDir, ots = null } = {}) {
   }
 
   // Load a committed reply by sequence number (null if missing/unparseable).
+  // Read an archived DKIM public key (PEM) by its commit-relative path (the
+  // `dkim_key_file` recorded on the commit, e.g. 'dkim_keys/commit-001.pem').
+  // The offline verifier re-runs DKIM against this. Path is allowlisted to the
+  // dkim_keys/ dir so a crafted commit can't read arbitrary files. Returns the
+  // PEM string or null.
+  async function loadDkimPem(eventId, relPath) {
+    if (!EVENT_ID_RE.test(eventId) || !relPath) return null;
+    if (!/^dkim_keys\/commit-\d+\.pem$/.test(relPath)) return null;
+    return readFileSafe(path.join(repoPath(eventId), relPath));
+  }
+
   async function loadCommit(eventId, sequence) {
     if (!EVENT_ID_RE.test(eventId)) throw new Error(`invalid eventId: ${eventId}`);
     const abs = path.join(repoPath(eventId), 'commits', `commit-${padSeq(sequence)}.json`);
@@ -388,6 +399,7 @@ function createGitrepo({ dataDir, ots = null } = {}) {
     appendEditCommit,
     commitCompletion,
     loadCommit,
+    loadDkimPem,
     listCommits,
     syncEventJson,
     // Pure helpers (no dataDir), exposed for convenience.

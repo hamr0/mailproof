@@ -17,6 +17,7 @@ const { createEventStore } = require('./event-store');
 const { createGitrepo } = require('./gitrepo');
 const { createOts } = require('./ots');
 const { createNotary } = require('./notary');
+const { createVerifier } = require('./verifier');
 const { createIngest } = require('./ingest');
 const completion = require('./completion');
 const crypto = require('./crypto');
@@ -62,6 +63,10 @@ function create({
   const gitrepo = createGitrepo({ dataDir, ots });
   const eventStore = createEventStore({ dataDir });
   const notary = createNotary({ gitrepo, eventStore });
+  // Offline durable-verify: matches a forwarded email/doc to a commit and
+  // re-checks DKIM against the archived key (m7c-2). Uses the same injected
+  // resolver as the base for the DKIM re-check.
+  const verifier = createVerifier({ gitrepo, eventStore, resolver });
 
   // The inbound pipeline, closing over the bound pillars + decoders + engines.
   const ingest = createIngest({
@@ -104,6 +109,9 @@ function create({
     // Verify — document notary (PRD §4.1)
     verifyDocument: notary.verifyDocument,
     hashDocument: notary.hashDocument,
+    // Verify — offline durable verification: match a forwarded email/doc to a
+    // commit + re-verify DKIM against the archived key (m7c-2).
+    verify: verifier.verify,
   };
 }
 

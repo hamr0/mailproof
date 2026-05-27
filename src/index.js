@@ -38,6 +38,7 @@ const {
   CRYPTO_REASONS,
 } = require('./crypto');
 const { createNotary, hashDocument } = require('./notary');
+const { createVerifier, findMatch, reverifyDkim } = require('./verifier');
 const { create } = require('./create');
 
 module.exports = {
@@ -97,4 +98,8 @@ module.exports = {
   // Verify — document notary (PRD §4.1; factory composes gitrepo + eventStore)
   createNotary,
   hashDocument,
+  // Verify — offline durable verification (m7c-2; DKIM re-check vs archived key)
+  createVerifier,
+  findMatch,
+  reverifyDkim,
 };

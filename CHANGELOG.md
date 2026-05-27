@@ -371,6 +371,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (parse/PEM/pick + `fetchDkimKey` via offline resolver, error paths) +
   `tests/integration/ingest.test.js` (a verified reply records the DKIM summary +
   archives the key on its commit). 203 → 209, 0 fail.
+- **Verify pillar, m7c-2: offline durable verification.** `src/verifier.js` —
+  `createVerifier({ gitrepo, eventStore, resolver })` → `verify(eventId, bytes,
+  { messageId?, resolver? })`, exposed as **`core.verify()`**. Two lifted kernel
+  primitives (gitdone's verify.js/reverify.js, trimmed — report *formatting* stays
+  policy §8.6): **`findMatch`** (re-hash a candidate against committed
+  `raw_sha256` → salted `message_id_hash` → attachment hashes, one
+  `sha256:`-tagged format end to end) and **`reverifyDkim`** (re-run mailauth DKIM
+  against the ARCHIVED PEM via a resolver that serves the archived key and
+  delegates everything else to an injected base resolver — so the signature
+  re-verifies OFFLINE, even with live DNS down, after the signer rotates keys).
+  `gitrepo` gains **`loadDkimPem`** (allowlisted to `dkim_keys/commit-*.pem`).
+  Re-exported from `src/index.js` (`createVerifier`, `findMatch`, `reverifyDkim`).
+  Tests: `tests/unit/verifier.test.js` (the `findMatch` cascade + precedence) +
+  `tests/integration/verifier.test.js` (ingest a signed reply → re-verify the
+  exact bytes against the archived key with **live DNS disabled**; tampered ⇒
+  no match; attachment-hash match; unknown event). 209 → 218, 0 fail.
 - `src/index.js` — public entry point, re-exporting each pillar as it lands.
 - `tests/unit/classifier.test.js` — 14 behavior tests (every trust level,
   precedence ordering, alignment edges, defensive input), reconciled with
