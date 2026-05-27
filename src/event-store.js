@@ -404,6 +404,12 @@ function createEventStore({ dataDir } = {}) {
     createEvent,
     activateEvent,
     editEvent,
+    // Raw atomic overwrite of an existing event's master JSON. UNGUARDED — it
+    // takes no mutex, so the caller MUST already hold withEventMutex(eventId).
+    // ingest() needs this: the in-process mutex is non-reentrant, so ingest
+    // holds the lock for its whole commit→advance→persist section and cannot
+    // call the mutex-taking helpers (activateEvent/editEvent) from inside it.
+    writeEventAtomic,
     recordStepSendErrors,
     recordProofEmailMessageId,
     generateEventId,

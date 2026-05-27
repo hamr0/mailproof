@@ -17,6 +17,13 @@ const { createEventStore } = require('./event-store');
 const { createGitrepo } = require('./gitrepo');
 const { createOts } = require('./ots');
 const { createNotary } = require('./notary');
+const { createIngest } = require('./ingest');
+const completion = require('./completion');
+const crypto = require('./crypto');
+const { parseMessage, authenticateMessage } = require('./parse');
+const { classifyTrust } = require('./classifier');
+const { parseEventTag, parseAttestTag } = require('./router');
+const { preFilter, extractHeaderBlock } = require('./prefilter');
 
 // Compose a bound mailproof instance.
 //   dataDir     — root for {dataDir}/events/*.json + the per-event git repos
@@ -29,7 +36,12 @@ const { createNotary } = require('./notary');
 //                 (optional; absent ⇒ sends report {ok:false}, never throw).
 //   otsBin      — path to the `ots` binary for optional OpenTimestamps anchoring
 //                 (optional; absent ⇒ the ledger commits without OTS proofs).
-function create({ dataDir, domain, sendmailBin, otsBin } = {}) {
+//   mtaHostname — this MTA's hostname, passed to mailauth as the receiving `mta`
+//                 for the Authentication-Results it builds (optional).
+//   resolver    — a custom DNS resolver for mailauth (optional). Production uses
+//                 the system resolver (absent); tests inject an offline stub and
+//                 the future verify+ endpoint re-checks against an archived key.
+function create({ dataDir, domain, sendmailBin, otsBin, mtaHostname, resolver } = {}) {
   if (!dataDir) throw new Error('create: dataDir required');
   if (!domain) throw new Error('create: domain required');
 
@@ -42,7 +54,26 @@ function create({ dataDir, domain, sendmailBin, otsBin } = {}) {
   const eventStore = createEventStore({ dataDir });
   const notary = createNotary({ gitrepo, eventStore });
 
+  // The inbound pipeline, closing over the bound pillars + decoders + engines.
+  const ingest = createIngest({
+    eventStore,
+    gitrepo,
+    workflowEngine: completion,
+    cryptoEngine: crypto,
+    parseMessage,
+    authenticateMessage,
+    classifyTrust,
+    parseEventTag,
+    parseAttestTag,
+    preFilter,
+    extractHeaderBlock,
+    mtaHostname,
+    resolver,
+  });
+
   return {
+    // Inbound — verify→route→commit→advance pipeline (accept-with-flag)
+    ingest,
     // Sequence — create / activate / edit events (both modes; routed by `type`)
     createEvent: eventStore.createEvent,
     activateEvent: eventStore.activateEvent,
@@ -54,7 +85,6 @@ function create({ dataDir, domain, sendmailBin, otsBin } = {}) {
     // Verify — document notary (PRD §4.1)
     verifyDocument: notary.verifyDocument,
     hashDocument: notary.hashDocument,
-    // ingest() — the inbound pipeline — is added here in m7b-3 Commit B.
   };
 }
 

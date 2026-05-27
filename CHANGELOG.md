@@ -289,6 +289,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `tests/integration/create.test.js` drives the real store + ledger + notary on a
   tmp dir (validation, surface shape, both-mode `createEvent`↔`loadEvent` round
   trip, notary/gitrepo sharing the bound dataDir, otsBin-optional). 185 → 191, 0 fail.
+- **Assembly, module 7b-3 (Commit B): the `ingest()` core.** `src/ingest.js` —
+  `createIngest(deps)` returns `ingest(raw, envelope)`, the one path every inbound
+  reply takes (mailproof's answer to gitdone's NOT-lifted `receive.js main()`):
+  **prefilter** (humans-only gate; non-human mail returns `routed:false`, never
+  committed) → **decode** (`parseMessage` + `authenticateMessage`) → **classify**
+  trust → **route** by plus-tag (`event+`→workflow, `attest+`→crypto) → **load** →
+  **match** (workflow `participant_match`; crypto `signer_match` + `is_initiator`,
+  resolved from the lowercased plaintext sender, never persisted) → **commit ALWAYS**
+  (accept-with-flag: the engine's `shouldCount` verdict drives both the commit's
+  `counted`/`count_reason` and the transition) → **advance** (`applyReply`, routed
+  by mode) → **persist** master JSON + repo mirror → **`commitCompletion`** on the
+  newly-complete edge → return a summary `{ routed, mode, eventId, trustLevel,
+  committedSeq, counted, count_reason, completedStep|signatureCount, eventComplete,
+  notified }`. The whole load→commit→advance→persist section runs inside ONE
+  `withEventMutex(eventId)` (the in-process mutex is non-reentrant and `commitReply`
+  allocates its sequence by reading the dir, so concurrent replies must serialise);
+  DNS-bound auth stays outside the lock. **The trigger/send layer is deferred to
+  Commit C** — `notified` is always `[]` here.
+  - `event-store.js` now exposes **`writeEventAtomic(eventId, event)`** — the raw
+    (mutex-less) atomic master writer `ingest` needs from inside the lock it
+    already holds (the mutex-taking `activateEvent`/`editEvent` would deadlock).
+  - `create()` gains optional **`mtaHostname`** + **`resolver`** (threaded into
+    mailauth) and composes + returns `ingest`. `resolver` lets tests authenticate
+    offline; production uses the system resolver.
+  - Tests: `tests/integration/ingest.test.js` drives the real store + ledger +
+    both engines + the real mailauth/mailparser decode path offline (workflow
+    count→complete, crypto verified sign-off→lock, accept-with-flag for
+    wrong-participant + unverified-trust + initiator self-reply, prefilter drop,
+    unknown-event + tagless). New TEST-ONLY `tests/helpers/dkim.js` (per-call
+    keypair + `signDkim` + matching in-process resolver → `verified` offline).
+    191 → 198, 0 fail.
 - `src/index.js` — public entry point, re-exporting each pillar as it lands.
 - `tests/unit/classifier.test.js` — 14 behavior tests (every trust level,
   precedence ordering, alignment edges, defensive input), reconciled with
