@@ -69,12 +69,14 @@ EVENT_ID_RE  = /^[a-zA-Z0-9]+$/        // eventId is alphanumeric, validated at 
 | `stats+{eventId}@` | Initiator requests a status summary. |
 | `verify+{eventId}@` | Public, durable verification endpoint (no step component). |
 | `reverify+{eventId}-{commitSeq}@` | Contested-commit re-evaluation: submitter supplies a raw `.eml` that must validate against the DKIM key archived for `commit-{commitSeq}`. `commitSeq` is `1..99999`. |
+| `attest+{eventId}@` | Crypto sign-off reply (§3.1). No step component — sign-off events have no steps; the engine resolves the signer from the verified sender. **Promoted from a policy tag to a kernel tag with the two-mode pivot.** |
 
 ### Policy tags (gitdone, NOT lifted)
 
-`manage+`, `attest+`, `attach+`, `revoke+`, `close+`, `bundle+`. The mailproof
-router must **not** parse these — a consumer that needs them adds its own
-parser. (gitdone's `router.js` parses all of them; the lift drops these.)
+`manage+`, `attach+`, `revoke+`, `close+`, `bundle+`. The mailproof router must
+**not** parse these — a consumer that needs them adds its own parser. (gitdone's
+`router.js` parses all of them; the lift drops these. `attest+` was in this set
+until crypto sign-off became a core mode — it is now a kernel tag above.)
 
 ---
 

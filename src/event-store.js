@@ -139,6 +139,85 @@ function _applyEditPatch(event, patch) {
 
 // Bind a store to a fixed data directory. All disk-touching primitives close
 // over `dataDir`; pure helpers are returned as-is for convenience.
+// Expand the `flow` sugar into the canonical per-step `dependsOn` graph the
+// engine reads (SPEC §3). The engine has ONE eligibility model (dependsOn), so
+// `flow` exists only at creation: `sequential` → a linear chain (each step
+// depends on the prior), `parallel` → no deps, `custom` → the caller's
+// `dependsOn` kept verbatim. Per-step lifecycle defaults (status,
+// commit_sequence) are filled idempotently. Pure.
+function expandFlow(steps, flow) {
+  const list = Array.isArray(steps) ? steps : [];
+  return list.map((s, i) => {
+    let dependsOn;
+    if (flow === 'parallel') dependsOn = [];
+    else if (flow === 'custom') dependsOn = Array.isArray(s.dependsOn) ? s.dependsOn : [];
+    else dependsOn = i === 0 ? [] : [list[i - 1].id]; // sequential (default)
+    return { status: 'pending', commit_sequence: null, ...s, dependsOn };
+  });
+}
+
+// Normalize a caller's partial event into the canonical record both engines
+// read — branching on `type` (SPEC §3 workflow / §3.1 crypto). Pure (no I/O);
+// `createEvent` wraps it with the collision check + atomic write. Validation is
+// structural only (mechanism, not policy): it rejects records that could never
+// behave — an unknown type, a workflow step without a unique id, a crypto event
+// with threshold < 1 or with neither `signers` nor `open` (nothing could ever
+// count).
+function buildEventRecord(partialEvent, { now = new Date().toISOString() } = {}) {
+  if (!partialEvent || typeof partialEvent !== 'object') {
+    throw new Error('createEvent: event object required');
+  }
+  const id = partialEvent.id || generateEventId();
+  if (!EVENT_ID_RE.test(id)) {
+    throw new Error(`createEvent: invalid id '${id}' (must be alphanumeric)`);
+  }
+  const type = partialEvent.type || 'workflow';
+  if (type !== 'workflow' && type !== 'crypto') {
+    throw new Error(`createEvent: unknown type '${type}' (expected 'workflow' | 'crypto')`);
+  }
+
+  const base = {
+    ...partialEvent,
+    id,
+    type,
+    created_at: partialEvent.created_at || now,
+    salt: partialEvent.salt || generateEventSalt(),
+    status: partialEvent.status || 'open',
+    activated_at: partialEvent.activated_at || null,
+    completed_at: partialEvent.completed_at || null,
+    archived_at: partialEvent.archived_at || null,
+  };
+
+  if (type === 'workflow') {
+    const flow = partialEvent.flow || 'sequential';
+    const steps = Array.isArray(partialEvent.steps) ? partialEvent.steps : [];
+    const ids = steps.map((s) => s && s.id);
+    if (ids.some((x) => !x)) throw new Error('createEvent: every workflow step needs an id');
+    if (new Set(ids).size !== ids.length) throw new Error('createEvent: workflow step ids must be unique');
+    return { ...base, flow, steps: expandFlow(steps, flow) };
+  }
+
+  // type === 'crypto'
+  const threshold = partialEvent.threshold == null ? 1 : partialEvent.threshold;
+  if (!Number.isInteger(threshold) || threshold < 1) {
+    throw new Error(`createEvent: crypto threshold must be an integer >= 1 (got ${partialEvent.threshold})`);
+  }
+  const open = !!partialEvent.open;
+  const signers = Array.isArray(partialEvent.signers)
+    ? partialEvent.signers.map((s) => String(s).toLowerCase()) : [];
+  if (!open && signers.length === 0) {
+    throw new Error('createEvent: a crypto event needs `signers` or `open: true` (nothing could ever count)');
+  }
+  return {
+    ...base,
+    signers,
+    open,
+    threshold,
+    requiredDocHash: partialEvent.requiredDocHash || null,
+    signatures: Array.isArray(partialEvent.signatures) ? partialEvent.signatures : [],
+  };
+}
+
 function createEventStore({ dataDir } = {}) {
   if (!dataDir) throw new Error('createEventStore: dataDir required');
 
@@ -181,35 +260,20 @@ function createEventStore({ dataDir } = {}) {
   // are created pending (activated_at: null); a reply doesn't count until the
   // event is activated.
   async function createEvent(partialEvent) {
-    if (!partialEvent || typeof partialEvent !== 'object') {
-      throw new Error('createEvent: event object required');
-    }
-    let id = partialEvent.id;
-    if (!id) id = generateEventId();
-    if (!EVENT_ID_RE.test(id)) {
-      throw new Error(`createEvent: invalid id '${id}' (must be alphanumeric)`);
-    }
+    // Normalize + validate (two-mode, flow→dependsOn) purely, then persist.
+    const event = buildEventRecord(partialEvent);
 
     await fs.mkdir(eventsDir, { recursive: true });
 
     // Refuse to overwrite — an id collision is a real bug, not a silent update.
     try {
-      await fs.stat(eventFile(id));
-      throw new Error(`createEvent: event ${id} already exists`);
+      await fs.stat(eventFile(event.id));
+      throw new Error(`createEvent: event ${event.id} already exists`);
     } catch (err) {
       if (err.code !== 'ENOENT') throw err;
     }
 
-    const event = {
-      id,
-      created_at: new Date().toISOString(),
-      salt: partialEvent.salt || generateEventSalt(),
-      activated_at: null,
-      ...partialEvent,
-      id, // ensure generated id overrides any caller-supplied id field
-    };
-
-    await writeEventAtomic(id, event);
+    await writeEventAtomic(event.id, event);
     return event;
   }
 
@@ -347,4 +411,4 @@ function createEventStore({ dataDir } = {}) {
   };
 }
 
-module.exports = { createEventStore };
+module.exports = { createEventStore, buildEventRecord, expandFlow };

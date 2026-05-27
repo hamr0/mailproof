@@ -9,10 +9,12 @@
 //   stats+{eventId}@               → status summary
 //   verify+{eventId}@              → public durable-verification endpoint
 //   reverify+{eventId}-{commitSeq}@→ contested-commit re-evaluation
+//   attest+{eventId}@              → crypto sign-off reply (no step component)
 //
-// Policy tags stay in the consumer (gitdone) and are deliberately NOT parsed
-// here: manage+, attest+, attach+, revoke+, close+, bundle+. A consumer that
-// needs them adds its own parser on top.
+// `attest+` became a kernel tag with the two-mode pivot (crypto sign-off is now
+// a core mode, SPEC §2/§3.1). Policy tags still stay in the consumer (gitdone)
+// and are deliberately NOT parsed here: manage+, attach+, revoke+, close+,
+// bundle+. A consumer that needs them adds its own parser on top.
 //
 // Constraint: eventId is alphanumeric only (validated at event creation).
 // Step IDs may contain dashes; everything after the FIRST dash in an
@@ -52,6 +54,16 @@ function parseVerifyTag(recipient) {
   return { eventId: a.extension };
 }
 
+// attest+{eventId}@ — a crypto sign-off reply. No step component (sign-off
+// events have no steps); the engine resolves the signer from the verified
+// sender. eventId is alphanumeric, like every other kernel tag.
+function parseAttestTag(recipient) {
+  const a = parseAddress(recipient);
+  if (!a || a.kind !== 'attest') return null;
+  if (!EVENT_ID_RE.test(a.extension)) return null;
+  return { eventId: a.extension };
+}
+
 // reverify+{eventId}-{commitSeq}@ — contested-commit upgrade path. commitSeq
 // is the sequence of the commit being re-evaluated (e.g. 3 for
 // commit-003.json). Authentication is cryptographic — the submitter must
@@ -86,5 +98,5 @@ function parseInitiatorCommand(recipient) {
 
 module.exports = {
   parseAddress, parseEventTag, parseVerifyTag, parseReverifyTag,
-  parseInitiatorCommand,
+  parseAttestTag, parseInitiatorCommand,
 };

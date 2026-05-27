@@ -29,7 +29,7 @@ before(async () => {
     path.join(tmpDir, 'events', 'demo123.json'),
     JSON.stringify({
       id: 'demo123',
-      type: 'event',
+      type: 'workflow',
       flow: 'sequential',
       title: 'Demo',
       initiator: 'init@example.com',
@@ -69,7 +69,7 @@ test('loadEvent: rejects invalid id (path traversal guard)', async () => {
 
 test('createEvent: assigns id/created_at/salt, omits magic-link fields, pending', async () => {
   const ev = await store.createEvent({
-    type: 'event', title: 'trim', initiator: 'o@ex.com',
+    type: 'workflow', title: 'trim', initiator: 'o@ex.com',
     steps: [{ id: 's', name: 'n', participant: 'a@ex.com', status: 'pending' }],
   });
   assert.match(ev.id, /^[a-zA-Z0-9]+$/);
@@ -86,17 +86,44 @@ test('createEvent: assigns id/created_at/salt, omits magic-link fields, pending'
 
 test('createEvent: refuses to overwrite an existing id', async () => {
   const ev = await store.createEvent({
-    type: 'event', title: 'dup', initiator: 'o@ex.com',
+    type: 'workflow', title: 'dup', initiator: 'o@ex.com',
     steps: [{ id: 's', name: 'n', participant: 'a@ex.com', status: 'pending' }],
   });
   await assert.rejects(() => store.createEvent({ id: ev.id, title: 'again' }), /already exists/);
+});
+
+test('createEvent: workflow flow→dependsOn expansion persists to disk', async () => {
+  const ev = await store.createEvent({
+    type: 'workflow', flow: 'sequential', title: 'chain', initiator: 'o@ex.com',
+    steps: [{ id: 'a', participant: 'a@ex.com' }, { id: 'b', participant: 'b@ex.com' }],
+  });
+  const reloaded = await store.loadEvent(ev.id);
+  assert.equal(reloaded.flow, 'sequential');
+  assert.deepEqual(reloaded.steps[0].dependsOn, []);
+  assert.deepEqual(reloaded.steps[1].dependsOn, ['a']);
+  assert.equal(reloaded.steps[0].status, 'pending');
+});
+
+test('createEvent: crypto type normalizes + persists signers/threshold/signatures', async () => {
+  const ev = await store.createEvent({
+    type: 'crypto', title: 'board consent', initiator: 'counsel@ex.com',
+    signers: ['A@ex.com', 'b@ex.com'], threshold: 2, requiredDocHash: 'sha256:abc',
+  });
+  const reloaded = await store.loadEvent(ev.id);
+  assert.equal(reloaded.type, 'crypto');
+  assert.equal(reloaded.status, 'open');
+  assert.deepEqual(reloaded.signers, ['a@ex.com', 'b@ex.com']);
+  assert.equal(reloaded.threshold, 2);
+  assert.equal(reloaded.requiredDocHash, 'sha256:abc');
+  assert.deepEqual(reloaded.signatures, []);
+  assert.equal(reloaded.steps, undefined, 'crypto events have no steps');
 });
 
 // --- activateEvent (the pending→active gate; gitrepo sync is best-effort) ---
 
 test('activateEvent: flips pending→active and persists, idempotently', async () => {
   const ev = await store.createEvent({
-    type: 'event', title: 'act', initiator: 'o@ex.com',
+    type: 'workflow', title: 'act', initiator: 'o@ex.com',
     steps: [{ id: 's', name: 'n', participant: 'a@ex.com', status: 'pending' }],
   });
   assert.equal(ev.activated_at, null);
@@ -121,7 +148,7 @@ test('activateEvent: throws on unknown event', async () => {
 
 test('editEvent: rejects edit on completed step', async () => {
   const ev = await store.createEvent({
-    type: 'event', title: 'editfreeze', initiator: 'org@ex.com',
+    type: 'workflow', title: 'editfreeze', initiator: 'org@ex.com',
     steps: [
       { id: 'a', name: 'one', participant: 'a@ex.com', status: 'complete' },
       { id: 'b', name: 'two', participant: 'b@ex.com', status: 'pending' },
@@ -135,7 +162,7 @@ test('editEvent: rejects edit on completed step', async () => {
 
 test('editEvent: pending event — no audit commit, plain mutation', async () => {
   const ev = await store.createEvent({
-    type: 'event', title: 'pending edit', initiator: 'org@ex.com',
+    type: 'workflow', title: 'pending edit', initiator: 'org@ex.com',
     steps: [{ id: 's', name: 'do', participant: 'old@ex.com', status: 'pending' }],
   });
   const result = await store.editEvent(ev.id, {
@@ -156,7 +183,7 @@ test('editEvent: participant change clears last_send_error on that step', async 
   // activation. The activated variant (which also writes an audit commit) is
   // covered by the skipped 5b test below.
   const ev = await store.createEvent({
-    type: 'event', title: 'reset', initiator: 'org@ex.com',
+    type: 'workflow', title: 'reset', initiator: 'org@ex.com',
     steps: [
       { id: 'a', name: 'audio', participant: 'old@ex.com', status: 'pending',
         last_send_error: { reason: 'bounced', code: '5.1.1', at: '2026-01-02T00:00:00Z' } },
@@ -175,7 +202,7 @@ test('editEvent: participant change clears last_send_error on that step', async 
 
 test('editEvent: no-op when patch matches current state', async () => {
   const ev = await store.createEvent({
-    type: 'event', title: 'noop', initiator: 'org@ex.com',
+    type: 'workflow', title: 'noop', initiator: 'org@ex.com',
     steps: [{ id: 's', name: 'do', participant: 'a@ex.com', status: 'pending' }],
   });
   const result = await store.editEvent(ev.id, { steps: [{ id: 's', participant: 'a@ex.com' }] });
@@ -185,7 +212,7 @@ test('editEvent: no-op when patch matches current state', async () => {
 
 test('editEvent: rejects invalid email', async () => {
   const ev = await store.createEvent({
-    type: 'event', title: 't', initiator: 'org@ex.com',
+    type: 'workflow', title: 't', initiator: 'org@ex.com',
     steps: [{ id: 's', name: 'do', participant: 'a@ex.com', status: 'pending' }],
   });
   await assert.rejects(
@@ -196,7 +223,7 @@ test('editEvent: rejects invalid email', async () => {
 
 test('editEvent: rejects edit on completed event', async () => {
   const ev = await store.createEvent({
-    type: 'event', title: 'done', initiator: 'org@ex.com',
+    type: 'workflow', title: 'done', initiator: 'org@ex.com',
     completion: { status: 'complete', completed_at: '2026-01-01T00:00:00Z' },
     steps: [{ id: 's', name: 'do', participant: 'a@ex.com', status: 'complete' }],
   });
@@ -209,7 +236,7 @@ test('editEvent: rejects edit on completed event', async () => {
 test('editEvent: activated event writes a hashed audit commit', async () => {
   const repo = require('../../src/gitrepo').createGitrepo({ dataDir: tmpDir });
   const ev = await store.createEvent({
-    type: 'event', title: 'audit', initiator: 'org@ex.com',
+    type: 'workflow', title: 'audit', initiator: 'org@ex.com',
     salt: store.generateEventSalt(),
     steps: [{ id: 's', name: 'do', participant: 'old@ex.com', status: 'pending' }],
   });
@@ -238,7 +265,7 @@ test('editEvent: activated event writes a hashed audit commit', async () => {
 
 test('recordStepSendErrors: persists per-step error and clears on null', async () => {
   const ev = await store.createEvent({
-    type: 'event', title: 'send-err', initiator: 'org@ex.com',
+    type: 'workflow', title: 'send-err', initiator: 'org@ex.com',
     steps: [
       { id: 'a', name: 'one', participant: 'a@ex.com', status: 'pending' },
       { id: 'b', name: 'two', participant: 'b@ex.com', status: 'pending' },
@@ -261,7 +288,7 @@ test('recordStepSendErrors: persists per-step error and clears on null', async (
 
 test('recordStepSendErrors: leaves untouched steps alone, ignores unknown step ids', async () => {
   const ev = await store.createEvent({
-    type: 'event', title: 'send-err-2', initiator: 'org@ex.com',
+    type: 'workflow', title: 'send-err-2', initiator: 'org@ex.com',
     steps: [
       { id: 'a', name: 'one', participant: 'a@ex.com', status: 'pending' },
       { id: 'b', name: 'two', participant: 'b@ex.com', status: 'pending', last_send_error: { reason: 'old', code: null, at: 'x' } },
@@ -280,7 +307,7 @@ test('recordStepSendErrors: leaves untouched steps alone, ignores unknown step i
 
 test('recordProofEmailMessageId: stores once, then is idempotent', async () => {
   const ev = await store.createEvent({
-    type: 'event', title: 'proof-thread', initiator: 'org@ex.com',
+    type: 'workflow', title: 'proof-thread', initiator: 'org@ex.com',
     steps: [{ id: 's', name: 'do', participant: 'a@ex.com', status: 'pending' }],
   });
   assert.equal(await store.recordProofEmailMessageId(ev.id, '<first@ex.com>'), '<first@ex.com>');

@@ -251,6 +251,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Tests: `tests/unit/gitrepo.test.js` (kind/counted/count_reason incl. the
     invariant + defensive default) and `tests/integration/gitrepo.test.js`
     (real repo: completion.json written once, idempotent, `event_mode` absent).
+- **Assembly prep, module 7b-2: two-mode `createEvent` + the `attest+` route.**
+  - `event-store.js` gains two pure, exported helpers: **`expandFlow(steps, flow)`**
+    turns the `flow` sugar into the canonical per-step `dependsOn` graph the
+    engine reads (sequential → linear chain, parallel → no deps, custom →
+    verbatim — the engine has ONE eligibility model, so `flow` exists only at
+    creation, SPEC §3); **`buildEventRecord(partialEvent)`** normalizes a
+    caller's partial event into the canonical two-mode record (workflow §3 /
+    crypto §3.1) with structural-only validation — rejects an unknown `type`, a
+    workflow step without a unique id, a crypto event with `threshold < 1` or
+    with neither `signers` nor `open` (nothing could ever count). `createEvent`
+    is now a thin writer over `buildEventRecord` (collision check + atomic
+    write); crypto events init `signatures: []`, signers are lowercased.
+  - **`router.parseAttestTag`** (`attest+{eventId}@`, no step component) — the
+    crypto sign-off route, **promoted from a policy tag to a kernel tag** (SPEC
+    §2; deferred here from m6.7, now that it's exercised). `attach+`/`revoke+`/
+    `manage+`/`close+`/`bundle+` stay dropped.
+  - **Fixed a stale value**: the event-store integration tests used the gitdone
+    `type: 'event'` literal; the canonical mailproof value (SPEC §3, PRD §4.2,
+    every other test) is `'workflow'`. `buildEventRecord`'s type validation
+    surfaced it; the 14 occurrences are corrected.
+  - Tests: `tests/unit/event-store.test.js` (`expandFlow` 3 flows; `buildEventRecord`
+    workflow/crypto normalization + every validation throw), `tests/unit/router.test.js`
+    (`parseAttestTag` accept/reject), `tests/integration/event-store.test.js`
+    (both modes normalize + persist to disk). 174 → 185, 0 fail.
 - `src/index.js` — public entry point, re-exporting each pillar as it lands.
 - `tests/unit/classifier.test.js` — 14 behavior tests (every trust level,
   precedence ordering, alignment edges, defensive input), reconciled with

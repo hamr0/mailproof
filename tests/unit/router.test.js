@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 
 const router = require('../../src/router');
 const {
-  parseAddress, parseEventTag, parseVerifyTag, parseReverifyTag, parseInitiatorCommand,
+  parseAddress, parseEventTag, parseVerifyTag, parseReverifyTag, parseAttestTag, parseInitiatorCommand,
 } = router;
 
 // --- parseAddress ---
@@ -81,6 +81,21 @@ test('parseVerifyTag: rejects non-alphanumeric / dashed eventId', () => {
   assert.equal(parseVerifyTag('verify+abc-3@example.com'), null);
   assert.equal(parseVerifyTag('verify+..@example.com'), null);
   assert.equal(parseVerifyTag('verify+@example.com'), null);
+});
+
+// --- parseAttestTag (kernel tag since the two-mode pivot) ---
+
+test('parseAttestTag: extracts eventId, no step component', () => {
+  assert.deepEqual(parseAttestTag('attest+abc123@example.com'), { eventId: 'abc123' });
+  assert.deepEqual(parseAttestTag('ATTEST+abc123@example.com'), { eventId: 'abc123' });
+});
+
+test('parseAttestTag: rejects non-attest kinds and dashed/non-alphanumeric ids', () => {
+  assert.equal(parseAttestTag('event+abc123@example.com'), null);
+  assert.equal(parseAttestTag('verify+abc123@example.com'), null);
+  assert.equal(parseAttestTag('attest+abc-123@example.com'), null);
+  assert.equal(parseAttestTag('attest+..@example.com'), null);
+  assert.equal(parseAttestTag('attest+@example.com'), null);
 });
 
 // --- parseReverifyTag ---
