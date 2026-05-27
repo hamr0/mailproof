@@ -326,6 +326,18 @@ matches; a random observer cannot bulk rainbow-table across events because the
 salt differs per event. `sender_domain` is kept plaintext (non-PII, useful for
 at-a-glance audit).
 
+**Pseudonymous, not anonymous — and durable by design.** Because the salt is
+public and lives in the committed `event.json`, a `sender_hash` is *re-linkable*
+to a guessed address; it is pseudonymized personal data, not anonymized. This is
+deliberate: it is what makes the proof publicly, offline-verifiable. The records
+are therefore **durable by design** — there is no per-record erasure (it would
+rewrite the Merkle chain and the non-repudiation it carries; PRD §8.16). The
+**only** erasure lever is coarse and opt-in: deleting an *entire* event removes
+its repo and `event.json`, destroying that event's salt, after which any
+residual exported hashes are unlinkable (whole-event crypto-shred). Privacy
+rests on minimization (no plaintext at rest) + lawful retention, not deletion
+(PRD §8.17 for the GDPR posture).
+
 ---
 
 ## 7. Outbound RFC-822 message

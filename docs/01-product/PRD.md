@@ -224,6 +224,38 @@ When a feature request comes in, point at this table.
 | 8.13 | **TypeScript source** | JSDoc + shipped `.d.ts`, no build step — matches the family convention (`knowless`, `bareagent`). |
 | 8.14 | **Hosted SaaS** | It's a library. |
 | 8.15 | **Telemetry / phone-home of any kind** | Never. |
+| 8.16 | **Per-record erasure / participant self-revoke** (right-to-be-forgotten by deletion) | Directly attacks the three properties that *are* the product — tamper-evidence (deleting a commit rewrites every descendant SHA), non-repudiation (erasing a counted reply rewrites "3 of 3 signed" → "2 of 3"), and offline verifiability. Privacy is served instead by **minimization** (§5, SPEC §6 — no plaintext at rest, only salted hashes) and the "receipt, not secret" framing. The only erasure lever is coarse + opt-in: deleting an **entire event** also destroys its salt, making residual hashes unlinkable (whole-event crypto-shred, free with deletion). See the decisions log (2026-05-27) and §8.17. |
+
+### 8.17 Privacy & GDPR posture (engineering rationale, not legal advice)
+
+mailproof stores **no plaintext personal data at rest** — only per-event salted
+`sender_hash`es plus the plaintext `sender_domain` (SPEC §6). A salted hash is
+**pseudonymous, not anonymous** (GDPR Recital 26): the public salt lets the
+controller re-link a *guessed* address, so GDPR still applies — mailproof does
+not claim the data is out of scope. What the design *does* give the operator:
+
+- **Data-protection-by-design/default (Art. 25) + security of processing
+  (Art. 32):** minimization + salting + tamper-evident integrity are textbook.
+- **A lawful basis to *retain* (Art. 6):** an audit of who-signed-what rests on
+  legitimate interest (6(1)(f)) and/or contract (6(1)(b)) / legal obligation.
+- **Resistance to an erasure demand (Art. 17(3)(b)/(e)):** the right to be
+  forgotten **does not apply** where processing is necessary for a legal
+  obligation or for the establishment, exercise, or defence of legal claims — a
+  non-repudiable sign-off record plausibly sits there. So the records **can be
+  kept** for as long as that purpose subsists (with storage-limitation, Art.
+  5(1)(e), satisfied by a documented retention policy).
+- **Art. 11:** mailproof cannot, from the store alone, enumerate who is in it
+  (no directly-identifying data), which relaxes some subject-rights mechanics
+  unless the subject supplies the identifying address.
+
+**Boundary:** the *operator/consumer is the data controller*, not mailproof and
+not its authors. mailproof is built to *enable* a compliant deployment
+(minimization, salting-at-rest, durable lawful retention) — it does not
+*discharge* the controller's own duties (privacy notice, documented basis,
+DPIA where warranted, retention policy). Final compliance is the controller's
+determination, with counsel. Adopters needing hard per-person erasure of
+*retained* records need a different posture — the rejected "forgettability-capable"
+variant in the decisions log.
 
 ## 9. Sibling-project candidates
 
