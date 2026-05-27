@@ -38,7 +38,9 @@ const {
   CRYPTO_REASONS,
 } = require('./crypto');
 const { createNotary, hashDocument } = require('./notary');
-const { createVerifier, findMatch, reverifyDkim } = require('./verifier');
+const {
+  createVerifier, findMatch, reverifyDkim, resolveUpgrade, pickSigner,
+} = require('./verifier');
 const { create } = require('./create');
 
 module.exports = {
@@ -99,7 +101,10 @@ module.exports = {
   createNotary,
   hashDocument,
   // Verify — offline durable verification (m7c-2; DKIM re-check vs archived key)
+  // + contested-commit reverify/trust-upgrade (m7c-3)
   createVerifier,
   findMatch,
   reverifyDkim,
+  resolveUpgrade,
+  pickSigner,
 };

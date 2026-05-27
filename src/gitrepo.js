@@ -189,6 +189,65 @@ function createGitrepo({ dataDir, ots = null } = {}) {
     return max + 1;
   }
 
+  // Next sequence in the reverify-NNN.json namespace (separate from the reply
+  // commit-NNN.json namespace).
+  async function nextReverifySequence(root) {
+    let files;
+    try { files = await fs.readdir(path.join(root, 'commits')); }
+    catch { return 1; }
+    let max = 0;
+    for (const f of files) {
+      const m = f.match(/^reverify-(\d+)\.json$/);
+      if (m) { const n = parseInt(m[1], 10); if (n > max) max = n; }
+    }
+    return max + 1;
+  }
+
+  // Append an IMMUTABLE reverify record layered on top of a reply commit — it
+  // records the offline DKIM re-verify verdict against the archived key and the
+  // trust delta, and NEVER rewrites the original commit-NNN.json (the ledger is
+  // append-only; the upgrade is a new fact, not a mutation). Same OTS-stamp +
+  // git-commit shape as commitReply.
+  async function commitReverify(eventId, event, targetSequence, result, receivedAt) {
+    const { root } = await initRepoIfNeeded(eventId, event);
+    const targetSeqStr = padSeq(targetSequence);
+    const mySeq = await nextReverifySequence(root);
+    const mySeqStr = padSeq(mySeq);
+    const rel = path.join('commits', `reverify-${mySeqStr}.json`);
+    const abs = path.join(root, rel);
+
+    const metadata = {
+      schema_version: 2,
+      kind: 'reverify',
+      event_id: eventId,
+      sequence: mySeq,
+      target_commit: `commit-${targetSeqStr}.json`,
+      target_sequence: targetSequence,
+      received_at: receivedAt,
+      trust_level_before: result.trust_level_before || null,
+      trust_level_after: result.trust_level_after || null,
+      upgraded: Boolean(result.upgraded),
+      dkim_reverify: result.dkim_reverify || null,
+      evidence: result.evidence || null,
+      ots_proof_file: null,
+    };
+    const filesToAdd = [rel];
+    await writeJson(abs, metadata);
+    await maybeStamp(abs, root, path.join('ots_proofs', `reverify-${mySeqStr}.ots`), metadata, filesToAdd);
+
+    await git(root, ['add', ...filesToAdd]);
+    await git(root, ['commit', '-m',
+      `reverify ${mySeqStr}: ${eventId} target ${targetSeqStr} ${metadata.upgraded ? 'UPGRADED' : 'no-change'}`]);
+
+    return {
+      sha: await git(root, ['rev-parse', 'HEAD']),
+      sequence: mySeq,
+      file: rel,
+      target_sequence: targetSequence,
+      upgraded: metadata.upgraded,
+    };
+  }
+
   async function commitReply(eventId, event, ctx) {
     const { root } = await initRepoIfNeeded(eventId, event);
     const seq = await nextSequence(root);
@@ -396,6 +455,7 @@ function createGitrepo({ dataDir, ots = null } = {}) {
     initRepoIfNeeded,
     nextSequence,
     commitReply,
+    commitReverify,
     appendEditCommit,
     commitCompletion,
     loadCommit,

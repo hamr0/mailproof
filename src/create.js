@@ -112,6 +112,9 @@ function create({
     // Verify — offline durable verification: match a forwarded email/doc to a
     // commit + re-verify DKIM against the archived key (m7c-2).
     verify: verifier.verify,
+    // Verify — re-evaluate a contested commit + upgrade trust on a DKIM pass,
+    // persisting an immutable reverify record (m7c-3).
+    reverify: verifier.reverify,
   };
 }
 

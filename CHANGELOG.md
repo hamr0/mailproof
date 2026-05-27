@@ -387,6 +387,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `tests/integration/verifier.test.js` (ingest a signed reply → re-verify the
   exact bytes against the archived key with **live DNS disabled**; tampered ⇒
   no match; attachment-hash match; unknown event). 209 → 218, 0 fail.
+- **Verify pillar, m7c-3: contested-commit `reverify` + trust upgrade.**
+  `verifier.js` gains pure **`resolveUpgrade`** (below-`verified` → `verified` on a
+  DKIM pass; already-verified records the attempt, no upgrade) and **`pickSigner`**
+  (the commit's signing domain/selector), plus **`reverify(eventId, targetSeq,
+  rawEml, { resolver? })`** (exposed as **`core.reverify()`**): re-runs DKIM against
+  the target commit's archived key and, on a pass, upgrades the recorded trust —
+  persisting an **immutable** `reverify-NNN.json` via new **`gitrepo.commitReverify`**
+  (separate sequence namespace; the original `commit-NNN.json` is never rewritten;
+  OTS-stamped like a reply). Re-exported from `src/index.js`. Tests:
+  `tests/unit/verifier.test.js` (`resolveUpgrade`/`pickSigner`) +
+  `tests/integration/reverify.test.js` (a non-aligned commit recorded `unverified`
+  upgrades to `verified` against the archived key with live DNS disabled; an
+  already-`verified` commit records the attempt without upgrading; missing target
+  ⇒ `found:false`). 218 → 223, 0 fail.
 - `src/index.js` — public entry point, re-exporting each pillar as it lands.
 - `tests/unit/classifier.test.js` — 14 behavior tests (every trust level,
   precedence ordering, alignment edges, defensive input), reconciled with

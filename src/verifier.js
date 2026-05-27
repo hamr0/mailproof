@@ -79,11 +79,35 @@ async function reverifyDkim(rawEmail, archivedPem, expectedDomain, expectedSelec
   }
 }
 
+// Trust-upgrade policy for a contested commit (pure). A commit recorded below
+// `verified` at reception whose DKIM re-verifies against the archived key is
+// upgraded to `verified`; an already-verified commit records the attempt but
+// doesn't upgrade. (mailproof's four levels — classifier.js.)
+function resolveUpgrade(currentLevel) {
+  if (currentLevel === 'verified') return { upgradeTo: null, reason: 'already verified' };
+  if (['unverified', 'authorized', 'forwarded'].includes(currentLevel)) {
+    return { upgradeTo: 'verified', reason: null };
+  }
+  return { upgradeTo: null, reason: `unknown source trust level: ${currentLevel}` };
+}
+
+// Find the signing domain/selector in a commit's DKIM summary (pure). Prefer the
+// signature that passed at reception; else any with domain+selector (reverify is
+// exactly about the cases that didn't pass/align then).
+function pickSigner(commit) {
+  const sigs = (commit && commit.dkim && commit.dkim.signatures) || [];
+  return (
+    sigs.find((s) => s && s.result === 'pass' && s.domain && s.selector)
+    || sigs.find((s) => s && s.domain && s.selector)
+    || null
+  );
+}
+
 // Compose the verifier over the bound ledger. `resolver` is the default base
 // resolver for the DKIM re-check (create() threads its own; tests inject an
 // offline one so the archived key is the ONLY way the signature can verify).
 function createVerifier({ gitrepo, eventStore, resolver: defaultResolver = null } = {}) {
-  const { listCommits, loadDkimPem, saltedMessageIdHash } = gitrepo;
+  const { listCommits, loadCommit, loadDkimPem, commitReverify, saltedMessageIdHash } = gitrepo;
   const { loadEvent } = eventStore;
 
   // Verify candidate bytes (the original raw email, or a document) against an
@@ -122,7 +146,56 @@ function createVerifier({ gitrepo, eventStore, resolver: defaultResolver = null 
     return result;
   }
 
-  return { verify, findMatch, reverifyDkim };
+  // Re-evaluate a CONTESTED reply commit: the submitter forwards the original
+  // raw .eml, we re-run DKIM against that commit's archived key, and on a pass
+  // upgrade the recorded trust — persisting an IMMUTABLE reverify record (the
+  // original commit is never rewritten). `candidateBytes` is the raw original
+  // email. Returns the record; never throws. The reverify+ email route is the
+  // consumer's glue (the ack body is policy, §8.6).
+  async function reverify(eventId, targetSequence, candidateBytes, { resolver = defaultResolver, now = new Date().toISOString() } = {}) {
+    const target = await loadCommit(eventId, targetSequence);
+    if (!target) {
+      return { found: false, reason: `no commit-${String(targetSequence).padStart(3, '0')}.json in ${eventId}` };
+    }
+    const buf = Buffer.isBuffer(candidateBytes) ? candidateBytes : Buffer.from(String(candidateBytes || ''));
+    const before = target.trust_level || 'unverified';
+    const signer = pickSigner(target);
+    const pem = target.dkim_key_file ? await loadDkimPem(eventId, target.dkim_key_file) : null;
+
+    let verdict;
+    if (!signer) verdict = { ok: false, reason: 'no signing domain/selector in committed DKIM record' };
+    else if (!pem) verdict = { ok: false, reason: 'no archived DKIM key for this commit' };
+    else verdict = await reverifyDkim(buf, pem, signer.domain, signer.selector, { baseResolver: resolver });
+
+    const policy = resolveUpgrade(before);
+    const upgraded = Boolean(verdict.ok && policy.upgradeTo);
+    const after = upgraded ? policy.upgradeTo : before;
+
+    const record = {
+      trust_level_before: before,
+      trust_level_after: after,
+      upgraded,
+      dkim_reverify: verdict,
+      evidence: { raw_sha256: hashDocument(buf), raw_size: buf.length },
+    };
+    // Persist the immutable upgrade record onto the ledger.
+    const event = await loadEvent(eventId);
+    const commit = await commitReverify(eventId, event, targetSequence, record, now);
+
+    return {
+      found: true,
+      eventId,
+      targetSequence,
+      reverifySequence: commit.sequence,
+      upgraded,
+      trust_level_before: before,
+      trust_level_after: after,
+      policy_note: policy.reason,
+      dkim_reverify: verdict,
+    };
+  }
+
+  return { verify, reverify, findMatch, reverifyDkim, resolveUpgrade, pickSigner };
 }
 
-module.exports = { createVerifier, findMatch, reverifyDkim };
+module.exports = { createVerifier, findMatch, reverifyDkim, resolveUpgrade, pickSigner };

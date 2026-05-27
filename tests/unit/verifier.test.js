@@ -6,7 +6,7 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { findMatch } = require('../../src/verifier');
+const { findMatch, resolveUpgrade, pickSigner } = require('../../src/verifier');
 const { hashDocument } = require('../../src/notary');
 
 const RAW = Buffer.from('the original signed email bytes');
@@ -50,4 +50,23 @@ test('findMatch: raw_sha256 takes precedence over a Message-ID hit', () => {
   const m = findMatch(RAW, commits, { messageIdHash: 'sha256:mid2' });
   assert.equal(m.matchType, 'raw_email');
   assert.equal(m.commit.sequence, 1);
+});
+
+// --- reverify trust-upgrade policy ---
+
+test('resolveUpgrade: below-verified levels upgrade to verified; verified does not', () => {
+  for (const lvl of ['unverified', 'authorized', 'forwarded']) {
+    assert.deepEqual(resolveUpgrade(lvl), { upgradeTo: 'verified', reason: null });
+  }
+  assert.deepEqual(resolveUpgrade('verified'), { upgradeTo: null, reason: 'already verified' });
+  assert.equal(resolveUpgrade('bogus').upgradeTo, null);
+});
+
+test('pickSigner: prefers a pass signature, falls back to any with domain+selector, else null', () => {
+  const pass = { result: 'pass', domain: 'a.example', selector: 's1' };
+  const fail = { result: 'fail', domain: 'b.example', selector: 's2' };
+  assert.equal(pickSigner({ dkim: { signatures: [fail, pass] } }), pass);
+  assert.equal(pickSigner({ dkim: { signatures: [fail] } }), fail);     // fallback
+  assert.equal(pickSigner({ dkim: { signatures: [{ result: 'none' }] } }), null); // no domain/selector
+  assert.equal(pickSigner({}), null);
 });
