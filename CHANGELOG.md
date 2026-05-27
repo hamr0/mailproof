@@ -275,6 +275,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     workflow/crypto normalization + every validation throw), `tests/unit/router.test.js`
     (`parseAttestTag` accept/reject), `tests/integration/event-store.test.js`
     (both modes normalize + persist to disk). 174 → 185, 0 fail.
+- **Assembly, module 7b-3 (Commit A): the `create()` composition root.**
+  `src/create.js` — `create({ dataDir, domain, sendmailBin?, otsBin? })` wires
+  the four pillars into ONE bound instance: it composes `createOts` (only when
+  `otsBin` is set) → `createGitrepo` → `createEventStore` → `createNotary` over a
+  single `dataDir`, so config is injected here and nowhere else (decisions log,
+  "Config injection by bound per-pillar factories"). Returns the create/read/verify
+  surface — `createEvent`, `activateEvent`, `editEvent`, `loadEvent`, `listCommits`,
+  `loadCommit`, `verifyDocument`, `hashDocument`. `dataDir`/`domain` are required
+  (validated at composition); `sendmailBin`/`otsBin` are optional. **`ingest()` is
+  deferred to Commit B** (the inbound verify→route→commit→advance→trigger pipeline,
+  added to this same returned object). Re-exported from `src/index.js`. Tests:
+  `tests/integration/create.test.js` drives the real store + ledger + notary on a
+  tmp dir (validation, surface shape, both-mode `createEvent`↔`loadEvent` round
+  trip, notary/gitrepo sharing the bound dataDir, otsBin-optional). 185 → 191, 0 fail.
 - `src/index.js` — public entry point, re-exporting each pillar as it lands.
 - `tests/unit/classifier.test.js` — 14 behavior tests (every trust level,
   precedence ordering, alignment edges, defensive input), reconciled with

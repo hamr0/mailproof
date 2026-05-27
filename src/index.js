@@ -35,8 +35,11 @@ const {
   CRYPTO_REASONS,
 } = require('./crypto');
 const { createNotary, hashDocument } = require('./notary');
+const { create } = require('./create');
 
 module.exports = {
+  // Composition root — wires the four pillars into one bound instance (m7b-3)
+  create,
   // Verify
   classifyTrust,
   TRUST_LEVELS,
