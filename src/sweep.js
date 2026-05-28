@@ -39,6 +39,7 @@
 
 const { withEventMutex } = require('./event-mutex');
 const { isComplete } = require('./event-store');
+const { renderDefault } = require('./templates');
 
 const MS_PER_DAY = 86400 * 1000;
 
@@ -123,13 +124,12 @@ function createSweep({
         const daysIdle = Math.floor(daysOver);
         archived.push({ eventId: id, daysIdle });
         if (result.initiator) {
+          const ctx = { eventId: id, event: result, daysIdle };
           const r = await deliver({
             kind: 'archived',
             to: result.initiator,
             replyAddress: replyBaseFor(result, id),
-            subject: `Archived: ${result.title || id}`,
-            defaultBody: `"${result.title || id}" was automatically archived after ${daysIdle} days with no activity. Reply to this email to reopen it.`,
-            ctx: { eventId: id, event: result, daysIdle },
+            ...renderDefault('archived', ctx), ctx,
           });
           if (r) notified.push(r);
         }
@@ -149,13 +149,12 @@ function createSweep({
         const daysOverInt = Math.floor(daysOver);
         overdue.push({ eventId: id, daysOver: daysOverInt });
         if (result.initiator) {
+          const ctx = { eventId: id, event: result, daysOver: daysOverInt };
           const r = await deliver({
             kind: 'overdue',
             to: result.initiator,
             replyAddress: replyBaseFor(result, id),
-            subject: `Still pending: ${result.title || id}`,
-            defaultBody: `"${result.title || id}" still has steps pending after ${daysOverInt} days. Reply to send a reminder, or leave it to keep waiting.`,
-            ctx: { eventId: id, event: result, daysOver: daysOverInt },
+            ...renderDefault('overdue', ctx), ctx,
           });
           if (r) notified.push(r);
         }

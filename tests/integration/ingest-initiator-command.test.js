@@ -92,7 +92,7 @@ test('remind+: workflow — initiator triggers reminder to every eligible step (
     // The outbound is From the per-step plus-tag so a reply routes back.
     const aliceMsg = cap.captures().find((m) => /To:\s*alice@corp.example/i.test(m));
     assert.match(aliceMsg, /From:\s*event\+wf31-s1@app\.example/i);
-    assert.match(aliceMsg, /Reminder: Two-track/);
+    assert.match(aliceMsg, /Reminder — action needed: Two-track/);
   } finally {
     cap.cleanup();
     await fs.rm(tmp, { recursive: true, force: true });
@@ -133,7 +133,7 @@ test('remind+: crypto — pings every signer that has not yet signed (kind:activ
     );
     const eveMsg = cap.captures().find((m) => /To:\s*eve@signer.example/i.test(m));
     assert.match(eveMsg, /From:\s*attest\+cr30@app\.example/i);
-    assert.match(eveMsg, /Reminder: Sign/);
+    assert.match(eveMsg, /Reminder — signature requested: Sign/);
   } finally {
     cap.cleanup();
     await fs.rm(tmp, { recursive: true, force: true });

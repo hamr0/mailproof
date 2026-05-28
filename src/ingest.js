@@ -28,6 +28,7 @@
 'use strict';
 
 const { withEventMutex } = require('./event-mutex');
+const { renderDefault } = require('./templates');
 
 // Scan at most this many leading bytes for the humans-only prefilter. Headers
 // live at the top of the message; this caps work on a hostile multi-megabyte
@@ -110,41 +111,6 @@ function createIngest({
     return { ok: true };
   }
 
-  // Render the snapshot as a plain ASCII textual dump — the neutral default
-  // body for kind:'stats'. The shape mirrors gitdone's `statsBody` (a
-  // checkbox-style step list for workflow, sig-progress + signer list for
-  // crypto) so a consumer migrating from gitdone gets a recognisable default;
-  // an override via composeNotification(ctx) is the policy seam (§8.6).
-  function defaultStatsBody(s) {
-    const lines = [];
-    lines.push(`Event: ${s.title || s.eventId}`);
-    lines.push(`ID: ${s.eventId}`);
-    lines.push(`Type: ${s.type}`);
-    lines.push(`Status: ${s.status}`);
-    if (s.completed_at) lines.push(`Completed: ${s.completed_at}`);
-    if (s.archived_at)  lines.push(`Archived:  ${s.archived_at}`);
-    if (s.type === 'workflow') {
-      lines.push('');
-      lines.push('Steps:');
-      for (const step of (s.steps || [])) {
-        const tick = step.status === 'complete' ? '[x]' : '[ ]';
-        const deps = step.depends_on && step.depends_on.length
-          ? ` (after: ${step.depends_on.join(', ')})` : '';
-        const ts = step.completed_at ? ` · ${step.completed_at}` : '';
-        const name = step.name ? ` — ${step.name}` : '';
-        lines.push(`  ${tick} ${step.id}${name} → ${step.participant || '?'}${deps}${ts}`);
-      }
-    } else if (s.type === 'crypto') {
-      lines.push(`Signatures: ${s.signatureCount} / ${s.threshold}`);
-      if ((s.signers || []).length) {
-        lines.push('');
-        lines.push('Signers:');
-        for (const sig of s.signers) lines.push(`  - ${sig}`);
-      }
-    }
-    return lines.join('\n');
-  }
-
   // Build the snapshot a stats+ command exposes. KERNEL scope: just the facts
   // the consumer already has on `loadEvent(id)`, reshaped into a stable shape
   // a `composeStatsReply(snapshot)` policy can render. NO outbound here — the
@@ -216,16 +182,15 @@ function createIngest({
       // — branding stays policy §8.6). The snapshot is the source of truth for
       // both the kernel default body and any consumer override.
       const snapshot = buildStatsSnapshot(event);
+      const ctx = {
+        mode: event.type === 'crypto' ? 'crypto' : 'workflow',
+        eventId: cmd.eventId, event, snapshot,
+      };
       const r = await deliver({
         kind: 'stats',
         to: sender, // = event.initiator (we authenticated above)
         replyAddress: `stats+${cmd.eventId}@${domain}`,
-        subject: `Status: ${event.title || cmd.eventId}`,
-        defaultBody: defaultStatsBody(snapshot),
-        ctx: {
-          mode: event.type === 'crypto' ? 'crypto' : 'workflow',
-          eventId: cmd.eventId, event, snapshot,
-        },
+        ...renderDefault('stats', ctx), ctx,
       });
       return {
         routed: false, command: 'stats', eventId: cmd.eventId,
@@ -243,16 +208,14 @@ function createIngest({
         };
       }
       const notified = [];
-      const title = event.title || cmd.eventId;
       if (event.type === 'workflow') {
         for (const step of workflowEngine.eligibleSteps(event)) {
           if (!step.participant) continue;
+          const ctx = { mode: 'workflow', eventId: cmd.eventId, event, step, reminder: true };
           const r = await deliver({
             kind: 'advance', to: step.participant,
             replyAddress: `event+${cmd.eventId}-${step.id}@${domain}`,
-            subject: `Reminder: ${title}`,
-            defaultBody: `A reminder: a step in "${title}" is still waiting for you. Reply to this email to confirm your part.`,
-            ctx: { mode: 'workflow', eventId: cmd.eventId, event, step, reminder: true },
+            ...renderDefault('advance', ctx), ctx,
           });
           if (r) notified.push(r);
         }
@@ -267,12 +230,11 @@ function createIngest({
         for (const addr of (Array.isArray(event.signers) ? event.signers : [])) {
           const h = saltedSenderHash(String(addr).toLowerCase(), event.salt);
           if (signed.has(h)) continue;
+          const ctx = { mode: 'crypto', eventId: cmd.eventId, event, reminder: true };
           const r = await deliver({
             kind: 'activation', to: addr,
             replyAddress: `attest+${cmd.eventId}@${domain}`,
-            subject: `Reminder: ${title}`,
-            defaultBody: `A reminder: your signature is still requested on "${title}". Reply to this email to sign.`,
-            ctx: { mode: 'crypto', eventId: cmd.eventId, event, reminder: true },
+            ...renderDefault('activation', ctx), ctx,
           });
           if (r) notified.push(r);
         }
@@ -321,16 +283,12 @@ function createIngest({
 
     const notified = [];
     if (failed.length && event.initiator) {
-      const title = event.title || eventId;
-      const who = failedRecipients.length ? ` to ${failedRecipients.join(', ')}` : '';
-      const why = failed[0] && failed[0].diagnostic ? ` The mail server said: ${failed[0].diagnostic}` : '';
+      const ctx = { mode: event.type === 'crypto' ? 'crypto' : 'workflow', eventId, event, stepId, failed };
       const r = await deliver({
         kind: 'bounce',
         to: event.initiator,
         replyAddress: replyBaseFor(event, eventId),
-        subject: `Delivery problem: ${title}`,
-        defaultBody: `A notification for "${title}" could not be delivered${who}.${why}`,
-        ctx: { mode: event.type === 'crypto' ? 'crypto' : 'workflow', eventId, event, stepId, failed },
+        ...renderDefault('bounce', ctx), ctx,
       });
       if (r) notified.push(r);
     }
@@ -539,31 +497,28 @@ function createIngest({
     const notified = [];
     if (outcome.counted) {
       const ev = outcome.postEvent;
-      const title = (ev && ev.title) || eventId;
 
       if (mode === 'workflow' && outcome.completedStep && !outcome.eventComplete) {
         const newlyEligible = workflowEngine.eligibleSteps(ev).filter(
           (s) => s && s.participant && (s.dependsOn || []).includes(outcome.completedStep)
         );
         for (const step of newlyEligible) {
+          const ctx = { mode, eventId, event: ev, step };
           const r = await deliver({
             kind: 'advance',
             to: step.participant,
             replyAddress: `event+${eventId}-${step.id}@${domain}`,
-            subject: `Action needed: ${title}`,
-            defaultBody: `A step is ready for you in "${title}". Reply to this email to confirm your part.`,
-            ctx: { mode, eventId, event: ev, step },
+            ...renderDefault('advance', ctx), ctx,
           });
           if (r) notified.push(r);
         }
       } else if (mode === 'crypto') {
+        const ctx = { mode, eventId, event: ev, signatureCount: outcome.signatureCount };
         const r = await deliver({
           kind: 'ack',
           to: sender,
           replyAddress: `attest+${eventId}@${domain}`,
-          subject: `Recorded: ${title}`,
-          defaultBody: `Your verified reply to "${title}" has been recorded.`,
-          ctx: { mode, eventId, event: ev, signatureCount: outcome.signatureCount },
+          ...renderDefault('ack', ctx), ctx,
         });
         if (r) notified.push(r);
       }
@@ -573,13 +528,12 @@ function createIngest({
         // Read the just-finalised ledger so the completion composer can render
         // a per-reply receipt block (PRD §0.1.4 "the proof comes to the user").
         const { countedCommits, receipts } = await completionReceipts(eventId);
+        const ctx = { mode, eventId, event: ev, countedCommits, receipts };
         const r = await deliver({
           kind: 'completion',
           to: ev.initiator,
           replyAddress: `${base}@${domain}`,
-          subject: `Complete: ${title}`,
-          defaultBody: `"${title}" is now complete.`,
-          ctx: { mode, eventId, event: ev, countedCommits, receipts },
+          ...renderDefault('completion', ctx), ctx,
         });
         if (r) notified.push(r);
       }

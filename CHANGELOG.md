@@ -17,6 +17,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Centralised default email surface (`src/templates.js`).** One pure
+  `renderDefault(kind, ctx) → { subject, defaultBody }` (+ `statsBody`) owns the
+  neutral default subject/body for all 10 emitted occasions (`activation`,
+  `advance`, `reassigned`, `stats`, `bounce`, `ack`, `completion`, `archived`,
+  `overdue`, `proof_anchored`). Producers (`ingest`/`create`/`sweep`/
+  `proof-anchor`) spread it into `deliver()` instead of inlining copy at each
+  call site — mirrors the organisation gitdone reached with `email-bodies.js`,
+  but the copy stays **generic and brand-free** (no product tag / host names /
+  verify-CLI). The `composeNotification(ctx)` override seam is unchanged, so
+  branded prose remains policy (§8.6 intact). New unit suite
+  `tests/unit/templates.test.js` (8 tests) pins the per-kind shape + the
+  brand-free invariant. See decisions-log 2026-05-28.
 - **P2 Step 1: gitdone→mailproof boundary audit.** Read-only API audit
   (`docs/03-logs/audit-p2-step1-gitdone-boundary.md`) classifying every
   `gitdone/app/src/` module + `bin/receive.js` into Bucket A
@@ -27,6 +39,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (3-5 weeks).
 
 ### Changed
+- **Neutral default email copy upgraded** (richer, still generic) as part of
+  the `templates.js` lift. Notably the two `remind+` reuse-paths now read
+  `Reminder — action needed: <title>` / `Reminder — signature requested:
+  <title>` (was `Reminder: <title>`); `defaultStatsBody` moved out of
+  `ingest.js` and the inline bounce recipient/diagnostic rendering moved into
+  the template (producers pass `ctx.failed`). No public-API change; any
+  consumer overriding bodies via `composeNotification` is unaffected.
 - **P2 validation runs as a non-merging gitdone branch (PRD §7.1, decisions-log
   2026-05-28).** Revises the canonical "P2 = refactor gitdone onto mailproof"
   reading of DESIGN.md's phasing. Two steps: (1) read-only API audit producing

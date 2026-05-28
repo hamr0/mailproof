@@ -30,6 +30,7 @@
 'use strict';
 
 const { withEventMutex } = require('./event-mutex');
+const { renderDefault } = require('./templates');
 
 function createProofAnchor({
   eventStore, gitrepo, ots, deliver, domain = null,
@@ -102,15 +103,13 @@ function createProofAnchor({
       let notifiedRec = null;
       if (locked.notify && locked.notify.initiator) {
         const ev = locked.notify;
-        const title = ev.title || eventId;
         const block = (anchored.find((a) => a.blockHeight) || {}).blockHeight || null;
+        const ctx = { mode: ev.type === 'crypto' ? 'crypto' : 'workflow', eventId, event: ev, blockHeight: block, anchoredCount: anchored.length, newlyAnchored };
         notifiedRec = await deliver({
           kind: 'proof_anchored',
           to: ev.initiator,
           replyAddress: replyBaseFor(ev, eventId),
-          subject: `Proof anchored: ${title}`,
-          defaultBody: `The Bitcoin attestation for "${title}" has been folded into the ledger${block ? ` (block ${block})` : ''}. Each commit's .ots proof is now offline-verifiable.`,
-          ctx: { mode: ev.type === 'crypto' ? 'crypto' : 'workflow', eventId, event: ev, blockHeight: block, anchoredCount: anchored.length, newlyAnchored },
+          ...renderDefault('proof_anchored', ctx), ctx,
         });
         if (notifiedRec) summary.notified.push(notifiedRec);
       }

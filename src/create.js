@@ -19,6 +19,7 @@ const { createOts } = require('./ots');
 const { createNotary } = require('./notary');
 const { createVerifier } = require('./verifier');
 const { createNotifier } = require('./notify');
+const { renderDefault } = require('./templates');
 const { createIngest } = require('./ingest');
 const { createSweep } = require('./sweep');
 const { createProofAnchor } = require('./proof-anchor');
@@ -138,27 +139,24 @@ function create({
   async function notifyActivation(ev) {
     const out = [];
     const eventId = ev.id;
-    const title = ev.title || eventId;
     if (ev.type === 'crypto') {
       for (const signer of (Array.isArray(ev.signers) ? ev.signers : [])) {
+        const ctx = { mode: 'crypto', eventId, event: ev };
         const r = await deliver({
           kind: 'activation', to: signer,
           replyAddress: `attest+${eventId}@${domain}`,
-          subject: `Signature requested: ${title}`,
-          defaultBody: `Your signature is requested on "${title}". Reply to this email to sign.`,
-          ctx: { mode: 'crypto', eventId, event: ev },
+          ...renderDefault('activation', ctx), ctx,
         });
         if (r) out.push(r);
       }
     } else {
       for (const step of completion.eligibleSteps(ev)) {
         if (!step.participant) continue;
+        const ctx = { mode: 'workflow', eventId, event: ev, step };
         const r = await deliver({
           kind: 'activation', to: step.participant,
           replyAddress: `event+${eventId}-${step.id}@${domain}`,
-          subject: `Action needed: ${title}`,
-          defaultBody: `A step is ready for you in "${title}". Reply to this email to confirm your part.`,
-          ctx: { mode: 'workflow', eventId, event: ev, step },
+          ...renderDefault('activation', ctx), ctx,
         });
         if (r) out.push(r);
       }
@@ -186,12 +184,11 @@ function create({
       for (const c of res.changes) {
         if (c.field !== 'participant' || !c.to || !eligibleIds.has(c.step_id)) continue;
         const step = eventStore.findStep(ev, c.step_id);
+        const ctx = { mode: 'workflow', eventId, event: ev, step };
         const r = await deliver({
           kind: 'reassigned', to: c.to,
           replyAddress: `event+${eventId}-${c.step_id}@${domain}`,
-          subject: `Action needed: ${ev.title || eventId}`,
-          defaultBody: `A step in "${ev.title || eventId}" has been assigned to you. Reply to this email to confirm your part.`,
-          ctx: { mode: 'workflow', eventId, event: ev, step },
+          ...renderDefault('reassigned', ctx), ctx,
         });
         if (r) notified.push(r);
       }
