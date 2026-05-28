@@ -43,6 +43,7 @@ const {
 } = require('./verifier');
 const { createNotifier } = require('./notify');
 const { createSweep, referenceClockMs, isActive } = require('./sweep');
+const { createProofAnchor } = require('./proof-anchor');
 const {
   isDeliveryStatusReport, extractDsn, permanentFailures, parseDeliveryStatusBody,
 } = require('./dsn');
@@ -120,6 +121,8 @@ module.exports = {
   createSweep,
   referenceClockMs,
   isActive,
+  // Email triggers — OTS proof-anchor pass + the `proof_anchored` occasion (m7d-4)
+  createProofAnchor,
   // Email triggers — inbound bounce (DSN) parser → the `bounce` occasion (m7d-3)
   isDeliveryStatusReport,
   extractDsn,

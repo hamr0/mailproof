@@ -522,6 +522,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `tests/integration/ingest-bounce.test.js` (4 — route + step-error + notify +
     not-committed; transient no-op; untagged/unknown-event reported-not-routed;
     crypto event notifies without a step error). **259 → 273, 0 fail.**
+- **Triggers pillar — m7d-4: OTS proof anchoring + the `proof_anchored` occasion.**
+  `create()` exposes `upgradeProofs({ now? })` — a consumer-scheduled pass that
+  walks every event's repo, drives **m7c-4's `ots.upgradeProof`** across each
+  pending `.ots` proof, records the anchored state into the ledger, and emits
+  `proof_anchored` to the initiator when an event newly crosses fully-Bitcoin-
+  anchored. Only stood up when `otsBin` is configured (otherwise `undefined`).
+  - **Ledger recording (`gitrepo.commitProofUpgrade`)** — patches the sibling
+    commit JSON with `ots_anchored: true` + `ots_anchored_at` + (when known)
+    `ots_block`, git-adds the upgraded proofs AND the patched JSONs, writes ONE
+    summary commit per event. Idempotent backfill: a re-run on already-anchored
+    proofs writes nothing if nothing actually changed. Plus
+    `gitrepo.listProofFiles(eventId)` (basename map `commit-NNN.ots ↔
+    commit-NNN.json`, `reverify-NNN.ots ↔ reverify-NNN.json`, `completion.ots ↔
+    completion.json`).
+  - **`proof_anchored` once-only** — gitdone's `.anchored-notified` SENTINEL
+    FILE becomes a top-level `event.ots_proof_anchored_notified_at` flag (same
+    store as the sweep flags — one source of truth). Gated on `status==='complete'`
+    (collapses gitdone's `completion.status || threshold_reached_at`), at least
+    one proof NEWLY anchored this run (a pure backfill never re-sends), and no
+    proofs still pending.
+  - **Concurrency:** the slow per-file `ots upgrade` runs OUTSIDE the per-event
+    mutex (talks to calendar servers); the ledger commit + the flag flip happen
+    INSIDE one mutex section per event, so they can't race with a concurrent
+    ingest writing into the same `.git`. The send fires outside the lock.
+  - **Ported** from gitdone's `app/bin/ots-upgrade.js` `processRepo`/`run` +
+    `notifyProofAnchored` gate, trimmed to the kernel boundary: no `bin/` cron
+    glue, no notify-bodies (the `composeNotification` seam owns the body).
+  - Tests: `tests/integration/proof-anchor.test.js` (6 — pending no-op, fresh
+    anchor → patch + emit + idempotent re-run, mixed proofs hold the notify
+    until all anchored, incomplete event records but doesn't emit, no-repo
+    skipped, composition guards). Stub-`ots` injection exercises the
+    orchestration without subprocesses (the real `upgradeProof` is m7c-4's
+    integration test). **SPEC §4 corrected** (the OTS section no longer says
+    "the consumer's scheduler" — `upgradeProofs` is the kernel mechanism).
+    **273 → 279, 0 fail.**
 
 ### Fixed
 - **`editEvent` completeness guard reads top-level `status`.** It refused edits

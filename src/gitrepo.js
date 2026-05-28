@@ -450,6 +450,89 @@ function createGitrepo({ dataDir, ots = null } = {}) {
     return { synced: true, sha: await git(root, ['rev-parse', 'HEAD']) };
   }
 
+  // List every OTS proof file in an event's repo, paired with its sibling
+  // commit JSON path (commit-NNN.ots ↔ commit-NNN.json, reverify-NNN.ots ↔
+  // reverify-NNN.json, completion.ots ↔ completion.json). Returns absolute and
+  // repo-relative paths for both, so the proof-anchor pass (m7d-4) can upgrade
+  // the proof in place and then patch the sibling JSON's anchored-state fields.
+  // Returns [] when the repo has no ots_proofs dir (event with no proofs yet).
+  async function listProofFiles(eventId) {
+    if (!EVENT_ID_RE.test(eventId)) return [];
+    const root = repoPath(eventId);
+    const proofsDir = path.join(root, 'ots_proofs');
+    let entries;
+    try { entries = await fs.readdir(proofsDir); }
+    catch { return []; }
+    return entries
+      .filter((e) => e.endsWith('.ots'))
+      .map((name) => {
+        const base = name.replace(/\.ots$/, '');
+        const proofRel = path.join('ots_proofs', name);
+        const jsonRel = path.join('commits', `${base}.json`);
+        return {
+          name,
+          base,
+          proofRel,
+          jsonRel,
+          proofAbs: path.join(root, proofRel),
+          jsonAbs: path.join(root, jsonRel),
+        };
+      });
+  }
+
+  // Record the result of an `ots upgrade` pass over an event's proofs into the
+  // ledger (m7d-4): patches each sibling commit JSON with `ots_anchored: true`
+  // (+ ots_anchored_at / optional ots_block), git-adds the upgraded .ots files
+  // AND the patched JSONs, and writes ONE summary commit. anchored = [{ proofRel,
+  // jsonRel, blockHeight? }]. Returns { committed: bool, sha?, patched }.
+  // Skips JSONs that are already fully anchored with the same block (idempotent
+  // backfill) and skips missing-sibling JSONs (no-ops for them).
+  async function commitProofUpgrade(eventId, { anchored = [], stamp = new Date().toISOString() } = {}) {
+    if (!EVENT_ID_RE.test(eventId)) throw new Error(`invalid eventId: ${eventId}`);
+    const root = repoPath(eventId);
+    if (!await dirExists(path.join(root, '.git'))) return { committed: false, reason: 'no_repo', patched: [] };
+    if (!Array.isArray(anchored) || anchored.length === 0) return { committed: false, reason: 'nothing_to_anchor', patched: [] };
+
+    const filesToAdd = [];
+    const patched = [];
+    for (const a of anchored) {
+      const proofAbs = path.join(root, a.proofRel);
+      const jsonAbs = path.join(root, a.jsonRel);
+      // Always stage the upgraded proof (its bytes have changed in place).
+      try {
+        const st = await fs.stat(proofAbs);
+        if (st.isFile()) filesToAdd.push(a.proofRel);
+      } catch { /* missing proof file → skip */ continue; }
+      // Patch the sibling JSON if it exists; idempotent.
+      let raw;
+      try { raw = await fs.readFile(jsonAbs, 'utf8'); }
+      catch { continue; }
+      let obj;
+      try { obj = JSON.parse(raw); }
+      catch { continue; }
+      let dirty = false;
+      if (obj.ots_anchored !== true) { obj.ots_anchored = true; dirty = true; }
+      if (!obj.ots_anchored_at) { obj.ots_anchored_at = stamp; dirty = true; }
+      if (a.blockHeight && !obj.ots_block) { obj.ots_block = a.blockHeight; dirty = true; }
+      if (dirty) {
+        // Preserve the canonical formatting the rest of the ledger uses.
+        await fs.writeFile(jsonAbs, JSON.stringify(obj, null, 2) + '\n');
+        filesToAdd.push(a.jsonRel);
+        patched.push(a.jsonRel);
+      }
+    }
+    if (filesToAdd.length === 0) return { committed: false, reason: 'nothing_changed', patched: [] };
+
+    await git(root, ['add', ...filesToAdd]);
+    // No-op-commit guard: if nothing is actually staged vs HEAD (e.g. a proof
+    // was upgraded but to byte-identical contents), skip the commit.
+    const staged = (await git(root, ['diff', '--cached', '--name-only'])).split('\n').filter(Boolean);
+    if (staged.length === 0) return { committed: false, reason: 'no_change', patched };
+    const msg = `ots upgrade: ${anchored.length} proof(s) anchored to Bitcoin`;
+    await git(root, ['commit', '-m', msg]);
+    return { committed: true, sha: await git(root, ['rev-parse', 'HEAD']), patched };
+  }
+
   return {
     repoPath,
     initRepoIfNeeded,
@@ -461,6 +544,8 @@ function createGitrepo({ dataDir, ots = null } = {}) {
     loadCommit,
     loadDkimPem,
     listCommits,
+    listProofFiles,
+    commitProofUpgrade,
     syncEventJson,
     // Pure helpers (no dataDir), exposed for convenience.
     buildCommitMetadata,

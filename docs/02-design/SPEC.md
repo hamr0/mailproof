@@ -301,8 +301,12 @@ re-verification against an archived PEM; never mutates the target commit).
    (runs `ots upgrade` in place — the proof file's sha256 *changing* is the
    authoritative "now anchored" signal, never `ots verify`). The anchored block
    is read offline with `readBlockHeight(abs)` (`ots info`, no network). Driving
-   the upgrade across an event's proofs and recording the anchored state into
-   the ledger (the `proof_anchored` occasion) is the consumer's scheduler.
+   `create().upgradeProofs({ now? })` (m7d-4, present when `otsBin` is set)
+   drives the upgrade across every event's proofs, patches each sibling commit
+   JSON with `ots_anchored`/`ots_anchored_at`/`ots_block` via
+   `gitrepo.commitProofUpgrade`, and emits the `proof_anchored` occasion on a
+   fresh full-anchor transition. The schedule is the consumer's; the
+   orchestration is the kernel's.
 3. **Serialization invariant.** Every writer of `event.json` MUST emit
    `JSON.stringify(event, null, 2) + '\n'`. The repo's no-op-sync check is
    **byte-strict**: identical bytes ⇒ no commit. Any drift (indent, key order,

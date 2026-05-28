@@ -100,6 +100,7 @@ the same `dataDir`. There are no env-var defaults (that's the consumer's glue).
 |---|---|
 | `ingest(raw, envelope)` | The inbound pipeline. `raw` = RFC-822 Buffer; `envelope` = `{ sender, recipient, clientIp, clientHelo }`. Returns the result summary (below). |
 | `sweep({ now? })` | The time-driven pass (run it on your own schedule). Scans every event and emits the `overdue` (idle nudge) + `archived` (auto-archive transition) occasions through the same notifier. Returns `{ overdue, archived, notified }`. Thresholds via `create()`'s `overdueDays`/`archiveDays` (14/45). |
+| `upgradeProofs({ now? })` | Drive the Bitcoin half of OTS: walk every event's `.ots` proofs, run `ots upgrade`, record anchored state into the ledger (`ots_anchored`/`ots_anchored_at`/`ots_block` on each commit JSON), and emit the `proof_anchored` occasion when an event newly crosses fully-anchored. Present only when `otsBin` is configured; schedule it on its own cadence (calendar network). |
 | `createEvent(partial)` | Create + persist an event (both modes). Created **pending** (`activated_at: null`). |
 | `activateEvent(id)` | Mark activated + fire the `activation` kickoff to initially-eligible participants/signers (once). `{ event, alreadyActive, notified }`. **Replies don't count until activated.** |
 | `editEvent(id, patch)` | Patch a non-finalised event; writes an audit commit if activated; re-notifies (`reassigned`) a participant moved onto a currently-eligible step. Returns `{ event, prev, changes, commitSequence, notified }`. |
@@ -252,14 +253,16 @@ lock, and reports them in `notified`:
 `activateEvent`/`editEvent` add the **organiser-action** occasions: `kind:'activation'`
 (first activation → ping initially-eligible participants / listed signers) and
 `kind:'reassigned'` (a participant moved onto a currently-eligible step). Both
-append a `notified` array to their return. And an inbound **DSN bounce** (a
+append a `notified` array to their return. An inbound **DSN bounce** (a
 notification that failed permanently downstream) is recognised by `ingest()`,
 routed to the event by its plus-tag return path, recorded as a per-step send
 error, and surfaced to the initiator as `kind:'bounce'` (operational — never
 committed to the ledger; `ingest` returns `{ routed:false, bounce:true, eventId,
-stepId, failedRecipients, notified }`). Non-counting replies send nothing. Each
-message's `From` is the plus-tagged reply address so the recipient's reply
-routes straight back.
+stepId, failedRecipients, notified }`). And `upgradeProofs()` emits
+`kind:'proof_anchored'` to the initiator on a fresh full-anchor transition (a
+complete event whose every `.ots` proof has folded in the Bitcoin attestation),
+once. Non-counting replies send nothing. Each message's `From` is the
+plus-tagged reply address so the recipient's reply routes straight back.
 
 ```js
 composeNotification({ kind, mode?, eventId, event, to, replyAddress, step?, signatureCount?, daysOver?, daysIdle? }) {

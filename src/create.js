@@ -21,6 +21,7 @@ const { createVerifier } = require('./verifier');
 const { createNotifier } = require('./notify');
 const { createIngest } = require('./ingest');
 const { createSweep } = require('./sweep');
+const { createProofAnchor } = require('./proof-anchor');
 const completion = require('./completion');
 const crypto = require('./crypto');
 const { parseMessage, authenticateMessage, summariseAuth } = require('./parse');
@@ -117,6 +118,15 @@ function create({
     eventStore, gitrepo, deliver, domain, overdueDays, archiveDays,
   });
 
+  // The proof-anchor pass (m7d-4): walks every event repo, drives ots.upgrade
+  // across its pending .ots proofs, records anchored state into the ledger, and
+  // emits the `proof_anchored` occasion when the event newly crosses fully-
+  // anchored. Only stood up when otsBin is configured (no ots → no proofs to
+  // anchor → upgradeProofs is undefined on the surface).
+  const upgradeProofs = ots
+    ? createProofAnchor({ eventStore, gitrepo, ots, deliver, domain }).upgradeProofs
+    : undefined;
+
   // Organiser-action occasions (m7d-2). The store's activate/edit stay pure; the
   // bound versions below run the transition, then emit the resulting occasions
   // through the same deliver(). Both append `notified` to the store's return.
@@ -193,6 +203,9 @@ function create({
     ingest,
     // Time-driven — overdue nudge + auto-archive occasions (m7d-1)
     sweep,
+    // Time-driven — OTS proof anchoring + the `proof_anchored` occasion
+    // (m7d-4). Present only when otsBin is configured; undefined otherwise.
+    upgradeProofs,
     // Sequence — create / activate / edit events (both modes; routed by `type`).
     // activate/edit emit the activation + reassigned occasions (m7d-2).
     createEvent: eventStore.createEvent,
