@@ -64,7 +64,32 @@ function createIngest({
   resolver = null,
 } = {}) {
   const { loadEvent, findStep, senderMatchesStep, writeEventAtomic, recordStepSendErrors } = eventStore;
-  const { commitReply, commitCompletion, syncEventJson, saltedSenderHash } = gitrepo;
+  const { commitReply, commitCompletion, syncEventJson, saltedSenderHash, listCommits } = gitrepo;
+
+  // Derive the lightweight receipts a completion-edge composer can render —
+  // ONE entry per counted reply commit, sourced from the ledger we just
+  // finalised (one source of truth: the audit trail IS the proof). Senders
+  // stay salted-hashed (SPEC §6 — no plaintext at rest), so receipts carry
+  // sender_hash + sender_domain only, matching what the commit records.
+  // Best-effort: a read failure yields an empty list, never throws — the
+  // completion notice must not be undone by a ledger read.
+  async function completionReceipts(eventId) {
+    let commits;
+    try { commits = await listCommits(eventId); }
+    catch { return { countedCommits: 0, receipts: [] }; }
+    const counted = commits.filter((c) => c && c.kind === 'reply' && c.counted === true);
+    return {
+      countedCommits: counted.length,
+      receipts: counted.map((c) => ({
+        sequence: c.sequence,
+        received_at: c.received_at,
+        step_id: c.step_id || null,
+        sender_domain: c.sender_domain || null,
+        sender_hash: c.sender_hash || null,
+        trust_level: c.trust_level || null,
+      })),
+    };
+  }
 
   // The plus-tagged reply From for an event (workflow → event+, crypto → attest+).
   const replyBaseFor = (event, eventId) =>
@@ -349,13 +374,16 @@ function createIngest({
 
       if (outcome.eventComplete && ev && ev.initiator) {
         const base = mode === 'workflow' ? `event+${eventId}` : `attest+${eventId}`;
+        // Read the just-finalised ledger so the completion composer can render
+        // a per-reply receipt block (PRD §0.1.4 "the proof comes to the user").
+        const { countedCommits, receipts } = await completionReceipts(eventId);
         const r = await deliver({
           kind: 'completion',
           to: ev.initiator,
           replyAddress: `${base}@${domain}`,
           subject: `Complete: ${title}`,
           defaultBody: `"${title}" is now complete.`,
-          ctx: { mode, eventId, event: ev },
+          ctx: { mode, eventId, event: ev, countedCommits, receipts },
         });
         if (r) notified.push(r);
       }

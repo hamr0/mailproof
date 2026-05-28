@@ -557,6 +557,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     integration test). **SPEC §4 corrected** (the OTS section no longer says
     "the consumer's scheduler" — `upgradeProofs` is the kernel mechanism).
     **273 → 279, 0 fail.**
+- **Triggers pillar — m7d-5a: richer `completion` ctx (ledger-sourced receipts).**
+  The completion-edge `composeNotification(ctx)` now sees `countedCommits`
+  (number) + `receipts` (one entry per counted reply commit, ordered by
+  sequence). Each receipt carries `{sequence, received_at, step_id,
+  sender_domain, sender_hash, trust_level}` — enough to render the proof block
+  the durable completion email is meant to embed (PRD §0.1.4 "the proof comes
+  to the user"). **One source of truth:** receipts are read straight from the
+  per-event git ledger we just finalised (`gitrepo.listCommits` → filter to
+  `kind:'reply' && counted`), so the kernel never builds a parallel index of
+  counted replies. **Privacy posture preserved (SPEC §6):** senders stay
+  salted-hashed in flight — receipts expose `sender_hash` + `sender_domain`,
+  never plaintext. Best-effort: a ledger read failure yields empty receipts so
+  the completion notification is never undone by a read. Lifted from gitdone's
+  `filterCountingCommits` (`app/bin/receive.js`) in spirit; trimmed to the
+  kernel boundary (workflow-vs-crypto filtering collapses because the commit
+  metadata already carries `counted`/`kind:'reply'` — gitdone's per-mode
+  step/threshold/attestor walking is policy). Tests:
+  `tests/integration/ingest-triggers.test.js` +2 (workflow 2-step completion
+  carries 2 receipts ordered s1/s2; crypto sign-off carries 1 receipt with
+  `step_id:null`). **279 → 281, 0 fail.**
 
 ### Fixed
 - **`editEvent` completeness guard reads top-level `status`.** It refused edits

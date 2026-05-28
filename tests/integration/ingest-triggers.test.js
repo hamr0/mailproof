@@ -202,3 +202,94 @@ test('triggers: with no sendmailBin, sends degrade to ok:false without throwing'
     await fs.rm(tmp, { recursive: true, force: true });
   }
 });
+
+test('triggers: completion ctx exposes countedCommits + per-reply receipts from the ledger', async () => {
+  // m7d-5a — the completion-edge composer needs enough to render a "proof
+  // block" (PRD §0.1.4 "the proof comes to the user"). The kernel sources
+  // those receipts from the ledger we just finalised — one source of truth,
+  // sender stays hashed (SPEC §6).
+  const tmp = await tmpDir();
+  const cap = fakeSendmail();
+  try {
+    const signer = verifiedSigner({ domain: 'corp.example' });
+    const seenCtx = [];
+    const core = create({
+      dataDir: tmp, domain: OPERATOR, resolver: signer.resolver, sendmailBin: cap.script,
+      composeNotification: (ctx) => {
+        if (ctx.kind === 'completion') seenCtx.push(ctx);
+        return null; // fall back to the neutral default body
+      },
+    });
+    await core.createEvent({
+      id: 'wf20', type: 'workflow', flow: 'sequential', title: 'Two-step',
+      initiator: 'boss@corp.example', activated_at: '2026-01-01T00:00:00Z',
+      steps: [
+        { id: 's1', participant: 'alice@corp.example' },
+        { id: 's2', participant: 'bob@corp.example' },
+      ],
+    });
+
+    // First reply counts but doesn't complete; second triggers the completion ctx.
+    await core.ingest(
+      await signer.sign({ from: 'alice@corp.example', to: `event+wf20-s1@${OPERATOR}` }),
+      envOf(`event+wf20-s1@${OPERATOR}`, 'alice@corp.example'),
+    );
+    await core.ingest(
+      await signer.sign({ from: 'bob@corp.example', to: `event+wf20-s2@${OPERATOR}` }),
+      envOf(`event+wf20-s2@${OPERATOR}`, 'bob@corp.example'),
+    );
+
+    assert.equal(seenCtx.length, 1, 'composer saw the one completion edge');
+    const c = seenCtx[0];
+    assert.equal(c.countedCommits, 2);
+    assert.equal(c.receipts.length, 2);
+    // Receipts are ledger-sourced + ordered by sequence; senders stay hashed.
+    assert.deepEqual(c.receipts.map((r) => r.step_id), ['s1', 's2']);
+    assert.deepEqual(c.receipts.map((r) => r.sequence), [1, 2]);
+    for (const r of c.receipts) {
+      assert.equal(r.sender_domain, 'corp.example');
+      assert.match(r.sender_hash, /^sha256:[0-9a-f]{64}$/, 'salted sender hash, no plaintext');
+      assert.ok(r.received_at, 'received_at present');
+      assert.equal(r.trust_level, 'verified');
+    }
+  } finally {
+    cap.cleanup();
+    await fs.rm(tmp, { recursive: true, force: true });
+  }
+});
+
+test('triggers: completion ctx for crypto carries the one signer receipt', async () => {
+  // Crypto sign-off completing on the first locking reply: countedCommits == 1,
+  // receipt has no step_id (crypto has no steps), sender_hash present.
+  const tmp = await tmpDir();
+  const cap = fakeSendmail();
+  try {
+    const signer = verifiedSigner({ domain: 'signer.example' });
+    const seenCtx = [];
+    const core = create({
+      dataDir: tmp, domain: OPERATOR, resolver: signer.resolver, sendmailBin: cap.script,
+      composeNotification: (ctx) => {
+        if (ctx.kind === 'completion') seenCtx.push(ctx);
+        return null;
+      },
+    });
+    await core.createEvent({
+      id: 'cr20', type: 'crypto', title: 'Sign', initiator: 'boss@signer.example',
+      signers: ['alice@signer.example'], threshold: 1, activated_at: '2026-01-01T00:00:00Z',
+    });
+    await core.ingest(
+      await signer.sign({ from: 'alice@signer.example', to: `attest+cr20@${OPERATOR}` }),
+      envOf(`attest+cr20@${OPERATOR}`, 'alice@signer.example'),
+    );
+
+    assert.equal(seenCtx.length, 1);
+    assert.equal(seenCtx[0].countedCommits, 1);
+    assert.equal(seenCtx[0].receipts.length, 1);
+    assert.equal(seenCtx[0].receipts[0].step_id, null);
+    assert.equal(seenCtx[0].receipts[0].sender_domain, 'signer.example');
+    assert.match(seenCtx[0].receipts[0].sender_hash, /^sha256:[0-9a-f]{64}$/);
+  } finally {
+    cap.cleanup();
+    await fs.rm(tmp, { recursive: true, force: true });
+  }
+});

@@ -246,7 +246,7 @@ lock, and reports them in `notified`:
 
 - workflow → ping the participant(s) of every newly-eligible step (`kind:'advance'`)
 - crypto → ack the verified signer (`kind:'ack'`)
-- both → notify the `initiator` on the completing edge (`kind:'completion'`)
+- both → notify the `initiator` on the completing edge (`kind:'completion'`) — the ctx carries `countedCommits` + a `receipts` array (`{sequence, received_at, step_id, sender_domain, sender_hash, trust_level}`, one per counted reply, ordered by sequence) sourced from the just-finalised git ledger, so the composer can render a per-reply proof block. Senders stay salted-hashed (SPEC §6).
 
 `sweep()` adds the **time-driven** occasions, to the initiator: `kind:'overdue'`
 (idle past `overdueDays`) and `kind:'archived'` (auto-archived past `archiveDays`).
@@ -265,7 +265,7 @@ once. Non-counting replies send nothing. Each message's `From` is the
 plus-tagged reply address so the recipient's reply routes straight back.
 
 ```js
-composeNotification({ kind, mode?, eventId, event, to, replyAddress, step?, signatureCount?, daysOver?, daysIdle? }) {
+composeNotification({ kind, mode?, eventId, event, to, replyAddress, step?, signatureCount?, daysOver?, daysIdle?, countedCommits?, receipts? }) {
   return `Your custom body for ${kind}`; // return falsy → neutral default; a throw → default
 }
 ```
