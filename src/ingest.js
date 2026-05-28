@@ -110,6 +110,41 @@ function createIngest({
     return { ok: true };
   }
 
+  // Render the snapshot as a plain ASCII textual dump — the neutral default
+  // body for kind:'stats'. The shape mirrors gitdone's `statsBody` (a
+  // checkbox-style step list for workflow, sig-progress + signer list for
+  // crypto) so a consumer migrating from gitdone gets a recognisable default;
+  // an override via composeNotification(ctx) is the policy seam (§8.6).
+  function defaultStatsBody(s) {
+    const lines = [];
+    lines.push(`Event: ${s.title || s.eventId}`);
+    lines.push(`ID: ${s.eventId}`);
+    lines.push(`Type: ${s.type}`);
+    lines.push(`Status: ${s.status}`);
+    if (s.completed_at) lines.push(`Completed: ${s.completed_at}`);
+    if (s.archived_at)  lines.push(`Archived:  ${s.archived_at}`);
+    if (s.type === 'workflow') {
+      lines.push('');
+      lines.push('Steps:');
+      for (const step of (s.steps || [])) {
+        const tick = step.status === 'complete' ? '[x]' : '[ ]';
+        const deps = step.depends_on && step.depends_on.length
+          ? ` (after: ${step.depends_on.join(', ')})` : '';
+        const ts = step.completed_at ? ` · ${step.completed_at}` : '';
+        const name = step.name ? ` — ${step.name}` : '';
+        lines.push(`  ${tick} ${step.id}${name} → ${step.participant || '?'}${deps}${ts}`);
+      }
+    } else if (s.type === 'crypto') {
+      lines.push(`Signatures: ${s.signatureCount} / ${s.threshold}`);
+      if ((s.signers || []).length) {
+        lines.push('');
+        lines.push('Signers:');
+        for (const sig of s.signers) lines.push(`  - ${sig}`);
+      }
+    }
+    return lines.join('\n');
+  }
+
   // Build the snapshot a stats+ command exposes. KERNEL scope: just the facts
   // the consumer already has on `loadEvent(id)`, reshaped into a stable shape
   // a `composeStatsReply(snapshot)` policy can render. NO outbound here — the
@@ -175,9 +210,26 @@ function createIngest({
     }
 
     if (cmd.command === 'stats') {
+      // Neutral default reply: a plain ASCII dump of the snapshot. The snapshot
+      // ALSO stays on the result so a consumer that wants gitdone-grade prose
+      // overrides via composeNotification keyed on kind:'stats' (the body hook
+      // — branding stays policy §8.6). The snapshot is the source of truth for
+      // both the kernel default body and any consumer override.
+      const snapshot = buildStatsSnapshot(event);
+      const r = await deliver({
+        kind: 'stats',
+        to: sender, // = event.initiator (we authenticated above)
+        replyAddress: `stats+${cmd.eventId}@${domain}`,
+        subject: `Status: ${event.title || cmd.eventId}`,
+        defaultBody: defaultStatsBody(snapshot),
+        ctx: {
+          mode: event.type === 'crypto' ? 'crypto' : 'workflow',
+          eventId: cmd.eventId, event, snapshot,
+        },
+      });
       return {
         routed: false, command: 'stats', eventId: cmd.eventId,
-        authenticated: true, snapshot: buildStatsSnapshot(event), notified: [],
+        authenticated: true, snapshot, notified: r ? [r] : [],
       };
     }
 

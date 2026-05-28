@@ -140,7 +140,7 @@ parsers, `preFilter`, `parseEnvelope`, `authenticateMessage`, `parseMessage`,
 // initiator command — remind+/stats+ (NOT committed; operational):
 { routed: false, command: 'remind'|'stats', eventId, authenticated,
   reason?,                  // 'unverified'|'sender_not_initiator'|'unknown_event'|'already_complete'
-  snapshot?, notified? }    // stats → snapshot; remind → notified (advance/activation, ctx.reminder=true)
+  snapshot?, notified? }    // stats → snapshot + notified ([{kind:'stats',…}]); remind → notified (advance/activation, ctx.reminder=true)
 ```
 
 ## The core invariant: accept-with-flag
@@ -272,8 +272,21 @@ complete event whose every `.ots` proof has folded in the Bitcoin attestation),
 once. Non-counting replies send nothing. Each message's `From` is the
 plus-tagged reply address so the recipient's reply routes straight back.
 
+The **initiator commands** `remind+{id}@` and `stats+{id}@` route through the
+same `ingest()` (DKIM-verified + envelope sender == event.initiator; never
+committed to the ledger). `remind+` reuses the existing kinds rather than
+minting a new one — workflow remind fires `kind:'advance'` for every currently-
+eligible step, crypto remind fires `kind:'activation'` for every listed signer
+that hasn't yet signed — with `ctx.reminder = true` so a composer keyed on
+`kind` can render "reminder" vs "first prompt" wording from one branch. `stats+`
+returns a structured snapshot on the `ingest()` return (`{ command:'stats',
+authenticated, snapshot, notified:[{kind:'stats', …}] }`) AND sends a neutral
+default reply to the initiator (`kind:'stats'`, a plain ASCII dump of the
+snapshot). The snapshot is on the ctx, so a consumer overrides the prose via
+`composeNotification` keyed on `kind:'stats'` — branding stays policy (§8.6).
+
 ```js
-composeNotification({ kind, mode?, eventId, event, to, replyAddress, step?, signatureCount?, daysOver?, daysIdle?, countedCommits?, receipts? }) {
+composeNotification({ kind, mode?, eventId, event, to, replyAddress, step?, signatureCount?, daysOver?, daysIdle?, countedCommits?, receipts?, reminder? }) {
   return `Your custom body for ${kind}`; // return falsy → neutral default; a throw → default
 }
 ```

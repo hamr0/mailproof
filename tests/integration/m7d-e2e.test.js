@@ -8,11 +8,12 @@
 // derivable occasion fires through the same `deliver()` seam, keyed by `kind`,
 // over a single bound notifier.
 //
-// 9-occasion checklist (m7d table):
+// 10-occasion checklist (m7d table):
 //   activation    — first activateEvent transition pings the eligible roster
 //   advance       — counted reply completes a step but not the event
 //   ack           — counted crypto reply, threshold>1 so it doesn't complete
 //   remind (advance|activation + ctx.reminder=true) — initiator command path
+//   stats         — initiator stats+ command, neutral default reply to initiator
 //   bounce        — inbound DSN → operational nudge to the initiator
 //   overdue       — sweep() past overdueDays
 //   archived      — sweep() past archiveDays (separate event so it doesn't
@@ -155,6 +156,16 @@ test('m7d e2e: every kernel occasion fires through one deliver(), keyed by kind'
     assert.equal(r1.eventComplete, false);
     assert.deepEqual(r1.notified.map((n) => n.kind), ['advance']);
 
+    // [stats] initiator stats+ → snapshot on the return + a neutral default reply.
+    const st = await core.ingest(
+      await corpSigner.sign({ from: 'boss@corp.example', to: `stats+wf@${OPERATOR}` }),
+      envOf(`stats+wf@${OPERATOR}`, 'boss@corp.example'),
+    );
+    assert.equal(st.command, 'stats');
+    assert.equal(st.authenticated, true);
+    assert.deepEqual(st.notified.map((n) => n.kind), ['stats']);
+    assert.equal(st.snapshot.eventId, 'wf');
+
     // [remind] initiator triggers a reminder to bob (the currently-eligible step).
     const rem = await core.ingest(
       await corpSigner.sign({ from: 'boss@corp.example', to: `remind+wf@${OPERATOR}` }),
@@ -232,7 +243,7 @@ test('m7d e2e: every kernel occasion fires through one deliver(), keyed by kind'
 
     // ── full coverage check: every kernel-derivable occasion was seen ────────
     const kindsSeen = new Set(seen.map((s) => s.kind));
-    for (const kind of ['activation', 'advance', 'ack', 'completion', 'overdue', 'archived', 'bounce', 'proof_anchored']) {
+    for (const kind of ['activation', 'advance', 'ack', 'stats', 'completion', 'overdue', 'archived', 'bounce', 'proof_anchored']) {
       assert.ok(kindsSeen.has(kind), `composer saw kind:'${kind}' at least once`);
     }
     // remind reuses kind:'advance' + ctx.reminder=true (one source of truth: same body path).

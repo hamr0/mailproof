@@ -140,7 +140,7 @@ test('remind+: crypto — pings every signer that has not yet signed (kind:activ
   }
 });
 
-test('stats+: returns a structured kernel snapshot, sends NOTHING (body is policy)', async () => {
+test('stats+: returns a kernel snapshot AND sends a neutral default reply (kind:stats)', async () => {
   const tmp = await tmpDir();
   const cap = fakeSendmail();
   try {
@@ -163,10 +163,17 @@ test('stats+: returns a structured kernel snapshot, sends NOTHING (body is polic
     );
     assert.equal(r.command, 'stats');
     assert.equal(r.authenticated, true);
-    assert.deepEqual(r.notified, [], 'stats never sends — body is policy');
-    assert.equal(cap.captures().length, 0);
+    // Auto-send a neutral default reply to the initiator (kind:'stats').
+    assert.deepEqual(r.notified, [{ kind: 'stats', to: 'boss@corp.example', ok: true, reason: null }]);
+    const statsMsg = cap.captures().find((m) => /To:\s*boss@corp.example/i.test(m));
+    assert.match(statsMsg, /From:\s*stats\+wf32@app\.example/i);
+    assert.match(statsMsg, /Subject:\s*Status: Two-step/);
+    assert.match(statsMsg, /Type: workflow/);
+    assert.match(statsMsg, /\[ \] s1 → alice@corp.example/);
+    assert.match(statsMsg, /\[ \] s2 → bob@corp.example/);
 
-    // The snapshot reshapes loadEvent(id) into a stable surface a composer can render.
+    // The snapshot reshapes loadEvent(id) into a stable surface (still on the
+    // result so policy can override via composeNotification keyed on 'stats').
     assert.equal(r.snapshot.eventId, 'wf32');
     assert.equal(r.snapshot.type, 'workflow');
     assert.equal(r.snapshot.title, 'Two-step');
@@ -176,6 +183,39 @@ test('stats+: returns a structured kernel snapshot, sends NOTHING (body is polic
     assert.equal(r.snapshot.steps[0].id, 's1');
     assert.equal(r.snapshot.steps[0].participant, 'alice@corp.example');
     assert.equal(r.snapshot.steps[0].status, 'pending');
+  } finally {
+    cap.cleanup();
+    await fs.rm(tmp, { recursive: true, force: true });
+  }
+});
+
+test('stats+: composeNotification override wins over the neutral default body', async () => {
+  // The snapshot in ctx lets a consumer render any body it wants — branding/
+  // prose stays policy (§8.6), same boundary as every other kind.
+  const tmp = await tmpDir();
+  const cap = fakeSendmail();
+  try {
+    const signer = verifiedSigner({ domain: 'signer.example' });
+    const core = create({
+      dataDir: tmp, domain: OPERATOR, resolver: signer.resolver, sendmailBin: cap.script,
+      composeNotification: (ctx) => {
+        if (ctx.kind !== 'stats') return null;
+        return `CUSTOM-STATS ${ctx.snapshot.eventId} sigs=${ctx.snapshot.signatureCount}/${ctx.snapshot.threshold}`;
+      },
+    });
+    await core.createEvent({
+      id: 'cr40', type: 'crypto', title: 'Sign',
+      initiator: 'boss@signer.example',
+      signers: ['alice@signer.example'], threshold: 1,
+      activated_at: '2026-01-01T00:00:00Z',
+    });
+
+    await core.ingest(
+      await signer.sign({ from: 'boss@signer.example', to: `stats+cr40@${OPERATOR}` }),
+      envOf(`stats+cr40@${OPERATOR}`, 'boss@signer.example'),
+    );
+    const msg = cap.captures()[0];
+    assert.match(msg, /CUSTOM-STATS cr40 sigs=0\/1/);
   } finally {
     cap.cleanup();
     await fs.rm(tmp, { recursive: true, force: true });

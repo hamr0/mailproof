@@ -598,19 +598,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     roster, so remind ends up a no-op (the initiator owns distribution). An
     already-complete or archived event short-circuits with
     `reason:'already_complete'`, no sends.
-  - **`stats+{id}@` returns a kernel snapshot** (`{eventId, type, title,
-    status, activated_at, archived_at, completed_at, flow?, steps?, threshold?,
-    open?, signers?, signatureCount?}`) on the ingest return, with
-    `notified:[]` and **no outbound** — composing the reply body IS policy
-    (gitdone's `statsBody` is a rendered text composition, not a kernel
-    mechanism; same boundary as `composeNotification` everywhere else). One
-    source of truth: the snapshot is just `loadEvent(id)` reshaped into a
-    stable surface a `composeStatsReply(snapshot)` policy can render.
-  - Tests: `tests/integration/ingest-initiator-command.test.js` (7) — workflow
+  - **`stats+{id}@` returns a kernel snapshot AND sends a neutral default reply**
+    (`kind:'stats'`). The snapshot — `{eventId, type, title, status,
+    activated_at, archived_at, completed_at, flow?, steps?, threshold?, open?,
+    signers?, signatureCount?}` — is `loadEvent(id)` reshaped into a stable
+    surface; the default body is a plain ASCII dump of that snapshot
+    (gitdone-parity shape: checkbox step list / sig-progress, mirroring
+    gitdone's `statsBody`). The snapshot also rides on `ctx`, so a consumer's
+    `composeNotification` keyed on `kind:'stats'` overrides the prose — same
+    body-hook seam as every other kind, branding stays policy (§8.6). Adds the
+    10th occasion kind to the m7d taxonomy.
+  - Tests: `tests/integration/ingest-initiator-command.test.js` (8) — workflow
     remind hits both eligible steps with `ctx.reminder=true`; crypto remind
-    skips the already-signed signer; stats returns the snapshot + sends
-    nothing; auth rejects non-initiator + unverified; already-complete +
-    unknown-event short-circuit. **281 → 288, 0 fail.**
+    skips the already-signed signer; stats returns the snapshot AND auto-sends
+    the neutral default reply (with body assertions); the composeNotification
+    override for `kind:'stats'` wins over the default; auth rejects
+    non-initiator + unverified; already-complete + unknown-event
+    short-circuit. **281 → 289, 0 fail.**
 - **Triggers pillar — m7d-5c: m7d end-to-end test (every kernel occasion in one
   composition).** `tests/integration/m7d-e2e.test.js` drives the full trigger
   surface through ONE `create()` instance against real I/O (real outbound to a
@@ -619,14 +623,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   contract — every kind has its own dedicated test — but a proof of the
   COMPOSITION: every kernel-derivable occasion fires through the same
   `deliver()` seam, keyed by `kind`, over a single bound notifier. Asserts
-  every one of `activation`, `advance`, `ack`, `completion`, `overdue`,
-  `archived`, `bounce`, `proof_anchored` is seen by `composeNotification`, and
-  that `remind` reuses `kind:'advance'` (workflow) with `ctx.reminder=true`.
-  Crypto event uses `threshold:2` so the first counted reply produces `ack`
-  without completion; a separate event exercises `archived` (archive
-  precedence prevents `overdue`+`archived` racing on the same id in one
-  sweep tick). m7d is now COMPLETE — the trigger pillar emits every kernel-
-  derivable occasion. **288 → 289, 0 fail.**
+  every one of `activation`, `advance`, `ack`, `stats`, `completion`,
+  `overdue`, `archived`, `bounce`, `proof_anchored` is seen by
+  `composeNotification`, and that `remind` reuses `kind:'advance'` (workflow)
+  with `ctx.reminder=true`. Crypto event uses `threshold:2` so the first
+  counted reply produces `ack` without completion; a separate event exercises
+  `archived` (archive precedence prevents `overdue`+`archived` racing on the
+  same id in one sweep tick). m7d is now COMPLETE — the trigger pillar emits
+  every kernel-derivable occasion (10 kinds; `remind` is a flag on
+  `advance`/`activation`). **289 → 290, 0 fail.**
 
 ### Fixed
 - **`editEvent` completeness guard reads top-level `status`.** It refused edits
