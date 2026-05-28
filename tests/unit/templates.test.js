@@ -85,6 +85,32 @@ test('statsBody: workflow renders a checkbox step list; crypto a signature tally
   assert.match(cr, /- s@x\.example/);
 });
 
+test('renderDefault: verify_report reflects match / no-match + DKIM verdict', () => {
+  const matched = renderDefault('verify_report', {
+    event: ev(), report: { matched: true, matchType: 'raw_email', sequence: 2, counted: true, trustLevel: 'verified', dkim_reverify: { ok: true } },
+  });
+  assert.match(matched.subject, /match \(commit 2\)/);
+  assert.match(matched.defaultBody, /MATCH \(raw_email\) at commit 2/);
+  assert.match(matched.defaultBody, /DKIM re-verify.*PASS/);
+
+  const none = renderDefault('verify_report', { event: ev(), report: { matched: false, reason: 'no_commits' } });
+  assert.match(none.subject, /no match/);
+  assert.match(none.defaultBody, /no committed replies yet/);
+});
+
+test('renderDefault: reverify_report shows the trust transition + not-found case', () => {
+  const up = renderDefault('reverify_report', {
+    event: ev(), commitSequence: 3,
+    report: { found: true, upgraded: true, trust_level_before: 'unverified', trust_level_after: 'verified', dkim_reverify: { ok: true } },
+  });
+  assert.match(up.subject, /commit 3 \(upgraded\)/);
+  assert.match(up.defaultBody, /unverified → verified \(upgraded\)/);
+
+  const missing = renderDefault('reverify_report', { event: ev(), commitSequence: 9, report: { found: false, reason: 'no such commit' } });
+  assert.match(missing.subject, /commit 9 not found/);
+  assert.match(missing.defaultBody, /no such commit/);
+});
+
 test('renderDefault: an unknown kind degrades to a generic update, never throws', () => {
   const out = renderDefault('nope', { event: ev() });
   assert.match(out.defaultBody, /Update on "My Event"/);

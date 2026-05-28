@@ -43,6 +43,7 @@ function createIngest({
   workflowEngine,    // completion.js  { shouldCount, applyReply, eligibleSteps }
   cryptoEngine,      // crypto.js      { shouldCount, applyReply }
   parseMessage,      // parse.js
+  extractVerifyCandidates, // parse.js — transient verify+/reverify+ candidate bytes
   authenticateMessage,
   summariseAuth,
   classifyTrust,     // classifier.js
@@ -51,6 +52,12 @@ function createIngest({
   parseEventTag,     // router.js
   parseAttestTag,
   parseInitiatorCommand,
+  parseVerifyTag,    // router.js — verify+<id>@ public endpoint (m7c-6)
+  parseReverifyTag,  // router.js — reverify+<id>-<seq>@ contested-commit endpoint
+  // Verify pillar primitives (verifier.js) — the public verify+/reverify+ email
+  // endpoints (m7c-6); verify() is read-only, reverify() persists its own record.
+  verify,
+  reverify,
   preFilter,         // prefilter.js
   extractHeaderBlock,
   // Inbound bounce (DSN) parser (dsn.js, m7d-3) — pure.
@@ -295,6 +302,72 @@ function createIngest({
     return { routed: false, bounce: true, eventId, stepId, failedRecipients, notified };
   }
 
+  // The address to reply a verification report to: the human who forwarded the
+  // message. Public endpoint — no DKIM auth (anyone may ask), but it still
+  // passed the humans-only prefilter, and the report goes out Auto-Submitted so
+  // it can't trigger another.
+  const askerOf = (envelope, parsed) =>
+    String((envelope && envelope.sender) || (parsed && parsed.from && parsed.from.address) || '').toLowerCase();
+
+  // verify+<id>@ — PUBLIC, read-only (m7c-6). Match the forwarded message/doc to
+  // a committed reply and re-verify DKIM against the archived key. NEVER commits
+  // to the ledger; emits a `verify_report` occasion (body is policy, §8.6).
+  async function handleVerify(buf, envelope, tag, parsed) {
+    const eventId = tag.eventId;
+    if (!(await loadEvent(eventId))) {
+      return { routed: false, command: 'verify', eventId, reason: 'unknown_event' };
+    }
+    // The forwarded original lives in an attachment (content stripped from the
+    // ledger parse) — recover it transiently. Try each artifact, then the raw
+    // forward itself, stopping at the first match. verify() is read-only, so
+    // repeated calls are free of side effects.
+    const { messageId, candidates } = await extractVerifyCandidates(buf);
+    let report = null;
+    for (const cand of [...candidates, buf]) {
+      report = await verify(eventId, cand, { messageId, resolver });
+      if (report && report.matched) break;
+    }
+    const to = askerOf(envelope, parsed);
+    const event = await loadEvent(eventId);
+    const ctx = { kind: 'verify_report', eventId, event, report };
+    const r = await deliver({
+      kind: 'verify_report', to,
+      replyAddress: `verify+${eventId}@${domain}`,
+      ...renderDefault('verify_report', ctx), ctx,
+    });
+    return {
+      routed: false, command: 'verify', eventId,
+      matched: !!(report && report.matched), report, notified: r ? [r] : [],
+    };
+  }
+
+  // reverify+<id>-<seq>@ — PUBLIC contested-commit re-evaluation (m7c-6). Forward
+  // the original .eml for ONE commit; we re-run DKIM against its archived key and
+  // persist an IMMUTABLE reverify record (the original commit is never rewritten
+  // — that write is the primitive's, not a participant reply). Emits a
+  // `reverify_report` occasion. reverify() persists, so we call it exactly once.
+  async function handleReverify(buf, envelope, tag, parsed) {
+    const eventId = tag.eventId;
+    if (!(await loadEvent(eventId))) {
+      return { routed: false, command: 'reverify', eventId, reason: 'unknown_event' };
+    }
+    const { candidates } = await extractVerifyCandidates(buf);
+    const candidate = candidates[0] || buf;
+    const report = await reverify(eventId, tag.commitSequence, candidate, { resolver });
+    const to = askerOf(envelope, parsed);
+    const event = await loadEvent(eventId);
+    const ctx = { kind: 'reverify_report', eventId, event, report, commitSequence: tag.commitSequence };
+    const r = await deliver({
+      kind: 'reverify_report', to,
+      replyAddress: `reverify+${eventId}-${tag.commitSequence}@${domain}`,
+      ...renderDefault('reverify_report', ctx), ctx,
+    });
+    return {
+      routed: false, command: 'reverify', eventId, commitSequence: tag.commitSequence,
+      upgraded: !!(report && report.upgraded), report, notified: r ? [r] : [],
+    };
+  }
+
   // raw: RFC-822 bytes (Buffer). envelope: the parseEnvelope shape
   // ({ sender, recipient, clientIp, clientHelo }). Returns a result summary
   // (see the file header for accept-with-flag semantics).
@@ -322,6 +395,14 @@ function createIngest({
     //    participant replies.
     const initiatorCmd = parseInitiatorCommand && parseInitiatorCommand(envelope.recipient);
     if (initiatorCmd) return handleInitiatorCommand(buf, envelope, initiatorCmd, parsed);
+
+    // 2a. Public verification endpoints (m7c-6) — verify+<id>@ (read-only match
+    //     report) and reverify+<id>-<seq>@ (contested-commit re-eval). No auth;
+    //     verify never commits, reverify persists its own immutable record.
+    const verifyTag = parseVerifyTag && parseVerifyTag(envelope.recipient);
+    if (verifyTag) return handleVerify(buf, envelope, verifyTag, parsed);
+    const reverifyTag = parseReverifyTag && parseReverifyTag(envelope.recipient);
+    if (reverifyTag) return handleReverify(buf, envelope, reverifyTag, parsed);
 
     const eventTag = parseEventTag(envelope.recipient);
     const attestTag = eventTag ? null : parseAttestTag(envelope.recipient);

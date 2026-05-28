@@ -25,10 +25,10 @@ const { createSweep } = require('./sweep');
 const { createProofAnchor } = require('./proof-anchor');
 const completion = require('./completion');
 const crypto = require('./crypto');
-const { parseMessage, authenticateMessage, summariseAuth } = require('./parse');
+const { parseMessage, authenticateMessage, summariseAuth, extractVerifyCandidates } = require('./parse');
 const { classifyTrust } = require('./classifier');
 const { fetchDkimKey, pickSignatureToArchive } = require('./dkim-archive');
-const { parseEventTag, parseAttestTag, parseInitiatorCommand } = require('./router');
+const { parseEventTag, parseAttestTag, parseInitiatorCommand, parseVerifyTag, parseReverifyTag } = require('./router');
 const { preFilter, extractHeaderBlock } = require('./prefilter');
 const { isDeliveryStatusReport, extractDsn, permanentFailures } = require('./dsn');
 const {
@@ -94,6 +94,7 @@ function create({
     workflowEngine: completion,
     cryptoEngine: crypto,
     parseMessage,
+    extractVerifyCandidates,
     authenticateMessage,
     summariseAuth,
     classifyTrust,
@@ -102,6 +103,10 @@ function create({
     parseEventTag,
     parseAttestTag,
     parseInitiatorCommand,
+    parseVerifyTag,
+    parseReverifyTag,
+    verify: verifier.verify,
+    reverify: verifier.reverify,
     preFilter,
     extractHeaderBlock,
     isDeliveryStatusReport,

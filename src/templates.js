@@ -162,6 +162,53 @@ function renderDefault(kind, ctx = {}) {
       };
     }
 
+    case 'verify_report': {
+      const rep = ctx.report || {};
+      if (!rep.matched) {
+        const reason = rep.reason === 'no_commits'
+          ? 'this event has no committed replies yet'
+          : 'the forwarded message did not match any committed reply';
+        return {
+          subject: `Verification report: ${title} — no match`,
+          defaultBody: `We checked the message you forwarded against the ledger for "${title}".\n\nResult: NO MATCH — ${reason}.`,
+        };
+      }
+      const dkim = rep.dkim_reverify;
+      const dkimLine = dkim
+        ? `\nDKIM re-verify (against the archived key): ${dkim.ok ? 'PASS' : `FAIL${dkim.reason ? ` (${dkim.reason})` : ''}`}`
+        : '';
+      return {
+        subject: `Verification report: ${title} — match (commit ${rep.sequence})`,
+        defaultBody: `We checked the message you forwarded against the ledger for "${title}".\n\n`
+          + `Result: MATCH (${rep.matchType}) at commit ${rep.sequence}.\n`
+          + `Counted toward the event: ${rep.counted ? 'yes' : 'no'}\n`
+          + `Trust level at reception: ${rep.trustLevel || 'unknown'}${dkimLine}\n\n`
+          + `The match is against the event's tamper-evident log; the proof holds offline.`,
+      };
+    }
+
+    case 'reverify_report': {
+      const rep = ctx.report || {};
+      const seq = ctx.commitSequence;
+      if (!rep.found) {
+        return {
+          subject: `Re-verification report: ${title} — commit ${seq} not found`,
+          defaultBody: `We could not re-verify commit ${seq} on "${title}": ${rep.reason || 'no such commit'}.`,
+        };
+      }
+      const dkim = rep.dkim_reverify;
+      const dkimLine = dkim
+        ? `\nDKIM re-verify: ${dkim.ok ? 'PASS' : `FAIL${dkim.reason ? ` (${dkim.reason})` : ''}`}`
+        : '';
+      return {
+        subject: `Re-verification report: ${title} — commit ${seq}${rep.upgraded ? ' (upgraded)' : ''}`,
+        defaultBody: `We re-checked commit ${seq} on "${title}" against its archived DKIM key.\n\n`
+          + `Trust level: ${rep.trust_level_before} → ${rep.trust_level_after}`
+          + `${rep.upgraded ? ' (upgraded)' : ' (unchanged)'}${dkimLine}\n\n`
+          + `This re-verification is recorded as an immutable entry in the event's log; the original commit is never rewritten.`,
+      };
+    }
+
     default:
       return { subject: title, defaultBody: `Update on "${title}".` };
   }

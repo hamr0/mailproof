@@ -17,6 +17,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **m7c-6: public verification email endpoints wired through `ingest()`.** The
+  verify primitives (`verify()`/`reverify()`) are now reachable from inbound
+  mail, not just as library calls. `ingest()` routes `verify+<id>@` (read-only:
+  match a forwarded original to a committed reply + DKIM re-verify against the
+  archived key — **never commits**) and `reverify+<id>-<seq>@` (contested-commit
+  re-evaluation — persists its own immutable reverify record), each emitting a
+  neutral `verify_report` / `reverify_report` occasion through the shared
+  `deliver()`/`composeNotification` seam (report prose is policy, §8.6). The
+  forwarded original is recovered transiently via a new
+  `parse.extractVerifyCandidates(raw)` (attachment content + message-id; hashed
+  and discarded, never persisted — SPEC §6 governs the ledger, not a read-time
+  match). New `tests/integration/verify-endpoint.test.js` (4 tests, incl. an
+  end-to-end trust upgrade through the email path) + 2 template unit tests.
+  Brings the occasion taxonomy to **12 kinds**. With m7c-6 the verification
+  surface is reachable from email, matching gitdone's #19/#20. See
+  decisions-log 2026-05-28.
 - **Centralised default email surface (`src/templates.js`).** One pure
   `renderDefault(kind, ctx) → { subject, defaultBody }` (+ `statsBody`) owns the
   neutral default subject/body for all 10 emitted occasions (`activation`,

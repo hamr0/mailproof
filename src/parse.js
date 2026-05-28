@@ -56,6 +56,21 @@ async function parseMessage(raw) {
   };
 }
 
+// Extract verification candidates from a forwarded message — the raw bytes of
+// every attachment part (the forwarded original .eml / document) plus the
+// message-id. Used ONLY by the transient verify+/reverify+ read path: the
+// content is hashed against the ledger and discarded, never persisted. (SPEC §6
+// "no plaintext at rest" governs the LEDGER; a read-time match is not at rest.)
+// parseMessage deliberately strips attachment content, so this is the one seam
+// that recovers it — kept here so all MIME decoding stays in one module.
+async function extractVerifyCandidates(raw) {
+  const parsed = await simpleParser(raw);
+  const candidates = (parsed.attachments || [])
+    .map((a) => a.content)
+    .filter((c) => Buffer.isBuffer(c) && c.length > 0);
+  return { messageId: parsed.messageId || null, candidates };
+}
+
 // Reduce a mailauth result to the compact auth summaries the ledger records on
 // each commit (SPEC §4): the DKIM signatures (result/domain/selector/aligned),
 // and the SPF/DMARC/ARC verdicts. Pure — interprets the auth object, no I/O.
@@ -86,4 +101,4 @@ function summariseAuth(auth) {
   return { dkim, spf, dmarc, arc };
 }
 
-module.exports = { authenticateMessage, parseMessage, summariseAuth };
+module.exports = { authenticateMessage, parseMessage, summariseAuth, extractVerifyCandidates };
