@@ -133,6 +133,14 @@ parsers, `preFilter`, `parseEnvelope`, `authenticateMessage`, `parseMessage`,
 
 // not attached to any event (NOT committed):
 { routed: false, reason: 'no_event_tag'|'unknown_event'|<prefilter reason>, rejected? }
+
+// inbound DSN bounce (NOT committed; operational):
+{ routed: false, bounce: true, eventId, stepId, failedRecipients, notified }
+
+// initiator command — remind+/stats+ (NOT committed; operational):
+{ routed: false, command: 'remind'|'stats', eventId, authenticated,
+  reason?,                  // 'unverified'|'sender_not_initiator'|'unknown_event'|'already_complete'
+  snapshot?, notified? }    // stats → snapshot; remind → notified (advance/activation, ctx.reminder=true)
 ```
 
 ## The core invariant: accept-with-flag

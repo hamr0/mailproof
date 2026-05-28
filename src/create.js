@@ -27,7 +27,7 @@ const crypto = require('./crypto');
 const { parseMessage, authenticateMessage, summariseAuth } = require('./parse');
 const { classifyTrust } = require('./classifier');
 const { fetchDkimKey, pickSignatureToArchive } = require('./dkim-archive');
-const { parseEventTag, parseAttestTag } = require('./router');
+const { parseEventTag, parseAttestTag, parseInitiatorCommand } = require('./router');
 const { preFilter, extractHeaderBlock } = require('./prefilter');
 const { isDeliveryStatusReport, extractDsn, permanentFailures } = require('./dsn');
 const {
@@ -100,6 +100,7 @@ function create({
     pickSignatureToArchive,
     parseEventTag,
     parseAttestTag,
+    parseInitiatorCommand,
     preFilter,
     extractHeaderBlock,
     isDeliveryStatusReport,

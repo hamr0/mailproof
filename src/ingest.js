@@ -49,6 +49,7 @@ function createIngest({
   pickSignatureToArchive,
   parseEventTag,     // router.js
   parseAttestTag,
+  parseInitiatorCommand,
   preFilter,         // prefilter.js
   extractHeaderBlock,
   // Inbound bounce (DSN) parser (dsn.js, m7d-3) — pure.
@@ -94,6 +95,146 @@ function createIngest({
   // The plus-tagged reply From for an event (workflow → event+, crypto → attest+).
   const replyBaseFor = (event, eventId) =>
     `${event && event.type === 'crypto' ? 'attest' : 'event'}+${eventId}@${domain}`;
+
+  // Authenticate an initiator command (m7d-5b). Mailproof's auth for these is
+  // the SAME as gitdone's (`authenticateInitiatorCommand`): DKIM-verified +
+  // envelope sender == event.initiator (PRD §6.4 — the DKIM-validated sender
+  // IS the auth, no magic link). Returns { ok, reason }.
+  function authInitiator({ trustLevel, sender, event }) {
+    if (trustLevel !== 'verified') return { ok: false, reason: 'unverified' };
+    const initiator = String((event && event.initiator) || '').toLowerCase();
+    if (!initiator) return { ok: false, reason: 'no_initiator' };
+    if (String(sender || '').toLowerCase() !== initiator) {
+      return { ok: false, reason: 'sender_not_initiator' };
+    }
+    return { ok: true };
+  }
+
+  // Build the snapshot a stats+ command exposes. KERNEL scope: just the facts
+  // the consumer already has on `loadEvent(id)`, reshaped into a stable shape
+  // a `composeStatsReply(snapshot)` policy can render. NO outbound here — the
+  // body of a stats reply is policy (gitdone's `statsBody` is a rendered text
+  // composition, not a kernel mechanism). Privacy: per-step participant
+  // addresses come from the event JSON (operator-owned plaintext, not from
+  // the ledger which stays hashed).
+  function buildStatsSnapshot(event) {
+    const out = {
+      eventId: event.id,
+      type: event.type,
+      title: event.title || null,
+      status: event.status || (event.activated_at ? 'open' : 'pending'),
+      activated_at: event.activated_at || null,
+      archived_at: event.archived_at || null,
+      completed_at: event.completed_at || null,
+    };
+    if (event.type === 'workflow') {
+      out.flow = event.flow || null;
+      out.steps = (Array.isArray(event.steps) ? event.steps : []).map((s) => ({
+        id: s.id,
+        name: s.name || null,
+        participant: s.participant || null,
+        status: s.status || 'pending',
+        depends_on: Array.isArray(s.dependsOn) ? s.dependsOn.slice()
+          : (Array.isArray(s.depends_on) ? s.depends_on.slice() : []),
+        completed_at: s.completed_at || null,
+      }));
+    } else if (event.type === 'crypto') {
+      out.threshold = event.threshold || 1;
+      out.open = !!event.open;
+      out.signers = Array.isArray(event.signers) ? event.signers.slice() : [];
+      out.signatureCount = Array.isArray(event.signatures) ? event.signatures.length : 0;
+    }
+    return out;
+  }
+
+  // Handle a remind+/stats+ command (m7d-5b). Initiator-only, DKIM-required,
+  // NEVER committed to the ledger (operational, like `bounce`). For remind:
+  // re-fires pending-step prompts through the SAME deliver()/kinds the consumer
+  // already templates for those recipients, with ctx.reminder=true so policy
+  // can distinguish a remind from a first-time prompt. Workflow remind reuses
+  // kind:'advance' (same recipients as a cascade-advance); crypto remind reuses
+  // kind:'activation' (same recipients as the activation kickoff — "still need
+  // your signature" is the kickoff message reframed, not an ack of something
+  // that hasn't happened). For stats: returns a kernel snapshot; composing the
+  // reply body is policy.
+  async function handleInitiatorCommand(buf, envelope, cmd, parsed) {
+    const event = await loadEvent(cmd.eventId);
+    if (!event) {
+      return { routed: false, command: cmd.command, eventId: cmd.eventId, reason: 'unknown_event' };
+    }
+    // Auth (DNS-bound — kept outside any lock, same posture as ingest).
+    const auth = await authenticateMessage(buf, envelope, { mtaHostname, resolver });
+    const trustLevel = classifyTrust(auth);
+    const sender = String(envelope.sender || parsed.from.address || '').toLowerCase();
+    const a = authInitiator({ trustLevel, sender, event });
+    if (!a.ok) {
+      return {
+        routed: false, command: cmd.command, eventId: cmd.eventId,
+        authenticated: false, reason: a.reason, trustLevel,
+      };
+    }
+
+    if (cmd.command === 'stats') {
+      return {
+        routed: false, command: 'stats', eventId: cmd.eventId,
+        authenticated: true, snapshot: buildStatsSnapshot(event), notified: [],
+      };
+    }
+
+    if (cmd.command === 'remind') {
+      // A complete or archived event has nothing to remind on; return ok so
+      // the consumer can render the right "already done" reply body.
+      if (event.status === 'complete' || event.archived_at) {
+        return {
+          routed: false, command: 'remind', eventId: cmd.eventId,
+          authenticated: true, reason: 'already_complete', notified: [],
+        };
+      }
+      const notified = [];
+      const title = event.title || cmd.eventId;
+      if (event.type === 'workflow') {
+        for (const step of workflowEngine.eligibleSteps(event)) {
+          if (!step.participant) continue;
+          const r = await deliver({
+            kind: 'advance', to: step.participant,
+            replyAddress: `event+${cmd.eventId}-${step.id}@${domain}`,
+            subject: `Reminder: ${title}`,
+            defaultBody: `A reminder: a step in "${title}" is still waiting for you. Reply to this email to confirm your part.`,
+            ctx: { mode: 'workflow', eventId: cmd.eventId, event, step, reminder: true },
+          });
+          if (r) notified.push(r);
+        }
+      } else if (event.type === 'crypto') {
+        // Skip signers who already signed (matched via the same salted hash
+        // the ledger records, so 'already signed' here matches the engine's
+        // own dedup key — one source of truth). Open crypto has no roster,
+        // so remind ends up a no-op; the initiator owns distribution.
+        const signed = new Set(
+          (Array.isArray(event.signatures) ? event.signatures : [])
+            .map((s) => s && s.sender_hash).filter(Boolean)
+        );
+        for (const addr of (Array.isArray(event.signers) ? event.signers : [])) {
+          const h = saltedSenderHash(String(addr).toLowerCase(), event.salt);
+          if (signed.has(h)) continue;
+          const r = await deliver({
+            kind: 'activation', to: addr,
+            replyAddress: `attest+${cmd.eventId}@${domain}`,
+            subject: `Reminder: ${title}`,
+            defaultBody: `A reminder: your signature is still requested on "${title}". Reply to this email to sign.`,
+            ctx: { mode: 'crypto', eventId: cmd.eventId, event, reminder: true },
+          });
+          if (r) notified.push(r);
+        }
+      }
+      return {
+        routed: false, command: 'remind', eventId: cmd.eventId,
+        authenticated: true, notified,
+      };
+    }
+
+    // Unknown command (router would not parse it; defensive).
+    return { routed: false, command: cmd.command, eventId: cmd.eventId, reason: 'unknown_command' };
+  }
 
   // Handle an inbound delivery-status report (a bounce). Routed by the plus-tag
   // the bounce was delivered to (= our outbound return path), which names the
@@ -166,7 +307,13 @@ function createIngest({
       return { routed: false, rejected: true, reason: filter.reason };
     }
 
-    // 2. Route by plus-tag. event+{id}-{step}@ → workflow; attest+{id}@ → crypto.
+    // 2. Route by plus-tag. Initiator commands (remind+/stats+) come first —
+    //    they're never participant replies, never committed to the ledger, and
+    //    require their own auth (initiator-only). Then event+/attest+ for
+    //    participant replies.
+    const initiatorCmd = parseInitiatorCommand && parseInitiatorCommand(envelope.recipient);
+    if (initiatorCmd) return handleInitiatorCommand(buf, envelope, initiatorCmd, parsed);
+
     const eventTag = parseEventTag(envelope.recipient);
     const attestTag = eventTag ? null : parseAttestTag(envelope.recipient);
     const mode = eventTag ? 'workflow' : (attestTag ? 'crypto' : null);

@@ -577,6 +577,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `tests/integration/ingest-triggers.test.js` +2 (workflow 2-step completion
   carries 2 receipts ordered s1/s2; crypto sign-off carries 1 receipt with
   `step_id:null`). **279 → 281, 0 fail.**
+- **Triggers pillar — m7d-5b: initiator commands (`remind+`, `stats+`).**
+  `ingest()` now dispatches the initiator-command plus-tags before the
+  participant-reply tags. `parseInitiatorCommand` (lifted in module 2) is
+  wired through `create()`; auth matches gitdone's
+  `authenticateInitiatorCommand` — DKIM-verified + envelope sender ==
+  `event.initiator` (PRD §6.4). A non-initiator returns
+  `{ authenticated:false, reason:'sender_not_initiator' }`, an unverified reply
+  returns `reason:'unverified'`. Never committed to the ledger (operational,
+  like `bounce`).
+  - **`remind+{id}@` reuses existing kinds + `ctx.reminder=true`** (the user-
+    confirmed shape — one body hook keyed by kind; policy distinguishes via
+    flag; fewer kinds = simpler). Workflow remind re-fires every currently-
+    eligible step through `kind:'advance'` — same recipients as a cascade-
+    advance, matching gitdone's `notifyWorkflowParticipants({reminder:true})`.
+    Crypto remind re-fires every listed signer that hasn't yet signed through
+    `kind:'activation'` — same recipients as the activation kickoff (the
+    semantically right reuse: "still need your signature" IS the kickoff
+    message; `ack` is post-reply receipt and inverts here). Open crypto has no
+    roster, so remind ends up a no-op (the initiator owns distribution). An
+    already-complete or archived event short-circuits with
+    `reason:'already_complete'`, no sends.
+  - **`stats+{id}@` returns a kernel snapshot** (`{eventId, type, title,
+    status, activated_at, archived_at, completed_at, flow?, steps?, threshold?,
+    open?, signers?, signatureCount?}`) on the ingest return, with
+    `notified:[]` and **no outbound** — composing the reply body IS policy
+    (gitdone's `statsBody` is a rendered text composition, not a kernel
+    mechanism; same boundary as `composeNotification` everywhere else). One
+    source of truth: the snapshot is just `loadEvent(id)` reshaped into a
+    stable surface a `composeStatsReply(snapshot)` policy can render.
+  - Tests: `tests/integration/ingest-initiator-command.test.js` (7) — workflow
+    remind hits both eligible steps with `ctx.reminder=true`; crypto remind
+    skips the already-signed signer; stats returns the snapshot + sends
+    nothing; auth rejects non-initiator + unverified; already-complete +
+    unknown-event short-circuit. **281 → 288, 0 fail.**
 
 ### Fixed
 - **`editEvent` completeness guard reads top-level `status`.** It refused edits
