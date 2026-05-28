@@ -7,14 +7,17 @@ one of two generic modes — an **events** workflow or a **crypto sign-off** —
 triggers the next email. The web UI, branding, and the heavy attestation policy
 tail stay in `gitdone` on top.
 
-> **Status:** P1 lift in progress. `src/` now holds real modules — verify, the
-> inbound decoder (DKIM/DMARC auth + MIME parse, m7a — mailproof's first 2 runtime
-> deps, `mailauth` + `mailparser`), sequence routing, inbound preprocessing,
-> outbound, the full git-ledger storage, both sequencing engines (the workflow
-> events engine and the crypto sign-off engine), and the document notary
-> (`verifyDocument` + the now-wired inbound auto-hash capture, §4.1) are lifted.
-> Only the `create()` / `ingest()` assembly that makes it a usable library
-> remains (m7b) — see DESIGN.
+> **Status:** P1 (the lift) is COMPLETE, and so are the two surfaces on top of
+> it — m7c (verification) and m7d (triggers). `src/` holds verify, the inbound
+> decoder (DKIM/DMARC auth + MIME parse — mailproof's 2 runtime deps, `mailauth`
+> + `mailparser`), sequence routing, inbound preprocessing, outbound, the full
+> git-ledger storage, both sequencing engines (workflow events + crypto sign-off),
+> the document notary, and the `create()` / `ingest()` assembly that makes it a
+> usable library. On top: the offline `verify()`/`reverify()` primitives + OTS
+> anchoring + the public `verify+`/`reverify+` email endpoints, and the trigger
+> pillar emitting 12 neutral-templated occasion `kind`s. ~304 tests pass. Next is
+> **P2** — validate by rebuilding gitdone on mailproof (non-merging branch; see
+> the PRD §7.1 + DESIGN).
 
 ## Structure
 
