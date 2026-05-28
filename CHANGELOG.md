@@ -611,6 +611,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     skips the already-signed signer; stats returns the snapshot + sends
     nothing; auth rejects non-initiator + unverified; already-complete +
     unknown-event short-circuit. **281 → 288, 0 fail.**
+- **Triggers pillar — m7d-5c: m7d end-to-end test (every kernel occasion in one
+  composition).** `tests/integration/m7d-e2e.test.js` drives the full trigger
+  surface through ONE `create()` instance against real I/O (real outbound to a
+  fake `sendmail`, real per-event git repos, a small fake `ots` binary that
+  simulates `stamp`+`upgrade`+`info`). Not a re-proof of each occasion's
+  contract — every kind has its own dedicated test — but a proof of the
+  COMPOSITION: every kernel-derivable occasion fires through the same
+  `deliver()` seam, keyed by `kind`, over a single bound notifier. Asserts
+  every one of `activation`, `advance`, `ack`, `completion`, `overdue`,
+  `archived`, `bounce`, `proof_anchored` is seen by `composeNotification`, and
+  that `remind` reuses `kind:'advance'` (workflow) with `ctx.reminder=true`.
+  Crypto event uses `threshold:2` so the first counted reply produces `ack`
+  without completion; a separate event exercises `archived` (archive
+  precedence prevents `overdue`+`archived` racing on the same id in one
+  sweep tick). m7d is now COMPLETE — the trigger pillar emits every kernel-
+  derivable occasion. **288 → 289, 0 fail.**
 
 ### Fixed
 - **`editEvent` completeness guard reads top-level `status`.** It refused edits
