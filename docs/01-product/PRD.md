@@ -202,6 +202,43 @@ uniformity. Rationale in the [decisions log](../03-logs/decisions-log.md)
   dep** vanilla library with a real `src/index.js`, matching the `knowless` /
   `bareagent` packaging standard.
 
+### 7.1 Validation roadmap (how P1 → success is actually walked)
+
+P1 (the kernel lift) is complete (2026-05-28). The boundary-proof success
+criterion above said "P2 = gitdone reconverges onto mailproof." That
+sequencing is **revised here** to protect gitdone's production stability while
+still getting the boundary-proof signal. The new two-step plan:
+
+- **Step 1 — API audit (paper, no code).** Walk every module of
+  `~/PycharmProjects/gitdone/app/src/` against mailproof's published surface.
+  Output: **one boundary table** classifying each gitdone capability as
+  `depend-on-mailproof` | `reimplement-as-policy-on-hooks` |
+  `gap-mailproof-needs`. Also enumerates known behavioural deltas from the
+  lift (e.g. `editEvent` reads top-level `status`; bounce routing via
+  plus-tag/VERP; the trimmed `revoke`/`accumulating`/`latest`/multi-doc strict
+  manifests/`close+`/`bundle+`/magic-link/pending-TTL paths). Read-only — no
+  risk to gitdone. Deliverable answers "what would the reconverge cost, and
+  where are the silent-regression risks?" before any code is touched.
+
+- **Step 2 — gitdone-on-mailproof on a BRANCH (NOT to merge — a validation
+  harness).** Refactor gitdone on a dedicated branch to fully adopt mailproof,
+  module by module, using gitdone's own test suite as the regression gate.
+  The branch is explicitly a **validation artifact**: the goal is to surface
+  every real gap/awkwardness mailproof has when faced with the full corner-
+  case surface of a mature consumer, NOT to ship a refactored gitdone. The
+  user has flagged that gitdone carries production tuning and edge cases they
+  do not intend to disturb on `main`; the branch is the boundary-proof
+  evidence without forcing a merge. Friction surfaced on the branch drives
+  kernel-side fixes/extensions (a possible `m7e`, only if needed) — those land
+  on mailproof's `main`. gitdone's `main` is untouched.
+
+Rationale: validation that hardens mailproof's kernel without risking
+gitdone's production stability. The PRD success criteria above are unchanged
+— a non-gitdone consumer is still the **primary** metric, and the gitdone
+reconverge is still the **boundary proof**; the branch satisfies the
+boundary-proof requirement without the merge-back obligation. (Decisions log,
+2026-05-28: validation-via-branch, non-merging.)
+
 ## 8. Non-goals (the NO-GO table)
 
 Recorded explicitly. **Re-litigating these is the biggest scope-creep risk.**

@@ -633,6 +633,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   every kernel-derivable occasion (10 kinds; `remind` is a flag on
   `advance`/`activation`). **289 → 290, 0 fail.**
 
+### Changed
+- **P2 validation runs as a non-merging gitdone branch (PRD §7.1, decisions-log
+  2026-05-28).** Revises the canonical "P2 = refactor gitdone onto mailproof"
+  reading of DESIGN.md's phasing. Two steps: (1) read-only API audit producing
+  one boundary table across `gitdone/app/src/` (every capability classified
+  `depend-on-mailproof` | `reimplement-as-policy-on-hooks` |
+  `gap-mailproof-needs`, plus the behavioural deltas the lift introduced); (2)
+  gitdone-on-mailproof on a dedicated branch that is **never intended to
+  merge** — a validation harness whose purpose is surfacing every gap mailproof
+  has against gitdone's full corner-case surface and feeding kernel-side fixes
+  back to mailproof's `main` (possibly an `m7e`). gitdone's `main` stays
+  untouched. Boundary proof = the branch reaching gitdone-test parity; the
+  PRD's primary success metric (a non-gitdone consumer) is unchanged.
+  Rationale: protects gitdone's production stability while validating
+  mailproof's kernel against a real, corner-case-rich consumer. DESIGN.md §
+  Phasing updated to point at PRD §7.1.
+
 ### Fixed
 - **`editEvent` completeness guard reads top-level `status`.** It refused edits
   on a complete event via `event.completion.status` — gitdone's nested shape,
