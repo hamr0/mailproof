@@ -115,9 +115,13 @@ the same `dataDir`. There are no env-var defaults (that's the consumer's glue).
 Lower-level pieces are also exported from the package root for consumers that
 compose their own pipeline: `classifyTrust`, `TRUST_LEVELS`, the `router`
 parsers, `preFilter`, `parseEnvelope`, `authenticateMessage`, `parseMessage`,
-`buildRawMessage`/`sendmail`/…, `createEventStore`, `withEventMutex`,
-`createGitrepo`, `createOts`, the `completion` + `crypto` engine functions,
-`createNotary`, `hashDocument`.
+`buildRawMessage`/`sendmail`/…, `createEventStore` (returns include the
+schema-level canonical `isComplete(event)`), `withEventMutex`, `createGitrepo`,
+`createOts`, the `completion` + `crypto` engine functions (both re-export
+`isComplete` from event-store — same canonical predicate, every consumer
+imports rather than re-derives `event.status === 'complete'`),
+`crypto.signatures(event)` as the canonical safe-access for the signature
+array, `createNotary`, `hashDocument`.
 
 ### `ingest()` result shape
 

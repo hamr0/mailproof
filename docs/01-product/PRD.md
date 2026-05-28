@@ -170,6 +170,16 @@ attestor-PII redaction, no web/magic-link flow.
 4. **Mechanism, not policy.** mailproof exposes primitives (+ an optional
    `createReceiver()` with policy hooks). The orchestrator is the consumer's;
    `receive.js` is **not** lifted.
+5. **One definition per concept.** Any predicate or filter asked at >1 call
+   site has ONE canonical definition (single helper, single import). No
+   inline re-derivation, no copy-paste. The schema-level helpers
+   (`event-store.isComplete`, `crypto.signatures`, etc.) are the source of
+   truth for the field they read; consumers import, never re-derive. Lifted
+   in spirit from gitdone's 2026-05-28 DRY pass where three sites read
+   `event.completion` differently and silently disagreed for crypto-closed-
+   early. Drift-pattern lessons + the future-tense rules (`isClosedByInitiator`
+   when `close+` ships; `revokedHashSet` when revoke ships) recorded in the
+   Step-1 audit (`docs/03-logs/audit-p2-step1-gitdone-boundary.md`).
 
 ## 6. Public API (intent)
 

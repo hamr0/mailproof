@@ -23,6 +23,17 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 // --- Pure helpers (no dataDir needed; bound into the store for convenience) ---
 
+// Canonical "is this event complete?" predicate (schema-level). Both engines
+// — completion.js (workflow) and crypto.js (sign-off) — write `event.status`
+// in their applyReply transitions, and sweep/proof-anchor/ingest all gate on
+// the same field. One definition, every site imports this rather than
+// re-deriving `event.status === 'complete'` inline. (Lifted in spirit from
+// gitdone's 2026-05-28 closed_by canonicalisation: same concept asked at
+// multiple call sites silently drifts — keep it one definition.)
+function isComplete(event) {
+  return !!(event && event.status === 'complete');
+}
+
 function findStep(event, stepId) {
   if (!event || !Array.isArray(event.steps) || !stepId) return null;
   return event.steps.find((s) => s && s.id === stepId) || null;
@@ -329,7 +340,7 @@ function createEventStore({ dataDir } = {}) {
     return withEventMutex(eventId, async () => {
       const event = await loadEvent(eventId);
       if (!event) throw Object.assign(new Error(`editEvent: ${eventId} not found`), { code: 'NOT_FOUND' });
-      if (event.status === 'complete') {
+      if (isComplete(event)) {
         throw Object.assign(new Error('editEvent: event is complete'), { code: 'EVENT_COMPLETE' });
       }
       if (event.archived_at) {
@@ -420,6 +431,7 @@ function createEventStore({ dataDir } = {}) {
     listEventIds,
     findStep,
     senderMatchesStep,
+    isComplete,
     createEvent,
     activateEvent,
     editEvent,
@@ -436,4 +448,4 @@ function createEventStore({ dataDir } = {}) {
   };
 }
 
-module.exports = { createEventStore, buildEventRecord, expandFlow };
+module.exports = { createEventStore, buildEventRecord, expandFlow, isComplete };

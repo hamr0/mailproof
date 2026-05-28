@@ -64,7 +64,7 @@ function createIngest({
   mtaHostname = null,
   resolver = null,
 } = {}) {
-  const { loadEvent, findStep, senderMatchesStep, writeEventAtomic, recordStepSendErrors } = eventStore;
+  const { loadEvent, findStep, senderMatchesStep, writeEventAtomic, recordStepSendErrors, isComplete } = eventStore;
   const { commitReply, commitCompletion, syncEventJson, saltedSenderHash, listCommits } = gitrepo;
 
   // Derive the lightweight receipts a completion-edge composer can render —
@@ -177,7 +177,7 @@ function createIngest({
       out.threshold = event.threshold || 1;
       out.open = !!event.open;
       out.signers = Array.isArray(event.signers) ? event.signers.slice() : [];
-      out.signatureCount = Array.isArray(event.signatures) ? event.signatures.length : 0;
+      out.signatureCount = cryptoEngine.signatures(event).length;
     }
     return out;
   }
@@ -236,7 +236,7 @@ function createIngest({
     if (cmd.command === 'remind') {
       // A complete or archived event has nothing to remind on; return ok so
       // the consumer can render the right "already done" reply body.
-      if (event.status === 'complete' || event.archived_at) {
+      if (isComplete(event) || event.archived_at) {
         return {
           routed: false, command: 'remind', eventId: cmd.eventId,
           authenticated: true, reason: 'already_complete', notified: [],
@@ -262,8 +262,7 @@ function createIngest({
         // own dedup key — one source of truth). Open crypto has no roster,
         // so remind ends up a no-op; the initiator owns distribution.
         const signed = new Set(
-          (Array.isArray(event.signatures) ? event.signatures : [])
-            .map((s) => s && s.sender_hash).filter(Boolean)
+          cryptoEngine.signatures(event).map((s) => s && s.sender_hash).filter(Boolean)
         );
         for (const addr of (Array.isArray(event.signers) ? event.signers : [])) {
           const h = saltedSenderHash(String(addr).toLowerCase(), event.salt);
@@ -487,9 +486,7 @@ function createIngest({
       const applied = engine.applyReply(event, applyInput, { now: receivedAt });
 
       let completedStep = null;
-      let signatureCount = mode === 'crypto'
-        ? (Array.isArray(event.signatures) ? event.signatures.length : 0)
-        : null;
+      let signatureCount = mode === 'crypto' ? cryptoEngine.signatures(event).length : null;
       let eventComplete = false;
 
       if (applied.applied) {

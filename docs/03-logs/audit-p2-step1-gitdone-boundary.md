@@ -178,6 +178,41 @@ For each Tier-1 gap, the validation branch has to pick:
 
 The audit can't answer this — only the validation branch attempting (1) and hitting friction can. That's the entire point of Step 2.
 
+## Drift-pattern lessons from gitdone's 2026-05-28 DRY pass (apply on the validation branch)
+
+In parallel with this audit, gitdone shipped a DRY-up fix for two cases where
+"same concept, multiple call sites" had silently diverged:
+1. `isClosedByInitiator(event)` — three sites read `event.completion`
+   differently and disagreed for crypto-closed-early.
+2. `revokedHashSet(event)` — five copy-pasted inline filter implementations,
+   replaced by one canonical helper.
+
+**Cross-check on mailproof's current src/**:
+
+- **`closed_by` drift**: NOT present today — mailproof has no `close+`
+  command + no `closed_by` field (audit Gap #2). **Future-tense rule** for
+  the validation branch: when `close+` ships (whether as gitdone-internal
+  policy or as `m7e`), define `isClosedByInitiator(event)` from day one and
+  use it everywhere, never re-derive `event.completion.closed_by` inline.
+- **`revoked_senders` duplication**: NOT present today — mailproof has no
+  revoke surface (Gap #3). **Future-tense rule**: when revoke ships, export
+  `revokedHashSet(event)` once from the engine (or schema module) and import
+  it at every read site; never inline the filter.
+- **Underlying pattern in mailproof today** (FIXED on the same commit as this
+  doc update): the `event.status === 'complete'` predicate was re-derived at
+  5 sites (`ingest.js:239`, `sweep.js:65`, `event-store.js:332`,
+  `proof-anchor.js:90`, plus byte-identical duplicates in `completion.js` /
+  `crypto.js`). Canonicalised to a single `isComplete(event)` exported from
+  `event-store.js` (schema-level); both engines re-export it; every consumer
+  imports it. Same lesson, same fix shape — applied proactively before the
+  validation branch had a chance to widen the duplication. Same pass also
+  unified the 4 inline `Array.isArray(event.signatures) ? event.signatures :
+  []` accesses in `ingest.js` to `crypto.signatures(event)` (the engine's
+  canonical helper).
+
+**Rule for the validation branch**: any concept asked at >1 call site gets
+one definition. If a new helper is needed, lift it; don't re-derive.
+
 ## Recommendation for Step 2 sequencing
 
 Suggest doing Tier-1 first (in any order) because they're the load-bearing gates. If one of them forces an `m7e` kernel extension, better to find that early than after a week of tier-2 wiring built on assumptions that don't hold.

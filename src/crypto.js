@@ -63,9 +63,10 @@ const CRYPTO_REASONS = Object.freeze({
 
 // --- pure predicates ---
 
-function isComplete(event) {
-  return !!(event && event.status === 'complete');
-}
+// Re-exported from event-store (the schema-level canonical predicate, lifted
+// in spirit from gitdone's 2026-05-28 closed_by canonicalisation — one
+// definition for "is this event complete?", not one per engine).
+const { isComplete } = require('./event-store');
 
 // The distinct signatures already counted — one source of truth for "who
 // counted" and the count-to-threshold record.

@@ -70,9 +70,10 @@ function meetsTrust(commit, step) {
 
 // --- step-graph predicates (pure) ---
 
-function isComplete(event) {
-  return !!(event && event.status === 'complete');
-}
+// Re-exported from event-store (the schema-level canonical predicate, lifted
+// in spirit from gitdone's 2026-05-28 closed_by canonicalisation — one
+// definition for "is this event complete?", not one per engine).
+const { isComplete } = require('./event-store');
 
 function findStep(event, stepId) {
   if (!event || !Array.isArray(event.steps) || !stepId) return null;

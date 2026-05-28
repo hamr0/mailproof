@@ -634,6 +634,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `advance`/`activation`). **289 → 290, 0 fail.**
 
 ### Changed
+- **Canonical `isComplete(event)` + `signatures(event)` — drift-prevention DRY
+  pass.** Lifted in spirit from gitdone's 2026-05-28 fix where three sites read
+  `event.completion` differently and disagreed for crypto-closed-early (their
+  fix: one canonical `isClosedByInitiator(event)` helper). Same pattern was
+  present in mailproof for "is this event complete?": `event.status ===
+  'complete'` was re-derived inline at 5 sites (`ingest.js`, `sweep.js`,
+  `event-store.js editEvent`, `proof-anchor.js`) plus byte-identical
+  duplicates in `completion.js` / `crypto.js`. **Now one definition** —
+  `isComplete(event)` exported from `event-store.js` (schema-level: every
+  engine writes `event.status` there); both engines re-export it (public API
+  preserved: `completion.isComplete`, `crypto.isComplete` still work); every
+  consumer imports the canonical helper. Same pass unified the 4 inline
+  `Array.isArray(event.signatures) ? event.signatures : []` accesses in
+  `ingest.js` to `cryptoEngine.signatures(event)` (the engine's existing
+  canonical helper — also previously duplicated). Behaviour-preserving; per
+  [[prefers-simple-one-source-of-truth]]. **Tests stay 290 / 0 fail.**
+  Future-tense rules captured in the Step-1 audit doc: when `close+` ships
+  (audit Gap #2), define `isClosedByInitiator(event)` from day one; when
+  revoke ships (Gap #3), define `revokedHashSet(event)` from day one. Same
+  drift-pattern, same one-definition rule.
 - **P2 validation runs as a non-merging gitdone branch (PRD §7.1, decisions-log
   2026-05-28).** Revises the canonical "P2 = refactor gitdone onto mailproof"
   reading of DESIGN.md's phasing. Two steps: (1) read-only API audit producing

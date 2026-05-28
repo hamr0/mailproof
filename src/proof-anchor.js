@@ -36,7 +36,7 @@ function createProofAnchor({
 } = {}) {
   if (!ots) throw new Error('createProofAnchor: ots required (createOts({otsBin}))');
   if (!eventStore || !gitrepo) throw new Error('createProofAnchor: eventStore + gitrepo required');
-  const { loadEvent, listEventIds, writeEventAtomic } = eventStore;
+  const { loadEvent, listEventIds, writeEventAtomic, isComplete } = eventStore;
   const { listProofFiles, commitProofUpgrade, syncEventJson } = gitrepo;
 
   const replyBaseFor = (event, eventId) =>
@@ -87,7 +87,7 @@ function createProofAnchor({
         // haven't already notified. A pure backfill run (flag-patch only) MUST
         // NOT re-send.
         const fullyAnchored = pendingAfter === 0 && newlyAnchored > 0;
-        const eligible = cur.status === 'complete'
+        const eligible = isComplete(cur)
           && fullyAnchored
           && !cur.ots_proof_anchored_notified_at;
         if (!eligible) return { committed, notify: null };

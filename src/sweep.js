@@ -38,6 +38,7 @@
 'use strict';
 
 const { withEventMutex } = require('./event-mutex');
+const { isComplete } = require('./event-store');
 
 const MS_PER_DAY = 86400 * 1000;
 
@@ -62,7 +63,7 @@ function isActive(event) {
   if (!event) return false;
   if (!event.activated_at) return false;
   if (event.archived_at) return false;
-  if (event.status === 'complete') return false;
+  if (isComplete(event)) return false;
   return true;
 }
 
