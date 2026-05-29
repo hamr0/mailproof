@@ -9,9 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > reserve the `mailproof` name during the scaffold phase. Versions `0.1.0`
 > through `0.6.1` are **backdated** to match the P1 lift as it landed on `main` —
 > the public API (`create()` / `ingest()` and the verify + trigger surfaces) was
-> implemented across those milestones but has not yet been published to npm.
-> `0.7.0` is the current cut (shipped TypeScript declarations) and is likewise
-> unpublished until a release runs the publish workflow.
+> implemented across those milestones but was never published to npm.
+> **`0.7.0` is the first published library release** (the `create()` / `ingest()`
+> API + verify/trigger surfaces + shipped TypeScript declarations), cut from the
+> `v0.7.0` GitHub release via the trusted-publishing workflow.
 > Pre-1.0 minor bumps may include breaking shape changes per SemVer 0.x
 > conventions. See [`docs/02-design/DESIGN.md`](docs/02-design/DESIGN.md) for
 > the phasing.

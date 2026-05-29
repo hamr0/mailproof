@@ -1,6 +1,7 @@
 # mailproof
 
 <p align="center">
+  <img src="https://img.shields.io/npm/v/mailproof?label=npm&color=2a4f8c" alt="npm version">
   <img src="https://img.shields.io/github/package-json/v/hamr0/mailproof?label=version&color=2a4f8c" alt="version (auto from package.json)">
   <img src="https://img.shields.io/badge/license-Apache%202.0-2a4f8c" alt="license: Apache 2.0">
   <img src="https://img.shields.io/github/actions/workflow/status/hamr0/mailproof/ci.yml?branch=main&label=CI" alt="CI status">
@@ -28,8 +29,20 @@ Every inbound reply is committed — *even rejected ones* (wrong sender, failed 
 | Phase | State |
 |---|---|
 | P0 — composition proof (POC) | ✅ `npm run poc` |
-| P1 — lift real modules + tests | 🔄 in progress — verify + inbound decoder (DKIM/DMARC auth + MIME parse, m7a), sequence routing, inbound preprocessing, outbound, git-ledger storage, workflow + crypto sign-off engines, document notary (incl. auto-hash capture) done; `create()`/`ingest()` assembly pending (m7b) |
-| P2 — gitdone depends on mailproof | ⬜ |
+| P1 — lift real modules + tests | ✅ COMPLETE — verify + inbound decoder (DKIM/DMARC auth + MIME parse), sequence routing, inbound preprocessing, outbound, git-ledger storage, workflow + crypto sign-off engines, document notary (incl. auto-hash capture), and the `create()`/`ingest()` assembly |
+| m7c — verification surface | ✅ COMPLETE — durable DKIM-key archive, offline `verify()`/`reverify()`, OTS-proof anchoring, public `verify+`/`reverify+` email endpoints |
+| m7d — trigger pillar | ✅ COMPLETE — every kernel-derivable occasion (state/time/bounce/verify) as one of 12 neutral-templated `kind`s over one `composeNotification` hook |
+| P2 — gitdone depends on mailproof | ⬜ next — validate by rebuilding gitdone on mailproof (non-merging branch) |
+
+## Install
+
+```bash
+npm i mailproof   # 2 runtime deps (mailauth, mailparser); Node ≥ 22.5
+```
+
+Vanilla JS + JSDoc, no consumer build step. The public surface ships JSDoc-generated, full-`strict` checkJs-gated TypeScript declarations, so `require('mailproof')` gives TS consumers a checked surface. The git ledger shells out to the `git` binary directly (no `simple-git`), so storage stays dependency-free.
+
+> **Pre-1.0:** the API can still change shape between `0.x` minors (SemVer 0.x). P2 (rebuilding gitdone on it) is the surface-validation phase.
 
 ## Try the POC
 
@@ -37,7 +50,7 @@ Every inbound reply is committed — *even rejected ones* (wrong sender, failed 
 npm run poc   # stdlib + git only: runs a 2-step workflow, prints the ledger + outbox, self-asserts
 ```
 
-Requires Node ≥ 22.5. The POC has no dependencies; the lifted library now has **2 runtime deps** — `mailauth` (DKIM/DMARC/ARC) and `mailparser` (MIME), both landed with the inbound decoder (m7a) and required because verifying/parsing untrusted mail is security-critical (a vetted library, never hand-rolled). The git ledger still shells out to the `git` binary directly (no `simple-git`), so storage stays dependency-free. Budget: ≤3.
+Requires Node ≥ 22.5. The POC has no dependencies; the lifted library has **2 runtime deps** — `mailauth` (DKIM/DMARC/ARC) and `mailparser` (MIME), both required because verifying/parsing untrusted mail is security-critical (a vetted library, never hand-rolled). Budget: ≤3.
 
 ## Docs
 
