@@ -1,4 +1,3 @@
-'use strict';
 
 // Unit tests for the PURE OTS output parser. parseOtsBlockHeight reads the
 // Bitcoin block height out of `ots info` stdout, across the output shapes the
@@ -6,9 +5,9 @@
 // subprocess wrappers (upgradeProof/readBlockHeight) are covered in
 // tests/integration/ots.test.js.
 
-const { test } = require('node:test');
-const assert = require('node:assert/strict');
-const { parseOtsBlockHeight } = require('../../src/ots');
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { parseOtsBlockHeight } from '../../src/ots.js';
 
 test('parseOtsBlockHeight: "Bitcoin block <n>" shape', () => {
   assert.equal(parseOtsBlockHeight('Success! Bitcoin block 850123 attests existence'), 850123);

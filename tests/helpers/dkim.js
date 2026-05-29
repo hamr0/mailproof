@@ -1,12 +1,11 @@
-'use strict';
 
 // TEST-ONLY DKIM helpers. Sign a synthesized .eml with mailauth's own dkimSign
 // and build a matching in-process DNS resolver, so authenticateMessage reaches
 // trust_level 'verified' OFFLINE (no network, no opendkim). Keys are generated
 // per call, so nothing secret is committed. NEVER imported from src/.
 
-const crypto = require('node:crypto');
-const { dkimSign } = require('mailauth');
+import crypto from 'node:crypto';
+import { dkimSign } from 'mailauth';
 
 const DEFAULT_HEADERS = ['from', 'to', 'subject', 'date', 'message-id'];
 
@@ -111,6 +110,6 @@ function verifiedSigner({ domain = 'corp.example', selector = 'sel1' } = {}) {
 // A resolver where every lookup fails — nothing can authenticate (→ 'unverified').
 const noDnsResolver = buildResolver({});
 
-module.exports = {
+export {
   makeDkimKeypair, signDkim, buildResolver, verifiedFixture, verifiedSigner, noDnsResolver,
 };

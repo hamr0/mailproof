@@ -1,13 +1,12 @@
-'use strict';
 
 // Pure unit tests for the verifier's findMatch (the match cascade). reverifyDkim
 // + the composed verify() are exercised end-to-end in
 // tests/integration/verifier.test.js (they need the real mailauth + ledger).
 
-const { test } = require('node:test');
-const assert = require('node:assert/strict');
-const { findMatch, resolveUpgrade, pickSigner } = require('../../src/verifier');
-const { hashDocument } = require('../../src/notary');
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { findMatch, resolveUpgrade, pickSigner } from '../../src/verifier.js';
+import { hashDocument } from '../../src/notary.js';
 
 const RAW = Buffer.from('the original signed email bytes');
 const DOC = Buffer.from('an attached document');

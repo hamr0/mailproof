@@ -1,15 +1,14 @@
-'use strict';
 
 // Integration tests for sendmail(): they spawn a REAL child process (the
 // injected `binary`) and touch the filesystem via fake-sendmail scripts in
 // tmp. No mocks — we drive the actual child_process path.
 
-const { test } = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
-const { sendmail } = require('../../src/outbound');
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { sendmail } from '../../src/outbound.js';
 
 // Write an executable fake-sendmail script into a fresh tmp dir; returns
 // { dir, script, ...extra } and registers cleanup on the test context.

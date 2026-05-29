@@ -1,4 +1,3 @@
-'use strict';
 
 // Integration tests for sweep() — the time-driven trigger pass (m7d-1). Drives
 // the public create() surface against a real event store + ledger + a fake
@@ -8,15 +7,15 @@
 // step deadlines; not-yet-due events are untouched; and composeNotification
 // overrides the body. Time is injected via sweep({ now }) for determinism.
 
-const { test } = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs/promises');
-const fss = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import fss from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
-const { create } = require('../../src/create');
-const { verifiedSigner } = require('../helpers/dkim');
+import { create } from '../../src/create.js';
+import { verifiedSigner } from '../helpers/dkim.js';
 
 const OPERATOR = 'app.example';
 const DAY = 86400 * 1000;

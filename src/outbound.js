@@ -17,10 +17,9 @@
 // endings, headers separated from body by an empty line). buildRawMessage is
 // the canonical builder.
 
-'use strict';
 
-const { spawn } = require('node:child_process');
-const crypto = require('node:crypto');
+import { spawn } from 'node:child_process';
+import crypto from 'node:crypto';
 
 function randomToken() {
   return crypto.randomBytes(8).toString('hex');
@@ -192,4 +191,4 @@ function sendmail({ from, rawMessage, binary, to }) {
   });
 }
 
-module.exports = { sendmail, buildRawMessage, sanitizeSubject, newMessageId, rfc5322Date, withSignature };
+export { sendmail, buildRawMessage, sanitizeSubject, newMessageId, rfc5322Date, withSignature };

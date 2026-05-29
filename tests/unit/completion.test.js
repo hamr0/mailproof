@@ -1,4 +1,3 @@
-'use strict';
 
 // Workflow completion engine (SPEC §4) — transitions are pure, so the whole
 // decision tree is covered without I/O. Re-anchored from gitdone's
@@ -6,9 +5,9 @@
 // top-level `status`/`completed_at`, camelCase `dependsOn`. Crypto/declaration/
 // attestation/dedup/revoke cases are NOT here — they stay in gitdone (PRD §8).
 
-const { test } = require('node:test');
-const assert = require('node:assert/strict');
-const {
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import {
   shouldCount,
   applyReply,
   isComplete,
@@ -17,7 +16,7 @@ const {
   eligibleSteps,
   meetsTrust,
   COUNT_REASONS,
-} = require('../../src/completion');
+} from '../../src/completion.js';
 
 // -- builders (SPEC §3 shapes; gitdone domains → example.com) --
 

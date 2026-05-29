@@ -20,7 +20,6 @@
 // Step IDs may contain dashes; everything after the FIRST dash in an
 // event+ extension is the stepId.
 
-'use strict';
 
 const ADDR_RE = /^([a-z][a-z0-9]*)\+([^@\s]+)@([^\s@]+)$/i;
 const EVENT_ID_RE = /^[a-zA-Z0-9]+$/;
@@ -126,7 +125,7 @@ function parseInitiatorCommand(recipient) {
   return { command: a.kind, eventId: a.extension };
 }
 
-module.exports = {
+export {
   parseAddress, parseEventTag, parseVerifyTag, parseReverifyTag,
   parseAttestTag, parseInitiatorCommand,
 };

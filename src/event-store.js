@@ -9,12 +9,12 @@
 // Defensive against path traversal via a strict eventId allowlist
 // (alphanumeric only).
 
-'use strict';
 
-const crypto = require('node:crypto');
-const fs = require('node:fs/promises');
-const path = require('node:path');
-const { withEventMutex } = require('./event-mutex');
+import crypto from 'node:crypto';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { withEventMutex } from './event-mutex.js';
+import { createGitrepo } from './gitrepo.js';
 
 const EVENT_ID_RE = /^[a-zA-Z0-9]+$/;
 /** @type {Array<'participant' | 'deadline' | 'requires_attachment' | 'details'>} */
@@ -40,8 +40,8 @@ function isErrnoException(err) {
 // re-deriving `event.status === 'complete'` inline. (Lifted in spirit from
 // gitdone's 2026-05-28 closed_by canonicalisation: same concept asked at
 // multiple call sites silently drifts — keep it one definition.)
-/** @typedef {import('./types').MailproofEvent} MailproofEvent */
-/** @typedef {import('./types').Step} Step */
+/** @typedef {import('./types.js').MailproofEvent} MailproofEvent */
+/** @typedef {import('./types.js').Step} Step */
 
 /**
  * Canonical "is this event complete?" predicate (schema-level). Pure.
@@ -338,13 +338,12 @@ function createEventStore({ dataDir } = {}) {
   // Lazily bind a gitrepo to the SAME dataDir. gitrepo is the other half of
   // the storage pillar (module 5b); event-store calls into it when an
   // *activated* event mutates so the change is tamper-evident alongside
-  // replies. Until 5b lands, requiring it throws — activateEvent swallows
-  // that (sync is best-effort), and editEvent's activated path is covered by
-  // a test deferred to 5b.
-  /** @type {ReturnType<import('./gitrepo').createGitrepo> | undefined} */
+  // replies. The module is imported statically; construction stays lazy so the
+  // repo is only built on first mutation.
+  /** @type {ReturnType<import('./gitrepo.js').createGitrepo> | undefined} */
   let _gitrepo;
   function gitrepo() {
-    if (!_gitrepo) _gitrepo = require('./gitrepo').createGitrepo({ dataDir });
+    if (!_gitrepo) _gitrepo = createGitrepo({ dataDir });
     return _gitrepo;
   }
 
@@ -570,4 +569,4 @@ function createEventStore({ dataDir } = {}) {
   };
 }
 
-module.exports = { createEventStore, buildEventRecord, expandFlow, isComplete };
+export { createEventStore, buildEventRecord, expandFlow, isComplete };

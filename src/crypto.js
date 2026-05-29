@@ -44,7 +44,6 @@
 // machine-code `count_reason`s, camelCase fields, top-level `status`/
 // `completed_at` (not gitdone's nested `completion` object).
 
-'use strict';
 
 // The accept-with-flag taxonomy for sign-off (SPEC §4). Frozen and exported so
 // consumers and tests share one source of truth for "why didn't this count?".
@@ -66,13 +65,13 @@ const CRYPTO_REASONS = Object.freeze({
 // Re-exported from event-store (the schema-level canonical predicate, lifted
 // in spirit from gitdone's 2026-05-28 closed_by canonicalisation — one
 // definition for "is this event complete?", not one per engine).
-const { isComplete } = require('./event-store');
+import { isComplete } from './event-store.js';
 
 // The distinct signatures already counted — one source of truth for "who
 // counted" and the count-to-threshold record.
-/** @typedef {import('./types').MailproofEvent} MailproofEvent */
-/** @typedef {import('./types').Signature} Signature */
-/** @typedef {import('./types').Attachment} Attachment */
+/** @typedef {import('./types.js').MailproofEvent} MailproofEvent */
+/** @typedef {import('./types.js').Signature} Signature */
+/** @typedef {import('./types.js').Attachment} Attachment */
 /**
  * The in-memory sign-off reply input the engine reasons over.
  * @typedef {Object} SignoffInput
@@ -195,7 +194,7 @@ function applyReply(event, commit, { now = new Date().toISOString() } = {}) {
   };
 }
 
-module.exports = {
+export {
   shouldCount,
   applyReply,
   isComplete,

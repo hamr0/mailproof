@@ -9,10 +9,9 @@
 // Levels are ranked strongest-first; a step's minTrust gate (in the
 // sequencing module) compares against this ordering.
 
-'use strict';
 
-/** @typedef {import('./types').TrustLevel} TrustLevel */
-/** @typedef {import('./types').MailauthResult} MailauthResult */
+/** @typedef {import('./types.js').TrustLevel} TrustLevel */
+/** @typedef {import('./types.js').MailauthResult} MailauthResult */
 
 /** @type {readonly TrustLevel[]} */
 const TRUST_LEVELS = ['verified', 'forwarded', 'authorized', 'unverified'];
@@ -39,4 +38,4 @@ function classifyTrust(auth) {
   return 'unverified';
 }
 
-module.exports = { classifyTrust, TRUST_LEVELS };
+export { classifyTrust, TRUST_LEVELS };

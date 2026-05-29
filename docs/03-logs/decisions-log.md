@@ -17,6 +17,13 @@ the [PRD](../01-product/PRD.md) / [DESIGN](../02-design/DESIGN.md).
 
 ---
 
+### Decision: Pure ESM (0.8.0) — repackage CJS → ESM
+**Date**: 2026-05-29
+**Status**: Accepted
+**Context**: `LIBRARY_CONVENTIONS.md` §1 mandates pure ESM (`"type": "module"`) for every published suite library; mailproof was the last one still on CommonJS (`require`/`module.exports`), the standing open delta after the 0.7.0 types realignment. ESM is also the ecosystem default and what TS consumers expect.
+**Decision**: Migrate the whole package to ESM and ship it as **0.8.0**. The bulk was mechanical (a one-shot codemod: `const {a}=require('./m')` → `import {a} from './m.js'`, `module.exports={...}` → `export {...}`, strip redundant `'use strict'`), with the `.js` extension added to every relative specifier in code **and** JSDoc `import('./x.js')` type references (node16 resolution requires it). Three seams were reworked by hand: `parse.js`'s variable-specifier `require('mailparser')` (kept the JSDoc type-cast over a default import), inline `require('node:dns')` in `verifier.js`/`dkim-archive.js` (hoisted to top-level imports), and the lazy `require('./gitrepo')` in `event-store.js` (static import; construction stays lazy). `create.js`'s whole-module captures of `completion`/`crypto` became `import * as`. `poc/pipeline.js` → `poc/pipeline.cjs` so the superseded P0 proof still runs.
+**Consequences**: Minor bump (no API surface change — same 59 exports, `create()`/`ingest()`, 12 occasion kinds), but a breaking module-system change for any consumer doing `require('mailproof')`: they must now `import`. 307 tests pass, typecheck 0, `build:types` clean. Removes the last convention delta; P2 (gitdone rebuild) will consume the ESM surface.
+
 ### Decision: Git-native storage (events as JSON + per-event git repo)
 **Date**: 2026-05-22
 **Status**: Accepted

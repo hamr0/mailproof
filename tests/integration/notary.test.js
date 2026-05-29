@@ -1,18 +1,17 @@
-'use strict';
 
 // Document notary — verify half (PRD §4.1). Drives the real ledger: an event
 // in the event store + a reply committed to its per-event git repo, then
 // verifyDocument re-hashes the file and matches it back. No mocks.
 
-const { test } = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs/promises');
-const os = require('node:os');
-const path = require('node:path');
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 
-const { createEventStore } = require('../../src/event-store');
-const { createGitrepo } = require('../../src/gitrepo');
-const { createNotary } = require('../../src/notary');
+import { createEventStore } from '../../src/event-store.js';
+import { createGitrepo } from '../../src/gitrepo.js';
+import { createNotary } from '../../src/notary.js';
 
 const DOC = Buffer.from('the signed contract, v3 — bytes that get fingerprinted');
 

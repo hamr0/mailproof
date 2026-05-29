@@ -1,4 +1,3 @@
-'use strict';
 
 // Crypto sign-off engine (SPEC §4 crypto-event shape) — transitions are pure,
 // so the whole decision tree is covered without I/O. Re-anchored from gitdone's
@@ -8,15 +7,15 @@
 // accumulating dedup, strict multi-doc manifests, revoke, attestor-PII — has NO
 // cases here by design (it stays in gitdone, PRD §8). Domains → example.com.
 
-const { test } = require('node:test');
-const assert = require('node:assert/strict');
-const {
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import {
   shouldCount,
   applyReply,
   isComplete,
   signatures,
   CRYPTO_REASONS,
-} = require('../../src/crypto');
+} from '../../src/crypto.js';
 
 // -- builders (SPEC §3 crypto shape) --
 

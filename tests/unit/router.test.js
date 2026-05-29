@@ -1,9 +1,8 @@
-'use strict';
 
-const { test } = require('node:test');
-const assert = require('node:assert/strict');
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
 
-const router = require('../../src/router');
+import * as router from '../../src/router.js';
 const {
   parseAddress, parseEventTag, parseVerifyTag, parseReverifyTag, parseAttestTag, parseInitiatorCommand,
 } = router;

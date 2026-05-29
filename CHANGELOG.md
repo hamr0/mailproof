@@ -19,6 +19,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-05-29
+
+### Changed
+- **Migrated the package from CommonJS to pure ESM** (`"type": "module"`), to
+  the suite-wide `LIBRARY_CONVENTIONS.md` §1 — mailproof was the last library on
+  CJS. Every `src/*.js` module and test now uses `import`/`export` instead of
+  `require`/`module.exports`; all relative specifiers carry the `.js` extension
+  Node ESM requires (in code **and** in JSDoc `import('./x.js')` type
+  references). Consumers now `import { create } from 'mailproof'` rather than
+  `const { create } = require('mailproof')`. The `package.json` `exports` map
+  gains an `"import"` condition. **No API surface change** — the 59 named
+  exports, `create()`/`ingest()`, and the 12 occasion kinds are identical;
+  this is a packaging/module-system change, hence the minor bump.
+- Three module-system seams were reworked by hand (the rest was mechanical):
+  `parse.js`'s `mailparser` type-cast (was a variable-specifier `require` to
+  dodge the untyped module; now a default import + the same JSDoc cast),
+  `verifier.js` / `dkim-archive.js` inline `require('node:dns')` (hoisted to
+  top-level `import`), and `event-store.js`'s lazy `require('./gitrepo')`
+  (now a static import; construction stays lazy). `create.js`'s whole-module
+  captures of `completion`/`crypto` became `import * as`.
+- `poc/pipeline.js` → `poc/pipeline.cjs` so the superseded P0 proof still runs
+  under the now-ESM package (`npm run poc`).
+
+### Unchanged
+- Runtime deps still **2** (`mailauth`, `mailparser`). **307** `node --test`
+  tests pass, `npm run typecheck` → 0 errors (`checkJs` + `strictNullChecks`),
+  `build:types` emits 24 `.d.ts` to git-ignored `./types/`. Node ≥ 22.5.
+
 ## [0.7.0] - 2026-05-29
 
 ### Added

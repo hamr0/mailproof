@@ -13,7 +13,7 @@ sign-off, **commit** it to a tamper-evident per-event **git** ledger, and
 the consumer on top.
 
 ```js
-const { create } = require('mailproof'); // CommonJS, vanilla JS
+import { create } from 'mailproof'; // pure ESM, vanilla JS
 
 const core = create({
   dataDir: '/var/lib/mailproof',   // required — events + per-event git repos live here
@@ -359,7 +359,7 @@ primitives + the `composeNotification` hook:
 
 ## Constraints
 
-- Node ≥ 22.5. Vanilla JS (CommonJS); JSDoc is the single source of truth and the shipped `.d.ts` are generated from it (`checkJs` + `strictNullChecks`, git-ignored, built on publish). No consumer build step.
+- Node ≥ 22.5. Vanilla JS (pure ESM — `import`, `"type": "module"`); JSDoc is the single source of truth and the shipped `.d.ts` are generated from it (`checkJs` + `strictNullChecks`, git-ignored, built on publish). No consumer build step.
 - 2 runtime deps (`mailauth`, `mailparser`); the git ledger uses the `git` binary via `child_process` (not `simple-git`). `ots` is an optional external binary.
 - Transport is **bundled self-hosted Postfix/sendmail** with opendkim signing outbound at the MTA — not a pluggable third-party mail provider.
 - Durability-first: the ledger is the single source of truth and is meant to be offline-verifiable; SQL consumers project a read-model, they don't replace it.

@@ -14,14 +14,13 @@
 // into mailauth), so tests run offline and the future verify+ endpoint can
 // re-check against an archived key. Pure except the DNS lookup.
 
-'use strict';
 
-const dns = require('node:dns').promises;
+import { promises as dns } from 'node:dns';
 
 // Parse a DKIM record's `p=` value. DKIM records are semicolon-separated
 // tag=value; we only need p (public key). Returns base64 string or null.
-/** @typedef {import('./types').DkimArchive} DkimArchive */
-/** @typedef {import('./types').MailauthResult} MailauthResult */
+/** @typedef {import('./types.js').DkimArchive} DkimArchive */
+/** @typedef {import('./types.js').MailauthResult} MailauthResult */
 
 /**
  * Extract a DKIM record's `p=` base64 public key. Pure.
@@ -120,4 +119,4 @@ function pickSignatureToArchive(auth) {
   );
 }
 
-module.exports = { fetchDkimKey, extractPublicKey, toPem, pickSignatureToArchive };
+export { fetchDkimKey, extractPublicKey, toPem, pickSignatureToArchive };

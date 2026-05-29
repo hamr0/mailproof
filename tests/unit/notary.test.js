@@ -1,12 +1,11 @@
-'use strict';
 
 // Document notary — pure half (PRD §4.1). hashDocument is the one source of
 // truth for the fingerprint format that m7's parser and verifyDocument share.
 
-const { test } = require('node:test');
-const assert = require('node:assert/strict');
-const crypto = require('node:crypto');
-const { hashDocument, createNotary } = require('../../src/notary');
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
+import { hashDocument, createNotary } from '../../src/notary.js';
 
 test('hashDocument: sha256:-prefixed lowercase hex, deterministic', () => {
   const h = hashDocument(Buffer.from('contract bytes'));

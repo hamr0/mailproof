@@ -21,9 +21,8 @@
 // hashDocument() to populate `commit.attachments[].sha256`. This module reads
 // those hashes; it does not produce them at commit time.
 
-'use strict';
 
-const crypto = require('node:crypto');
+import crypto from 'node:crypto';
 
 // Canonical document fingerprint: `sha256:`-prefixed lowercase hex of the raw
 // bytes. Accepts a Buffer, Uint8Array, or string (utf8). The prefix matches the
@@ -87,7 +86,7 @@ function createNotary({ gitrepo, eventStore } = {}) {
     const commits = await gitrepo.listCommits(eventId);
     const matches = [];
     for (const c of commits) {
-      /** @type {import('./types').Attachment[]} */
+      /** @type {import('./types.js').Attachment[]} */
       const atts = Array.isArray(c.attachments) ? c.attachments : [];
       const hit = atts.find((a) => a && normHash(a.sha256) === target);
       if (!hit) continue;
@@ -107,4 +106,4 @@ function createNotary({ gitrepo, eventStore } = {}) {
   return { hashDocument, verifyDocument };
 }
 
-module.exports = { createNotary, hashDocument };
+export { createNotary, hashDocument };

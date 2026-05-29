@@ -1,11 +1,10 @@
-'use strict';
 
 // Unit tests for the git ledger's PURE surface — no git, no filesystem. The
 // repo-touching primitives are exercised in tests/integration/gitrepo.test.js.
 
-const { test } = require('node:test');
-const assert = require('node:assert/strict');
-const { createGitrepo } = require('../../src/gitrepo');
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { createGitrepo } from '../../src/gitrepo.js';
 
 // Pure helpers ignore dataDir; a throwaway binding is fine.
 const repo = createGitrepo({ dataDir: '/nonexistent' });

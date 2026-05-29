@@ -1,4 +1,3 @@
-'use strict';
 
 // Pins the PUBLIC contract — the exact surface a consumer gets from
 // `require('mailproof')`. Every other test imports `src/<module>.js`
@@ -10,10 +9,10 @@
 // export, or changing its kind (function <-> constant), must be a conscious
 // edit here. Keep this list in sync with docs/02-design/DESIGN.md's surface.
 
-const test = require('node:test');
-const assert = require('node:assert/strict');
+import test from 'node:test';
+import assert from 'node:assert/strict';
 
-const mailproof = require('../../src/index.js');
+import * as mailproof from '../../src/index.js';
 
 const EXPECTED = {
   // Composition root

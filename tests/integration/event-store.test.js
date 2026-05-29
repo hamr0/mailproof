@@ -1,4 +1,3 @@
-'use strict';
 
 // Integration tests for the event store's filesystem-backed primitives,
 // lifted from gitdone's event-store.test.js and adapted to the injected-config
@@ -11,12 +10,13 @@
 // behaviors don't depend on that commit and are covered now (gitrepo sync in
 // activateEvent is best-effort and no-ops until 5b lands).
 
-const { test, before, after } = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs/promises');
-const path = require('node:path');
-const os = require('node:os');
-const { createEventStore } = require('../../src/event-store');
+import { test, before, after } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import os from 'node:os';
+import { createEventStore } from '../../src/event-store.js';
+import { createGitrepo } from '../../src/gitrepo.js';
 
 let tmpDir;
 let store;
@@ -237,7 +237,7 @@ test('editEvent: rejects edit on completed event', async () => {
 });
 
 test('editEvent: activated event writes a hashed audit commit', async () => {
-  const repo = require('../../src/gitrepo').createGitrepo({ dataDir: tmpDir });
+  const repo = createGitrepo({ dataDir: tmpDir });
   const ev = await store.createEvent({
     type: 'workflow', title: 'audit', initiator: 'org@ex.com',
     salt: store.generateEventSalt(),

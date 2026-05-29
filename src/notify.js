@@ -16,12 +16,11 @@
 // happened and must not be undone by a send. (Same contract ingest relied on
 // when deliver lived inline; m7d lifted it here verbatim so sweep can share it.)
 
-'use strict';
 
 // Bind the outbound primitives + the operator domain + the optional body hook
 // once; return { deliver }. create() builds exactly one notifier and threads its
 // deliver into both ingest() and sweep().
-/** @typedef {import('./types').DeliverResult} DeliverResult */
+/** @typedef {import('./types.js').DeliverResult} DeliverResult */
 
 /**
  * One occasion-to-email delivery request.
@@ -39,10 +38,10 @@
  * builds exactly one and threads it into ingest() and sweep(). The four outbound
  * primitives are required — `deliver` cannot compose an email without them.
  * @param {Object} deps
- * @param {typeof import('./outbound').buildRawMessage} deps.buildRawMessage
- * @param {typeof import('./outbound').sendmail} deps.sendmail
- * @param {typeof import('./outbound').newMessageId} deps.newMessageId
- * @param {typeof import('./outbound').sanitizeSubject} deps.sanitizeSubject
+ * @param {typeof import('./outbound.js').buildRawMessage} deps.buildRawMessage
+ * @param {typeof import('./outbound.js').sendmail} deps.sendmail
+ * @param {typeof import('./outbound.js').newMessageId} deps.newMessageId
+ * @param {typeof import('./outbound.js').sanitizeSubject} deps.sanitizeSubject
  * @param {string | null} [deps.domain]
  * @param {string | null} [deps.sendmailBin]
  * @param {((ctx: Record<string, any>) => string | null | undefined) | null} [deps.composeNotification]
@@ -98,4 +97,4 @@ function createNotifier({
   return { deliver };
 }
 
-module.exports = { createNotifier };
+export { createNotifier };

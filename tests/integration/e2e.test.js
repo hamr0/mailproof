@@ -1,4 +1,3 @@
-'use strict';
 
 // Kitchen-sink end-to-end (m7c-5) — the "all the pillars compose" proof. Drives
 // a FULL lifecycle of each coordination mode through the public create() API
@@ -8,15 +7,15 @@
 // salted-at-rest, doc hashing, one-source-of-truth offline verify, and
 // email-triggered advancement — before the gitdone reconverge (P2).
 
-const { test } = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs/promises');
-const fss = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import fss from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
-const { create } = require('../../src/create');
-const { verifiedSigner, noDnsResolver } = require('../helpers/dkim');
+import { create } from '../../src/create.js';
+import { verifiedSigner, noDnsResolver } from '../helpers/dkim.js';
 
 const OPERATOR = 'app.example';
 const envOf = (recipient, sender) => ({ recipient, sender, clientIp: '198.51.100.9', clientHelo: 'mta.example' });

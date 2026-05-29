@@ -8,9 +8,8 @@
 // object ({ clientIp, clientHelo, sender, recipient }) itself and passes it to
 // ingest(). Pure: no I/O, no config.
 
-'use strict';
 
-/** @typedef {import('./types').Envelope} Envelope */
+/** @typedef {import('./types.js').Envelope} Envelope */
 
 /**
  * Parse a Postfix pipe-transport argv into the structured envelope. The four
@@ -30,4 +29,4 @@ function parseEnvelope(argv) {
   };
 }
 
-module.exports = { parseEnvelope };
+export { parseEnvelope };

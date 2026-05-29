@@ -1,4 +1,3 @@
-'use strict';
 
 // Offline durable verification (m7c-2). End to end: ingest a DKIM-signed reply
 // (which archives the signer's public key on the commit), then verify the exact
@@ -6,14 +5,14 @@
 // signature holds offline, the way a third party would re-check the proof after
 // the signer rotates their DNS. No mocks; the real ledger + mailauth.
 
-const { test } = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs/promises');
-const os = require('node:os');
-const path = require('node:path');
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 
-const { create } = require('../../src/create');
-const { verifiedFixture, noDnsResolver } = require('../helpers/dkim');
+import { create } from '../../src/create.js';
+import { verifiedFixture, noDnsResolver } from '../helpers/dkim.js';
 
 const OPERATOR = 'app.example';
 const envOf = (recipient, sender) => ({ recipient, sender, clientIp: '198.51.100.9', clientHelo: 'mta.example' });

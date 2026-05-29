@@ -17,13 +17,12 @@
 // Non-bare repo: the working tree IS the inspectable state of the event —
 // `git clone` and read commits/* directly, no plumbing needed.
 
-'use strict';
 
-const crypto = require('node:crypto');
-const fs = require('node:fs/promises');
-const path = require('node:path');
-const { execFile } = require('node:child_process');
-const { promisify } = require('node:util');
+import crypto from 'node:crypto';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 
 const _execFile = promisify(execFile);
 
@@ -92,8 +91,8 @@ function padSeq(n) { return String(n).padStart(3, '0'); }
 // the sender address, never the plaintext. Salt is a per-event public random
 // value stored in event.json — verifiers re-hash a claimed address with the
 // event's salt and match; observers can't bulk rainbow-table across events.
-/** @typedef {import('./types').MailproofEvent} MailproofEvent */
-/** @typedef {import('./types').Commit} Commit */
+/** @typedef {import('./types.js').MailproofEvent} MailproofEvent */
+/** @typedef {import('./types.js').Commit} Commit */
 
 /**
  * Salted hash of a sender address (SPEC §0.1) — never the plaintext. Pure.
@@ -759,4 +758,4 @@ function createGitrepo({ dataDir, ots = null } = {}) {
   };
 }
 
-module.exports = { createGitrepo };
+export { createGitrepo };

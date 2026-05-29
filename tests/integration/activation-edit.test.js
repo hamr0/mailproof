@@ -1,4 +1,3 @@
-'use strict';
 
 // Organiser-action occasions (m7d-2). activateEvent fires the `activation`
 // kickoff to every initially-eligible participant (workflow) / listed signer
@@ -6,14 +5,14 @@
 // currently-eligible step of an activated event. Both go through the shared
 // notifier to a fake capture transport — no mocks.
 
-const { test } = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs/promises');
-const fss = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import fss from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
-const { create } = require('../../src/create');
+import { create } from '../../src/create.js';
 
 const OPERATOR = 'app.example';
 

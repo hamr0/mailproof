@@ -1,4 +1,3 @@
-'use strict';
 
 // Integration tests for the git ledger, lifted from gitdone's gitrepo.test.js
 // and adapted to: the injected-config factory (createGitrepo({ dataDir }));
@@ -7,14 +6,14 @@
 // reverify writer is deferred (no caller yet — module note in src/gitrepo.js),
 // so its tests are not lifted.
 
-const { test, before, after } = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs/promises');
-const path = require('node:path');
-const os = require('node:os');
-const { execFile } = require('node:child_process');
-const { promisify } = require('node:util');
-const { createGitrepo } = require('../../src/gitrepo');
+import { test, before, after } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import os from 'node:os';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { createGitrepo } from '../../src/gitrepo.js';
 
 const _exec = promisify(execFile);
 const gitOut = async (cwd, args) => (await _exec('git', args, { cwd })).stdout.trim();

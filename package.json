@@ -1,17 +1,19 @@
 {
   "name": "mailproof",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Email-native multi-party coordination kernel: turns a promise made over email into proof. DKIM/DMARC-verified replies, a tamper-evident git ledger, workflow sequencing, and email triggers. Extracted from gitdone.",
+  "type": "module",
   "main": "src/index.js",
   "types": "./types/index.d.ts",
   "exports": {
     ".": {
       "types": "./types/index.d.ts",
+      "import": "./src/index.js",
       "default": "./src/index.js"
     }
   },
   "scripts": {
-    "poc": "node poc/pipeline.js",
+    "poc": "node poc/pipeline.cjs",
     "test": "node --test 'tests/unit/**/*.test.js' 'tests/integration/**/*.test.js'",
     "typecheck": "tsc --noEmit",
     "build:types": "tsc",

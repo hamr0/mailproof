@@ -1,4 +1,3 @@
-'use strict';
 
 // Inbound decoding (src/parse.js). parseMessage is a deterministic function of
 // the raw bytes; authenticateMessage runs the real mailauth pipeline OFFLINE
@@ -7,11 +6,11 @@
 // defaults hold — not mailauth/mailparser internals (testing the vetted dep
 // would be testing the dependency).
 
-const { test } = require('node:test');
-const assert = require('node:assert/strict');
-const { parseMessage, authenticateMessage } = require('../../src/parse');
-const { hashDocument } = require('../../src/notary');
-const { classifyTrust } = require('../../src/classifier');
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { parseMessage, authenticateMessage } from '../../src/parse.js';
+import { hashDocument } from '../../src/notary.js';
+import { classifyTrust } from '../../src/classifier.js';
 
 const CRLF = '\r\n';
 

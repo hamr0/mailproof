@@ -1,4 +1,3 @@
-'use strict';
 
 // m7c-6 — the PUBLIC verification email endpoints wired through ingest():
 //   verify+<id>@           → match a forwarded original to a committed reply
@@ -10,15 +9,15 @@
 // by reverify.test.js / verifier.test.js — here we prove the EMAIL WIRING:
 // routing, candidate extraction from a forwarded attachment, and the report send.
 
-const { test } = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs/promises');
-const fss = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import fss from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
-const { create } = require('../../src/create');
-const { verifiedSigner, makeDkimKeypair, signDkim, buildResolver } = require('../helpers/dkim');
+import { create } from '../../src/create.js';
+import { verifiedSigner, makeDkimKeypair, signDkim, buildResolver } from '../helpers/dkim.js';
 
 // A message DKIM-signed by a domain that does NOT align with From: it verifies
 // cryptographically (a key is archived) but classifies 'unverified' at reception

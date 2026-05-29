@@ -28,11 +28,10 @@
 // `ots upgrade` exits non-zero when a proof is still calendar-pending and
 // nothing can be merged yet — that is NORMAL ({ pending: true }), not an error.
 
-'use strict';
 
-const fs = require('node:fs/promises');
-const crypto = require('node:crypto');
-const { spawn } = require('node:child_process');
+import fs from 'node:fs/promises';
+import crypto from 'node:crypto';
+import { spawn } from 'node:child_process';
 
 // Parse the Bitcoin block height an .ots proof is anchored to, out of `ots
 // info` stdout. PURE. opentimestamps-client has used a few output shapes over
@@ -180,4 +179,4 @@ function createOts({ otsBin, timeoutMs = 30000 } = {}) {
   return { stampFile, upgradeProof, readBlockHeight };
 }
 
-module.exports = { createOts, parseOtsBlockHeight };
+export { createOts, parseOtsBlockHeight };

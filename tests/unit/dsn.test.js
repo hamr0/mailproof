@@ -1,16 +1,15 @@
-'use strict';
 
 // Unit tests for the PURE RFC 3464 DSN parser. No fs, no process, no mailparser
 // — raw bytes in, a report shape out. The ingest() bounce wiring (route by
 // plus-tag, record the step error, emit the `bounce` occasion) is covered in
 // tests/integration/ingest-bounce.test.js.
 
-const { test } = require('node:test');
-const assert = require('node:assert/strict');
-const {
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import {
   isDeliveryStatusReport, extractDsn, permanentFailures, parseDeliveryStatusBody,
   stripAddressType, contentTypeOf,
-} = require('../../src/dsn');
+} from '../../src/dsn.js';
 
 const CRLF = '\r\n';
 function dsn({ boundary = 'BOUND', action = 'failed', status = '5.1.1', diagnostic = 'smtp; 550 5.1.1 user unknown', finalRecipient = 'alice@corp.example' } = {}) {

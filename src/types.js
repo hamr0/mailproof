@@ -1,11 +1,10 @@
 // Shared JSDoc type vocabulary — the domain shapes that recur across the
 // pillars (SPEC §0–4). This module declares ONLY types: no runtime code. Other
-// modules reference these via `import('./types').Name` in their JSDoc, so every
+// modules reference these via `import('./types.js').Name` in their JSDoc, so every
 // annotation speaks one vocabulary instead of re-inventing `Event`/`Step` shapes.
 // tsc emits types.d.ts from these typedefs — the JSDoc here is the source of
 // truth, the .d.ts is generated (no hand-maintained second copy).
 
-'use strict';
 
 /**
  * Trust level a reply is classified at (SPEC §1, strongest-first).
@@ -165,4 +164,4 @@
  * @property {string | null} reason
  */
 
-module.exports = {};
+export {};

@@ -1,8 +1,7 @@
-'use strict';
 
-const { test } = require('node:test');
-const assert = require('node:assert/strict');
-const { preFilter, extractHeaderBlock, rawHeader } = require('../../src/prefilter');
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { preFilter, extractHeaderBlock, rawHeader } from '../../src/prefilter.js';
 
 const headers = (lines) => lines.join('\r\n') + '\r\n\r\nbody\r\n';
 

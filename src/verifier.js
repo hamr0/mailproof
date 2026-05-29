@@ -9,17 +9,17 @@
 // primitives (findMatch + reverifyDkim) + a thin composer. Report FORMATTING
 // (the plain-text body sent back to a forwarder) stays policy.
 
-'use strict';
 
-const { authenticate } = require('mailauth');
-const { hashDocument } = require('./notary');
+import dns from 'node:dns';
+import { authenticate } from 'mailauth';
+import { hashDocument } from './notary.js';
 
 // Match candidate bytes against an event's commits. Cascade: whole-email
 // (raw_sha256) → Message-ID (salted, when the caller supplies the hash) → any
 // committed attachment. Pure. Hashes use the notary's `sha256:`-tagged format —
 // the same one the ledger stored, so one fingerprint format end to end.
-/** @typedef {import('./types').Commit} Commit */
-/** @typedef {import('./types').TrustLevel} TrustLevel */
+/** @typedef {import('./types.js').Commit} Commit */
+/** @typedef {import('./types.js').TrustLevel} TrustLevel */
 
 /**
  * Match candidate bytes against an event's commits (raw → message-id → any
@@ -78,8 +78,8 @@ async function reverifyDkim(rawEmail, archivedPem, expectedDomain, expectedSelec
     if ((type || 'TXT').toUpperCase() === 'TXT' && name === wantName) return [[txtRecord]];
     if (baseResolver) return baseResolver(name, type);
     return type
-      ? require('node:dns').promises.resolve(name, type)
-      : require('node:dns').promises.resolve(name);
+      ? dns.promises.resolve(name, type)
+      : dns.promises.resolve(name);
   };
   try {
     const auth = await authenticate(rawEmail, { trustReceived: false, resolver });
@@ -265,4 +265,4 @@ function createVerifier({ gitrepo, eventStore, resolver: defaultResolver = null 
   return { verify, reverify, findMatch, reverifyDkim, resolveUpgrade, pickSigner };
 }
 
-module.exports = { createVerifier, findMatch, reverifyDkim, resolveUpgrade, pickSigner };
+export { createVerifier, findMatch, reverifyDkim, resolveUpgrade, pickSigner };

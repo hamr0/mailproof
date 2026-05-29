@@ -1,10 +1,9 @@
-'use strict';
 
-const { test } = require('node:test');
-const assert = require('node:assert/strict');
-const {
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import {
   buildRawMessage, newMessageId, sanitizeSubject, withSignature,
-} = require('../../src/outbound');
+} from '../../src/outbound.js';
 
 // --- newMessageId ---
 

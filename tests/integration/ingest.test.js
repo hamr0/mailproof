@@ -1,4 +1,3 @@
-'use strict';
 
 // Inbound pipeline core (m7b-3 Commit B). Drives create().ingest end to end on
 // a tmp dir against the real store + git ledger + both sequencing engines + the
@@ -9,14 +8,14 @@
 // counted or not), the count decision drives both the commit flag and the
 // transition, workflow vs crypto routing by plus-tag, and completion.
 
-const { test } = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs/promises');
-const os = require('node:os');
-const path = require('node:path');
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 
-const { create } = require('../../src/create');
-const { verifiedFixture, noDnsResolver } = require('../helpers/dkim');
+import { create } from '../../src/create.js';
+import { verifiedFixture, noDnsResolver } from '../helpers/dkim.js';
 
 const CRLF = '\r\n';
 const OPERATOR = 'app.example';

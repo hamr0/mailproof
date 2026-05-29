@@ -1,8 +1,7 @@
-'use strict';
 
-const { test } = require('node:test');
-const assert = require('node:assert/strict');
-const { classifyTrust, TRUST_LEVELS } = require('../../src/classifier');
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { classifyTrust, TRUST_LEVELS } from '../../src/classifier.js';
 
 // Synthetic mailauth authenticate() result fragments. These mirror the REAL
 // shape mailauth produces (carried over from gitdone's characterization

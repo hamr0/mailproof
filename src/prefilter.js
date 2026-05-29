@@ -7,7 +7,6 @@
 // it does not depend on a structured MIME parse — header parsing of untrusted
 // input is exactly where subtle bugs hide. Pure: no I/O, no config.
 
-'use strict';
 
 /**
  * Slice the leading header block out of raw message bytes (up to `maxBytes`),
@@ -72,4 +71,4 @@ function preFilter(headerBlock, fromAddr) {
   return { rejected: false, reason: null };
 }
 
-module.exports = { preFilter, extractHeaderBlock, rawHeader };
+export { preFilter, extractHeaderBlock, rawHeader };

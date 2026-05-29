@@ -15,7 +15,6 @@
 // multi-worker consumer that needs cross-process safety must add its own
 // filesystem-level lock (O_EXCL on a sentinel).
 
-'use strict';
 
 /** @type {Map<string, Promise<any>>} */
 const _writeMutex = new Map();
@@ -44,4 +43,4 @@ async function withEventMutex(eventId, work) {
   }
 }
 
-module.exports = { withEventMutex };
+export { withEventMutex };

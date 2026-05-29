@@ -14,29 +14,26 @@
 // Attachment + raw hashes go through the notary's `hashDocument` so every
 // fingerprint mailproof writes uses ONE format (the notary "capture" half).
 
-'use strict';
 
-const { authenticate } = require('mailauth');
-const { hashDocument } = require('./notary');
+import { authenticate } from 'mailauth';
+import mailparserPkg from 'mailparser';
+import { hashDocument } from './notary.js';
 
 /**
  * The subset of mailparser's `ParsedMail` the kernel reads. mailparser ships no
  * type declarations, so this local shape pins exactly the fields used here
- * (the `simpleParser` require is typed against it below).
+ * (the `simpleParser` import is typed against it below).
  * @typedef {Object} ParsedMail
  * @property {{ value?: Array<{ address?: string, name?: string }> } | null} [from]
  * @property {string | null} [messageId]
  * @property {Array<{ filename?: string, size?: number, content?: Buffer }>} [attachments]
  */
-// mailparser ships no type declarations. Requiring it through a variable
-// specifier lets the JSDoc cast below supply the real shape (the fields the
-// kernel reads — see ParsedMail) instead of an implicit `any`, with no
-// `@ts-ignore` and an identical runtime resolution.
-const MAILPARSER = 'mailparser';
-const mailparser = /** @type {{ simpleParser: (source: Buffer | string) => Promise<ParsedMail> }} */ (
-  require(MAILPARSER)
+// mailparser ships no type declarations. The JSDoc cast supplies the real shape
+// (the fields the kernel reads — see ParsedMail) instead of an implicit `any`,
+// with no `@ts-ignore`.
+const { simpleParser } = /** @type {{ simpleParser: (source: Buffer | string) => Promise<ParsedMail> }} */ (
+  mailparserPkg
 );
-const simpleParser = mailparser.simpleParser;
 
 // Authenticate an inbound message. Pins `trustReceived: false` — mailproof
 // never trusts pre-existing `Received`/`Authentication-Results` headers, only
@@ -44,10 +41,10 @@ const simpleParser = mailparser.simpleParser;
 // `envelope` is the m3 parseEnvelope shape; `mtaHostname`/`resolver` are
 // injected config (no env singleton). `resolver` lets tests run offline and the
 // future verify+@ endpoint re-check against an archived key.
-/** @typedef {import('./types').Envelope} Envelope */
-/** @typedef {import('./types').ParsedMessage} ParsedMessage */
-/** @typedef {import('./types').AuthSummary} AuthSummary */
-/** @typedef {import('./types').MailauthResult} MailauthResult */
+/** @typedef {import('./types.js').Envelope} Envelope */
+/** @typedef {import('./types.js').ParsedMessage} ParsedMessage */
+/** @typedef {import('./types.js').AuthSummary} AuthSummary */
+/** @typedef {import('./types.js').MailauthResult} MailauthResult */
 
 /**
  * Authenticate an inbound message via mailauth (DKIM/DMARC/ARC/SPF). Pins
@@ -151,4 +148,4 @@ function summariseAuth(auth) {
   return { dkim, spf, dmarc, arc };
 }
 
-module.exports = { authenticateMessage, parseMessage, summariseAuth, extractVerifyCandidates };
+export { authenticateMessage, parseMessage, summariseAuth, extractVerifyCandidates };

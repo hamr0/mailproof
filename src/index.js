@@ -8,48 +8,47 @@
 // P1 lifts the modules one at a time; this file re-exports each as it lands.
 // The high-level create({ ... }) factory arrives once the pillars compose.
 
-'use strict';
 
-const { classifyTrust, TRUST_LEVELS } = require('./classifier');
-const {
+import { classifyTrust, TRUST_LEVELS } from './classifier.js';
+import {
   parseAddress, parseEventTag, parseVerifyTag, parseReverifyTag, parseAttestTag, parseInitiatorCommand,
-} = require('./router');
-const { preFilter, extractHeaderBlock, rawHeader } = require('./prefilter');
-const { parseEnvelope } = require('./envelope');
-const { authenticateMessage, parseMessage, summariseAuth } = require('./parse');
-const {
+} from './router.js';
+import { preFilter, extractHeaderBlock, rawHeader } from './prefilter.js';
+import { parseEnvelope } from './envelope.js';
+import { authenticateMessage, parseMessage, summariseAuth } from './parse.js';
+import {
   fetchDkimKey, pickSignatureToArchive, extractPublicKey, toPem,
-} = require('./dkim-archive');
-const {
+} from './dkim-archive.js';
+import {
   sendmail, buildRawMessage, sanitizeSubject, newMessageId, rfc5322Date, withSignature,
-} = require('./outbound');
-const { createEventStore } = require('./event-store');
-const { withEventMutex } = require('./event-mutex');
-const { createGitrepo } = require('./gitrepo');
-const { createOts, parseOtsBlockHeight } = require('./ots');
-const {
+} from './outbound.js';
+import { createEventStore } from './event-store.js';
+import { withEventMutex } from './event-mutex.js';
+import { createGitrepo } from './gitrepo.js';
+import { createOts, parseOtsBlockHeight } from './ots.js';
+import {
   shouldCount, applyReply, isComplete, firstPendingStep,
   stepDepsMet, eligibleSteps, meetsTrust, COUNT_REASONS,
-} = require('./completion');
-const {
-  shouldCount: shouldCountSignoff,
-  applyReply: applySignoff,
+} from './completion.js';
+import {
+  shouldCount as shouldCountSignoff,
+  applyReply as applySignoff,
   signatures,
   CRYPTO_REASONS,
-} = require('./crypto');
-const { createNotary, hashDocument } = require('./notary');
-const {
+} from './crypto.js';
+import { createNotary, hashDocument } from './notary.js';
+import {
   createVerifier, findMatch, reverifyDkim, resolveUpgrade, pickSigner,
-} = require('./verifier');
-const { createNotifier } = require('./notify');
-const { createSweep, referenceClockMs, isActive } = require('./sweep');
-const { createProofAnchor } = require('./proof-anchor');
-const {
+} from './verifier.js';
+import { createNotifier } from './notify.js';
+import { createSweep, referenceClockMs, isActive } from './sweep.js';
+import { createProofAnchor } from './proof-anchor.js';
+import {
   isDeliveryStatusReport, extractDsn, permanentFailures, parseDeliveryStatusBody,
-} = require('./dsn');
-const { create } = require('./create');
+} from './dsn.js';
+import { create } from './create.js';
 
-module.exports = {
+export {
   // Composition root — wires the four pillars into one bound instance (m7b-3)
   create,
   // Verify

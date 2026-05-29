@@ -1,13 +1,12 @@
-'use strict';
 
 // Unit tests for the event store's PURE surface — no filesystem. The
 // disk-touching primitives (loadEvent/createEvent/activateEvent/editEvent/
 // record*) are exercised in tests/integration/event-store.test.js, matching
 // the unit-vs-integration split established for outbound.
 
-const { test } = require('node:test');
-const assert = require('node:assert/strict');
-const { createEventStore, buildEventRecord, expandFlow } = require('../../src/event-store');
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { createEventStore, buildEventRecord, expandFlow } from '../../src/event-store.js';
 
 // A store needs only dataDir to construct; the pure helpers ignore it.
 const store = createEventStore({ dataDir: '/nonexistent' });

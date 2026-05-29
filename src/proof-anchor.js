@@ -27,10 +27,9 @@
 // recorded in the summary, never thrown — proof anchoring is not allowed to
 // undo state already written elsewhere.
 
-'use strict';
 
-const { withEventMutex } = require('./event-mutex');
-const { renderDefault } = require('./templates');
+import { withEventMutex } from './event-mutex.js';
+import { renderDefault } from './templates.js';
 
 /**
  * Compose the proof-anchor pass (m7d-4) over the bound store/ledger/ots + the
@@ -150,4 +149,4 @@ function createProofAnchor({
   return { upgradeProofs };
 }
 
-module.exports = { createProofAnchor };
+export { createProofAnchor };

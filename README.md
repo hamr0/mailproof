@@ -40,7 +40,7 @@ Every inbound reply is committed — *even rejected ones* (wrong sender, failed 
 npm i mailproof   # 2 runtime deps (mailauth, mailparser); Node ≥ 22.5
 ```
 
-Vanilla JS + JSDoc, no consumer build step. The public surface ships JSDoc-generated, `strictNullChecks` checkJs-gated TypeScript declarations, so `require('mailproof')` gives TS consumers a checked surface. The git ledger shells out to the `git` binary directly (no `simple-git`), so storage stays dependency-free.
+Pure ESM (`import`, `"type": "module"`) + JSDoc, no consumer build step. The public surface ships JSDoc-generated, `strictNullChecks` checkJs-gated TypeScript declarations, so `import … from 'mailproof'` gives TS consumers a checked surface. The git ledger shells out to the `git` binary directly (no `simple-git`), so storage stays dependency-free.
 
 > **Pre-1.0:** the API can still change shape between `0.x` minors (SemVer 0.x). P2 (rebuilding gitdone on it) is the surface-validation phase.
 

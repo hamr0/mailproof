@@ -1,4 +1,3 @@
-'use strict';
 
 // Initiator commands (m7d-5b) — `remind+{id}@` and `stats+{id}@`. These are
 // not participant replies and are never committed to the ledger; they're the
@@ -13,15 +12,15 @@
 // is policy (gitdone's `statsBody` is a rendered text composition, not a kernel
 // mechanism — there is no outbound for stats here).
 
-const { test } = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs/promises');
-const fss = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import fss from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
-const { create } = require('../../src/create');
-const { verifiedSigner, noDnsResolver } = require('../helpers/dkim');
+import { create } from '../../src/create.js';
+import { verifiedSigner, noDnsResolver } from '../helpers/dkim.js';
 
 const OPERATOR = 'app.example';
 

@@ -35,11 +35,10 @@
 // `completion` object), camelCase `dependsOn`/`minTrust`. Document-hash
 // verification is the notary (PRD §4.1), not part of this engine.
 
-'use strict';
 
-const { TRUST_LEVELS } = require('./classifier');
+import { TRUST_LEVELS } from './classifier.js';
 
-/** @typedef {import('./types').TrustLevel} TrustLevel */
+/** @typedef {import('./types.js').TrustLevel} TrustLevel */
 
 // The accept-with-flag taxonomy (SPEC §4). Exported so consumers and tests
 // share one source of truth for "why didn't this reply count?".
@@ -69,9 +68,9 @@ function trustRank(level) {
   return i < 0 ? Infinity : i;
 }
 
-/** @typedef {import('./types').MailproofEvent} MailproofEvent */
-/** @typedef {import('./types').Step} Step */
-/** @typedef {import('./types').CountDecision} CountDecision */
+/** @typedef {import('./types.js').MailproofEvent} MailproofEvent */
+/** @typedef {import('./types.js').Step} Step */
+/** @typedef {import('./types.js').CountDecision} CountDecision */
 /**
  * The in-memory reply input the engine reasons over (the orchestrator computes
  * the identity booleans; the engine stays pure).
@@ -99,7 +98,7 @@ function meetsTrust(commit, step) {
 // Re-exported from event-store (the schema-level canonical predicate, lifted
 // in spirit from gitdone's 2026-05-28 closed_by canonicalisation — one
 // definition for "is this event complete?", not one per engine).
-const { isComplete } = require('./event-store');
+import { isComplete } from './event-store.js';
 
 /**
  * @param {MailproofEvent} event
@@ -236,7 +235,7 @@ function applyReply(event, commit, { now = new Date().toISOString() } = {}) {
   };
 }
 
-module.exports = {
+export {
   shouldCount,
   applyReply,
   isComplete,

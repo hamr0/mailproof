@@ -29,7 +29,6 @@
 // We surface only the machine-readable per-recipient Status + Diagnostic-Code —
 // the text/plain summary varies wildly between MTAs and isn't worth echoing.
 
-'use strict';
 
 // Split a raw message into its header block + body at the first blank line.
 /**
@@ -245,7 +244,7 @@ function permanentFailures(dsn) {
   return recipients.filter((r) => r.action === 'failed' || (!r.action && r.status && /^5\./.test(r.status)));
 }
 
-module.exports = {
+export {
   isDeliveryStatusReport,
   extractDsn,
   permanentFailures,

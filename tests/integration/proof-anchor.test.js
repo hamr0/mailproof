@@ -1,4 +1,3 @@
-'use strict';
 
 // Proof-anchor pass (m7d-4). Drives the per-event lift of the Bitcoin
 // attestation across an event's .ots proofs, records anchored state into the
@@ -8,15 +7,15 @@
 // `ots upgrade` is the m7c-4 primitive, already tested in tests/integration/
 // ots.test.js) and a stub deliver that captures calls.
 
-const { test } = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs/promises');
-const os = require('node:os');
-const path = require('node:path');
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 
-const { createEventStore } = require('../../src/event-store');
-const { createGitrepo } = require('../../src/gitrepo');
-const { createProofAnchor } = require('../../src/proof-anchor');
+import { createEventStore } from '../../src/event-store.js';
+import { createGitrepo } from '../../src/gitrepo.js';
+import { createProofAnchor } from '../../src/proof-anchor.js';
 
 const OPERATOR = 'app.example';
 

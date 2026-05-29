@@ -1,4 +1,3 @@
-'use strict';
 
 // Composition root (m7b-3 Commit A). create({ ... }) must wire the four pillars
 // onto ONE dataDir and hand back a working create/read/verify surface. These
@@ -7,13 +6,13 @@
 // exercised by ingest() in Commit B and by the direct gitrepo/notary
 // integration tests; here we prove the wiring, validation, and surface shape.
 
-const { test } = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs/promises');
-const os = require('node:os');
-const path = require('node:path');
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 
-const { create } = require('../../src/create');
+import { create } from '../../src/create.js';
 
 async function tmpDir() {
   return fs.mkdtemp(path.join(os.tmpdir(), 'mailproof-create-'));

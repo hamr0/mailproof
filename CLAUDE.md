@@ -22,7 +22,7 @@ npm run typecheck  # tsc --noEmit — checkJs + strictNullChecks over src/*.js J
 npm run build:types # tsc — emit the .d.ts to ./types/ (git-ignored; auto-runs on publish via prepublishOnly)
 npm run poc        # node poc/pipeline.js — the original P0 proof (superseded; never shipped)
 ```
-Runtime deps: `mailauth` + `mailparser` (2; the git ledger uses the `git` binary via `child_process`, **not** `simple-git`). No build step **for consumers** — vanilla JS + JSDoc; the shipped `.d.ts` are generated from that JSDoc by a dev-only `npm run build:types` into git-ignored `./types/` and built fresh on publish (`prepublishOnly`), never committed (devDeps: `typescript`, `@types/node`). The JSDoc is the single source of truth; CI runs `typecheck` (`checkJs` + `strictNullChecks`, **not** full `strict` — see `LIBRARY_CONVENTIONS.md`) — no `!`/`as any`/`@ts-ignore` to silence findings. Node ≥ 22.5 required.
+Runtime deps: `mailauth` + `mailparser` (2; the git ledger uses the `git` binary via `child_process`, **not** `simple-git`). No build step **for consumers** — vanilla JS + JSDoc, **pure ESM** (`"type": "module"`, `import`/`export`; consumers `import { create } from 'mailproof'`, and all relative specifiers carry the `.js` extension Node ESM requires); the shipped `.d.ts` are generated from that JSDoc by a dev-only `npm run build:types` into git-ignored `./types/` and built fresh on publish (`prepublishOnly`), never committed (devDeps: `typescript`, `@types/node`). The JSDoc is the single source of truth; CI runs `typecheck` (`checkJs` + `strictNullChecks`, **not** full `strict` — see `LIBRARY_CONVENTIONS.md`) — no `!`/`as any`/`@ts-ignore` to silence findings. Node ≥ 22.5 required.
 
 ## Architecture (the big picture)
 

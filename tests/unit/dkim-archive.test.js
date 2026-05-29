@@ -1,14 +1,13 @@
-'use strict';
 
 // DKIM public-key archival (src/dkim-archive.js). Pure parsing/PEM helpers +
 // fetchDkimKey driven through an injected offline resolver (no network) and
 // pickSignatureToArchive over synthetic mailauth shapes.
 
-const { test } = require('node:test');
-const assert = require('node:assert/strict');
-const {
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import {
   fetchDkimKey, pickSignatureToArchive, extractPublicKey, toPem,
-} = require('../../src/dkim-archive');
+} from '../../src/dkim-archive.js';
 
 test('extractPublicKey: pulls p= from a DKIM TXT record, ignoring other tags', () => {
   assert.equal(extractPublicKey('v=DKIM1; k=rsa; p=ABC123'), 'ABC123');

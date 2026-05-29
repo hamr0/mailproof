@@ -25,21 +25,20 @@
 // gitrepo writers, the pure engines). DNS-bound work (authenticate) and the
 // trigger sends (Commit C) stay OUTSIDE the lock.
 
-'use strict';
 
-const { withEventMutex } = require('./event-mutex');
-const { renderDefault } = require('./templates');
+import { withEventMutex } from './event-mutex.js';
+import { renderDefault } from './templates.js';
 
 // Scan at most this many leading bytes for the humans-only prefilter. Headers
 // live at the top of the message; this caps work on a hostile multi-megabyte
 // body without parsing it.
 const MAX_HEADER_BYTES = 64 * 1024;
 
-/** @typedef {import('./types').Envelope} Envelope */
-/** @typedef {import('./types').MailproofEvent} MailproofEvent */
-/** @typedef {import('./types').Step} Step */
-/** @typedef {import('./types').Commit} Commit */
-/** @typedef {import('./types').ParsedMessage} ParsedMessage */
+/** @typedef {import('./types.js').Envelope} Envelope */
+/** @typedef {import('./types.js').MailproofEvent} MailproofEvent */
+/** @typedef {import('./types.js').Step} Step */
+/** @typedef {import('./types.js').Commit} Commit */
+/** @typedef {import('./types.js').ParsedMessage} ParsedMessage */
 
 /**
  * A parsed plus-tag command (remind+/stats+) from router.parseInitiatorCommand.
@@ -701,4 +700,4 @@ function createIngest({
   return ingest;
 }
 
-module.exports = { createIngest };
+export { createIngest };

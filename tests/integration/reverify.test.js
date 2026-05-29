@@ -1,4 +1,3 @@
-'use strict';
 
 // Contested-commit reverify (m7c-3). A reply whose DKIM didn't align at
 // reception (so it was recorded below `verified`) is later proven by forwarding
@@ -6,14 +5,14 @@
 // the recorded trust — persisting an IMMUTABLE reverify-NNN.json (the original
 // commit is never rewritten). End to end on the real ledger + mailauth, offline.
 
-const { test } = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs/promises');
-const os = require('node:os');
-const path = require('node:path');
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 
-const { create } = require('../../src/create');
-const { makeDkimKeypair, signDkim, buildResolver, verifiedFixture, noDnsResolver } = require('../helpers/dkim');
+import { create } from '../../src/create.js';
+import { makeDkimKeypair, signDkim, buildResolver, verifiedFixture, noDnsResolver } from '../helpers/dkim.js';
 
 const OPERATOR = 'app.example';
 const envOf = (recipient, sender) => ({ recipient, sender, clientIp: '198.51.100.9', clientHelo: 'mta.example' });

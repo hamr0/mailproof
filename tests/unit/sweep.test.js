@@ -1,13 +1,12 @@
-'use strict';
 
 // Unit tests for sweep's PURE predicates — the reference clock and the
 // active-cohort gate that drive the overdue/archive decisions. No fs, no
 // process; the bound sweep() that walks the store + emits occasions is covered
 // in tests/integration/sweep.test.js.
 
-const { test } = require('node:test');
-const assert = require('node:assert/strict');
-const { referenceClockMs, isActive } = require('../../src/sweep');
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { referenceClockMs, isActive } from '../../src/sweep.js';
 
 const ms = (iso) => new Date(iso).getTime();
 

@@ -11,29 +11,28 @@
 // verify→route→commit→advance→trigger pipeline — to the returned object, closing
 // over the same pillars + outbound config.
 
-'use strict';
 
-const { createEventStore } = require('./event-store');
-const { createGitrepo } = require('./gitrepo');
-const { createOts } = require('./ots');
-const { createNotary } = require('./notary');
-const { createVerifier } = require('./verifier');
-const { createNotifier } = require('./notify');
-const { renderDefault } = require('./templates');
-const { createIngest } = require('./ingest');
-const { createSweep } = require('./sweep');
-const { createProofAnchor } = require('./proof-anchor');
-const completion = require('./completion');
-const crypto = require('./crypto');
-const { parseMessage, authenticateMessage, summariseAuth, extractVerifyCandidates } = require('./parse');
-const { classifyTrust } = require('./classifier');
-const { fetchDkimKey, pickSignatureToArchive } = require('./dkim-archive');
-const { parseEventTag, parseAttestTag, parseInitiatorCommand, parseVerifyTag, parseReverifyTag } = require('./router');
-const { preFilter, extractHeaderBlock } = require('./prefilter');
-const { isDeliveryStatusReport, extractDsn, permanentFailures } = require('./dsn');
-const {
+import { createEventStore } from './event-store.js';
+import { createGitrepo } from './gitrepo.js';
+import { createOts } from './ots.js';
+import { createNotary } from './notary.js';
+import { createVerifier } from './verifier.js';
+import { createNotifier } from './notify.js';
+import { renderDefault } from './templates.js';
+import { createIngest } from './ingest.js';
+import { createSweep } from './sweep.js';
+import { createProofAnchor } from './proof-anchor.js';
+import * as completion from './completion.js';
+import * as crypto from './crypto.js';
+import { parseMessage, authenticateMessage, summariseAuth, extractVerifyCandidates } from './parse.js';
+import { classifyTrust } from './classifier.js';
+import { fetchDkimKey, pickSignatureToArchive } from './dkim-archive.js';
+import { parseEventTag, parseAttestTag, parseInitiatorCommand, parseVerifyTag, parseReverifyTag } from './router.js';
+import { preFilter, extractHeaderBlock } from './prefilter.js';
+import { isDeliveryStatusReport, extractDsn, permanentFailures } from './dsn.js';
+import {
   sendmail, buildRawMessage, newMessageId, sanitizeSubject,
-} = require('./outbound');
+} from './outbound.js';
 
 // Compose a bound mailproof instance.
 //   dataDir     — root for {dataDir}/events/*.json + the per-event git repos
@@ -59,7 +58,7 @@ const {
 //                 before the `overdue` nudge fires (optional; default 14).
 //   archiveDays — sweep(): idle days before an active event auto-archives and
 //                 emits the `archived` occasion (optional; default 45).
-/** @typedef {import('./types').MailproofEvent} MailproofEvent */
+/** @typedef {import('./types.js').MailproofEvent} MailproofEvent */
 
 /**
  * Compose a bound mailproof instance — wires the four pillars over one dataDir.
@@ -74,7 +73,7 @@ const {
  * @param {number} [opts.overdueDays] sweep(): idle days before the overdue nudge (default 14).
  * @param {number} [opts.archiveDays] sweep(): idle days before auto-archive (default 45).
  * @returns {{
- *   ingest: (raw: Buffer | string, envelope?: import('./types').Envelope) => Promise<Record<string, any>>,
+ *   ingest: (raw: Buffer | string, envelope?: import('./types.js').Envelope) => Promise<Record<string, any>>,
  *   sweep: (opts?: { now?: number }) => Promise<Record<string, any>>,
  *   upgradeProofs: ((opts?: { now?: string }) => Promise<Record<string, any>>) | undefined,
  *   createEvent: (partialEvent: Partial<MailproofEvent> & Record<string, any>) => Promise<MailproofEvent>,
@@ -175,7 +174,7 @@ function create({
   // roster — the initiator distributes the attest+ link themselves.)
   /**
    * @param {MailproofEvent} ev
-   * @returns {Promise<import('./types').DeliverResult[]>}
+   * @returns {Promise<import('./types.js').DeliverResult[]>}
    */
   async function notifyActivation(ev) {
     const out = [];
@@ -222,7 +221,7 @@ function create({
   // count yet, so neither warrants a kickoff here.
   /**
    * @param {string} eventId
-   * @param {{ title?: string, steps?: Array<Partial<import('./types').Step> & { id: string }> }} patch
+   * @param {{ title?: string, steps?: Array<Partial<import('./types.js').Step> & { id: string }> }} patch
    * @param {{ now?: string, organiserHandle?: string | null }} [opts]
    */
   async function editEvent(eventId, patch, opts) {
@@ -275,4 +274,4 @@ function create({
   };
 }
 
-module.exports = { create };
+export { create };

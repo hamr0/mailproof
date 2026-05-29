@@ -1,4 +1,3 @@
-'use strict';
 
 // Inbound bounce (m7d-3). A DSN delivered to a plus-tagged reply address (our
 // outbound return path) is recognised BEFORE the humans-only prefilter, routed
@@ -7,14 +6,14 @@
 // a participant reply — it is never committed to the ledger. Drives the public
 // create() surface against a fake capture transport.
 
-const { test } = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs/promises');
-const fss = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import fss from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
-const { create } = require('../../src/create');
+import { create } from '../../src/create.js';
 
 const OPERATOR = 'app.example';
 const CRLF = '\r\n';

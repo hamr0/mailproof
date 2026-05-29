@@ -13,7 +13,6 @@
 // also pass `step` / `snapshot` / `failed` / `signatureCount` / `countedCommits`
 // / `daysIdle` / `daysOver` / `blockHeight` — the same shape the body hook sees.
 
-'use strict';
 
 /**
  * @param {Record<string, any>} [ctx]
@@ -234,4 +233,4 @@ function renderDefault(kind, ctx = {}) {
   }
 }
 
-module.exports = { renderDefault, statsBody };
+export { renderDefault, statsBody };

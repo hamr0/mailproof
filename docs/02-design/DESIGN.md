@@ -28,10 +28,10 @@ becomes its first consumer (web + crypto modes as policy on top).
 
 **Stays in gitdone** (policy/product): the heavy attestation tail (`revoke`, `latest`/`accumulating` dedup, multi-doc strict manifests + `reference_docs`/`attach`, attestor-PII redaction), `bundle`, `[gitdone]` email bodies, web dashboard + magic-link flow, knowless-based manage auth. (The lean crypto sign-off *mechanism* itself is now lifted — see the Sequence bullet above.) **`receive.js` is NOT lifted** — it's app glue; mailproof exposes primitives + an optional `createReceiver()` with policy hooks, and each app writes thin glue.
 
-## Planned public API (CommonJS, mirrors gitdone style)
+## Planned public API (pure ESM)
 ```js
-const mailproof = require('mailproof');
-const core = mailproof.create({ dataDir, domain, sendmailBin, otsBin /* optional */ });
+import { create } from 'mailproof';
+const core = create({ dataDir, domain, sendmailBin, otsBin /* optional */ });
 
 await core.createEvent({ title, flow: 'sequential', initiator,
   steps: [{ id, name, participant, dependsOn: [], minTrust: 'verified' }] });

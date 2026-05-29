@@ -1,14 +1,13 @@
-'use strict';
 
 // Unit coverage for the neutral default email surface (src/templates.js).
 // renderDefault is pure, so we assert the { subject, defaultBody } shape per
 // occasion directly — the integration tests cover that producers spread it
 // into deliver() and that composeNotification still overrides it.
 
-const test = require('node:test');
-const assert = require('node:assert/strict');
+import test from 'node:test';
+import assert from 'node:assert/strict';
 
-const { renderDefault, statsBody } = require('../../src/templates');
+import { renderDefault, statsBody } from '../../src/templates.js';
 
 const ev = (over = {}) => ({ id: 'ev1', title: 'My Event', ...over });
 

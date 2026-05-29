@@ -1,4 +1,3 @@
-'use strict';
 
 // Integration tests for the optional OTS anchor. stampFile/upgradeProof/
 // readBlockHeight are thin wrappers around the `ots` CLI, so we cover the
@@ -9,13 +8,13 @@
 // note). The PURE output parser is unit-tested in tests/unit/ots.test.js.
 // moveProofIntoTree was dropped in the lift (gitrepo files the proof itself).
 
-const { test } = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs/promises');
-const path = require('node:path');
-const os = require('node:os');
-const { spawnSync } = require('node:child_process');
-const { createOts } = require('../../src/ots');
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import os from 'node:os';
+import { spawnSync } from 'node:child_process';
+import { createOts } from '../../src/ots.js';
 
 // Is a real `ots` client on PATH? Skip the real-binary smoke tests if not.
 const HAS_OTS = (() => {

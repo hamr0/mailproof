@@ -1,4 +1,3 @@
-'use strict';
 
 // Inbound pipeline — the trigger/send layer (m7b-3 Commit C). On a COUNTED
 // reply ingest() drives the next email: workflow pings the participant(s) of
@@ -8,15 +7,15 @@
 // binary in tmp — no mocks. Bodies route through the optional composeNotification
 // hook (neutral default otherwise).
 
-const { test } = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs/promises');
-const fss = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import fss from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
-const { create } = require('../../src/create');
-const { verifiedSigner, noDnsResolver } = require('../helpers/dkim');
+import { create } from '../../src/create.js';
+import { verifiedSigner, noDnsResolver } from '../helpers/dkim.js';
 
 const OPERATOR = 'app.example';
 

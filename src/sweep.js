@@ -35,17 +35,16 @@
 // change; git repos and OTS proofs are never touched ("proofs outlive the
 // service" applies to the evidence, not the dashboard record).
 
-'use strict';
 
-const { withEventMutex } = require('./event-mutex');
-const { isComplete } = require('./event-store');
-const { renderDefault } = require('./templates');
+import { withEventMutex } from './event-mutex.js';
+import { isComplete } from './event-store.js';
+import { renderDefault } from './templates.js';
 
 const MS_PER_DAY = 86400 * 1000;
 
 // The reference clock (ms) for overdue/archive decisions. PURE. Returns null if
 // the event has no meaningful clock yet (never activated).
-/** @typedef {import('./types').MailproofEvent} MailproofEvent */
+/** @typedef {import('./types.js').MailproofEvent} MailproofEvent */
 
 /**
  * The reference clock (ms) for overdue/archive decisions, or null if the event
@@ -86,8 +85,8 @@ function isActive(event) {
 //   overdueDays — idle days past the reference clock before the overdue nudge
 //                 (default 14, matching gitdone's overdueNudgeDays).
 //   archiveDays — idle days before auto-archive (default 45, gitdone's archiveDays).
-/** @typedef {import('./notify').DeliverArgs} DeliverArgs */
-/** @typedef {import('./types').DeliverResult} DeliverResult */
+/** @typedef {import('./notify.js').DeliverArgs} DeliverArgs */
+/** @typedef {import('./types.js').DeliverResult} DeliverResult */
 
 /**
  * The subset of the event store sweep binds (event-store).
@@ -214,4 +213,4 @@ function createSweep({
   return { sweep };
 }
 
-module.exports = { createSweep, referenceClockMs, isActive };
+export { createSweep, referenceClockMs, isActive };

@@ -1,4 +1,3 @@
-'use strict';
 
 // m7d end-to-end (m7d-5c) — the full trigger surface, exercised through ONE
 // `create()` instance against real I/O (real outbound to a fake sendmail, real
@@ -26,15 +25,15 @@
 // event `cr` exercises ack + reassigned; a third event `arch` exercises
 // archived (precedence prevents overdue+archived on the same id in one tick).
 
-const { test } = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs/promises');
-const fss = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import fss from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
-const { create } = require('../../src/create');
-const { verifiedSigner } = require('../helpers/dkim');
+import { create } from '../../src/create.js';
+import { verifiedSigner } from '../helpers/dkim.js';
 
 const OPERATOR = 'app.example';
 const CRLF = '\r\n';
