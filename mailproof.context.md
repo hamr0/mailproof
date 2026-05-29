@@ -1,7 +1,7 @@
 # mailproof — Integration Guide
 
 > For AI assistants and developers wiring mailproof into a project.
-> Pre-library (P1 — m7b assembly + m7c verify surface + m7d-1 sweep) | Node.js >= 22.5 | 2 deps (`mailauth`, `mailparser`) | Apache-2.0
+> Published `0.7.0` (pre-1.0) — P1 lift + m7c verification + m7d triggers COMPLETE | Node.js >= 22.5 | 2 deps (`mailauth`, `mailparser`) | Apache-2.0
 
 ## What this is
 
@@ -145,6 +145,10 @@ array, `createNotary`, `hashDocument`.
 { routed: false, command: 'remind'|'stats', eventId, authenticated,
   reason?,                  // 'unverified'|'sender_not_initiator'|'unknown_event'|'already_complete'
   snapshot?, notified? }    // stats → snapshot + notified ([{kind:'stats',…}]); remind → notified (advance/activation, ctx.reminder=true)
+
+// public verification email endpoints — verify+/reverify+ (read-only / append-only):
+{ routed: false, command: 'verify',   eventId, report, notified }  // verify+{id}@   → never commits; emits kind:'verify_report'
+{ routed: false, command: 'reverify', eventId, report, notified }  // reverify+{id}-{seq}@ → persists an immutable reverify record; emits kind:'reverify_report'
 ```
 
 ## The core invariant: accept-with-flag
@@ -238,8 +242,8 @@ contested commit's trust against it. With `otsBin` set, `createOts()` also
 exposes `upgradeProof(abs)` (folds the Bitcoin attestation into a pending `.ots`
 once the calendars have it; the file's sha256 changing = "now anchored") and
 `readBlockHeight(abs)` (reads the anchored block via `ots info`, offline) — so
-the `.ots` proofs are verifiable, not just stored. *(Driving these across an
-event + emitting a `proof_anchored` notification is m7d.)*
+the `.ots` proofs are verifiable, not just stored. The bound `upgradeProofs()`
+drives these across an event and emits `proof_anchored` (see § Triggers).
 
 ## The notary (documents, both ways)
 
@@ -288,6 +292,18 @@ authenticated, snapshot, notified:[{kind:'stats', …}] }`) AND sends a neutral
 default reply to the initiator (`kind:'stats'`, a plain ASCII dump of the
 snapshot). The snapshot is on the ctx, so a consumer overrides the prose via
 `composeNotification` keyed on `kind:'stats'` — branding stays policy (§8.6).
+
+The **public verification endpoints** `verify+{id}@` and `reverify+{id}-{seq}@`
+also route through the same `ingest()` (m7c-6) — the email-facing counterparts
+of the `verify()`/`reverify()` methods, open to anyone (not initiator-gated).
+`verify+` matches a forwarded original to a committed reply + re-checks DKIM
+against the archived key and **never commits**, emitting `kind:'verify_report'`;
+`reverify+` re-evaluates the named commit and persists its own immutable reverify
+record, emitting `kind:'reverify_report'`. The forwarded original is recovered
+transiently (hashed, never persisted). With these, the kernel emits **12
+occasion kinds** in total: `activation`, `advance`, `reassigned`, `ack`,
+`completion`, `stats`, `bounce`, `overdue`, `archived`, `proof_anchored`,
+`verify_report`, `reverify_report`.
 
 ```js
 composeNotification({ kind, mode?, eventId, event, to, replyAddress, step?, signatureCount?, daysOver?, daysIdle?, countedCommits?, receipts?, reminder? }) {
@@ -343,7 +359,7 @@ primitives + the `composeNotification` hook:
 
 ## Constraints
 
-- Node ≥ 22.5. Vanilla JS (CommonJS), JSDoc + shipped `.d.ts`. No build step.
+- Node ≥ 22.5. Vanilla JS (CommonJS); JSDoc is the single source of truth and the shipped `.d.ts` are generated from it (`checkJs` + `strictNullChecks`, git-ignored, built on publish). No consumer build step.
 - 2 runtime deps (`mailauth`, `mailparser`); the git ledger uses the `git` binary via `child_process` (not `simple-git`). `ots` is an optional external binary.
 - Transport is **bundled self-hosted Postfix/sendmail** with opendkim signing outbound at the MTA — not a pluggable third-party mail provider.
 - Durability-first: the ledger is the single source of truth and is meant to be offline-verifiable; SQL consumers project a read-model, they don't replace it.

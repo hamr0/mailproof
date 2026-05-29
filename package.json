@@ -53,6 +53,7 @@
     "src/",
     "types/",
     "README.md",
+    "mailproof.context.md",
     "OPS.md",
     "CHANGELOG.md",
     "config.example.env",

@@ -43,6 +43,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `tests/unit/index.test.js` pins the exact public-barrel surface (59 exports).
   Matches the family contract (`bareagent` reference, `knowless`); repo-only
   docs (`docs/`) are no longer shipped in the tarball (PRD §8.13).
+- **Adopter integration guide (`mailproof.context.md`) now ships.** The
+  self-contained "wire mailproof correctly without reading the source" reference
+  (every `create()` option, the full public API + `ingest()` result shape, the
+  plus-tag address space, the `composeNotification` contract + 12 occasion
+  `kind`s, the threat model, gotchas, constraints) is added to `files` so it
+  reaches adopters via npm. Refreshed to current reality (published 0.7.0; the
+  m7c-6 public `verify+`/`reverify+` email endpoints + their report kinds; types
+  generated-on-publish). Per `LIBRARY_CONVENTIONS.md` §3–4, the adopter's
+  complete picture is README + `mailproof.context.md`; `docs/` + `CLAUDE.md`
+  stay repo-only.
 - **m7c-6: public verification email endpoints wired through `ingest()`.** The
   verify primitives (`verify()`/`reverify()`) are now reachable from inbound
   mail, not just as library calls. `ingest()` routes `verify+<id>@` (read-only:
