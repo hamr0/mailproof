@@ -2,5 +2,11 @@ node_modules/
 poc/.data/
 *.log
 .npmrc
+
+# Generated TypeScript declarations — emitted from JSDoc by `npm run build:types`,
+# git-ignored and built fresh on publish (prepublishOnly). Never committed, so
+# the .d.ts can't drift from the JSDoc (LIBRARY_CONVENTIONS §2).
+/types/
+/src/**/*.d.ts
 .claude/settings.local.json
 .claude/stash/

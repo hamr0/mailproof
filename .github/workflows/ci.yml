@@ -21,25 +21,18 @@ jobs:
       - name: Install dev dependencies
         run: npm ci
 
-      # Check the JSDoc types against the implementation (checkJs). A wrong
-      # call or argument shape inside src/ fails here.
+      # Check the JSDoc types against the implementation (checkJs +
+      # strictNullChecks). A wrong call, argument shape, or null-safety bug
+      # inside src/ fails here — the gate that makes the JSDoc a checked contract.
       - name: Typecheck
         run: npm run typecheck
 
-      # The shipped .d.ts are generated from the JSDoc. Regenerate and fail if
-      # the committed output is stale — the JSDoc is the single source of truth,
-      # so the .d.ts must always match it.
-      - name: Types are current
-        run: |
-          npm run build:types
-          # Catches both modified and new/uncommitted .d.ts (a new src module
-          # whose generated declaration was never committed).
-          changed="$(git status --porcelain -- 'src/*.d.ts')"
-          if [ -n "$changed" ]; then
-            echo "::error::Generated .d.ts are stale or missing. Run 'npm run build:types' and commit the result."
-            echo "$changed"
-            exit 1
-          fi
+      # The shipped .d.ts are generated from the JSDoc and never committed
+      # (git-ignored, built on publish via prepublishOnly). Build them here so
+      # CI fails if the declaration emit itself errors. No "is it current?"
+      # check is needed — there's no committed artifact that can drift.
+      - name: Build types
+        run: npm run build:types
 
       - name: Test
         run: npm test

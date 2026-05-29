@@ -3,18 +3,19 @@
   "version": "0.7.0",
   "description": "Email-native multi-party coordination kernel: turns a promise made over email into proof. DKIM/DMARC-verified replies, a tamper-evident git ledger, workflow sequencing, and email triggers. Extracted from gitdone.",
   "main": "src/index.js",
-  "types": "./src/index.d.ts",
+  "types": "./types/index.d.ts",
   "exports": {
     ".": {
-      "types": "./src/index.d.ts",
+      "types": "./types/index.d.ts",
       "default": "./src/index.js"
     }
   },
   "scripts": {
     "poc": "node poc/pipeline.js",
     "test": "node --test 'tests/unit/**/*.test.js' 'tests/integration/**/*.test.js'",
-    "typecheck": "tsc -p tsconfig.json",
-    "build:types": "rm -f src/*.d.ts && tsc -p tsconfig.types.json"
+    "typecheck": "tsc --noEmit",
+    "build:types": "tsc",
+    "prepublishOnly": "npm run build:types"
   },
   "keywords": [
     "email",
@@ -50,7 +51,7 @@
   },
   "files": [
     "src/",
-    "docs/",
+    "types/",
     "README.md",
     "OPS.md",
     "CHANGELOG.md",

@@ -18,11 +18,11 @@ Describe mailproof by what's actually lifted (the PRD status line + CHANGELOG ar
 
 ```bash
 npm test           # node --test over tests/unit/**/*.test.js + tests/integration/**/*.test.js (~307 tests)
-npm run typecheck  # tsc -p tsconfig.json — checkJs over src/*.js JSDoc, full strict (0 errors; CI gate)
-npm run build:types # rm -f src/*.d.ts && tsc -p tsconfig.types.json — regenerate the shipped src/*.d.ts (cleans first so the committed copy can't collide with the emit)
+npm run typecheck  # tsc --noEmit — checkJs + strictNullChecks over src/*.js JSDoc (0 errors; CI gate)
+npm run build:types # tsc — emit the .d.ts to ./types/ (git-ignored; auto-runs on publish via prepublishOnly)
 npm run poc        # node poc/pipeline.js — the original P0 proof (superseded; never shipped)
 ```
-Runtime deps: `mailauth` + `mailparser` (2; the git ledger uses the `git` binary via `child_process`, **not** `simple-git`). No build step **for consumers** — vanilla JS + JSDoc; the shipped `src/*.d.ts` are generated from that JSDoc by a dev-only `npm run build:types` (devDeps: `typescript`, `@types/node`). The JSDoc is the single source of truth; CI runs `typecheck` (full `strict`) and fails if the committed `.d.ts` are stale. `strictNullChecks` is the floor, `strict:true` the default — no `any` casts / `@ts-ignore`. Node ≥ 22.5 required.
+Runtime deps: `mailauth` + `mailparser` (2; the git ledger uses the `git` binary via `child_process`, **not** `simple-git`). No build step **for consumers** — vanilla JS + JSDoc; the shipped `.d.ts` are generated from that JSDoc by a dev-only `npm run build:types` into git-ignored `./types/` and built fresh on publish (`prepublishOnly`), never committed (devDeps: `typescript`, `@types/node`). The JSDoc is the single source of truth; CI runs `typecheck` (`checkJs` + `strictNullChecks`, **not** full `strict` — see `LIBRARY_CONVENTIONS.md`) — no `!`/`as any`/`@ts-ignore` to silence findings. Node ≥ 22.5 required.
 
 ## Architecture (the big picture)
 

@@ -1,34 +1,41 @@
 {
-  // Type-checking config (no emit). `npm run typecheck` runs this; CI gates on it.
-  // The .d.ts files are emitted by tsconfig.types.json (which extends this).
+  // Dev-only types toolchain (LIBRARY_CONVENTIONS §2). mailproof ships vanilla
+  // JS + JSDoc with NO build step for consumers; tsc only (a) checks the JSDoc
+  // against the implementation (checkJs) and (b) generates the shipped .d.ts
+  // from it. The JSDoc is the single source of truth.
   //
-  // mailproof ships vanilla JS with JSDoc types — there is NO build step for
-  // consumers. tsc is a dev-only tool that (a) checks the JSDoc against the
-  // implementation (checkJs) and (b) generates the shipped .d.ts from it. The
-  // JSDoc in src/*.js is the single source of truth; the .d.ts is derived.
+  // Anti-drift: the generated .d.ts are emitted to ./types, git-ignored, and
+  // built fresh on publish (package.json `prepublishOnly`) — never committed,
+  // so no stored artifact can go stale. Emitting to a separate dir (not next to
+  // src/*.js) also means no .d.ts is ever both an input and an output, so the
+  // declaration emit can't collide with its own prior output.
   //
-  // Strictness convention: strictNullChecks is the non-negotiable FLOOR and
-  // full `strict` is the DEFAULT. mailproof runs full strict — every exported
-  // surface AND every internal helper is annotated (noImplicitAny on), and all
-  // null-safety is proven (strictNullChecks on). The JSDoc carries the types;
-  // `any` casts and `@ts-ignore` are not used to silence errors. checkJs runs
-  // this against the implementation; build:types projects the same JSDoc into
-  // the shipped .d.ts. If a flag is ever relaxed, strictNullChecks stays on.
+  // Strictness: checkJs + `strictNullChecks`, NOT full `strict`. Full strict is
+  // ~95% noImplicitAny annotation-noise over framework-agnostic params and ~5%
+  // real null-safety; strictNullChecks keeps the 5% and drops the noise.
+  //
+  // `npm run typecheck` runs `tsc --noEmit` (check only); `npm run build:types`
+  // runs `tsc` (emits the .d.ts to ./types).
   "compilerOptions": {
-    "target": "ES2022",
-    "module": "node16",
-    "moduleResolution": "node16",
-    "lib": ["ES2022"],
-    "types": ["node"],
     "allowJs": true,
     "checkJs": true,
-    "noEmit": true,
-    "strict": true,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "declarationDir": "./types",
+    "rootDir": "./src",
+    "module": "node16",
+    "moduleResolution": "node16",
+    "target": "es2022",
+    "lib": ["es2022"],
+    "types": ["node"],
     "skipLibCheck": true,
+    "noEmitOnError": true,
+    "strict": false,
+    "strictNullChecks": true,
     "resolveJsonModule": true,
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true
   },
   "include": ["src/**/*.js"],
-  "exclude": ["node_modules"]
+  "exclude": ["types", "node_modules"]
 }

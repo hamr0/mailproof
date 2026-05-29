@@ -22,26 +22,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.7.0] - 2026-05-29
 
 ### Added
-- **Shipped TypeScript declarations, generated from JSDoc (`.d.ts` + `npm run
-  typecheck`).** Every `src/*.js` module now carries JSDoc type annotations
-  referencing a shared vocabulary in `src/types.js` (`TrustLevel`,
-  `MailproofEvent`, `Step`, `Commit`, `ParsedMessage`, …). `tsc` with `checkJs`
-  under **full `strict`** type-checks the source against that JSDoc (0 errors;
-  `npm run typecheck`) and emits the committed, shipped `src/*.d.ts`
-  (`npm run build:types`, which cleans the prior `.d.ts` first so a co-located
-  copy can't collide with or shadow the emit) — so TS consumers of
-  `require('mailproof')` get a checked surface. Strictness convention:
-  `strictNullChecks` is the non-negotiable floor, `strict:true` the default —
-  every internal helper is annotated and all null-safety is proven, with no
-  `any` casts or `@ts-ignore`. The JSDoc is the single source of truth; the
-  `.d.ts` are derived. `package.json` gains a `types`/`exports` entry;
+- **Shipped TypeScript declarations, generated from JSDoc — to the suite-wide
+  library types contract (`LIBRARY_CONVENTIONS.md`).** Every `src/*.js` module
+  carries JSDoc type annotations referencing a shared vocabulary in
+  `src/types.js` (`TrustLevel`, `MailproofEvent`, `Step`, `Commit`,
+  `ParsedMessage`, …). `tsc` with `checkJs` + **`strictNullChecks`** (not full
+  `strict` — full strict is ~95% `noImplicitAny` noise, ~5% real null-safety;
+  `strictNullChecks` keeps the 5%) type-checks the source against that JSDoc
+  (0 errors; `npm run typecheck` → `tsc --noEmit`). `npm run build:types`
+  (`tsc`) emits the `.d.ts` to **`./types/` (git-ignored)**; they are built
+  fresh on publish via `prepublishOnly` and **never committed**, so no stored
+  artifact can drift from the JSDoc — drift is structurally impossible, not just
+  guarded. Null-safety findings were fixed with minimal behaviour-preserving
+  guards (no `!` / `as any` / `@ts-ignore`). `package.json` gains a
+  `types`/`exports` (→ `./types/index.d.ts`) entry + `prepublishOnly`;
   `typescript` + `@types/node` are dev-only devDeps (**runtime stays 2 deps, no
-  consumer build step**). New `.github/workflows/ci.yml` runs typecheck + a
-  "types-are-current" guard (regenerate and fail on drift) + tests on push/PR;
-  `publish.yml` also gates on typecheck. New `tests/unit/index.test.js` pins the
-  exact public-barrel surface (59 exports). Deliberately **diverges** from
-  `knowless`/`bareagent` (which ship no types) — an upgrade for the
-  published-package audience (PRD §8.13).
+  consumer build step**). `.github/workflows/ci.yml` runs typecheck +
+  `build:types` + tests on push/PR; `publish.yml` gates on typecheck and
+  `prepublishOnly` builds the types into the tarball. New
+  `tests/unit/index.test.js` pins the exact public-barrel surface (59 exports).
+  Matches the family contract (`bareagent` reference, `knowless`); repo-only
+  docs (`docs/`) are no longer shipped in the tarball (PRD §8.13).
 - **m7c-6: public verification email endpoints wired through `ingest()`.** The
   verify primitives (`verify()`/`reverify()`) are now reachable from inbound
   mail, not just as library calls. `ingest()` routes `verify+<id>@` (read-only:
