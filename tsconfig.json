@@ -1,0 +1,34 @@
+{
+  // Type-checking config (no emit). `npm run typecheck` runs this; CI gates on it.
+  // The .d.ts files are emitted by tsconfig.types.json (which extends this).
+  //
+  // mailproof ships vanilla JS with JSDoc types — there is NO build step for
+  // consumers. tsc is a dev-only tool that (a) checks the JSDoc against the
+  // implementation (checkJs) and (b) generates the shipped .d.ts from it. The
+  // JSDoc in src/*.js is the single source of truth; the .d.ts is derived.
+  //
+  // Strictness is deliberately moderate: checkJs catches real mistakes (calling
+  // an undefined export, wrong argument shape on a JSDoc-typed function, typos
+  // on a known type) without the full strictNullChecks tax that vanilla JS
+  // written without types would drown in. noImplicitAny is off so an
+  // unannotated internal helper stays `any` rather than erroring — annotation
+  // effort goes to the public surface (the index.js exports) first.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "node16",
+    "moduleResolution": "node16",
+    "lib": ["ES2022"],
+    "types": ["node"],
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "strict": false,
+    "noImplicitAny": false,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": ["src/**/*.js"],
+  "exclude": ["node_modules"]
+}

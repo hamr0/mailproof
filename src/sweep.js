@@ -45,6 +45,14 @@ const MS_PER_DAY = 86400 * 1000;
 
 // The reference clock (ms) for overdue/archive decisions. PURE. Returns null if
 // the event has no meaningful clock yet (never activated).
+/** @typedef {import('./types').MailproofEvent} MailproofEvent */
+
+/**
+ * The reference clock (ms) for overdue/archive decisions, or null if the event
+ * has no meaningful clock yet. Pure.
+ * @param {MailproofEvent | null} event
+ * @returns {number | null}
+ */
 function referenceClockMs(event) {
   if (!event || !event.activated_at) return null;
   if (event.type === 'workflow' && Array.isArray(event.steps)) {
@@ -60,6 +68,12 @@ function referenceClockMs(event) {
 
 // Is the event in the cohort sweep acts on: activated, not archived, not
 // complete? PURE.
+/**
+ * Is the event in the cohort sweep acts on (activated, not archived, not
+ * complete)? Pure.
+ * @param {MailproofEvent | null} event
+ * @returns {boolean}
+ */
 function isActive(event) {
   if (!event) return false;
   if (!event.activated_at) return false;
@@ -72,6 +86,17 @@ function isActive(event) {
 //   overdueDays — idle days past the reference clock before the overdue nudge
 //                 (default 14, matching gitdone's overdueNudgeDays).
 //   archiveDays — idle days before auto-archive (default 45, gitdone's archiveDays).
+/**
+ * Compose the lifecycle sweep over the bound store/ledger + shared notifier.
+ * @param {Object} [deps]
+ * @param {any} [deps.eventStore]
+ * @param {any} [deps.gitrepo]
+ * @param {(args: any) => Promise<any>} [deps.deliver]
+ * @param {string | null} [deps.domain]
+ * @param {number} [deps.overdueDays]
+ * @param {number} [deps.archiveDays]
+ * @returns {{ sweep: (opts?: { now?: number }) => Promise<{ overdue: Array<{ eventId: string, daysOver: number }>, archived: Array<{ eventId: string, daysIdle: number }>, notified: any[] }> }}
+ */
 function createSweep({
   eventStore, gitrepo, deliver, domain = null, overdueDays = 14, archiveDays = 45,
 } = {}) {

@@ -20,6 +20,14 @@ const dns = require('node:dns').promises;
 
 // Parse a DKIM record's `p=` value. DKIM records are semicolon-separated
 // tag=value; we only need p (public key). Returns base64 string or null.
+/** @typedef {import('./types').DkimArchive} DkimArchive */
+/** @typedef {import('./types').MailauthResult} MailauthResult */
+
+/**
+ * Extract a DKIM record's `p=` base64 public key. Pure.
+ * @param {string | string[] | null} txtRecord
+ * @returns {string | null}
+ */
 function extractPublicKey(txtRecord) {
   if (!txtRecord) return null;
   const joined = Array.isArray(txtRecord) ? txtRecord.join('') : String(txtRecord);
@@ -35,6 +43,11 @@ function extractPublicKey(txtRecord) {
 // Wrap base64 SubjectPublicKeyInfo bytes into PEM. DKIM records carry RSA public
 // keys in SubjectPublicKeyInfo DER; they drop directly under BEGIN/END PUBLIC
 // KEY headers (openssl/evp compatible).
+/**
+ * Wrap base64 SubjectPublicKeyInfo bytes into PEM. Pure.
+ * @param {string | null} base64
+ * @returns {string | null}
+ */
 function toPem(base64) {
   if (!base64) return null;
   const lines = [];
@@ -46,6 +59,15 @@ async function resolveTxt(name) {
   return dns.resolveTxt(name);
 }
 
+/**
+ * Fetch + PEM-wrap the DKIM public key at `{selector}._domainkey.{domain}`.
+ * Never throws; failure is reported in the `error` field. The resolver is
+ * injected so tests run offline.
+ * @param {string} domain
+ * @param {string} selector
+ * @param {{ resolver?: (name: string) => Promise<string[][]>, timeoutMs?: number }} [opts]
+ * @returns {Promise<DkimArchive>}
+ */
 async function fetchDkimKey(domain, selector, { resolver = resolveTxt, timeoutMs = 5000 } = {}) {
   if (!domain || !selector) return { pem: null, base64: null, error: 'missing domain/selector' };
   // Defensive input validation: selectors and domains in valid DKIM records are
@@ -77,6 +99,12 @@ async function fetchDkimKey(domain, selector, { resolver = resolveTxt, timeoutMs
 // Given a mailauth result, pick the DKIM signature to archive. Prefer a passing
 // + aligned signature; else first passing; else the first present; else null
 // (no archive for unsigned mail).
+/**
+ * Pick the DKIM signature to archive from a mailauth result (prefer pass+aligned,
+ * then any pass, then first present, else null). Pure.
+ * @param {MailauthResult} auth
+ * @returns {Record<string, any> | null}
+ */
 function pickSignatureToArchive(auth) {
   const sigs = (auth && auth.dkim && auth.dkim.results) || [];
   if (sigs.length === 0) return null;

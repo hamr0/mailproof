@@ -32,6 +32,17 @@
 const { withEventMutex } = require('./event-mutex');
 const { renderDefault } = require('./templates');
 
+/**
+ * Compose the proof-anchor pass (m7d-4) over the bound store/ledger/ots + the
+ * shared notifier. Requires `ots` (createOts).
+ * @param {Object} [deps]
+ * @param {any} [deps.eventStore]
+ * @param {any} [deps.gitrepo]
+ * @param {any} [deps.ots]
+ * @param {(args: any) => Promise<any>} [deps.deliver]
+ * @param {string | null} [deps.domain]
+ * @returns {{ upgradeProofs: (opts?: { now?: string }) => Promise<{ events: Array<Record<string, any>>, anchored: number, pending: number, notified: any[] }> }}
+ */
 function createProofAnchor({
   eventStore, gitrepo, ots, deliver, domain = null,
 } = {}) {

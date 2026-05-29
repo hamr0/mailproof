@@ -15,7 +15,8 @@ tail stay in `gitdone` on top.
 > the document notary, and the `create()` / `ingest()` assembly that makes it a
 > usable library. On top: the offline `verify()`/`reverify()` primitives + OTS
 > anchoring + the public `verify+`/`reverify+` email endpoints, and the trigger
-> pillar emitting 12 neutral-templated occasion `kind`s. ~304 tests pass. Next is
+> pillar emitting 12 neutral-templated occasion `kind`s. ~307 tests pass; the
+> public surface ships JSDoc-generated, checkJs-gated `.d.ts`. Next is
 > **P2** — validate by rebuilding gitdone on mailproof (non-merging branch; see
 > the PRD §7.1 + DESIGN).
 

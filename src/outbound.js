@@ -29,6 +29,13 @@ function randomToken() {
 // Append an injected signature footer with a blank-line separator and the
 // RFC 3676 §4.3 "-- " marker. No footer (falsy) → body is returned verbatim.
 // Idempotent: a body that already ends with the signature isn't doubled.
+/**
+ * Append an injected signature footer (RFC 3676 `-- ` marker). Idempotent; a
+ * falsy footer returns the body verbatim. Pure.
+ * @param {string} body
+ * @param {string | null | undefined} footer
+ * @returns {string}
+ */
 function withSignature(body, footer) {
   if (!footer) return body;
   const sig = `-- \n${footer}`;
@@ -40,6 +47,11 @@ function withSignature(body, footer) {
 // <timestamp.random@domain>. The 16-hex-char suffix (2^64) provides
 // uniqueness within a single second on a single host. Domain is required —
 // there is no fallback.
+/**
+ * Generate an RFC 5322 Message-Id `<timestamp.random@domain>`. Domain required.
+ * @param {string} domain
+ * @returns {string}
+ */
 function newMessageId(domain) {
   if (!domain) throw new Error('newMessageId: domain required');
   return `<${Date.now()}.${randomToken()}@${domain}>`;
@@ -48,6 +60,11 @@ function newMessageId(domain) {
 // Format a UTC date as an RFC 5322 date-time string. Node's toUTCString()
 // is already this format; wrapped for clarity and to make the dependency
 // explicit.
+/**
+ * Format a date as an RFC 5322 date-time string. Pure.
+ * @param {Date} [d]
+ * @returns {string}
+ */
 function rfc5322Date(d = new Date()) {
   return d.toUTCString();
 }
@@ -55,11 +72,33 @@ function rfc5322Date(d = new Date()) {
 // Strip CR/LF so a user-supplied subject can't break out of the Subject
 // header and inject extra ones. The boundary that emits the message is the
 // last line of defence against header injection.
+/**
+ * Strip CR/LF from a subject so it can't inject extra headers. Pure.
+ * @param {*} s
+ * @returns {string}
+ */
 function sanitizeSubject(s) {
   return String(s == null ? '' : s).replace(/[\r\n]+/g, ' ');
 }
 
-// Build a raw RFC-822 message from structured fields. Plaintext only.
+/**
+ * Build a raw RFC-822 message from structured fields (plaintext only). The
+ * canonical builder; from/to/subject/body are required.
+ * @param {Object} fields
+ * @param {string} fields.from
+ * @param {string} fields.to
+ * @param {string} fields.subject
+ * @param {string} fields.body
+ * @param {string} [fields.inReplyTo]
+ * @param {string} [fields.references]
+ * @param {string | false} [fields.autoSubmitted]
+ * @param {string} [fields.messageId]
+ * @param {Record<string, string>} [fields.extraHeaders]
+ * @param {string} [fields.domain]
+ * @param {string} [fields.replyTo]
+ * @param {string} [fields.footer]
+ * @returns {string}
+ */
 function buildRawMessage({ from, to, subject, body, inReplyTo, references, autoSubmitted, messageId, extraHeaders, domain, replyTo, footer }) {
   if (!from || !to || !subject || body == null) {
     throw new Error('buildRawMessage: from, to, subject, body are required');
@@ -105,6 +144,13 @@ function buildRawMessage({ from, to, subject, body, inReplyTo, references, autoS
 //   - default: sendmail -t reads recipients from To/Cc/Bcc headers
 //   - positional: pass `to: [addr, ...]` to override the envelope and
 //     ignore header recipients
+/**
+ * Submit a raw message to the local MTA via sendmail(8). Never throws under
+ * normal operation — failure is reported in the resolved object. `binary` is
+ * required (injected config).
+ * @param {{ from?: string, rawMessage?: string, binary?: string | null, to?: string[] }} args
+ * @returns {Promise<{ ok: boolean, code?: number, stderr?: string | null, reason?: string }>}
+ */
 function sendmail({ from, rawMessage, binary, to }) {
   if (!binary) {
     return Promise.resolve({ ok: false, reason: 'sendmail binary not configured' });

@@ -39,6 +39,11 @@ const { spawn } = require('node:child_process');
 // its lifetime; we accept the common ones and return the first match. Returns
 // null when no anchor is present (calendar-only proof) or the format is
 // unrecognised — callers degrade to "anchored to Bitcoin" without a number.
+/**
+ * Parse the Bitcoin block height out of `ots info` stdout, or null. Pure.
+ * @param {string | null} stdout
+ * @returns {number | null}
+ */
 function parseOtsBlockHeight(stdout) {
   if (!stdout) return null;
   const patterns = [
@@ -79,7 +84,7 @@ function runOts(bin, args, timeoutMs) {
     proc.stderr.on('data', (c) => { stderr += c.toString(); });
     proc.on('error', (err) => {
       clearTimeout(timer);
-      resolve({ code: -1, stdout, stderr, error: err.code === 'ENOENT' ? 'ots not found' : err.message });
+      resolve({ code: -1, stdout, stderr, error: /** @type {any} */ (err).code === 'ENOENT' ? 'ots not found' : err.message });
     });
     proc.on('close', (code) => {
       clearTimeout(timer);
@@ -88,6 +93,16 @@ function runOts(bin, args, timeoutMs) {
   });
 }
 
+/**
+ * Bind an OpenTimestamps stamper to the `ots` binary. Each method reports its
+ * outcome and never throws.
+ * @param {{ otsBin?: string, timeoutMs?: number }} [opts]
+ * @returns {{
+ *   stampFile: (absPath: string) => Promise<{ proof_path: string } | { error: string }>,
+ *   upgradeProof: (absPath: string) => Promise<{ ok: boolean, changed: boolean, anchored: boolean, pending: boolean, exit: number, block_height?: number | null, error?: string }>,
+ *   readBlockHeight: (absPath: string) => Promise<number | null>,
+ * }}
+ */
 function createOts({ otsBin, timeoutMs = 30000 } = {}) {
   if (!otsBin) throw new Error('createOts: otsBin required');
 

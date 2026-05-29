@@ -9,6 +9,13 @@
 
 'use strict';
 
+/**
+ * Slice the leading header block out of raw message bytes (up to `maxBytes`),
+ * stopping at the first blank line. Pure.
+ * @param {Buffer} raw
+ * @param {number} maxBytes
+ * @returns {string}
+ */
 function extractHeaderBlock(raw, maxBytes) {
   const limit = Math.min(raw.length, maxBytes);
   const s = raw.slice(0, limit).toString('utf8');
@@ -16,6 +23,13 @@ function extractHeaderBlock(raw, maxBytes) {
   return endIdx > 0 ? s.slice(0, endIdx) : s;
 }
 
+/**
+ * Read a single unfolded header value from a header block (case-insensitive),
+ * or null if absent. Pure.
+ * @param {string} headerBlock
+ * @param {string} name
+ * @returns {string | null}
+ */
 function rawHeader(headerBlock, name) {
   const re = new RegExp('^' + name + '\\s*:\\s*(.+(?:\\r?\\n[ \\t].+)*)', 'im');
   const m = headerBlock.match(re);
@@ -25,6 +39,13 @@ function rawHeader(headerBlock, name) {
 const SYSTEM_SENDER = /^(noreply|no-reply|mailer-daemon|postmaster|bounces)$/;
 const BULK_PRECEDENCE = /^(bulk|list|junk)$/;
 
+/**
+ * Decide whether an inbound message should be rejected before any crypto/ledger
+ * work — auto-responders, lists, bulk mail, system senders. Pure.
+ * @param {string} headerBlock
+ * @param {string | null} [fromAddr]
+ * @returns {{ rejected: boolean, reason: string | null }}
+ */
 function preFilter(headerBlock, fromAddr) {
   const autoSubmitted = rawHeader(headerBlock, 'Auto-Submitted');
   if (autoSubmitted && autoSubmitted.toLowerCase() !== 'no') {

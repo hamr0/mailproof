@@ -49,6 +49,26 @@ function contentTypeOf(headerBlock) {
 
 // Is this a delivery-status report? Takes the raw header block (what ingest
 // already extracts). PURE.
+/**
+ * @typedef {Object} DsnRecipient
+ * @property {string | null} originalRecipient
+ * @property {string | null} finalRecipient
+ * @property {string | null} action
+ * @property {string | null} status
+ * @property {string | null} diagnostic
+ */
+/**
+ * @typedef {Object} Dsn
+ * @property {Record<string, string>} reporting
+ * @property {DsnRecipient[]} recipients
+ * @property {string} [note]
+ */
+
+/**
+ * Is this a multipart/report delivery-status message? Pure.
+ * @param {string | null} headerBlock
+ * @returns {boolean}
+ */
 function isDeliveryStatusReport(headerBlock) {
   const ct = contentTypeOf(headerBlock);
   if (!ct) return false;
@@ -63,8 +83,14 @@ function stripAddressType(value) {
 }
 
 // Parse one "Field: value" group (folded continuations joined with a space).
+/**
+ * Parse one "Field: value" group (folded continuations joined). Pure.
+ * @param {string} text
+ * @returns {Record<string, string>}
+ */
 function parseFieldGroup(text) {
   const lines = String(text || '').split(/\r?\n/);
+  /** @type {Record<string, string>} */
   const fields = {};
   let curName = null;
   let curValue = '';
@@ -90,13 +116,18 @@ function parseFieldGroup(text) {
 // blank-line-separated group is the per-message report (Reporting-MTA, …); each
 // later group is a per-recipient block. Robust to MTA quirks (unknown fields
 // ignored, missing blocks → []).
+/**
+ * Parse a message/delivery-status body into `{ reporting, recipients }`. Pure.
+ * @param {string} text
+ * @returns {Dsn}
+ */
 function parseDeliveryStatusBody(text) {
   const groups = String(text || '')
     .replace(/\r\n/g, '\n')
     .split(/\n[ \t]*\n/)
     .map((g) => g.trim())
     .filter(Boolean);
-  if (groups.length === 0) return { reporting: {}, recipients: [] };
+  if (groups.length === 0) return { reporting: /** @type {Record<string, string>} */ ({}), recipients: [] };
   const [first, ...rest] = groups;
   const reporting = parseFieldGroup(first);
   const recipients = rest.map((g) => {
@@ -154,6 +185,12 @@ function splitPart(part) {
 
 // Top-level: parse a raw DSN message → { reporting, recipients } | null (not a
 // DSN). PURE; no network, no fs.
+/**
+ * Parse a raw DSN message into `{ reporting, recipients }`, or null if it is not
+ * a delivery-status report. Pure; no network, no fs.
+ * @param {Buffer | string} raw
+ * @returns {Dsn | null}
+ */
 function extractDsn(raw) {
   const text = Buffer.isBuffer(raw) ? raw.toString('utf8') : String(raw || '');
   const { headerBlock, body } = splitHeadersBody(text);
@@ -170,6 +207,12 @@ function extractDsn(raw) {
 // The recipient blocks that represent a PERMANENT failure (Action: failed, or a
 // 5.x status when Action is absent) — the ones worth alerting the initiator on.
 // Transient "delayed" (4.x) reports are not surfaced.
+/**
+ * The recipient blocks representing a PERMANENT failure (worth alerting on).
+ * Pure.
+ * @param {Dsn | null} dsn
+ * @returns {DsnRecipient[]}
+ */
 function permanentFailures(dsn) {
   const recipients = (dsn && dsn.recipients) || [];
   return recipients.filter((r) => r.action === 'failed' || (!r.action && r.status && /^5\./.test(r.status)));

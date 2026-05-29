@@ -3,11 +3,12 @@
 <p align="center">
   <img src="https://img.shields.io/github/package-json/v/hamr0/mailproof?label=version&color=2a4f8c" alt="version (auto from package.json)">
   <img src="https://img.shields.io/badge/license-Apache%202.0-2a4f8c" alt="license: Apache 2.0">
+  <img src="https://img.shields.io/github/actions/workflow/status/hamr0/mailproof/ci.yml?branch=main&label=CI" alt="CI status">
 </p>
 
 **Email-native multi-party coordination kernel.** Verify a reply, sequence it through a workflow, commit it to a tamper-evident git ledger, trigger the next email.
 
-> ⚠️ **Early WIP — P1 lift in progress.** Being extracted from [gitdone](https://github.com/hamr0/gitdone). Real `src/` modules are landing pillar by pillar (verify + the inbound decoder — DKIM/DMARC auth and MIME parse — sequence routing, inbound preprocessing, outbound, the full git-ledger storage, both sequencing engines — the **events** workflow and the **crypto sign-off** engine — and the document notary, now with its inbound auto-hash capture, are done); only the `create()` / `ingest()` assembly (m7b) remains before there is a usable published API. See [`docs/`](docs/) ([PRD](docs/01-product/PRD.md), [DESIGN](docs/02-design/DESIGN.md), [SPEC](docs/02-design/SPEC.md)).
+> **Status — P1 (lift) + m7c (verification) + m7d (triggers) are COMPLETE.** Being extracted from [gitdone](https://github.com/hamr0/gitdone). A consumer can `create()` a bound instance and `ingest()` inbound replies end to end: verify + the inbound decoder (DKIM/DMARC auth + MIME parse), sequence routing, inbound preprocessing, outbound, the full git-ledger storage, both sequencing engines (**events** workflow + **crypto sign-off**), the document notary with inbound auto-hash capture, the offline `verify()`/`reverify()` primitives + their public email endpoints, and the trigger pillar (12 neutral-templated occasion `kind`s). 307 `node --test` tests pass with 2 runtime deps; the public surface ships JSDoc-generated, checkJs-gated TypeScript declarations. Next is **P2** — validate by rebuilding gitdone on mailproof. See [`docs/`](docs/) ([PRD](docs/01-product/PRD.md), [DESIGN](docs/02-design/DESIGN.md), [SPEC](docs/02-design/SPEC.md)).
 
 ## The idea
 

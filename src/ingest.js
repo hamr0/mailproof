@@ -35,8 +35,15 @@ const { renderDefault } = require('./templates');
 // body without parsing it.
 const MAX_HEADER_BYTES = 64 * 1024;
 
-// Compose the inbound pipeline over already-bound pillars. create() passes the
-// store/ledger/engines/decoders + auth config; ingest closes over them.
+/** @typedef {import('./types').Envelope} Envelope */
+
+/**
+ * Compose the inbound pipeline over already-bound pillars. create() passes the
+ * store/ledger/engines/decoders + auth config; ingest closes over them. The
+ * dependency bag is all injected primitives (see the inline notes below).
+ * @param {Record<string, any>} [deps]
+ * @returns {(raw: Buffer | string, envelope?: Envelope) => Promise<Record<string, any>>}
+ */
 function createIngest({
   eventStore,        // { loadEvent, findStep, senderMatchesStep, writeEventAtomic }
   gitrepo,           // { commitReply, commitCompletion, syncEventJson, saltedSenderHash }
@@ -456,6 +463,7 @@ function createIngest({
       // these precomputed booleans (the orchestrator owns identity resolution).
       let participantMatch = null;
       let engine;
+      /** @type {Record<string, any>} */
       let commitInput;
       if (mode === 'workflow') {
         const step = findStep(event, stepId);
@@ -517,6 +525,7 @@ function createIngest({
 
       // 7. Advance. applyReply re-checks shouldCount and only transitions when
       //    it counts; on a transition we persist the master JSON + repo mirror.
+      /** @type {Record<string, any>} */
       const applyInput = { ...commitInput, sequence: commit.sequence };
       if (mode === 'crypto') {
         applyInput.sender_domain = senderDomain;

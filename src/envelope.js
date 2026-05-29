@@ -10,6 +10,14 @@
 
 'use strict';
 
+/** @typedef {import('./types').Envelope} Envelope */
+
+/**
+ * Parse a Postfix pipe-transport argv into the structured envelope. The four
+ * transport fields live at argv indices 2-5. Pure.
+ * @param {string[]} argv
+ * @returns {Envelope}
+ */
 function parseEnvelope(argv) {
   const [, , clientIp, clientHelo, sender, recipient] = argv;
   const norm = (v) => (v && v !== 'unknown' ? v : null);

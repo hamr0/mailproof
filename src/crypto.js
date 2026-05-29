@@ -70,6 +70,27 @@ const { isComplete } = require('./event-store');
 
 // The distinct signatures already counted — one source of truth for "who
 // counted" and the count-to-threshold record.
+/** @typedef {import('./types').MailproofEvent} MailproofEvent */
+/** @typedef {import('./types').Signature} Signature */
+/** @typedef {import('./types').Attachment} Attachment */
+/**
+ * The in-memory sign-off reply input the engine reasons over.
+ * @typedef {Object} SignoffInput
+ * @property {string} [trust_level]
+ * @property {boolean} [is_initiator]
+ * @property {boolean} [signer_match]
+ * @property {string | null} [sender_hash]
+ * @property {string | null} [sender_domain]
+ * @property {string} [received_at]
+ * @property {number} [sequence]
+ * @property {Attachment[]} [attachments]
+ */
+
+/**
+ * The distinct signatures already counted on an event. Pure.
+ * @param {MailproofEvent} event
+ * @returns {Signature[]}
+ */
 function signatures(event) {
   return event && Array.isArray(event.signatures) ? event.signatures : [];
 }
@@ -96,6 +117,12 @@ function deny(reason) {
   return { count: false, reason };
 }
 
+/**
+ * Decide whether a reply counts as a distinct sign-off (accept-with-flag). Pure.
+ * @param {MailproofEvent} event
+ * @param {SignoffInput} commit
+ * @returns {{ count: boolean, reason?: string }}
+ */
 function shouldCount(event, commit) {
   if (!event.activated_at) return deny(CRYPTO_REASONS.EVENT_NOT_ACTIVATED);
   if (event.archived_at) return deny(CRYPTO_REASONS.EVENT_ARCHIVED);
@@ -115,6 +142,14 @@ function shouldCount(event, commit) {
 // completed_at) once the count reaches threshold (default 1). The signature
 // stores only non-PII (salted `sender_hash`, plaintext `sender_domain`) per
 // SPEC §6; the triggering commit's `received_at` is the timestamp.
+/**
+ * Apply a sign-off reply, returning a NEW event (never mutates input). Appends
+ * the distinct signature and locks the event at threshold. Pure.
+ * @param {MailproofEvent} event
+ * @param {SignoffInput} commit
+ * @param {{ now?: string }} [opts]
+ * @returns {{ event: MailproofEvent, applied: boolean, decision: { count: boolean, reason?: string }, signatureCount?: number, completedEvent?: boolean }}
+ */
 function applyReply(event, commit, { now = new Date().toISOString() } = {}) {
   const decision = shouldCount(event, commit);
   if (!decision.count) return { event, applied: false, decision };

@@ -32,6 +32,11 @@ const LEDGER_NOTE = "Your reply is verified and recorded in the event's tamper-e
 // Render the stats snapshot as a plain ASCII dump — checkbox step list for
 // workflow, signature tally + signer list for crypto. Lifted verbatim from
 // ingest.js so the default `stats` body has one definition.
+/**
+ * Render a stats snapshot as a plain ASCII body. Pure.
+ * @param {Record<string, any>} [s]
+ * @returns {string}
+ */
 function statsBody(s = {}) {
   const lines = [];
   lines.push(`Event: ${s.title || s.eventId}`);
@@ -64,6 +69,13 @@ function statsBody(s = {}) {
 
 // Map an occasion `kind` (+ its ctx) to a neutral { subject, defaultBody }.
 // Returned keys spread directly into deliver({ ... }).
+/**
+ * Map an occasion `kind` (+ its ctx) to a neutral `{ subject, defaultBody }`.
+ * The returned keys spread directly into deliver(). Pure.
+ * @param {string} kind
+ * @param {Record<string, any>} [ctx]
+ * @returns {{ subject: string, defaultBody: string }}
+ */
 function renderDefault(kind, ctx = {}) {
   const title = titleOf(ctx);
   const step = stepClause(ctx);

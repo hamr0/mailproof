@@ -18,6 +18,17 @@ const { hashDocument } = require('./notary');
 // (raw_sha256) → Message-ID (salted, when the caller supplies the hash) → any
 // committed attachment. Pure. Hashes use the notary's `sha256:`-tagged format —
 // the same one the ledger stored, so one fingerprint format end to end.
+/** @typedef {import('./types').Commit} Commit */
+/** @typedef {import('./types').TrustLevel} TrustLevel */
+
+/**
+ * Match candidate bytes against an event's commits (raw → message-id → any
+ * attachment). Pure.
+ * @param {Buffer} candidateBytes
+ * @param {Commit[]} commits
+ * @param {{ messageIdHash?: string | null }} [opts]
+ * @returns {{ matchType: 'raw_email' | 'message_id' | 'attachment' | 'none', hash: string, commit?: Commit, attachment?: Record<string, any>, messageIdHash?: string | null }}
+ */
 function findMatch(candidateBytes, commits, { messageIdHash = null } = {}) {
   const hash = hashDocument(candidateBytes);
   const byRaw = commits.find((c) => c && c.raw_sha256 === hash);
@@ -39,6 +50,15 @@ function findMatch(candidateBytes, commits, { messageIdHash = null } = {}) {
 // irrelevant here — we read the DKIM signature result directly, so passing a
 // failing baseResolver (offline) still lets the archived-key check run. Never
 // throws; returns { ok, result?, reason?, signatures_found }.
+/**
+ * Re-run DKIM on `rawEmail` against an ARCHIVED PEM key. Never throws.
+ * @param {Buffer | string} rawEmail
+ * @param {string | null} archivedPem
+ * @param {string} expectedDomain
+ * @param {string} expectedSelector
+ * @param {{ baseResolver?: any }} [opts]
+ * @returns {Promise<{ ok: boolean, result?: string, reason?: string, signatures_found?: Array<Record<string, any>> }>}
+ */
 async function reverifyDkim(rawEmail, archivedPem, expectedDomain, expectedSelector, { baseResolver = null } = {}) {
   if (!archivedPem || !expectedDomain || !expectedSelector) {
     return { ok: false, reason: 'missing archived key or signer context' };
@@ -83,6 +103,11 @@ async function reverifyDkim(rawEmail, archivedPem, expectedDomain, expectedSelec
 // `verified` at reception whose DKIM re-verifies against the archived key is
 // upgraded to `verified`; an already-verified commit records the attempt but
 // doesn't upgrade. (mailproof's four levels — classifier.js.)
+/**
+ * Trust-upgrade policy for a contested commit (pure).
+ * @param {string} currentLevel
+ * @returns {{ upgradeTo: TrustLevel | null, reason: string | null }}
+ */
 function resolveUpgrade(currentLevel) {
   if (currentLevel === 'verified') return { upgradeTo: null, reason: 'already verified' };
   if (['unverified', 'authorized', 'forwarded'].includes(currentLevel)) {
@@ -94,6 +119,11 @@ function resolveUpgrade(currentLevel) {
 // Find the signing domain/selector in a commit's DKIM summary (pure). Prefer the
 // signature that passed at reception; else any with domain+selector (reverify is
 // exactly about the cases that didn't pass/align then).
+/**
+ * Find the signing domain/selector in a commit's DKIM summary. Pure.
+ * @param {Record<string, any>} commit
+ * @returns {{ domain: string, selector: string, result?: string } | null}
+ */
 function pickSigner(commit) {
   const sigs = (commit && commit.dkim && commit.dkim.signatures) || [];
   return (
@@ -106,6 +136,18 @@ function pickSigner(commit) {
 // Compose the verifier over the bound ledger. `resolver` is the default base
 // resolver for the DKIM re-check (create() threads its own; tests inject an
 // offline one so the archived key is the ONLY way the signature can verify).
+/**
+ * Compose the offline durable-verifier over the bound ledger + store.
+ * @param {{ gitrepo?: any, eventStore?: any, resolver?: any }} [deps]
+ * @returns {{
+ *   verify: (eventId: string, candidateBytes: Buffer | string, opts?: { messageId?: string | null, resolver?: any }) => Promise<Record<string, any>>,
+ *   reverify: (eventId: string, targetSequence: number, candidateBytes: Buffer | string, opts?: { resolver?: any, now?: string }) => Promise<Record<string, any>>,
+ *   findMatch: typeof findMatch,
+ *   reverifyDkim: typeof reverifyDkim,
+ *   resolveUpgrade: typeof resolveUpgrade,
+ *   pickSigner: typeof pickSigner,
+ * }}
+ */
 function createVerifier({ gitrepo, eventStore, resolver: defaultResolver = null } = {}) {
   const { listCommits, loadCommit, loadDkimPem, commitReverify, saltedMessageIdHash } = gitrepo;
   const { loadEvent } = eventStore;

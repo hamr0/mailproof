@@ -17,8 +17,18 @@
 
 'use strict';
 
+/** @type {Map<string, Promise<any>>} */
 const _writeMutex = new Map();
 
+/**
+ * Serialise `work` against other writers of the same event WITHIN this process
+ * (does not guard across processes — see the file header). Returns whatever
+ * `work` resolves to.
+ * @template T
+ * @param {string} eventId
+ * @param {() => Promise<T>} work
+ * @returns {Promise<T>}
+ */
 async function withEventMutex(eventId, work) {
   const prev = _writeMutex.get(eventId);
   const p = (async () => {

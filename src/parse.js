@@ -26,6 +26,19 @@ const { hashDocument } = require('./notary');
 // `envelope` is the m3 parseEnvelope shape; `mtaHostname`/`resolver` are
 // injected config (no env singleton). `resolver` lets tests run offline and the
 // future verify+@ endpoint re-check against an archived key.
+/** @typedef {import('./types').Envelope} Envelope */
+/** @typedef {import('./types').ParsedMessage} ParsedMessage */
+/** @typedef {import('./types').AuthSummary} AuthSummary */
+/** @typedef {import('./types').MailauthResult} MailauthResult */
+
+/**
+ * Authenticate an inbound message via mailauth (DKIM/DMARC/ARC/SPF). Pins
+ * `trustReceived:false`. Config is injected (no env singleton).
+ * @param {Buffer | string} raw
+ * @param {Envelope} [envelope]
+ * @param {{ mtaHostname?: string | null, resolver?: any }} [opts]
+ * @returns {Promise<MailauthResult>}
+ */
 function authenticateMessage(raw, envelope = {}, { mtaHostname = null, resolver = null } = {}) {
   return authenticate(raw, {
     trustReceived: false,
@@ -40,6 +53,12 @@ function authenticateMessage(raw, envelope = {}, { mtaHostname = null, resolver 
 // Parse an inbound message into the structured shape the kernel consumes.
 // `attachments[].sha256` is the notary fingerprint of the part's bytes — this
 // IS the notary capture half (mandatory auto-hash of every inbound attachment).
+/**
+ * Parse raw bytes into the structured shape the kernel consumes. Attachment
+ * bytes are hashed (notary capture) then dropped. Deterministic, no network.
+ * @param {Buffer | string} raw
+ * @returns {Promise<ParsedMessage>}
+ */
 async function parseMessage(raw) {
   const parsed = await simpleParser(raw);
   const from = (parsed.from && parsed.from.value && parsed.from.value[0]) || {};
@@ -63,6 +82,12 @@ async function parseMessage(raw) {
 // "no plaintext at rest" governs the LEDGER; a read-time match is not at rest.)
 // parseMessage deliberately strips attachment content, so this is the one seam
 // that recovers it — kept here so all MIME decoding stays in one module.
+/**
+ * Recover the raw bytes of every attachment part (+ the message-id) from a
+ * forwarded message. Transient read-path only — never persisted (SPEC §6).
+ * @param {Buffer | string} raw
+ * @returns {Promise<{ messageId: string | null, candidates: Buffer[] }>}
+ */
 async function extractVerifyCandidates(raw) {
   const parsed = await simpleParser(raw);
   const candidates = (parsed.attachments || [])
@@ -76,6 +101,12 @@ async function extractVerifyCandidates(raw) {
 // and the SPF/DMARC/ARC verdicts. Pure — interprets the auth object, no I/O.
 // `classifyTrust` (m1) collapses the same object to ONE trust level; this keeps
 // the detail an auditor needs alongside it.
+/**
+ * Reduce a mailauth result to the compact auth summaries the ledger records
+ * (SPEC §4). Pure — interprets the auth object, no I/O.
+ * @param {MailauthResult} auth
+ * @returns {AuthSummary}
+ */
 function summariseAuth(auth) {
   const dkimResults = (auth && auth.dkim && auth.dkim.results) || [];
   const dkim = dkimResults.length === 0 ? { result: 'none' } : {

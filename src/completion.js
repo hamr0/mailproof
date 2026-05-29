@@ -63,6 +63,26 @@ function trustRank(level) {
   return i < 0 ? Infinity : i;
 }
 
+/** @typedef {import('./types').MailproofEvent} MailproofEvent */
+/** @typedef {import('./types').Step} Step */
+/** @typedef {import('./types').CountDecision} CountDecision */
+/**
+ * The in-memory reply input the engine reasons over (the orchestrator computes
+ * the identity booleans; the engine stays pure).
+ * @typedef {Object} ReplyInput
+ * @property {string | null} [step_id]
+ * @property {boolean} [participant_match]
+ * @property {string} [trust_level]
+ * @property {boolean} [has_attachment]
+ * @property {number} [sequence]
+ */
+
+/**
+ * Does a reply's trust level meet a step's `minTrust` gate (SPEC §1)? Pure.
+ * @param {ReplyInput} commit
+ * @param {Step & { minTrust?: string }} step
+ * @returns {boolean}
+ */
 function meetsTrust(commit, step) {
   const min = (step && step.minTrust) || 'verified';
   return trustRank(commit && commit.trust_level) <= trustRank(min);
@@ -80,6 +100,11 @@ function findStep(event, stepId) {
   return event.steps.find((s) => s && s.id === stepId) || null;
 }
 
+/**
+ * The first step that isn't complete, or null. Pure.
+ * @param {MailproofEvent} event
+ * @returns {Step | null}
+ */
 function firstPendingStep(event) {
   if (!event || !Array.isArray(event.steps)) return null;
   return event.steps.find((s) => s && s.status !== 'complete') || null;
@@ -87,6 +112,12 @@ function firstPendingStep(event) {
 
 // A step is eligible iff every id in its dependsOn is complete. Empty/absent
 // dependsOn ⇒ always eligible (the parallel case falls out for free).
+/**
+ * Is every id in a step's `dependsOn` complete? Empty deps ⇒ eligible. Pure.
+ * @param {MailproofEvent} event
+ * @param {Step} step
+ * @returns {boolean}
+ */
 function stepDepsMet(event, step) {
   const deps = (step && step.dependsOn) || [];
   if (deps.length === 0) return true;
@@ -98,6 +129,11 @@ function stepDepsMet(event, step) {
   return true;
 }
 
+/**
+ * Every not-complete step whose dependencies are met. Pure.
+ * @param {MailproofEvent} event
+ * @returns {Step[]}
+ */
 function eligibleSteps(event) {
   return ((event && event.steps) || []).filter(
     (s) => s && s.status !== 'complete' && stepDepsMet(event, s)
@@ -110,6 +146,13 @@ function deny(reason, step) {
   return step ? { count: false, reason, step } : { count: false, reason };
 }
 
+/**
+ * Decide whether a workflow reply counts toward its step (accept-with-flag).
+ * Pure.
+ * @param {MailproofEvent} event
+ * @param {ReplyInput} commit
+ * @returns {CountDecision}
+ */
 function shouldCount(event, commit) {
   if (!event.activated_at) return deny(COUNT_REASONS.EVENT_NOT_ACTIVATED);
   if (event.archived_at) return deny(COUNT_REASONS.EVENT_ARCHIVED);
@@ -143,16 +186,25 @@ function shouldCount(event, commit) {
 // `commit_sequence` (the commit's `received_at` is the timestamp — SPEC §3
 // keeps no separate step.completed_at), and flips the event to complete with
 // `completed_at` once every step is done.
+/**
+ * Apply a workflow reply, returning a NEW event (never mutates input). Only
+ * transitions when `shouldCount(...).count`. Pure.
+ * @param {MailproofEvent} event
+ * @param {ReplyInput} commit
+ * @param {{ now?: string }} [opts]
+ * @returns {{ event: MailproofEvent, applied: boolean, decision: CountDecision, completedStep?: string | null, completedEvent?: boolean }}
+ */
 function applyReply(event, commit, { now = new Date().toISOString() } = {}) {
   const decision = shouldCount(event, commit);
   if (!decision.count) return { event, applied: false, decision };
 
-  const steps = event.steps.map((s) =>
+  const steps = /** @type {Step[]} */ ((event.steps || []).map((s) =>
     s.id === commit.step_id
       ? { ...s, status: 'complete', commit_sequence: commit.sequence }
       : s
-  );
+  ));
   const allDone = steps.every((s) => s.status === 'complete');
+  /** @type {MailproofEvent} */
   const updated = {
     ...event,
     steps,

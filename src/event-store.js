@@ -30,10 +30,24 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 // re-deriving `event.status === 'complete'` inline. (Lifted in spirit from
 // gitdone's 2026-05-28 closed_by canonicalisation: same concept asked at
 // multiple call sites silently drifts — keep it one definition.)
+/** @typedef {import('./types').MailproofEvent} MailproofEvent */
+/** @typedef {import('./types').Step} Step */
+
+/**
+ * Canonical "is this event complete?" predicate (schema-level). Pure.
+ * @param {MailproofEvent | null | undefined} event
+ * @returns {boolean}
+ */
 function isComplete(event) {
   return !!(event && event.status === 'complete');
 }
 
+/**
+ * Find a step by id on an event, or null. Pure.
+ * @param {MailproofEvent | null} event
+ * @param {string | null} stepId
+ * @returns {Step | null}
+ */
 function findStep(event, stepId) {
   if (!event || !Array.isArray(event.steps) || !stepId) return null;
   return event.steps.find((s) => s && s.id === stepId) || null;
@@ -43,6 +57,12 @@ function normaliseEmail(addr) {
   return (addr || '').trim().toLowerCase();
 }
 
+/**
+ * Does a sender address match a step's participant (normalised)? Pure.
+ * @param {string | null} senderAddr
+ * @param {Step | null} step
+ * @returns {boolean}
+ */
 function senderMatchesStep(senderAddr, step) {
   if (!step || !step.participant) return false;
   return normaliseEmail(senderAddr) === normaliseEmail(step.participant);
@@ -51,6 +71,10 @@ function senderMatchesStep(senderAddr, step) {
 // Generate a short, url-safe, alphanumeric event ID. 8 random bytes → base36,
 // trimmed to 12 chars — reads well in URLs and email plus-tags, with ample
 // entropy for uniqueness across expected volume.
+/**
+ * Generate a short url-safe alphanumeric event ID.
+ * @returns {string}
+ */
 function generateEventId() {
   const n = BigInt('0x' + crypto.randomBytes(8).toString('hex'));
   return n.toString(36).padStart(12, '0').slice(0, 12);
@@ -58,6 +82,10 @@ function generateEventId() {
 
 // Generate an event's public salt (per-event 32 bytes hex) used to salt the
 // sender_hash and message_id_hash in commit metadata (SPEC §0.1).
+/**
+ * Generate an event's public salt (32 bytes hex). Pure.
+ * @returns {string}
+ */
 function generateEventSalt() {
   return crypto.randomBytes(32).toString('hex');
 }
@@ -80,6 +108,12 @@ function generateEventSalt() {
 //
 // Returns the new event object and an array of change records:
 //   [{ step_id, field, from, to }, ...]   (step_id is null for title)
+/**
+ * Apply a partial patch to an event, returning `{ next, changes }`. Pure.
+ * @param {MailproofEvent} event
+ * @param {{ title?: string, steps?: Array<Partial<Step> & { id: string }> }} patch
+ * @returns {{ next: MailproofEvent, changes: Array<{ step_id: string | null, field: string, from: any, to: any }> }}
+ */
 function _applyEditPatch(event, patch) {
   if (!patch || typeof patch !== 'object') {
     throw Object.assign(new Error('editEvent: patch object required'), { code: 'BAD_PATCH' });
@@ -156,6 +190,12 @@ function _applyEditPatch(event, patch) {
 // depends on the prior), `parallel` → no deps, `custom` → the caller's
 // `dependsOn` kept verbatim. Per-step lifecycle defaults (status,
 // commit_sequence) are filled idempotently. Pure.
+/**
+ * Expand the `flow` sugar into the canonical per-step `dependsOn` graph. Pure.
+ * @param {Step[]} steps
+ * @param {'sequential' | 'parallel' | 'custom'} flow
+ * @returns {Step[]}
+ */
 function expandFlow(steps, flow) {
   const list = Array.isArray(steps) ? steps : [];
   return list.map((s, i) => {
@@ -174,6 +214,13 @@ function expandFlow(steps, flow) {
 // behave — an unknown type, a workflow step without a unique id, a crypto event
 // with threshold < 1 or with neither `signers` nor `open` (nothing could ever
 // count).
+/**
+ * Normalize a caller's partial event into the canonical record both engines
+ * read (SPEC §3 workflow / §3.1 crypto). Pure; structural validation only.
+ * @param {Partial<MailproofEvent> & Record<string, any>} partialEvent
+ * @param {{ now?: string }} [opts]
+ * @returns {MailproofEvent}
+ */
 function buildEventRecord(partialEvent, { now = new Date().toISOString() } = {}) {
   if (!partialEvent || typeof partialEvent !== 'object') {
     throw new Error('createEvent: event object required');
@@ -229,6 +276,26 @@ function buildEventRecord(partialEvent, { now = new Date().toISOString() } = {})
   };
 }
 
+/**
+ * Bind an event store to a fixed data directory. All disk-touching primitives
+ * close over `dataDir`; pure helpers are returned as-is.
+ * @param {{ dataDir?: string }} [opts]
+ * @returns {{
+ *   loadEvent: (eventId: string) => Promise<MailproofEvent | null>,
+ *   listEventIds: () => Promise<string[]>,
+ *   findStep: typeof findStep,
+ *   senderMatchesStep: typeof senderMatchesStep,
+ *   isComplete: typeof isComplete,
+ *   createEvent: (partialEvent: Partial<MailproofEvent> & Record<string, any>) => Promise<MailproofEvent>,
+ *   activateEvent: (eventId: string, opts?: { now?: string }) => Promise<{ event: MailproofEvent, alreadyActive: boolean }>,
+ *   editEvent: (eventId: string, patch: any, opts?: { now?: string, organiserHandle?: string | null }) => Promise<{ event: MailproofEvent, prev: MailproofEvent, changes: any[], commitSequence: number | null }>,
+ *   writeEventAtomic: (id: string, event: MailproofEvent) => Promise<void>,
+ *   recordStepSendErrors: (eventId: string, errorsByStepId: Record<string, any>) => Promise<MailproofEvent | null>,
+ *   recordProofEmailMessageId: (eventId: string, messageId: string) => Promise<string | null>,
+ *   generateEventId: typeof generateEventId,
+ *   generateEventSalt: typeof generateEventSalt,
+ * }}
+ */
 function createEventStore({ dataDir } = {}) {
   if (!dataDir) throw new Error('createEventStore: dataDir required');
 

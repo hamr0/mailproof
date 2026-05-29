@@ -1,14 +1,20 @@
 {
   "name": "mailproof",
-  "version": "0.0.1",
+  "version": "0.7.0",
   "description": "Email-native multi-party coordination kernel: turns a promise made over email into proof. DKIM/DMARC-verified replies, a tamper-evident git ledger, workflow sequencing, and email triggers. Extracted from gitdone.",
   "main": "src/index.js",
+  "types": "./src/index.d.ts",
   "exports": {
-    ".": "./src/index.js"
+    ".": {
+      "types": "./src/index.d.ts",
+      "default": "./src/index.js"
+    }
   },
   "scripts": {
     "poc": "node poc/pipeline.js",
-    "test": "node --test 'tests/unit/**/*.test.js' 'tests/integration/**/*.test.js'"
+    "test": "node --test 'tests/unit/**/*.test.js' 'tests/integration/**/*.test.js'",
+    "typecheck": "tsc -p tsconfig.json",
+    "build:types": "tsc -p tsconfig.types.json"
   },
   "keywords": [
     "email",
@@ -55,5 +61,9 @@
   "dependencies": {
     "mailauth": "^4.13.3",
     "mailparser": "^3.9.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.19",
+    "typescript": "^6.0.3"
   }
 }

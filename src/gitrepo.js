@@ -65,6 +65,15 @@ function padSeq(n) { return String(n).padStart(3, '0'); }
 // the sender address, never the plaintext. Salt is a per-event public random
 // value stored in event.json — verifiers re-hash a claimed address with the
 // event's salt and match; observers can't bulk rainbow-table across events.
+/** @typedef {import('./types').MailproofEvent} MailproofEvent */
+/** @typedef {import('./types').Commit} Commit */
+
+/**
+ * Salted hash of a sender address (SPEC §0.1) — never the plaintext. Pure.
+ * @param {string | null} sender
+ * @param {string | null} [salt]
+ * @returns {string | null}
+ */
 function saltedSenderHash(sender, salt) {
   if (!sender) return null;
   const material = `${salt || ''}|${sender.toLowerCase()}`;
@@ -73,17 +82,35 @@ function saltedSenderHash(sender, salt) {
 
 // Normalise a Message-ID before hashing. RFC 5322 defines it as an opaque
 // value in angle brackets; treat case-insensitively for match stability.
+/**
+ * Normalise a Message-ID (strip brackets, lowercase) before hashing. Pure.
+ * @param {string | null} mid
+ * @returns {string | null}
+ */
 function normaliseMessageId(mid) {
   if (!mid) return null;
   return String(mid).trim().replace(/^<|>$/g, '').toLowerCase();
 }
 
+/**
+ * Salted hash of a normalised Message-ID. Pure.
+ * @param {string | null} mid
+ * @param {string | null} [salt]
+ * @returns {string | null}
+ */
 function saltedMessageIdHash(mid, salt) {
   const n = normaliseMessageId(mid);
   if (!n) return null;
   return `sha256:${sha256Hex(`${salt || ''}|${n}`)}`;
 }
 
+/**
+ * Build a reply commit's SPEC §4 metadata. Pure.
+ * @param {number} seq
+ * @param {Record<string, any>} ctx
+ * @param {MailproofEvent} event
+ * @returns {Commit}
+ */
 function buildCommitMetadata(seq, ctx, event) {
   const sender = ctx.envelope && ctx.envelope.sender ? ctx.envelope.sender
     : (ctx.from || null);
@@ -128,6 +155,11 @@ function buildCommitMetadata(seq, ctx, event) {
 }
 
 // Bind a ledger to a fixed data directory (and optional OTS stamper).
+/**
+ * Bind a per-event git ledger to a fixed data directory (+ optional OTS stamper).
+ * @param {{ dataDir?: string, ots?: any }} [opts]
+ * @returns {Record<string, any>}
+ */
 function createGitrepo({ dataDir, ots = null } = {}) {
   if (!dataDir) throw new Error('createGitrepo: dataDir required');
 

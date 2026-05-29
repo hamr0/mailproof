@@ -31,6 +31,12 @@ const crypto = require('node:crypto');
 // `message_id_hash`) and the existing attachment/`raw_sha256` fixtures, so m7's
 // parser stores a consistent value; verifyDocument still normalises either form
 // when comparing, so a populator that emitted bare hex can't trip the match.
+/**
+ * Canonical document fingerprint: `sha256:`-prefixed lowercase hex. Accepts a
+ * Buffer, Uint8Array, or utf8 string. Pure.
+ * @param {Buffer | Uint8Array | string} bytes
+ * @returns {string}
+ */
 function hashDocument(bytes) {
   return `sha256:${crypto.createHash('sha256').update(bytes).digest('hex')}`;
 }
@@ -39,6 +45,11 @@ function normHash(h) {
   return typeof h === 'string' ? h.replace(/^sha256:/i, '').toLowerCase() : '';
 }
 
+/**
+ * Compose the document notary over a bound gitrepo + event store (PRD §4.1).
+ * @param {{ gitrepo?: any, eventStore?: any }} [deps]
+ * @returns {{ hashDocument: typeof hashDocument, verifyDocument: (eventId: string, docBytes: Buffer | Uint8Array | string, opts?: { email?: string }) => Promise<{ found: boolean, matches: Array<Record<string, any>> }> }}
+ */
 function createNotary({ gitrepo, eventStore } = {}) {
   if (!gitrepo || !eventStore) {
     throw new Error('createNotary: { gitrepo, eventStore } required');
@@ -52,6 +63,14 @@ function createNotary({ gitrepo, eventStore } = {}) {
   //
   //   → { found, matches: [{ sequence, received_at, trust_level, counted,
   //                          sender_domain, sender_match, filename }] }
+  /**
+   * Verify a document against an event's ledger (PRD §4.1). Re-hashes the bytes
+   * and returns each commit whose attachments include that hash.
+   * @param {string} eventId
+   * @param {Buffer | Uint8Array | string} docBytes
+   * @param {{ email?: string }} [opts]
+   * @returns {Promise<{ found: boolean, matches: Array<Record<string, any>> }>}
+   */
   async function verifyDocument(eventId, docBytes, { email } = {}) {
     const target = normHash(hashDocument(docBytes));
     const event = await eventStore.loadEvent(eventId);

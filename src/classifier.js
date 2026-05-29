@@ -11,8 +11,18 @@
 
 'use strict';
 
+/** @typedef {import('./types').TrustLevel} TrustLevel */
+/** @typedef {import('./types').MailauthResult} MailauthResult */
+
+/** @type {readonly TrustLevel[]} */
 const TRUST_LEVELS = ['verified', 'forwarded', 'authorized', 'unverified'];
 
+/**
+ * Classify a mailauth `authenticate()` result into a trust level (SPEC §1).
+ * Pure — no I/O, no config, no policy.
+ * @param {MailauthResult} auth
+ * @returns {TrustLevel}
+ */
 function classifyTrust(auth) {
   const dkimResults = (auth && auth.dkim && auth.dkim.results) || [];
   const dkimPassAligned = dkimResults.some(

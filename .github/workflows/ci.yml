@@ -1,0 +1,45 @@
+name: CI
+
+# Type-check + tests on every push and PR. The publish workflow re-runs the
+# tests before releasing; this is the fast feedback gate for ordinary commits.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - name: Install dev dependencies
+        run: npm ci
+
+      # Check the JSDoc types against the implementation (checkJs). A wrong
+      # call or argument shape inside src/ fails here.
+      - name: Typecheck
+        run: npm run typecheck
+
+      # The shipped .d.ts are generated from the JSDoc. Regenerate and fail if
+      # the committed output is stale — the JSDoc is the single source of truth,
+      # so the .d.ts must always match it.
+      - name: Types are current
+        run: |
+          npm run build:types
+          # Catches both modified and new/uncommitted .d.ts (a new src module
+          # whose generated declaration was never committed).
+          changed="$(git status --porcelain -- 'src/*.d.ts')"
+          if [ -n "$changed" ]; then
+            echo "::error::Generated .d.ts are stale or missing. Run 'npm run build:types' and commit the result."
+            echo "$changed"
+            exit 1
+          fi
+
+      - name: Test
+        run: npm test

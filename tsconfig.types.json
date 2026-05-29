@@ -1,0 +1,18 @@
+{
+  // Declaration-emit config. `npm run build:types` runs this to regenerate the
+  // shipped .d.ts files from the JSDoc in src/*.js (next to each .js, so TS
+  // consumers resolve types automatically on `require('mailproof')`).
+  //
+  // This is a DEV-only step — the .d.ts are committed and shipped, so consumers
+  // and runtime install nothing. The JSDoc is the single source of truth; this
+  // config only projects it into .d.ts. CI runs build:types and fails if the
+  // committed output is stale (see .github/workflows/ci.yml).
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "declaration": true,
+    "emitDeclarationOnly": true
+  },
+  "include": ["src/**/*.js"],
+  "exclude": ["node_modules"]
+}
