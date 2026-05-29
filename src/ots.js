@@ -63,6 +63,10 @@ function parseOtsBlockHeight(stdout) {
 
 // sha256 of a file's bytes, or null if it can't be read. Used to detect whether
 // `ots upgrade` rewrote the proof (= merged the Bitcoin attestation).
+/**
+ * @param {string} abs
+ * @returns {Promise<string | null>}
+ */
 async function sha256OfFile(abs) {
   try {
     const buf = await fs.readFile(abs);
@@ -72,6 +76,12 @@ async function sha256OfFile(abs) {
   }
 }
 
+/**
+ * @param {string} bin
+ * @param {string[]} args
+ * @param {number} timeoutMs
+ * @returns {Promise<{ code: number, stdout: string, stderr: string, error?: string }>}
+ */
 function runOts(bin, args, timeoutMs) {
   return new Promise((resolve) => {
     let stdout = '', stderr = '';
@@ -88,7 +98,7 @@ function runOts(bin, args, timeoutMs) {
     });
     proc.on('close', (code) => {
       clearTimeout(timer);
-      resolve({ code, stdout, stderr });
+      resolve({ code: code ?? -1, stdout, stderr });
     });
   });
 }
@@ -105,11 +115,16 @@ function runOts(bin, args, timeoutMs) {
  */
 function createOts({ otsBin, timeoutMs = 30000 } = {}) {
   if (!otsBin) throw new Error('createOts: otsBin required');
+  const bin = otsBin;
 
   // Stamp the file at `absPath`. `ots` writes `<absPath>.ots` next to it.
   // Returns { proof_path } on success, or { error } on any failure.
+  /**
+   * @param {string} absPath
+   * @returns {Promise<{ proof_path: string } | { error: string }>}
+   */
   async function stampFile(absPath) {
-    const res = await runOts(otsBin, ['stamp', absPath], timeoutMs);
+    const res = await runOts(bin, ['stamp', absPath], timeoutMs);
     if (res.error) return { error: res.error };
     if (res.code !== 0) return { error: `ots exit ${res.code}: ${res.stderr.trim().slice(0, 200)}` };
     const proof = absPath + '.ots';
@@ -131,14 +146,19 @@ function createOts({ otsBin, timeoutMs = 30000 } = {}) {
   //   pending  — exit non-zero with no spawn error: still calendar-only (normal)
   //   error    — only the binary itself failing (missing/timeout); not pending
   // On a successful anchor we also read the block height (offline `ots info`).
+  /**
+   * @param {string} absPath
+   * @returns {Promise<{ ok: boolean, changed: boolean, anchored: boolean, pending: boolean, exit: number, block_height?: number | null, error?: string }>}
+   */
   async function upgradeProof(absPath) {
     const before = await sha256OfFile(absPath);
-    const res = await runOts(otsBin, ['upgrade', absPath], timeoutMs);
+    const res = await runOts(bin, ['upgrade', absPath], timeoutMs);
     if (res.error) return { ok: false, changed: false, anchored: false, pending: false, exit: res.code, error: res.error };
     const after = await sha256OfFile(absPath);
     const changed = Boolean(before && after && before !== after);
     const anchored = res.code === 0;   // exit 0 ⇒ fully anchored (just now, or already)
     const pending = res.code !== 0;    // exit ≠0 ⇒ still calendar-pending — normal, not an error
+    /** @type {{ ok: boolean, changed: boolean, anchored: boolean, pending: boolean, exit: number, block_height?: number | null }} */
     const out = { ok: true, changed, anchored, pending, exit: res.code };
     if (anchored) out.block_height = await readBlockHeight(absPath);
     return out;
@@ -147,8 +167,12 @@ function createOts({ otsBin, timeoutMs = 30000 } = {}) {
   // Read the Bitcoin block height the proof at `absPath` is anchored to, via
   // `ots info` (parses the binary proof LOCALLY — no network). Returns the
   // height, or null on any failure (binary missing, non-zero exit, parse miss).
+  /**
+   * @param {string} absPath
+   * @returns {Promise<number | null>}
+   */
   async function readBlockHeight(absPath) {
-    const res = await runOts(otsBin, ['info', absPath], timeoutMs);
+    const res = await runOts(bin, ['info', absPath], timeoutMs);
     if (res.error || res.code !== 0) return null;
     return parseOtsBlockHeight(res.stdout || '');
   }

@@ -39,6 +39,8 @@
 
 const { TRUST_LEVELS } = require('./classifier');
 
+/** @typedef {import('./types').TrustLevel} TrustLevel */
+
 // The accept-with-flag taxonomy (SPEC §4). Exported so consumers and tests
 // share one source of truth for "why didn't this reply count?".
 const COUNT_REASONS = Object.freeze({
@@ -58,8 +60,12 @@ const COUNT_REASONS = Object.freeze({
 // TRUST_LEVELS is strongest-first, so a SMALLER index is stronger. An unknown
 // level ranks weakest (Infinity) — an unrecognised commit trust never meets a
 // real gate, and a malformed minTrust never lets a weak reply through.
+/**
+ * @param {string | undefined} level
+ * @returns {number}
+ */
 function trustRank(level) {
-  const i = TRUST_LEVELS.indexOf(level);
+  const i = TRUST_LEVELS.indexOf(/** @type {TrustLevel} */ (level));
   return i < 0 ? Infinity : i;
 }
 
@@ -95,6 +101,11 @@ function meetsTrust(commit, step) {
 // definition for "is this event complete?", not one per engine).
 const { isComplete } = require('./event-store');
 
+/**
+ * @param {MailproofEvent} event
+ * @param {string | null | undefined} stepId
+ * @returns {Step | null}
+ */
 function findStep(event, stepId) {
   if (!event || !Array.isArray(event.steps) || !stepId) return null;
   return event.steps.find((s) => s && s.id === stepId) || null;
@@ -142,6 +153,11 @@ function eligibleSteps(event) {
 
 // --- count decision ---
 
+/**
+ * @param {string} reason
+ * @param {Step} [step]
+ * @returns {CountDecision}
+ */
 function deny(reason, step) {
   return step ? { count: false, reason, step } : { count: false, reason };
 }

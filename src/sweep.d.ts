@@ -1,22 +1,53 @@
 export type MailproofEvent = import("./types").MailproofEvent;
+export type DeliverArgs = import("./notify").DeliverArgs;
+export type DeliverResult = import("./types").DeliverResult;
+/**
+ * The subset of the event store sweep binds (event-store).
+ */
+export type SweepEventStore = {
+    loadEvent: (id: string) => Promise<MailproofEvent | null>;
+    listEventIds: () => Promise<string[]>;
+    writeEventAtomic: (id: string, event: MailproofEvent) => Promise<any>;
+};
+/**
+ * The subset of the git ledger sweep binds (gitrepo).
+ */
+export type SweepGitrepo = {
+    syncEventJson: (id: string, event: MailproofEvent, message: string) => Promise<any>;
+};
+/** @typedef {import('./notify').DeliverArgs} DeliverArgs */
+/** @typedef {import('./types').DeliverResult} DeliverResult */
+/**
+ * The subset of the event store sweep binds (event-store).
+ * @typedef {Object} SweepEventStore
+ * @property {(id: string) => Promise<MailproofEvent | null>} loadEvent
+ * @property {() => Promise<string[]>} listEventIds
+ * @property {(id: string, event: MailproofEvent) => Promise<any>} writeEventAtomic
+ */
+/**
+ * The subset of the git ledger sweep binds (gitrepo).
+ * @typedef {Object} SweepGitrepo
+ * @property {(id: string, event: MailproofEvent, message: string) => Promise<any>} syncEventJson
+ */
 /**
  * Compose the lifecycle sweep over the bound store/ledger + shared notifier.
- * @param {Object} [deps]
- * @param {any} [deps.eventStore]
- * @param {any} [deps.gitrepo]
- * @param {(args: any) => Promise<any>} [deps.deliver]
+ * eventStore/gitrepo/deliver are required — sweep cannot run without them.
+ * @param {Object} deps
+ * @param {SweepEventStore} deps.eventStore
+ * @param {SweepGitrepo} deps.gitrepo
+ * @param {(args: DeliverArgs) => Promise<DeliverResult | null>} deps.deliver
  * @param {string | null} [deps.domain]
  * @param {number} [deps.overdueDays]
  * @param {number} [deps.archiveDays]
- * @returns {{ sweep: (opts?: { now?: number }) => Promise<{ overdue: Array<{ eventId: string, daysOver: number }>, archived: Array<{ eventId: string, daysIdle: number }>, notified: any[] }> }}
+ * @returns {{ sweep: (opts?: { now?: number }) => Promise<{ overdue: Array<{ eventId: string, daysOver: number }>, archived: Array<{ eventId: string, daysIdle: number }>, notified: DeliverResult[] }> }}
  */
-export function createSweep({ eventStore, gitrepo, deliver, domain, overdueDays, archiveDays, }?: {
-    eventStore?: any;
-    gitrepo?: any;
-    deliver?: (args: any) => Promise<any>;
-    domain?: string | null;
-    overdueDays?: number;
-    archiveDays?: number;
+export function createSweep({ eventStore, gitrepo, deliver, domain, overdueDays, archiveDays, }: {
+    eventStore: SweepEventStore;
+    gitrepo: SweepGitrepo;
+    deliver: (args: DeliverArgs) => Promise<DeliverResult | null>;
+    domain?: string | null | undefined;
+    overdueDays?: number | undefined;
+    archiveDays?: number | undefined;
 }): {
     sweep: (opts?: {
         now?: number;
@@ -29,7 +60,7 @@ export function createSweep({ eventStore, gitrepo, deliver, domain, overdueDays,
             eventId: string;
             daysIdle: number;
         }>;
-        notified: any[];
+        notified: DeliverResult[];
     }>;
 };
 /** @typedef {import('./types').MailproofEvent} MailproofEvent */
@@ -44,6 +75,6 @@ export function referenceClockMs(event: MailproofEvent | null): number | null;
  * Is the event in the cohort sweep acts on (activated, not archived, not
  * complete)? Pure.
  * @param {MailproofEvent | null} event
- * @returns {boolean}
+ * @returns {event is MailproofEvent}
  */
-export function isActive(event: MailproofEvent | null): boolean;
+export function isActive(event: MailproofEvent | null): event is MailproofEvent;

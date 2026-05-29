@@ -14,7 +14,7 @@
     "poc": "node poc/pipeline.js",
     "test": "node --test 'tests/unit/**/*.test.js' 'tests/integration/**/*.test.js'",
     "typecheck": "tsc -p tsconfig.json",
-    "build:types": "tsc -p tsconfig.types.json"
+    "build:types": "rm -f src/*.d.ts && tsc -p tsconfig.types.json"
   },
   "keywords": [
     "email",

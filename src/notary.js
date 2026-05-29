@@ -41,6 +41,10 @@ function hashDocument(bytes) {
   return `sha256:${crypto.createHash('sha256').update(bytes).digest('hex')}`;
 }
 
+/**
+ * @param {string | null | undefined} h
+ * @returns {string}
+ */
 function normHash(h) {
   return typeof h === 'string' ? h.replace(/^sha256:/i, '').toLowerCase() : '';
 }
@@ -83,6 +87,7 @@ function createNotary({ gitrepo, eventStore } = {}) {
     const commits = await gitrepo.listCommits(eventId);
     const matches = [];
     for (const c of commits) {
+      /** @type {import('./types').Attachment[]} */
       const atts = Array.isArray(c.attachments) ? c.attachments : [];
       const hit = atts.find((a) => a && normHash(a.sha256) === target);
       if (!hit) continue;

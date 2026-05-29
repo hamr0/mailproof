@@ -15,11 +15,19 @@
 
 'use strict';
 
+/**
+ * @param {Record<string, any>} [ctx]
+ * @returns {string}
+ */
 function titleOf(ctx) {
   return (ctx && ctx.event && ctx.event.title) || (ctx && ctx.eventId) || 'your event';
 }
 
 // `— "step name"` when the occasion is about a named workflow step, else empty.
+/**
+ * @param {Record<string, any>} [ctx]
+ * @returns {string}
+ */
 function stepClause(ctx) {
   const s = ctx && ctx.step;
   return s && s.name ? ` — "${s.name}"` : '';

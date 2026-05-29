@@ -78,10 +78,6 @@ export function resolveUpgrade(currentLevel: string): {
 /**
  * Find the signing domain/selector in a commit's DKIM summary. Pure.
  * @param {Record<string, any>} commit
- * @returns {{ domain: string, selector: string, result?: string } | null}
+ * @returns {Record<string, any> | null}
  */
-export function pickSigner(commit: Record<string, any>): {
-    domain: string;
-    selector: string;
-    result?: string;
-} | null;
+export function pickSigner(commit: Record<string, any>): Record<string, any> | null;

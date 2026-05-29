@@ -25,17 +25,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   typecheck`).** Every `src/*.js` module now carries JSDoc type annotations
   referencing a shared vocabulary in `src/types.js` (`TrustLevel`,
   `MailproofEvent`, `Step`, `Commit`, `ParsedMessage`, …). `tsc` with `checkJs`
-  type-checks the source against that JSDoc (0 errors; `npm run typecheck`) and
-  emits the committed, shipped `src/*.d.ts` (`npm run build:types`) — so TS
-  consumers of `require('mailproof')` get a checked surface. The JSDoc is the
-  single source of truth; the `.d.ts` are derived. `package.json` gains a
-  `types`/`exports` entry; `typescript` + `@types/node` are dev-only devDeps
-  (**runtime stays 2 deps, no consumer build step**). New `.github/workflows/ci.yml`
-  runs typecheck + a "types-are-current" guard (regenerate and fail on drift) +
-  tests on push/PR; `publish.yml` also gates on typecheck. New
-  `tests/unit/index.test.js` pins the exact public-barrel surface (59 exports).
-  Deliberately **diverges** from `knowless`/`bareagent` (which ship no types) —
-  an upgrade for the published-package audience (PRD §8.13).
+  under **full `strict`** type-checks the source against that JSDoc (0 errors;
+  `npm run typecheck`) and emits the committed, shipped `src/*.d.ts`
+  (`npm run build:types`, which cleans the prior `.d.ts` first so a co-located
+  copy can't collide with or shadow the emit) — so TS consumers of
+  `require('mailproof')` get a checked surface. Strictness convention:
+  `strictNullChecks` is the non-negotiable floor, `strict:true` the default —
+  every internal helper is annotated and all null-safety is proven, with no
+  `any` casts or `@ts-ignore`. The JSDoc is the single source of truth; the
+  `.d.ts` are derived. `package.json` gains a `types`/`exports` entry;
+  `typescript` + `@types/node` are dev-only devDeps (**runtime stays 2 deps, no
+  consumer build step**). New `.github/workflows/ci.yml` runs typecheck + a
+  "types-are-current" guard (regenerate and fail on drift) + tests on push/PR;
+  `publish.yml` also gates on typecheck. New `tests/unit/index.test.js` pins the
+  exact public-barrel surface (59 exports). Deliberately **diverges** from
+  `knowless`/`bareagent` (which ship no types) — an upgrade for the
+  published-package audience (PRD §8.13).
 - **m7c-6: public verification email endpoints wired through `ingest()`.** The
   verify primitives (`verify()`/`reverify()`) are now reachable from inbound
   mail, not just as library calls. `ingest()` routes `verify+<id>@` (read-only:

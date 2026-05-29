@@ -35,30 +35,57 @@ const GIT_IDENTITY = { name: 'mailproof', email: 'noreply@mailproof.invalid' };
 // Run a git subcommand in `cwd`; resolve trimmed stdout, reject with git's
 // stderr on a non-zero exit. Outputs we read are tiny (a sha, a filename), so
 // the default maxBuffer is ample — raised anyway for safety.
+/**
+ * Run a git subcommand in `cwd`; resolve trimmed stdout, reject with git's stderr.
+ * @param {string} cwd
+ * @param {string[]} args
+ * @returns {Promise<string>}
+ */
 async function git(cwd, args) {
   try {
     const { stdout } = await _execFile('git', args, { cwd, maxBuffer: 16 * 1024 * 1024 });
     return stdout.trim();
   } catch (err) {
-    const detail = (err.stderr || '').trim() || err.message;
+    const e = /** @type {{ stderr?: string, message?: string }} */ (err);
+    const detail = (e.stderr || '').trim() || e.message;
     throw new Error(`git ${args[0]} failed: ${detail}`);
   }
 }
 
+/**
+ * Hex SHA-256 of the string form of `s`. Pure.
+ * @param {unknown} s
+ * @returns {string}
+ */
 function sha256Hex(s) {
   return crypto.createHash('sha256').update(String(s)).digest('hex');
 }
 
+/**
+ * True if `p` is an existing directory (false on any stat error).
+ * @param {string} p
+ * @returns {Promise<boolean>}
+ */
 async function dirExists(p) {
   try { return (await fs.stat(p)).isDirectory(); }
   catch { return false; }
 }
 
+/**
+ * Read a UTF-8 file, returning null on any error (missing/unreadable).
+ * @param {string} p
+ * @returns {Promise<string | null>}
+ */
 async function readFileSafe(p) {
   try { return await fs.readFile(p, 'utf8'); }
   catch { return null; }
 }
 
+/**
+ * Zero-pad a sequence number to 3 digits.
+ * @param {number} n
+ * @returns {string}
+ */
 function padSeq(n) { return String(n).padStart(3, '0'); }
 
 // SPEC §0.1 (plaintext discipline): commit payloads record a salted hash of
@@ -163,13 +190,25 @@ function buildCommitMetadata(seq, ctx, event) {
 function createGitrepo({ dataDir, ots = null } = {}) {
   if (!dataDir) throw new Error('createGitrepo: dataDir required');
 
+  /** @type {(eventId: string) => string} */
   const repoPath = (eventId) => path.join(dataDir, 'repos', eventId);
+  /** @type {(abs: string, obj: unknown) => Promise<void>} */
   const writeJson = (abs, obj) => fs.writeFile(abs, JSON.stringify(obj, null, 2) + '\n');
 
   // Optionally OTS-stamp a finalised JSON file in place. Sets
   // metadata.ots_proof_file to the in-tree proof path on success (and pushes
   // it onto filesToAdd), or records ots_archive.error and leaves the path
   // null on failure. No-op when no OTS stamper is wired.
+  /**
+   * Optionally OTS-stamp a finalised JSON file in place, mutating `metadata`'s
+   * `ots_proof_file`/`ots_archive` and pushing the proof onto `filesToAdd`.
+   * @param {string} abs            Absolute path of the JSON file to stamp.
+   * @param {string} root           Repo root.
+   * @param {string} proofRel       Repo-relative path the proof lands at.
+   * @param {Record<string, any>} metadata  The commit record being written (mutated).
+   * @param {string[]} filesToAdd   Accumulator of repo-relative paths to git-add.
+   * @returns {Promise<void>}
+   */
   async function maybeStamp(abs, root, proofRel, metadata, filesToAdd) {
     if (!ots) return; // unanchored: ots_proof_file stays null
     metadata.ots_proof_file = proofRel;
@@ -185,6 +224,12 @@ function createGitrepo({ dataDir, ots = null } = {}) {
     }
   }
 
+  /**
+   * Create the per-event repo (dirs, event.json, initial commit) if absent.
+   * @param {string} eventId
+   * @param {MailproofEvent} event
+   * @returns {Promise<{ root: string, initialised: boolean }>}
+   */
   async function initRepoIfNeeded(eventId, event) {
     if (!EVENT_ID_RE.test(eventId)) throw new Error(`invalid eventId: ${eventId}`);
     const root = repoPath(eventId);
@@ -209,6 +254,11 @@ function createGitrepo({ dataDir, ots = null } = {}) {
   }
 
   // Highest commit-NNN.json sequence + 1 (1 on an empty/absent commits dir).
+  /**
+   * Highest commit-NNN.json sequence + 1 (1 on an empty/absent commits dir).
+   * @param {string} root
+   * @returns {Promise<number>}
+   */
   async function nextSequence(root) {
     let files;
     try { files = await fs.readdir(path.join(root, 'commits')); }
@@ -223,6 +273,11 @@ function createGitrepo({ dataDir, ots = null } = {}) {
 
   // Next sequence in the reverify-NNN.json namespace (separate from the reply
   // commit-NNN.json namespace).
+  /**
+   * Next sequence in the reverify-NNN.json namespace (separate from replies).
+   * @param {string} root
+   * @returns {Promise<number>}
+   */
   async function nextReverifySequence(root) {
     let files;
     try { files = await fs.readdir(path.join(root, 'commits')); }
@@ -240,6 +295,26 @@ function createGitrepo({ dataDir, ots = null } = {}) {
   // trust delta, and NEVER rewrites the original commit-NNN.json (the ledger is
   // append-only; the upgrade is a new fact, not a mutation). Same OTS-stamp +
   // git-commit shape as commitReply.
+  /**
+   * The offline DKIM re-verify verdict a reverify record layers onto a reply.
+   * @typedef {Object} ReverifyResult
+   * @property {string | null} [trust_level_before]
+   * @property {string | null} [trust_level_after]
+   * @property {boolean} [upgraded]
+   * @property {Object | null} [dkim_reverify]
+   * @property {Object | null} [evidence]
+   */
+
+  /**
+   * Append an immutable reverify record on top of a reply commit (never
+   * rewrites the original). Same OTS-stamp + git-commit shape as commitReply.
+   * @param {string} eventId
+   * @param {MailproofEvent} event
+   * @param {number} targetSequence  The reply commit sequence being re-verified.
+   * @param {ReverifyResult} result
+   * @param {string} receivedAt
+   * @returns {Promise<{ sha: string, sequence: number, file: string, target_sequence: number, upgraded: boolean }>}
+   */
   async function commitReverify(eventId, event, targetSequence, result, receivedAt) {
     const { root } = await initRepoIfNeeded(eventId, event);
     const targetSeqStr = padSeq(targetSequence);
@@ -280,6 +355,14 @@ function createGitrepo({ dataDir, ots = null } = {}) {
     };
   }
 
+  /**
+   * Commit one accepted reply (SPEC §4): build metadata, archive DKIM PEM,
+   * optionally OTS-stamp, then git-add + commit.
+   * @param {string} eventId
+   * @param {MailproofEvent} event
+   * @param {Record<string, any>} ctx
+   * @returns {Promise<{ sha: string, sequence: number, file: string, dkim_key_file: string | null, ots_proof_file: string | null, repo_path: string }>}
+   */
   async function commitReply(eventId, event, ctx) {
     const { root } = await initRepoIfNeeded(eventId, event);
     const seq = await nextSequence(root);
@@ -316,8 +399,8 @@ function createGitrepo({ dataDir, ots = null } = {}) {
       sha: await git(root, ['rev-parse', 'HEAD']),
       sequence: seq,
       file: rel,
-      dkim_key_file: metadata.dkim_key_file,
-      ots_proof_file: metadata.ots_proof_file,
+      dkim_key_file: metadata.dkim_key_file ?? null,
+      ots_proof_file: metadata.ots_proof_file ?? null,
       repo_path: root,
     };
   }
@@ -325,6 +408,31 @@ function createGitrepo({ dataDir, ots = null } = {}) {
   // Append an audit-trail commit recording an organiser-driven edit on an
   // activated event. Participant changes are stored as before/after salted
   // hashes (SPEC §0.1); other fields (deadline, title, …) are non-PII plaintext.
+  /**
+   * One change in an organiser edit. `participant` changes carry from/to plaintext
+   * (hashed before storage); other fields are stored verbatim.
+   * @typedef {Object} EditChange
+   * @property {string} field
+   * @property {string} [step_id]
+   * @property {string | null} [from]
+   * @property {string | null} [to]
+   */
+
+  /**
+   * The organiser-edit context an edit commit records.
+   * @typedef {Object} EditCtx
+   * @property {EditChange[]} [changes]
+   * @property {string} [edited_at]
+   * @property {string | null} [organiser_handle]
+   */
+
+  /**
+   * Append an audit-trail commit for an organiser-driven edit on an active event.
+   * @param {string} eventId
+   * @param {EditCtx} editCtx
+   * @param {MailproofEvent} event
+   * @returns {Promise<{ sequence: number, sha: string, file: string, ots_proof_file: string | null, repo_path: string }>}
+   */
   async function appendEditCommit(eventId, editCtx, event) {
     const { root } = await initRepoIfNeeded(eventId, event);
     const seq = await nextSequence(root);
@@ -338,8 +446,8 @@ function createGitrepo({ dataDir, ots = null } = {}) {
         return {
           step_id: c.step_id,
           field: 'participant',
-          from_hash: saltedSenderHash(c.from, salt),
-          to_hash: saltedSenderHash(c.to, salt),
+          from_hash: saltedSenderHash(c.from ?? null, salt),
+          to_hash: saltedSenderHash(c.to ?? null, salt),
         };
       }
       return c;
@@ -378,6 +486,22 @@ function createGitrepo({ dataDir, ots = null } = {}) {
   // `completed_at` and the `triggering_commit_sequence` (the reply that tipped
   // it). gitdone's per-mode `event_mode` is dropped — the two-mode model has no
   // `mode`; `event_type` ("workflow" | "crypto") is enough.
+  /**
+   * Context for the one-shot completion record.
+   * @typedef {Object} CompletionCtx
+   * @property {string | null} [completedAt]
+   * @property {number | null} [triggeringSequence]
+   * @property {Object | null} [summary]
+   */
+
+  /**
+   * Write the one-shot completion record (SPEC §4). Idempotent — a second call
+   * returns { alreadyWritten } without a new commit.
+   * @param {string} eventId
+   * @param {MailproofEvent} event
+   * @param {CompletionCtx} [completionCtx]
+   * @returns {Promise<{ alreadyWritten: boolean, file: string, sha?: string, ots_proof_file?: string | null, repo_path?: string }>}
+   */
   async function commitCompletion(eventId, event, completionCtx = {}) {
     const { root } = await initRepoIfNeeded(eventId, event);
     const rel = path.join('commits', 'completion.json');
@@ -418,12 +542,25 @@ function createGitrepo({ dataDir, ots = null } = {}) {
   // The offline verifier re-runs DKIM against this. Path is allowlisted to the
   // dkim_keys/ dir so a crafted commit can't read arbitrary files. Returns the
   // PEM string or null.
+  /**
+   * Read an archived DKIM PEM by its commit-relative path (allowlisted to
+   * dkim_keys/). Returns the PEM string or null.
+   * @param {string} eventId
+   * @param {string} relPath
+   * @returns {Promise<string | null>}
+   */
   async function loadDkimPem(eventId, relPath) {
     if (!EVENT_ID_RE.test(eventId) || !relPath) return null;
     if (!/^dkim_keys\/commit-\d+\.pem$/.test(relPath)) return null;
     return readFileSafe(path.join(repoPath(eventId), relPath));
   }
 
+  /**
+   * Load a committed reply by sequence number (null if missing/unparseable).
+   * @param {string} eventId
+   * @param {number} sequence
+   * @returns {Promise<Commit | null>}
+   */
   async function loadCommit(eventId, sequence) {
     if (!EVENT_ID_RE.test(eventId)) throw new Error(`invalid eventId: ${eventId}`);
     const abs = path.join(repoPath(eventId), 'commits', `commit-${padSeq(sequence)}.json`);
@@ -436,6 +573,11 @@ function createGitrepo({ dataDir, ots = null } = {}) {
   // List all reply commits under an event, ordered by sequence ascending.
   // Reads the filesystem (not `git log`) — surfaces replies committed for
   // audit even when they didn't count.
+  /**
+   * List all reply commits under an event, ordered by sequence ascending.
+   * @param {string} eventId
+   * @returns {Promise<Commit[]>}
+   */
   async function listCommits(eventId) {
     if (!EVENT_ID_RE.test(eventId)) return [];
     let files;
@@ -465,6 +607,14 @@ function createGitrepo({ dataDir, ots = null } = {}) {
   // an unchanged event re-syncs to nothing staged. Drift in serialization
   // (indent, key order, trailing newline) produces spurious ledger commits;
   // the integration test pins both directions.
+  /**
+   * Sync the per-event repo's working-tree event.json with the master event
+   * JSON. No-op when there's no repo or the bytes match HEAD.
+   * @param {string} eventId
+   * @param {MailproofEvent} event
+   * @param {string} [message]
+   * @returns {Promise<{ synced: false, reason: string } | { synced: true, sha: string }>}
+   */
   async function syncEventJson(eventId, event, message) {
     if (!EVENT_ID_RE.test(eventId)) throw new Error(`invalid eventId: ${eventId}`);
     const root = repoPath(eventId);
@@ -488,6 +638,12 @@ function createGitrepo({ dataDir, ots = null } = {}) {
   // repo-relative paths for both, so the proof-anchor pass (m7d-4) can upgrade
   // the proof in place and then patch the sibling JSON's anchored-state fields.
   // Returns [] when the repo has no ots_proofs dir (event with no proofs yet).
+  /**
+   * List every OTS proof file in an event's repo, paired with its sibling commit
+   * JSON path (absolute + repo-relative). Returns [] when no ots_proofs dir.
+   * @param {string} eventId
+   * @returns {Promise<Array<{ name: string, base: string, proofRel: string, jsonRel: string, proofAbs: string, jsonAbs: string }>>}
+   */
   async function listProofFiles(eventId) {
     if (!EVENT_ID_RE.test(eventId)) return [];
     const root = repoPath(eventId);
@@ -519,6 +675,22 @@ function createGitrepo({ dataDir, ots = null } = {}) {
   // jsonRel, blockHeight? }]. Returns { committed: bool, sha?, patched }.
   // Skips JSONs that are already fully anchored with the same block (idempotent
   // backfill) and skips missing-sibling JSONs (no-ops for them).
+  /**
+   * One anchored proof to fold into the ledger.
+   * @typedef {Object} AnchoredProof
+   * @property {string} proofRel
+   * @property {string} jsonRel
+   * @property {number} [blockHeight]
+   */
+
+  /**
+   * Record the result of an `ots upgrade` pass into the ledger (m7d-4): patch
+   * sibling JSONs with anchored state, git-add the upgraded proofs + patched
+   * JSONs, write one summary commit. Idempotent.
+   * @param {string} eventId
+   * @param {{ anchored?: AnchoredProof[], stamp?: string }} [opts]
+   * @returns {Promise<{ committed: boolean, reason?: string, sha?: string, patched: string[] }>}
+   */
   async function commitProofUpgrade(eventId, { anchored = [], stamp = new Date().toISOString() } = {}) {
     if (!EVENT_ID_RE.test(eventId)) throw new Error(`invalid eventId: ${eventId}`);
     const root = repoPath(eventId);

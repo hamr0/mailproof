@@ -24,9 +24,10 @@ const TRUST_LEVELS = ['verified', 'forwarded', 'authorized', 'unverified'];
  * @returns {TrustLevel}
  */
 function classifyTrust(auth) {
+  /** @type {Array<{ status?: { result?: string, aligned?: boolean } }>} */
   const dkimResults = (auth && auth.dkim && auth.dkim.results) || [];
   const dkimPassAligned = dkimResults.some(
-    (r) => r.status && r.status.result === 'pass' && r.status.aligned
+    (r) => !!(r.status && r.status.result === 'pass' && r.status.aligned)
   );
   const dmarcPass = !!(auth && auth.dmarc && auth.dmarc.status && auth.dmarc.status.result === 'pass');
   const arcPass = !!(auth && auth.arc && auth.arc.status && auth.arc.status.result === 'pass');

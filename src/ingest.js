@@ -36,6 +36,24 @@ const { renderDefault } = require('./templates');
 const MAX_HEADER_BYTES = 64 * 1024;
 
 /** @typedef {import('./types').Envelope} Envelope */
+/** @typedef {import('./types').MailproofEvent} MailproofEvent */
+/** @typedef {import('./types').Step} Step */
+/** @typedef {import('./types').Commit} Commit */
+/** @typedef {import('./types').ParsedMessage} ParsedMessage */
+
+/**
+ * A parsed plus-tag command (remind+/stats+) from router.parseInitiatorCommand.
+ * @typedef {Object} InitiatorCommand
+ * @property {string} command   'remind' | 'stats'
+ * @property {string} eventId
+ */
+
+/**
+ * A parsed verify+/reverify+ plus-tag from router.parseVerifyTag/parseReverifyTag.
+ * @typedef {Object} VerifyTag
+ * @property {string} eventId
+ * @property {number} [commitSequence]   Present on reverify+<id>-<seq>@.
+ */
 
 /**
  * Compose the inbound pipeline over already-bound pillars. create() passes the
@@ -89,7 +107,9 @@ function createIngest({
   // sender_hash + sender_domain only, matching what the commit records.
   // Best-effort: a read failure yields an empty list, never throws — the
   // completion notice must not be undone by a ledger read.
+  /** @param {string} eventId */
   async function completionReceipts(eventId) {
+    /** @type {Commit[]} */
     let commits;
     try { commits = await listCommits(eventId); }
     catch { return { countedCommits: 0, receipts: [] }; }
@@ -108,6 +128,7 @@ function createIngest({
   }
 
   // The plus-tagged reply From for an event (workflow → event+, crypto → attest+).
+  /** @param {MailproofEvent | null} event @param {string} eventId */
   const replyBaseFor = (event, eventId) =>
     `${event && event.type === 'crypto' ? 'attest' : 'event'}+${eventId}@${domain}`;
 
@@ -115,6 +136,10 @@ function createIngest({
   // the SAME as gitdone's (`authenticateInitiatorCommand`): DKIM-verified +
   // envelope sender == event.initiator (PRD §6.4 — the DKIM-validated sender
   // IS the auth, no magic link). Returns { ok, reason }.
+  /**
+   * @param {{ trustLevel: string, sender: string, event: MailproofEvent | null }} input
+   * @returns {{ ok: boolean, reason?: string }}
+   */
   function authInitiator({ trustLevel, sender, event }) {
     if (trustLevel !== 'verified') return { ok: false, reason: 'unverified' };
     const initiator = String((event && event.initiator) || '').toLowerCase();
@@ -132,7 +157,9 @@ function createIngest({
   // composition, not a kernel mechanism). Privacy: per-step participant
   // addresses come from the event JSON (operator-owned plaintext, not from
   // the ledger which stays hashed).
+  /** @param {MailproofEvent} event */
   function buildStatsSnapshot(event) {
+    /** @type {Record<string, any>} */
     const out = {
       eventId: event.id,
       type: event.type,
@@ -144,7 +171,7 @@ function createIngest({
     };
     if (event.type === 'workflow') {
       out.flow = event.flow || null;
-      out.steps = (Array.isArray(event.steps) ? event.steps : []).map((s) => ({
+      out.steps = (Array.isArray(event.steps) ? event.steps : []).map((/** @type {Step & { depends_on?: string[] }} */ s) => ({
         id: s.id,
         name: s.name || null,
         participant: s.participant || null,
@@ -172,6 +199,12 @@ function createIngest({
   // your signature" is the kickoff message reframed, not an ack of something
   // that hasn't happened). For stats: returns a kernel snapshot; composing the
   // reply body is policy.
+  /**
+   * @param {Buffer} buf
+   * @param {Envelope} envelope
+   * @param {InitiatorCommand} cmd
+   * @param {ParsedMessage} parsed
+   */
   async function handleInitiatorCommand(buf, envelope, cmd, parsed) {
     const event = await loadEvent(cmd.eventId);
     if (!event) {
@@ -239,7 +272,7 @@ function createIngest({
         // own dedup key — one source of truth). Open crypto has no roster,
         // so remind ends up a no-op; the initiator owns distribution.
         const signed = new Set(
-          cryptoEngine.signatures(event).map((s) => s && s.sender_hash).filter(Boolean)
+          cryptoEngine.signatures(event).map((/** @type {{ sender_hash?: string }} */ s) => s && s.sender_hash).filter(Boolean)
         );
         for (const addr of (Array.isArray(event.signers) ? event.signers : [])) {
           const h = saltedSenderHash(String(addr).toLowerCase(), event.salt);
@@ -268,6 +301,10 @@ function createIngest({
   // event/step. A bounce is operational, NOT a participant reply: it is never
   // committed to the ledger. We record the per-step send error and emit the
   // `bounce` occasion to the initiator. Never throws.
+  /**
+   * @param {Buffer} buf
+   * @param {Envelope} envelope
+   */
   async function handleBounce(buf, envelope) {
     const eventTag = parseEventTag(envelope.recipient);
     const attestTag = eventTag ? null : parseAttestTag(envelope.recipient);
@@ -279,7 +316,7 @@ function createIngest({
 
     const dsn = extractDsn(buf) || { recipients: [] };
     const failed = permanentFailures(dsn);
-    const failedRecipients = failed.map((f) => f.finalRecipient || f.originalRecipient).filter(Boolean);
+    const failedRecipients = failed.map((/** @type {{ finalRecipient?: string, originalRecipient?: string }} */ f) => f.finalRecipient || f.originalRecipient).filter(Boolean);
 
     // Record the failure on the workflow step (crypto has no steps). Best-effort.
     if (stepId && failed.length) {
@@ -313,12 +350,19 @@ function createIngest({
   // message. Public endpoint — no DKIM auth (anyone may ask), but it still
   // passed the humans-only prefilter, and the report goes out Auto-Submitted so
   // it can't trigger another.
+  /** @param {Envelope} envelope @param {ParsedMessage} parsed */
   const askerOf = (envelope, parsed) =>
     String((envelope && envelope.sender) || (parsed && parsed.from && parsed.from.address) || '').toLowerCase();
 
   // verify+<id>@ — PUBLIC, read-only (m7c-6). Match the forwarded message/doc to
   // a committed reply and re-verify DKIM against the archived key. NEVER commits
   // to the ledger; emits a `verify_report` occasion (body is policy, §8.6).
+  /**
+   * @param {Buffer} buf
+   * @param {Envelope} envelope
+   * @param {VerifyTag} tag
+   * @param {ParsedMessage} parsed
+   */
   async function handleVerify(buf, envelope, tag, parsed) {
     const eventId = tag.eventId;
     if (!(await loadEvent(eventId))) {
@@ -353,6 +397,12 @@ function createIngest({
   // persist an IMMUTABLE reverify record (the original commit is never rewritten
   // — that write is the primitive's, not a participant reply). Emits a
   // `reverify_report` occasion. reverify() persists, so we call it exactly once.
+  /**
+   * @param {Buffer} buf
+   * @param {Envelope} envelope
+   * @param {VerifyTag} tag
+   * @param {ParsedMessage} parsed
+   */
   async function handleReverify(buf, envelope, tag, parsed) {
     const eventId = tag.eventId;
     if (!(await loadEvent(eventId))) {
@@ -378,6 +428,10 @@ function createIngest({
   // raw: RFC-822 bytes (Buffer). envelope: the parseEnvelope shape
   // ({ sender, recipient, clientIp, clientHelo }). Returns a result summary
   // (see the file header for accept-with-flag semantics).
+  /**
+   * @param {Buffer | string} raw
+   * @param {Envelope} [envelope]
+   */
   async function ingest(raw, envelope = {}) {
     const buf = Buffer.isBuffer(raw) ? raw : Buffer.from(String(raw || ''));
     const headerBlock = extractHeaderBlock(buf, MAX_HEADER_BYTES);
@@ -590,7 +644,7 @@ function createIngest({
 
       if (mode === 'workflow' && outcome.completedStep && !outcome.eventComplete) {
         const newlyEligible = workflowEngine.eligibleSteps(ev).filter(
-          (s) => s && s.participant && (s.dependsOn || []).includes(outcome.completedStep)
+          (/** @type {Step} */ s) => s && s.participant && (s.dependsOn || []).includes(outcome.completedStep)
         );
         for (const step of newlyEligible) {
           const ctx = { mode, eventId, event: ev, step };

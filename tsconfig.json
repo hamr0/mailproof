@@ -7,12 +7,13 @@
   // implementation (checkJs) and (b) generates the shipped .d.ts from it. The
   // JSDoc in src/*.js is the single source of truth; the .d.ts is derived.
   //
-  // Strictness is deliberately moderate: checkJs catches real mistakes (calling
-  // an undefined export, wrong argument shape on a JSDoc-typed function, typos
-  // on a known type) without the full strictNullChecks tax that vanilla JS
-  // written without types would drown in. noImplicitAny is off so an
-  // unannotated internal helper stays `any` rather than erroring — annotation
-  // effort goes to the public surface (the index.js exports) first.
+  // Strictness convention: strictNullChecks is the non-negotiable FLOOR and
+  // full `strict` is the DEFAULT. mailproof runs full strict — every exported
+  // surface AND every internal helper is annotated (noImplicitAny on), and all
+  // null-safety is proven (strictNullChecks on). The JSDoc carries the types;
+  // `any` casts and `@ts-ignore` are not used to silence errors. checkJs runs
+  // this against the implementation; build:types projects the same JSDoc into
+  // the shipped .d.ts. If a flag is ever relaxed, strictNullChecks stays on.
   "compilerOptions": {
     "target": "ES2022",
     "module": "node16",
@@ -22,8 +23,7 @@
     "allowJs": true,
     "checkJs": true,
     "noEmit": true,
-    "strict": false,
-    "noImplicitAny": false,
+    "strict": true,
     "skipLibCheck": true,
     "resolveJsonModule": true,
     "esModuleInterop": true,

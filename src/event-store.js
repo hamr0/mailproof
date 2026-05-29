@@ -17,9 +17,19 @@ const path = require('node:path');
 const { withEventMutex } = require('./event-mutex');
 
 const EVENT_ID_RE = /^[a-zA-Z0-9]+$/;
+/** @type {Array<'participant' | 'deadline' | 'requires_attachment' | 'details'>} */
 const ALLOWED_STEP_FIELDS = ['participant', 'deadline', 'requires_attachment', 'details'];
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Narrow an unknown caught value to a Node errno exception (has a `.code`).
+ * @param {unknown} err
+ * @returns {err is NodeJS.ErrnoException}
+ */
+function isErrnoException(err) {
+  return err instanceof Error;
+}
 
 // --- Pure helpers (no dataDir needed; bound into the store for convenience) ---
 
@@ -53,6 +63,11 @@ function findStep(event, stepId) {
   return event.steps.find((s) => s && s.id === stepId) || null;
 }
 
+/**
+ * Lowercase + trim an address for comparison. Pure.
+ * @param {string | null | undefined} addr
+ * @returns {string}
+ */
 function normaliseEmail(addr) {
   return (addr || '').trim().toLowerCase();
 }
@@ -132,20 +147,22 @@ function _applyEditPatch(event, patch) {
     }
   }
 
-  if (Array.isArray(patch.steps)) {
+  if (Array.isArray(patch.steps) && Array.isArray(next.steps)) {
+    const steps = next.steps;
     for (const sp of patch.steps) {
       if (!sp || !sp.id) continue;
-      const idx = next.steps.findIndex((s) => s.id === sp.id);
+      const idx = steps.findIndex((s) => s.id === sp.id);
       if (idx < 0) {
         throw Object.assign(new Error(`editEvent: step ${sp.id} not found`), { code: 'STEP_NOT_FOUND' });
       }
-      const cur = next.steps[idx];
+      const cur = steps[idx];
       if (cur.status === 'complete') {
         throw Object.assign(new Error(`editEvent: step ${sp.id} is complete and cannot be edited`), { code: 'EVENT_STEP_FROZEN' });
       }
       const merged = { ...cur };
       for (const f of ALLOWED_STEP_FIELDS) {
         if (!Object.prototype.hasOwnProperty.call(sp, f)) continue;
+        /** @type {string | boolean | undefined} */
         let value = sp[f];
         if (f === 'participant') {
           value = String(value || '').trim();
@@ -168,14 +185,15 @@ function _applyEditPatch(event, patch) {
         if (before !== value) {
           changes.push({ step_id: sp.id, field: f, from: before == null ? null : before, to: value == null ? null : value });
           if (value === undefined) delete merged[f];
-          else merged[f] = value;
+          else if (f === 'requires_attachment') merged[f] = !!value;
+          else merged[f] = String(value);
           // A participant edit invalidates any previous last_send_error: the
           // re-notify will write a fresh outcome, and a stale error would make
           // "did my fix land?" indistinguishable from "did the new send fail?".
           if (f === 'participant') delete merged.last_send_error;
         }
       }
-      next.steps[idx] = merged;
+      steps[idx] = merged;
     }
   }
 
@@ -199,6 +217,7 @@ function _applyEditPatch(event, patch) {
 function expandFlow(steps, flow) {
   const list = Array.isArray(steps) ? steps : [];
   return list.map((s, i) => {
+    /** @type {string[]} */
     let dependsOn;
     if (flow === 'parallel') dependsOn = [];
     else if (flow === 'custom') dependsOn = Array.isArray(s.dependsOn) ? s.dependsOn : [];
@@ -300,9 +319,15 @@ function createEventStore({ dataDir } = {}) {
   if (!dataDir) throw new Error('createEventStore: dataDir required');
 
   const eventsDir = path.join(dataDir, 'events');
+  /** @param {string} id */
   const eventFile = (id) => path.join(eventsDir, `${id}.json`);
 
   // Atomic write: temp file in the same dir, then rename.
+  /**
+   * @param {string} id
+   * @param {MailproofEvent} event
+   * @returns {Promise<void>}
+   */
   async function writeEventAtomic(id, event) {
     const file = eventFile(id);
     const tmp = file + '.tmp';
@@ -316,19 +341,24 @@ function createEventStore({ dataDir } = {}) {
   // replies. Until 5b lands, requiring it throws — activateEvent swallows
   // that (sync is best-effort), and editEvent's activated path is covered by
   // a test deferred to 5b.
+  /** @type {ReturnType<import('./gitrepo').createGitrepo> | undefined} */
   let _gitrepo;
   function gitrepo() {
     if (!_gitrepo) _gitrepo = require('./gitrepo').createGitrepo({ dataDir });
     return _gitrepo;
   }
 
+  /**
+   * @param {string} eventId
+   * @returns {Promise<MailproofEvent | null>}
+   */
   async function loadEvent(eventId) {
     if (!eventId || !EVENT_ID_RE.test(eventId)) return null;
     try {
       const data = await fs.readFile(eventFile(eventId), 'utf8');
       return JSON.parse(data);
     } catch (err) {
-      if (err.code === 'ENOENT') return null;
+      if (isErrnoException(err) && err.code === 'ENOENT') return null;
       throw err;
     }
   }
@@ -342,7 +372,7 @@ function createEventStore({ dataDir } = {}) {
     try {
       files = await fs.readdir(eventsDir);
     } catch (err) {
-      if (err.code === 'ENOENT') return [];
+      if (isErrnoException(err) && err.code === 'ENOENT') return [];
       throw err;
     }
     return files
@@ -355,6 +385,10 @@ function createEventStore({ dataDir } = {}) {
   // adds {id, created_at, salt, activated_at} and writes atomically. Events
   // are created pending (activated_at: null); a reply doesn't count until the
   // event is activated.
+  /**
+   * @param {Partial<MailproofEvent> & Record<string, any>} partialEvent
+   * @returns {Promise<MailproofEvent>}
+   */
   async function createEvent(partialEvent) {
     // Normalize + validate (two-mode, flow→dependsOn) purely, then persist.
     const event = buildEventRecord(partialEvent);
@@ -366,7 +400,7 @@ function createEventStore({ dataDir } = {}) {
       await fs.stat(eventFile(event.id));
       throw new Error(`createEvent: event ${event.id} already exists`);
     } catch (err) {
-      if (err.code !== 'ENOENT') throw err;
+      if (!isErrnoException(err) || err.code !== 'ENOENT') throw err;
     }
 
     await writeEventAtomic(event.id, event);
@@ -378,6 +412,11 @@ function createEventStore({ dataDir } = {}) {
   // (participant notifications) on the first transition only. Serialised
   // through the per-event mutex so two concurrent activations can't both
   // observe !activated_at.
+  /**
+   * @param {string} eventId
+   * @param {{ now?: string }} [opts]
+   * @returns {Promise<{ event: MailproofEvent, alreadyActive: boolean }>}
+   */
   async function activateEvent(eventId, { now = new Date().toISOString() } = {}) {
     return withEventMutex(eventId, async () => {
       const event = await loadEvent(eventId);
@@ -403,6 +442,12 @@ function createEventStore({ dataDir } = {}) {
   // touch a completed step (EVENT_STEP_FROZEN), and invalid values (BAD_EMAIL,
   // BAD_DEADLINE, BAD_TITLE). Returns { event, prev, changes, commitSequence };
   // commitSequence is the audit commit number (null for pending-event edits).
+  /**
+   * @param {string} eventId
+   * @param {{ title?: string, steps?: Array<Partial<Step> & { id: string }> }} patch
+   * @param {{ now?: string, organiserHandle?: string | null }} [opts]
+   * @returns {Promise<{ event: MailproofEvent, prev: MailproofEvent, changes: Array<{ step_id: string | null, field: string, from: any, to: any }>, commitSequence: number | null }>}
+   */
   async function editEvent(eventId, patch, { now = new Date().toISOString(), organiserHandle = null } = {}) {
     return withEventMutex(eventId, async () => {
       const event = await loadEvent(eventId);
@@ -445,6 +490,11 @@ function createEventStore({ dataDir } = {}) {
   // any previous error. Steps absent from the map are untouched. Returns the
   // updated event, or null if it no longer exists. Never throws on a missing
   // step id — outbound notifications and the event JSON are decoupled.
+  /**
+   * @param {string} eventId
+   * @param {Record<string, { reason: string, code: string | null, at: string } | null>} errorsByStepId
+   * @returns {Promise<MailproofEvent | null>}
+   */
   async function recordStepSendErrors(eventId, errorsByStepId) {
     if (!errorsByStepId || typeof errorsByStepId !== 'object') return null;
     const ids = Object.keys(errorsByStepId);
@@ -481,6 +531,11 @@ function createEventStore({ dataDir } = {}) {
   // follow-up can thread to it. Idempotent: a non-null existing value is left
   // untouched (the FIRST proof email is the canonical thread root). Returns
   // the post-write value.
+  /**
+   * @param {string} eventId
+   * @param {string} messageId
+   * @returns {Promise<string | null>}
+   */
   async function recordProofEmailMessageId(eventId, messageId) {
     if (!messageId) return null;
     return withEventMutex(eventId, async () => {

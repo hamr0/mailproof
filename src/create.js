@@ -152,7 +152,9 @@ function create({
   // overdue + archived occasions through the same deliver(). Thresholds are
   // injected here (defaults 14/45 days).
   const { sweep } = createSweep({
-    eventStore, gitrepo, deliver, domain, overdueDays, archiveDays,
+    eventStore,
+    gitrepo: { syncEventJson: gitrepo.syncEventJson },
+    deliver, domain, overdueDays, archiveDays,
   });
 
   // The proof-anchor pass (m7d-4): walks every event repo, drives ots.upgrade
@@ -171,6 +173,10 @@ function create({
   // Ping every initially-eligible participant (workflow) / listed signer
   // (crypto) that an activated event is waiting on. (Open crypto events have no
   // roster — the initiator distributes the attest+ link themselves.)
+  /**
+   * @param {MailproofEvent} ev
+   * @returns {Promise<import('./types').DeliverResult[]>}
+   */
   async function notifyActivation(ev) {
     const out = [];
     const eventId = ev.id;
@@ -200,6 +206,10 @@ function create({
   }
 
   // Activate, then — only on the FIRST transition — fire the activation kickoff.
+  /**
+   * @param {string} eventId
+   * @param {{ now?: string }} [opts]
+   */
   async function activateEvent(eventId, opts) {
     const res = await eventStore.activateEvent(eventId, opts);
     const notified = res.alreadyActive ? [] : await notifyActivation(res.event);
@@ -210,6 +220,11 @@ function create({
   // step of an ACTIVATED event: a blocked step's new owner is pinged later via
   // `advance` when it becomes eligible, and a pending event's replies wouldn't
   // count yet, so neither warrants a kickoff here.
+  /**
+   * @param {string} eventId
+   * @param {{ title?: string, steps?: Array<Partial<import('./types').Step> & { id: string }> }} patch
+   * @param {{ now?: string, organiserHandle?: string | null }} [opts]
+   */
   async function editEvent(eventId, patch, opts) {
     const res = await eventStore.editEvent(eventId, patch, opts);
     const notified = [];

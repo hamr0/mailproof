@@ -32,14 +32,22 @@
 'use strict';
 
 // Split a raw message into its header block + body at the first blank line.
+/**
+ * @param {string} text
+ * @returns {{ headerBlock: string, body: string }}
+ */
 function splitHeadersBody(text) {
   const s = String(text || '');
   const m = s.match(/\r?\n\r?\n/);
-  if (!m) return { headerBlock: s, body: '' };
+  if (!m || m.index == null) return { headerBlock: s, body: '' };
   return { headerBlock: s.slice(0, m.index), body: s.slice(m.index + m[0].length) };
 }
 
 // The top-level Content-Type value (RFC 5322 unfolded), or null.
+/**
+ * @param {string | null} headerBlock
+ * @returns {string | null}
+ */
 function contentTypeOf(headerBlock) {
   if (!headerBlock) return null;
   const unfolded = String(headerBlock).replace(/\r?\n[ \t]+/g, ' ');
@@ -76,6 +84,10 @@ function isDeliveryStatusReport(headerBlock) {
 }
 
 // Strip the "rfc822;" / "smtp;" address-type prefix (RFC 3464 §2.3.2).
+/**
+ * @param {string | null | undefined} value
+ * @returns {string | null}
+ */
 function stripAddressType(value) {
   if (!value) return null;
   const m = String(value).match(/^[a-zA-Z0-9-]+\s*;\s*(.+)$/);
@@ -92,6 +104,7 @@ function parseFieldGroup(text) {
   const lines = String(text || '').split(/\r?\n/);
   /** @type {Record<string, string>} */
   const fields = {};
+  /** @type {string | null} */
   let curName = null;
   let curValue = '';
   const flush = () => {
@@ -144,6 +157,10 @@ function parseDeliveryStatusBody(text) {
 }
 
 // The boundary= parameter of a multipart Content-Type (RFC 2046; quoted or not).
+/**
+ * @param {string | null} contentTypeHeader
+ * @returns {string | null}
+ */
 function extractBoundary(contentTypeHeader) {
   if (!contentTypeHeader) return null;
   const m = String(contentTypeHeader).match(/boundary\s*=\s*("([^"]+)"|([^;\s]+))/i);
@@ -153,10 +170,16 @@ function extractBoundary(contentTypeHeader) {
 
 // Split a raw multipart body into each part's raw text (headers + blank + body).
 // Preamble/epilogue and the closing "--boundary--" are discarded.
+/**
+ * @param {Buffer | string | null} rawBody
+ * @param {string | null} boundary
+ * @returns {string[]}
+ */
 function splitMultipart(rawBody, boundary) {
   if (!rawBody || !boundary) return [];
   const text = Buffer.isBuffer(rawBody) ? rawBody.toString('utf8') : String(rawBody);
   const marker = `--${boundary}`;
+  /** @type {string[]} */
   const parts = [];
   let i = text.indexOf(marker);
   while (i !== -1) {
@@ -177,6 +200,10 @@ function splitMultipart(rawBody, boundary) {
 }
 
 // Split a MIME part into { headers, body } on the first blank line.
+/**
+ * @param {string | null} part
+ * @returns {{ headers: string, body: string }}
+ */
 function splitPart(part) {
   const m = String(part || '').match(/^([\s\S]*?)\r?\n\r?\n([\s\S]*)$/);
   if (!m) return { headers: part || '', body: '' };

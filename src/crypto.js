@@ -95,6 +95,11 @@ function signatures(event) {
   return event && Array.isArray(event.signatures) ? event.signatures : [];
 }
 
+/**
+ * @param {MailproofEvent} event
+ * @param {SignoffInput} commit
+ * @returns {boolean}
+ */
 function alreadySigned(event, commit) {
   const h = commit && commit.sender_hash;
   if (!h) return false;
@@ -104,6 +109,11 @@ function alreadySigned(event, commit) {
 // requiredDocHash gate: when set, some attachment's sha256 must match it.
 // Hashes are the notary's `sha256:`-prefixed format (one source of truth —
 // notary.hashDocument). Absent requirement ⇒ satisfied.
+/**
+ * @param {MailproofEvent} event
+ * @param {SignoffInput} commit
+ * @returns {boolean}
+ */
 function docHashMatches(event, commit) {
   const req = event && event.requiredDocHash;
   if (!req) return true;
@@ -113,6 +123,10 @@ function docHashMatches(event, commit) {
 
 // --- count decision ---
 
+/**
+ * @param {string} reason
+ * @returns {{ count: boolean, reason?: string }}
+ */
 function deny(reason) {
   return { count: false, reason };
 }
@@ -154,16 +168,18 @@ function applyReply(event, commit, { now = new Date().toISOString() } = {}) {
   const decision = shouldCount(event, commit);
   if (!decision.count) return { event, applied: false, decision };
 
+  /** @type {Signature} */
   const signature = {
-    sender_hash: commit.sender_hash,
+    sender_hash: commit.sender_hash || '',
     sender_domain: commit.sender_domain || null,
-    commit_sequence: commit.sequence,
-    received_at: commit.received_at,
-    trust_level: commit.trust_level,
+    commit_sequence: commit.sequence || 0,
+    received_at: commit.received_at || '',
+    trust_level: commit.trust_level || '',
   };
   const sigs = [...signatures(event), signature];
   const threshold = event.threshold || 1;
   const reached = sigs.length >= threshold;
+  /** @type {MailproofEvent} */
   const updated = {
     ...event,
     signatures: sigs,

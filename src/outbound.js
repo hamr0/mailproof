@@ -112,7 +112,7 @@ function buildRawMessage({ from, to, subject, body, inReplyTo, references, autoS
   lines.push(`To: ${to}`);
   if (replyTo) lines.push(`Reply-To: ${replyTo}`);
   lines.push(`Subject: ${subject}`);
-  lines.push(`Message-Id: ${messageId || newMessageId(domain)}`);
+  lines.push(`Message-Id: ${messageId || newMessageId(domain || '')}`);
   lines.push(`Date: ${rfc5322Date()}`);
   if (autoSubmitted !== false) {
     // RFC 3834: auto-replied for a response to a specific human message;
@@ -175,7 +175,8 @@ function sendmail({ from, rawMessage, binary, to }) {
     try {
       child = spawn(binary, args, { stdio: ['pipe', 'pipe', 'pipe'] });
     } catch (err) {
-      return resolve({ ok: false, reason: err.message || String(err) });
+      const msg = err instanceof Error ? err.message : String(err);
+      return resolve({ ok: false, reason: msg || String(err) });
     }
     let stderr = '';
     child.stderr.on('data', (d) => { stderr += String(d); });
@@ -185,7 +186,7 @@ function sendmail({ from, rawMessage, binary, to }) {
     child.stdin.on('error', () => {});
     child.on('exit', (code) => {
       if (code === 0) return resolve({ ok: true });
-      resolve({ ok: false, code, stderr: stderr.trim() || null });
+      resolve({ ok: false, code: code == null ? undefined : code, stderr: stderr.trim() || null });
     });
     child.stdin.end(rawMessage);
   });

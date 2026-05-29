@@ -6,12 +6,13 @@ export type CountDecision = import("./types").CountDecision;
  * the identity booleans; the engine stays pure).
  */
 export type ReplyInput = {
-    step_id?: string | null;
-    participant_match?: boolean;
-    trust_level?: string;
-    has_attachment?: boolean;
-    sequence?: number;
+    step_id?: string | null | undefined;
+    participant_match?: boolean | undefined;
+    trust_level?: string | undefined;
+    has_attachment?: boolean | undefined;
+    sequence?: number | undefined;
 };
+export type TrustLevel = import("./types").TrustLevel;
 /**
  * Decide whether a workflow reply counts toward its step (accept-with-flag).
  * Pure.
@@ -79,6 +80,7 @@ export function eligibleSteps(event: MailproofEvent): Step[];
 export function meetsTrust(commit: ReplyInput, step: Step & {
     minTrust?: string;
 }): boolean;
+/** @typedef {import('./types').TrustLevel} TrustLevel */
 export const COUNT_REASONS: Readonly<{
     EVENT_NOT_ACTIVATED: "event_not_activated";
     EVENT_ARCHIVED: "event_archived";

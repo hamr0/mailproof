@@ -13,8 +13,8 @@ export function createProofAnchor({ eventStore, gitrepo, ots, deliver, domain, }
     eventStore?: any;
     gitrepo?: any;
     ots?: any;
-    deliver?: (args: any) => Promise<any>;
-    domain?: string | null;
+    deliver?: ((args: any) => Promise<any>) | undefined;
+    domain?: string | null | undefined;
 }): {
     upgradeProofs: (opts?: {
         now?: string;

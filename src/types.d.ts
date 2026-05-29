@@ -14,19 +14,19 @@ export type Envelope = {
     /**
      * Connecting client IP (mailauth SPF).
      */
-    clientIp?: string | null;
+    clientIp?: string | null | undefined;
     /**
      * Client HELO/EHLO name.
      */
-    clientHelo?: string | null;
+    clientHelo?: string | null | undefined;
     /**
      * Envelope MAIL FROM.
      */
-    sender?: string | null;
+    sender?: string | null | undefined;
     /**
      * Envelope (original) RCPT TO — the plus-tag.
      */
-    recipient?: string | null;
+    recipient?: string | null | undefined;
 };
 /**
  * One attachment fingerprint from a parsed message (content stripped; the
@@ -82,32 +82,32 @@ export type AuthSummary = {
  */
 export type Step = {
     id: string;
-    name?: string;
+    name?: string | undefined;
     /**
      * The address whose reply counts.
      */
-    participant?: string;
+    participant?: string | undefined;
     /**
      * 'YYYY-MM-DD'.
      */
-    deadline?: string;
-    requires_attachment?: boolean;
-    details?: string;
-    status?: "pending" | "complete";
+    deadline?: string | undefined;
+    requires_attachment?: boolean | undefined;
+    details?: string | undefined;
+    status?: "pending" | "complete" | undefined;
     /**
      * The reply commit that completed it.
      */
-    commit_sequence?: number | null;
+    commit_sequence?: number | null | undefined;
     /**
      * Step ids that gate eligibility.
      */
-    dependsOn?: string[];
-    completed_at?: string;
+    dependsOn?: string[] | undefined;
+    completed_at?: string | undefined;
     last_send_error?: {
         reason: string;
         code: string | null;
         at: string;
-    } | null;
+    } | null | undefined;
 };
 /**
  * A counted crypto sign-off (SPEC §4 crypto-event shape). Non-PII only.
@@ -138,43 +138,43 @@ export type MailproofEvent = {
     activated_at: string | null;
     completed_at: string | null;
     archived_at: string | null;
-    title?: string;
+    title?: string | undefined;
     /**
      * Initiator address (operator plaintext).
      */
-    initiator?: string;
+    initiator?: string | undefined;
     /**
      * Workflow only.
      */
-    flow?: "sequential" | "parallel" | "custom";
+    flow?: "sequential" | "parallel" | "custom" | undefined;
     /**
      * Workflow only.
      */
-    steps?: Step[];
+    steps?: Step[] | undefined;
     /**
      * Crypto only (lowercased).
      */
-    signers?: string[];
+    signers?: string[] | undefined;
     /**
      * Crypto only — any sender may sign.
      */
-    open?: boolean;
+    open?: boolean | undefined;
     /**
      * Crypto only — distinct sigs to complete.
      */
-    threshold?: number;
+    threshold?: number | undefined;
     /**
      * Crypto only — optional doc gate.
      */
-    requiredDocHash?: string | null;
+    requiredDocHash?: string | null | undefined;
     /**
      * Crypto only.
      */
-    signatures?: Signature[];
-    archive_reason?: string;
-    nudged_overdue_at?: string;
-    proof_email_message_id?: string;
-    ots_proof_anchored_notified_at?: string;
+    signatures?: Signature[] | undefined;
+    archive_reason?: string | undefined;
+    nudged_overdue_at?: string | undefined;
+    proof_email_message_id?: string | undefined;
+    ots_proof_anchored_notified_at?: string | undefined;
 };
 /**
  * A ledger reply-commit's metadata (SPEC §4; `buildCommitMetadata` output).
@@ -186,31 +186,31 @@ export type Commit = {
      */
     kind: string;
     event_id: string;
-    step_id?: string | null;
+    step_id?: string | null | undefined;
     sequence: number;
     received_at: string;
     sender_hash: string | null;
     sender_domain: string | null;
     message_id_hash: string | null;
-    trust_level?: TrustLevel;
-    participant_match?: boolean;
+    trust_level?: TrustLevel | undefined;
+    participant_match?: boolean | undefined;
     counted: boolean;
     count_reason: string | null;
-    attachments?: Attachment[];
-    dkim?: any | null;
-    spf?: any | null;
-    dmarc?: any | null;
-    arc?: any | null;
+    attachments?: Attachment[] | undefined;
+    dkim?: Object | null | undefined;
+    spf?: Object | null | undefined;
+    dmarc?: Object | null | undefined;
+    arc?: Object | null | undefined;
     envelope?: {
         client_ip: string | null;
         client_helo: string | null;
-    };
-    dkim_archive?: Record<string, any>;
-    ots_archive?: Record<string, any>;
-    raw_sha256?: string;
-    raw_size?: number;
-    dkim_key_file?: string | null;
-    ots_proof_file?: string | null;
+    } | undefined;
+    dkim_archive?: Record<string, any> | undefined;
+    ots_archive?: Record<string, any> | undefined;
+    raw_sha256?: string | undefined;
+    raw_size?: number | undefined;
+    dkim_key_file?: string | null | undefined;
+    ots_proof_file?: string | null | undefined;
 };
 /**
  * A reply COUNT decision returned by both sequencing engines.
@@ -223,11 +223,11 @@ export type CountDecision = {
     /**
      * Machine code when `count` is false.
      */
-    reason?: string;
+    reason?: string | undefined;
     /**
      * The resolved step (workflow).
      */
-    step?: Step;
+    step?: Step | undefined;
 };
 /**
  * The archived DKIM public key for one commit (`fetchDkimKey` output).
@@ -235,9 +235,9 @@ export type CountDecision = {
 export type DkimArchive = {
     pem: string | null;
     base64: string | null;
-    error?: string;
-    fetched_at?: string;
-    lookup?: string;
+    error?: string | undefined;
+    fetched_at?: string | undefined;
+    lookup?: string | undefined;
 };
 /**
  * One outbound notification record (`deliver` result).

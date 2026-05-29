@@ -58,7 +58,7 @@ function referenceClockMs(event) {
   if (event.type === 'workflow' && Array.isArray(event.steps)) {
     const pendingDeadlines = event.steps
       .filter((s) => s && s.status !== 'complete' && s.deadline)
-      .map((s) => new Date(s.deadline).getTime())
+      .map((s) => new Date(s.deadline || '').getTime())
       .filter((n) => Number.isFinite(n));
     if (pendingDeadlines.length > 0) return Math.max(...pendingDeadlines);
   }
@@ -72,7 +72,7 @@ function referenceClockMs(event) {
  * Is the event in the cohort sweep acts on (activated, not archived, not
  * complete)? Pure.
  * @param {MailproofEvent | null} event
- * @returns {boolean}
+ * @returns {event is MailproofEvent}
  */
 function isActive(event) {
   if (!event) return false;
@@ -86,25 +86,47 @@ function isActive(event) {
 //   overdueDays — idle days past the reference clock before the overdue nudge
 //                 (default 14, matching gitdone's overdueNudgeDays).
 //   archiveDays — idle days before auto-archive (default 45, gitdone's archiveDays).
+/** @typedef {import('./notify').DeliverArgs} DeliverArgs */
+/** @typedef {import('./types').DeliverResult} DeliverResult */
+
+/**
+ * The subset of the event store sweep binds (event-store).
+ * @typedef {Object} SweepEventStore
+ * @property {(id: string) => Promise<MailproofEvent | null>} loadEvent
+ * @property {() => Promise<string[]>} listEventIds
+ * @property {(id: string, event: MailproofEvent) => Promise<any>} writeEventAtomic
+ */
+/**
+ * The subset of the git ledger sweep binds (gitrepo).
+ * @typedef {Object} SweepGitrepo
+ * @property {(id: string, event: MailproofEvent, message: string) => Promise<any>} syncEventJson
+ */
+
 /**
  * Compose the lifecycle sweep over the bound store/ledger + shared notifier.
- * @param {Object} [deps]
- * @param {any} [deps.eventStore]
- * @param {any} [deps.gitrepo]
- * @param {(args: any) => Promise<any>} [deps.deliver]
+ * eventStore/gitrepo/deliver are required — sweep cannot run without them.
+ * @param {Object} deps
+ * @param {SweepEventStore} deps.eventStore
+ * @param {SweepGitrepo} deps.gitrepo
+ * @param {(args: DeliverArgs) => Promise<DeliverResult | null>} deps.deliver
  * @param {string | null} [deps.domain]
  * @param {number} [deps.overdueDays]
  * @param {number} [deps.archiveDays]
- * @returns {{ sweep: (opts?: { now?: number }) => Promise<{ overdue: Array<{ eventId: string, daysOver: number }>, archived: Array<{ eventId: string, daysIdle: number }>, notified: any[] }> }}
+ * @returns {{ sweep: (opts?: { now?: number }) => Promise<{ overdue: Array<{ eventId: string, daysOver: number }>, archived: Array<{ eventId: string, daysIdle: number }>, notified: DeliverResult[] }> }}
  */
 function createSweep({
   eventStore, gitrepo, deliver, domain = null, overdueDays = 14, archiveDays = 45,
-} = {}) {
+}) {
   const { loadEvent, listEventIds, writeEventAtomic } = eventStore;
   const { syncEventJson } = gitrepo;
 
   // The plus-tagged reply From for a sweep notice, so the initiator's reply
   // routes back to the event (workflow → event+, crypto → attest+).
+  /**
+   * @param {MailproofEvent} event
+   * @param {string} eventId
+   * @returns {string}
+   */
   function replyBaseFor(event, eventId) {
     const base = event && event.type === 'crypto' ? `attest+${eventId}` : `event+${eventId}`;
     return `${base}@${domain}`;

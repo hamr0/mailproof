@@ -39,14 +39,14 @@ export function buildRawMessage({ from, to, subject, body, inReplyTo, references
     to: string;
     subject: string;
     body: string;
-    inReplyTo?: string;
-    references?: string;
-    autoSubmitted?: string | false;
-    messageId?: string;
-    extraHeaders?: Record<string, string>;
-    domain?: string;
-    replyTo?: string;
-    footer?: string;
+    inReplyTo?: string | undefined;
+    references?: string | undefined;
+    autoSubmitted?: string | false | undefined;
+    messageId?: string | undefined;
+    extraHeaders?: Record<string, string> | undefined;
+    domain?: string | undefined;
+    replyTo?: string | undefined;
+    footer?: string | undefined;
 }): string;
 /**
  * Strip CR/LF from a subject so it can't inject extra headers. Pure.

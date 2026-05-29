@@ -69,13 +69,21 @@ async function reverifyDkim(rawEmail, archivedPem, expectedDomain, expectedSelec
     .replace(/\s+/g, '');
   const txtRecord = `v=DKIM1; k=rsa; p=${pemBody}`;
   const wantName = `${expectedSelector}._domainkey.${expectedDomain}`;
+  /**
+   * @param {string} name
+   * @param {string} [type]
+   * @returns {Promise<any>}
+   */
   const resolver = async (name, type) => {
     if ((type || 'TXT').toUpperCase() === 'TXT' && name === wantName) return [[txtRecord]];
     if (baseResolver) return baseResolver(name, type);
-    return require('node:dns').promises.resolve(name, type);
+    return type
+      ? require('node:dns').promises.resolve(name, type)
+      : require('node:dns').promises.resolve(name);
   };
   try {
     const auth = await authenticate(rawEmail, { trustReceived: false, resolver });
+    /** @type {Array<Record<string, any>>} */
     const sigs = (auth.dkim && auth.dkim.results) || [];
     const signatures_found = sigs.map((r) => ({
       domain: r.signingDomain || null,
@@ -95,7 +103,7 @@ async function reverifyDkim(rawEmail, archivedPem, expectedDomain, expectedSelec
     const passed = sig.status && sig.status.result === 'pass';
     return { ok: !!passed, result: sig.status && sig.status.result, signatures_found };
   } catch (err) {
-    return { ok: false, reason: err.message || String(err) };
+    return { ok: false, reason: (err instanceof Error ? err.message : null) || String(err) };
   }
 }
 
@@ -122,9 +130,10 @@ function resolveUpgrade(currentLevel) {
 /**
  * Find the signing domain/selector in a commit's DKIM summary. Pure.
  * @param {Record<string, any>} commit
- * @returns {{ domain: string, selector: string, result?: string } | null}
+ * @returns {Record<string, any> | null}
  */
 function pickSigner(commit) {
+  /** @type {Array<Record<string, any>>} */
   const sigs = (commit && commit.dkim && commit.dkim.signatures) || [];
   return (
     sigs.find((s) => s && s.result === 'pass' && s.domain && s.selector)
@@ -156,6 +165,12 @@ function createVerifier({ gitrepo, eventStore, resolver: defaultResolver = null 
   // event's ledger. Returns a structured result; never throws. When the match
   // is a whole-email/Message-ID hit, also re-verifies DKIM against the archived
   // key — the offline-durable proof.
+  /**
+   * @param {string} eventId
+   * @param {Buffer | string} candidateBytes
+   * @param {{ messageId?: string | null, resolver?: any }} [opts]
+   * @returns {Promise<Record<string, any>>}
+   */
   async function verify(eventId, candidateBytes, { messageId = null, resolver = defaultResolver } = {}) {
     const buf = Buffer.isBuffer(candidateBytes) ? candidateBytes : Buffer.from(String(candidateBytes || ''));
     const commits = await listCommits(eventId);
@@ -165,6 +180,7 @@ function createVerifier({ gitrepo, eventStore, resolver: defaultResolver = null 
     const messageIdHash = messageId ? saltedMessageIdHash(messageId, salt) : null;
 
     const m = findMatch(buf, commits, { messageIdHash });
+    /** @type {Record<string, any>} */
     const result = {
       eventId,
       matched: m.matchType !== 'none',
@@ -177,7 +193,9 @@ function createVerifier({ gitrepo, eventStore, resolver: defaultResolver = null 
     };
 
     if ((m.matchType === 'raw_email' || m.matchType === 'message_id') && m.commit) {
-      const sig = (m.commit.dkim && m.commit.dkim.signatures && m.commit.dkim.signatures[0]) || null;
+      /** @type {Record<string, any> | null} */
+      const dkim = m.commit.dkim || null;
+      const sig = (dkim && dkim.signatures && dkim.signatures[0]) || null;
       const pem = await loadDkimPem(eventId, m.commit.dkim_key_file);
       if (sig && pem && sig.result === 'pass') {
         result.dkim_reverify = await reverifyDkim(buf, pem, sig.domain, sig.selector, { baseResolver: resolver });
@@ -194,6 +212,13 @@ function createVerifier({ gitrepo, eventStore, resolver: defaultResolver = null 
   // original commit is never rewritten). `candidateBytes` is the raw original
   // email. Returns the record; never throws. The reverify+ email route is the
   // consumer's glue (the ack body is policy, §8.6).
+  /**
+   * @param {string} eventId
+   * @param {number} targetSequence
+   * @param {Buffer | string} candidateBytes
+   * @param {{ resolver?: any, now?: string }} [opts]
+   * @returns {Promise<Record<string, any>>}
+   */
   async function reverify(eventId, targetSequence, candidateBytes, { resolver = defaultResolver, now = new Date().toISOString() } = {}) {
     const target = await loadCommit(eventId, targetSequence);
     if (!target) {

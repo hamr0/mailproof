@@ -2,6 +2,25 @@ export type Envelope = import("./types").Envelope;
 export type ParsedMessage = import("./types").ParsedMessage;
 export type AuthSummary = import("./types").AuthSummary;
 export type MailauthResult = import("./types").MailauthResult;
+/**
+ * The subset of mailparser's `ParsedMail` the kernel reads. mailparser ships no
+ * type declarations, so this local shape pins exactly the fields used here
+ * (the `simpleParser` require is typed against it below).
+ */
+export type ParsedMail = {
+    from?: {
+        value?: Array<{
+            address?: string;
+            name?: string;
+        }>;
+    } | null | undefined;
+    messageId?: string | null | undefined;
+    attachments?: {
+        filename?: string;
+        size?: number;
+        content?: Buffer;
+    }[] | undefined;
+};
 /** @typedef {import('./types').Envelope} Envelope */
 /** @typedef {import('./types').ParsedMessage} ParsedMessage */
 /** @typedef {import('./types').AuthSummary} AuthSummary */

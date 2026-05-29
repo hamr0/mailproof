@@ -24,17 +24,29 @@
 /** @typedef {import('./types').DeliverResult} DeliverResult */
 
 /**
+ * One occasion-to-email delivery request.
+ * @typedef {Object} DeliverArgs
+ * @property {string} kind
+ * @property {string | null} [to]
+ * @property {string} [replyAddress]
+ * @property {string} [subject]
+ * @property {string} [defaultBody]
+ * @property {Record<string, any>} [ctx]
+ */
+
+/**
  * Bind the shared neutral-notification seam. Returns `{ deliver }`; create()
- * builds exactly one and threads it into ingest() and sweep().
- * @param {Object} [deps]
- * @param {typeof import('./outbound').buildRawMessage} [deps.buildRawMessage]
- * @param {typeof import('./outbound').sendmail} [deps.sendmail]
- * @param {typeof import('./outbound').newMessageId} [deps.newMessageId]
- * @param {typeof import('./outbound').sanitizeSubject} [deps.sanitizeSubject]
+ * builds exactly one and threads it into ingest() and sweep(). The four outbound
+ * primitives are required — `deliver` cannot compose an email without them.
+ * @param {Object} deps
+ * @param {typeof import('./outbound').buildRawMessage} deps.buildRawMessage
+ * @param {typeof import('./outbound').sendmail} deps.sendmail
+ * @param {typeof import('./outbound').newMessageId} deps.newMessageId
+ * @param {typeof import('./outbound').sanitizeSubject} deps.sanitizeSubject
  * @param {string | null} [deps.domain]
  * @param {string | null} [deps.sendmailBin]
  * @param {((ctx: Record<string, any>) => string | null | undefined) | null} [deps.composeNotification]
- * @returns {{ deliver: (args: { kind: string, to?: string | null, replyAddress?: string, subject?: string, defaultBody?: string, ctx?: Record<string, any> }) => Promise<DeliverResult | null> }}
+ * @returns {{ deliver: (args: DeliverArgs) => Promise<DeliverResult | null> }}
  */
 function createNotifier({
   buildRawMessage,
@@ -44,12 +56,16 @@ function createNotifier({
   domain = null,
   sendmailBin = null,
   composeNotification = null,
-} = {}) {
+}) {
   // Build + submit ONE neutral notification. `replyAddress` is the plus-tagged
   // From so the recipient's reply routes straight back to the right event/step.
   // Auto-Submitted marks it machine-generated (our own prefilter drops any
   // auto-reply to it). Returns a { kind, to, ok, reason } record, or null when
   // there is no recipient.
+  /**
+   * @param {DeliverArgs} args
+   * @returns {Promise<DeliverResult | null>}
+   */
   async function deliver({ kind, to, replyAddress, subject, defaultBody, ctx }) {
     if (!to) return null;
     let body = defaultBody;
@@ -58,6 +74,13 @@ function createNotifier({
         const custom = composeNotification({ ...ctx, kind, to, replyAddress });
         if (custom) body = custom;
       } catch { /* hook failure → neutral default */ }
+    }
+    // newMessageId/buildRawMessage throw on a falsy domain/from/body at runtime;
+    // surface the same requirements to the type system without changing behaviour
+    // (the throw point only moves a line earlier, with the same effect).
+    if (!domain) throw new Error('createNotifier: domain required to deliver');
+    if (!replyAddress || body == null) {
+      throw new Error('deliver: from (replyAddress) and body are required');
     }
     const rawMessage = buildRawMessage({
       from: replyAddress,

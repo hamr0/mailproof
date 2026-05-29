@@ -17,8 +17,26 @@
 'use strict';
 
 const { authenticate } = require('mailauth');
-const { simpleParser } = require('mailparser');
 const { hashDocument } = require('./notary');
+
+/**
+ * The subset of mailparser's `ParsedMail` the kernel reads. mailparser ships no
+ * type declarations, so this local shape pins exactly the fields used here
+ * (the `simpleParser` require is typed against it below).
+ * @typedef {Object} ParsedMail
+ * @property {{ value?: Array<{ address?: string, name?: string }> } | null} [from]
+ * @property {string | null} [messageId]
+ * @property {Array<{ filename?: string, size?: number, content?: Buffer }>} [attachments]
+ */
+// mailparser ships no type declarations. Requiring it through a variable
+// specifier lets the JSDoc cast below supply the real shape (the fields the
+// kernel reads — see ParsedMail) instead of an implicit `any`, with no
+// `@ts-ignore` and an identical runtime resolution.
+const MAILPARSER = 'mailparser';
+const mailparser = /** @type {{ simpleParser: (source: Buffer | string) => Promise<ParsedMail> }} */ (
+  require(MAILPARSER)
+);
+const simpleParser = mailparser.simpleParser;
 
 // Authenticate an inbound message. Pins `trustReceived: false` — mailproof
 // never trusts pre-existing `Received`/`Authentication-Results` headers, only
@@ -92,7 +110,7 @@ async function extractVerifyCandidates(raw) {
   const parsed = await simpleParser(raw);
   const candidates = (parsed.attachments || [])
     .map((a) => a.content)
-    .filter((c) => Buffer.isBuffer(c) && c.length > 0);
+    .filter(/** @returns {c is Buffer} */ (c) => Buffer.isBuffer(c) && c.length > 0);
   return { messageId: parsed.messageId || null, candidates };
 }
 
@@ -108,6 +126,7 @@ async function extractVerifyCandidates(raw) {
  * @returns {AuthSummary}
  */
 function summariseAuth(auth) {
+  /** @type {Array<{ status?: { result?: string, comment?: string, aligned?: boolean }, signingDomain?: string, selector?: string, algo?: string, info?: string }>} */
   const dkimResults = (auth && auth.dkim && auth.dkim.results) || [];
   const dkim = dkimResults.length === 0 ? { result: 'none' } : {
     signatures: dkimResults.map((r) => ({

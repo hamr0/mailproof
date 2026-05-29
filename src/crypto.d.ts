@@ -5,14 +5,14 @@ export type Attachment = import("./types").Attachment;
  * The in-memory sign-off reply input the engine reasons over.
  */
 export type SignoffInput = {
-    trust_level?: string;
-    is_initiator?: boolean;
-    signer_match?: boolean;
-    sender_hash?: string | null;
-    sender_domain?: string | null;
-    received_at?: string;
-    sequence?: number;
-    attachments?: Attachment[];
+    trust_level?: string | undefined;
+    is_initiator?: boolean | undefined;
+    signer_match?: boolean | undefined;
+    sender_hash?: string | null | undefined;
+    sender_domain?: string | null | undefined;
+    received_at?: string | undefined;
+    sequence?: number | undefined;
+    attachments?: import("./types").Attachment[] | undefined;
 };
 /**
  * Decide whether a reply counts as a distinct sign-off (accept-with-flag). Pure.

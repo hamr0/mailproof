@@ -29,15 +29,15 @@ export type MailproofEvent = import("./types").MailproofEvent;
  * }}
  */
 export function create({ dataDir, domain, sendmailBin, otsBin, mtaHostname, resolver, composeNotification, overdueDays, archiveDays, }?: {
-    dataDir?: string;
-    domain?: string;
-    sendmailBin?: string;
-    otsBin?: string;
-    mtaHostname?: string;
+    dataDir?: string | undefined;
+    domain?: string | undefined;
+    sendmailBin?: string | undefined;
+    otsBin?: string | undefined;
+    mtaHostname?: string | undefined;
     resolver?: any;
-    composeNotification?: (ctx: Record<string, any>) => string | null | undefined;
-    overdueDays?: number;
-    archiveDays?: number;
+    composeNotification?: ((ctx: Record<string, any>) => string | null | undefined) | undefined;
+    overdueDays?: number | undefined;
+    archiveDays?: number | undefined;
 }): {
     ingest: (raw: Buffer | string, envelope?: import("./types").Envelope) => Promise<Record<string, any>>;
     sweep: (opts?: {

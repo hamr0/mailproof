@@ -20,6 +20,7 @@
  */
 function parseEnvelope(argv) {
   const [, , clientIp, clientHelo, sender, recipient] = argv;
+  /** @param {string | undefined} v @returns {string | null} */
   const norm = (v) => (v && v !== 'unknown' ? v : null);
   return {
     clientIp: norm(clientIp),

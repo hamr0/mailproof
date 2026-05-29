@@ -55,6 +55,10 @@ function toPem(base64) {
   return `-----BEGIN PUBLIC KEY-----\n${lines.join('\n')}\n-----END PUBLIC KEY-----\n`;
 }
 
+/**
+ * @param {string} name
+ * @returns {Promise<string[][]>}
+ */
 async function resolveTxt(name) {
   return dns.resolveTxt(name);
 }
@@ -92,7 +96,7 @@ async function fetchDkimKey(domain, selector, { resolver = resolveTxt, timeoutMs
     if (!base64) return { pem: null, base64: null, error: 'no p= tag', fetched_at: fetchedAt, lookup: name };
     return { pem: toPem(base64), base64, fetched_at: fetchedAt, lookup: name };
   } catch (err) {
-    return { pem: null, base64: null, error: err.message || String(err), fetched_at: fetchedAt, lookup: name };
+    return { pem: null, base64: null, error: (err instanceof Error ? err.message : null) || String(err), fetched_at: fetchedAt, lookup: name };
   }
 }
 
@@ -106,6 +110,7 @@ async function fetchDkimKey(domain, selector, { resolver = resolveTxt, timeoutMs
  * @returns {Record<string, any> | null}
  */
 function pickSignatureToArchive(auth) {
+  /** @type {Array<Record<string, any>>} */
   const sigs = (auth && auth.dkim && auth.dkim.results) || [];
   if (sigs.length === 0) return null;
   return (

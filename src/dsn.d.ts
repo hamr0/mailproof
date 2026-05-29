@@ -8,7 +8,7 @@ export type DsnRecipient = {
 export type Dsn = {
     reporting: Record<string, string>;
     recipients: DsnRecipient[];
-    note?: string;
+    note?: string | undefined;
 };
 /**
  * @typedef {Object} DsnRecipient
@@ -56,5 +56,13 @@ export function parseDeliveryStatusBody(text: string): Dsn;
  * @returns {Record<string, string>}
  */
 export function parseFieldGroup(text: string): Record<string, string>;
-export function stripAddressType(value: any): string;
-export function contentTypeOf(headerBlock: any): string;
+/**
+ * @param {string | null | undefined} value
+ * @returns {string | null}
+ */
+export function stripAddressType(value: string | null | undefined): string | null;
+/**
+ * @param {string | null} headerBlock
+ * @returns {string | null}
+ */
+export function contentTypeOf(headerBlock: string | null): string | null;

@@ -51,6 +51,11 @@ function createProofAnchor({
   const { loadEvent, listEventIds, writeEventAtomic, isComplete } = eventStore;
   const { listProofFiles, commitProofUpgrade, syncEventJson } = gitrepo;
 
+  /**
+   * @param {Record<string, any>} event
+   * @param {string} eventId
+   * @returns {string}
+   */
   const replyBaseFor = (event, eventId) =>
     `${event && event.type === 'crypto' ? 'attest' : 'event'}+${eventId}@${domain}`;
 
@@ -59,6 +64,7 @@ function createProofAnchor({
   // { events: [{ eventId, checked, newlyAnchored, pendingAfter, committed,
   //              patched, notified }], anchored, pending, notified: [] }.
   async function upgradeProofs({ now = new Date().toISOString() } = {}) {
+    /** @type {{ events: Array<Record<string, any>>, anchored: number, pending: number, notified: any[] }} */
     const summary = { events: [], anchored: 0, pending: 0, notified: [] };
     for (const eventId of await listEventIds()) {
       const proofs = await listProofFiles(eventId);
@@ -68,6 +74,7 @@ function createProofAnchor({
       }
 
       // Per-proof upgrade — slow, no event lock held.
+      /** @type {Array<{ proofRel: string, jsonRel: string, blockHeight: number | null }>} */
       const anchored = [];   // every anchored proof (newly or already) → patch JSON
       let newlyAnchored = 0; // count that CHANGED this run (gates the notify)
       let pendingAfter = 0;
@@ -112,7 +119,7 @@ function createProofAnchor({
 
       // The notification fires OUTSIDE the lock (same posture as ingest/sweep).
       let notifiedRec = null;
-      if (locked.notify && locked.notify.initiator) {
+      if (deliver && locked.notify && locked.notify.initiator) {
         const ev = locked.notify;
         const block = (anchored.find((a) => a.blockHeight) || {}).blockHeight || null;
         const ctx = { mode: ev.type === 'crypto' ? 'crypto' : 'workflow', eventId, event: ev, blockHeight: block, anchoredCount: anchored.length, newlyAnchored };
