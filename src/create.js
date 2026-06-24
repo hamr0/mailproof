@@ -80,6 +80,7 @@ import {
  *   activateEvent: (eventId: string, opts?: { now?: string }) => Promise<Record<string, any>>,
  *   editEvent: (eventId: string, patch: any, opts?: any) => Promise<Record<string, any>>,
  *   reopenEvent: (eventId: string, opts?: { reason?: string | null, retractSignatures?: string[], now?: string, organiserHandle?: string | null }) => Promise<Record<string, any>>,
+ *   completeEvent: (eventId: string, opts?: { reason?: string | null, completedAt?: string | null, now?: string }) => Promise<Record<string, any>>,
  *   loadEvent: (eventId: string) => Promise<MailproofEvent | null>,
  *   listCommits: (eventId: string) => Promise<Record<string, any>[]>,
  *   loadCommit: (eventId: string, sequence: number) => Promise<Record<string, any> | null>,
@@ -263,6 +264,10 @@ function create({
     // consumer policies like revoke build on: flips complete→open, optionally
     // retracts counted signatures, appends an `event_reopen` audit commit).
     reopenEvent: eventStore.reopenEvent,
+    // Sequence — complete an event by consumer policy (mirror of reopenEvent;
+    // the seam a consumer that owns its completion semantics needs, e.g.
+    // strict-signing attestation). Writes the canonical completion record.
+    completeEvent: eventStore.completeEvent,
     // Read model — event JSON + the per-event commit ledger
     loadEvent: eventStore.loadEvent,
     listCommits: gitrepo.listCommits,

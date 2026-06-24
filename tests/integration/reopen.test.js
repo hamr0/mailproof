@@ -78,6 +78,37 @@ test('reopenEvent: retracts a signature, flips complete→open, appends an event
   }
 });
 
+test('completeEvent: consumer-driven completion flips open→complete + writes the completion record', async () => {
+  const tmp = await tmpDir();
+  const cap = fakeSendmail();
+  try {
+    const core = create({ dataDir: tmp, domain: OPERATOR, sendmailBin: cap.script });
+    // High threshold so the engine never auto-completes — the consumer owns it.
+    await core.createEvent({
+      id: 'cmp1', type: 'crypto', title: 'Consumer-owned', initiator: 'boss@signer.example',
+      open: true, threshold: 999, activated_at: '2026-01-01T00:00:00Z',
+    });
+    assert.equal((await core.loadEvent('cmp1')).status, 'open');
+
+    const r = await core.completeEvent('cmp1', { reason: 'all attestors complete', completedAt: '2026-02-01T00:00:00Z' });
+    assert.equal(r.completed, true);
+    assert.equal(r.event.status, 'complete');
+    assert.equal(r.event.completed_at, '2026-02-01T00:00:00Z');
+
+    const after = await core.loadEvent('cmp1');
+    assert.equal(after.status, 'complete');
+    assert.equal(after.completed_at, '2026-02-01T00:00:00Z');
+
+    // Idempotent: a second call is a no-op.
+    const again = await core.completeEvent('cmp1', { reason: 'again' });
+    assert.equal(again.completed, false);
+    assert.equal(again.reason, 'already_complete');
+  } finally {
+    cap.cleanup();
+    await fs.rm(tmp, { recursive: true, force: true });
+  }
+});
+
 test('reopenEvent: no-op on a non-complete event; refuses an archived event', async () => {
   const tmp = await tmpDir();
   const cap = fakeSendmail();

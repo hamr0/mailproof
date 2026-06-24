@@ -309,6 +309,7 @@ function buildEventRecord(partialEvent, { now = new Date().toISOString() } = {})
  *   activateEvent: (eventId: string, opts?: { now?: string }) => Promise<{ event: MailproofEvent, alreadyActive: boolean }>,
  *   editEvent: (eventId: string, patch: any, opts?: { now?: string, organiserHandle?: string | null }) => Promise<{ event: MailproofEvent, prev: MailproofEvent, changes: any[], commitSequence: number | null }>,
  *   reopenEvent: (eventId: string, opts?: { reason?: string | null, retractSignatures?: string[], now?: string, organiserHandle?: string | null }) => Promise<{ event: MailproofEvent, reopened: boolean, retracted: string[], commitSequence: number | null, reason?: string }>,
+ *   completeEvent: (eventId: string, opts?: { reason?: string | null, completedAt?: string | null, now?: string }) => Promise<{ event: MailproofEvent, completed: boolean, reason?: string, completionRecord: any }>,
  *   writeEventAtomic: (id: string, event: MailproofEvent) => Promise<void>,
  *   recordStepSendErrors: (eventId: string, errorsByStepId: Record<string, any>) => Promise<MailproofEvent | null>,
  *   recordProofEmailMessageId: (eventId: string, messageId: string) => Promise<string | null>,
@@ -544,6 +545,48 @@ function createEventStore({ dataDir } = {}) {
     });
   }
 
+  /**
+   * Mark an event complete by consumer policy (the mirror of reopenEvent — the
+   * neutral primitive a consumer that owns its own completion semantics needs,
+   * e.g. strict-signing attestation where an attestor only counts after signing
+   * a whole reference-doc set). Flips `status`→`complete`, stamps `completed_at`,
+   * and writes the canonical one-shot completion record to the ledger
+   * (`gitrepo.commitCompletion`). The kernel holds no opinion on WHY the consumer
+   * decided completion — `reason` is opaque, and the consumer owns any
+   * completion notification (this primitive does not send mail, matching
+   * reopenEvent). No-op (`completed:false`) if already complete; refuses archived.
+   * @param {string} eventId
+   * @param {{ reason?: string | null, completedAt?: string | null, now?: string }} [opts]
+   * @returns {Promise<{ event: MailproofEvent, completed: boolean, reason?: string, completionRecord: any }>}
+   */
+  async function completeEvent(eventId, { reason = null, completedAt = null, now = new Date().toISOString() } = {}) {
+    return withEventMutex(eventId, async () => {
+      const event = await loadEvent(eventId);
+      if (!event) throw Object.assign(new Error(`completeEvent: ${eventId} not found`), { code: 'NOT_FOUND' });
+      if (event.archived_at) {
+        throw Object.assign(new Error('completeEvent: event is archived'), { code: 'EVENT_ARCHIVED' });
+      }
+      if (isComplete(event)) {
+        return { event, completed: false, reason: 'already_complete', completionRecord: null };
+      }
+      const at = completedAt || now;
+      /** @type {MailproofEvent} */
+      const next = { ...event, status: 'complete', completed_at: at };
+      await writeEventAtomic(eventId, next);
+
+      let completionRecord = null;
+      if (event.activated_at) {
+        const repo = gitrepo();
+        completionRecord = await repo.commitCompletion(eventId, next, { completedAt: at, summary: reason });
+        try {
+          await repo.syncEventJson(eventId, next, `event completed: ${reason || 'consumer policy'}`);
+        } catch { /* sync failure shouldn't undo the completion */ }
+      }
+
+      return { event: next, completed: true, completionRecord };
+    });
+  }
+
   // Persist per-step send-error flags after an outbound notification batch.
   // `errorsByStepId` is { [stepId]: { reason, code, at } | null }; null clears
   // any previous error. Steps absent from the map are untouched. Returns the
@@ -617,6 +660,7 @@ function createEventStore({ dataDir } = {}) {
     activateEvent,
     editEvent,
     reopenEvent,
+    completeEvent,
     // Raw atomic overwrite of an existing event's master JSON. UNGUARDED — it
     // takes no mutex, so the caller MUST already hold withEventMutex(eventId).
     // ingest() needs this: the in-process mutex is non-reentrant, so ingest

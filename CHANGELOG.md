@@ -20,6 +20,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`completeEvent(eventId, opts)` — the mirror of `reopenEvent`** (forced by the
+  `mailproof-probe` C2/strict-signing validation: a consumer that owns its own
+  completion semantics — e.g. strict-signing attestation, where an attestor only
+  counts after signing a whole reference-doc set — had no way to mark an event
+  complete). Flips `status`→`complete`, stamps `completed_at`, and writes the
+  canonical one-shot completion record (`gitrepo.commitCompletion`). Policy-free:
+  `reason` is opaque, and the consumer owns any completion notification (the
+  primitive sends no mail, matching `reopenEvent`). No-op (`completed:false`) when
+  already complete; refuses archived. Together with `reopenEvent`, this lets a
+  consumer drive the full completion lifecycle (create with an unreachable
+  `threshold` so the engine never auto-completes, then complete/reopen by policy)
+  while mailproof's verify + append-only ledger do the load-bearing work.
 - **`reopenEvent(eventId, opts)` — a neutral event-lifecycle primitive** (forced
   by the `mailproof-probe` C1/revoke validation: a consumer had no way to reopen
   a completed event, so policies like revoke / close-reversal were impossible to
