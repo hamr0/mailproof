@@ -102,6 +102,8 @@
  * @property {string | null} [requiredDocHash]    Crypto only — optional doc gate.
  * @property {Signature[]} [signatures]           Crypto only.
  * @property {string} [archive_reason]
+ * @property {string} [reopened_at]             Set when a completed event is reopened by consumer policy.
+ * @property {string | null} [reopened_reason]  Opaque consumer-supplied reason for the reopen.
  * @property {string} [nudged_overdue_at]
  * @property {string} [proof_email_message_id]
  * @property {string} [ots_proof_anchored_notified_at]

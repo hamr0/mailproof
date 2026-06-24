@@ -19,6 +19,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`reopenEvent(eventId, opts)` — a neutral event-lifecycle primitive** (forced
+  by the `mailproof-probe` C1/revoke validation: a consumer had no way to reopen
+  a completed event, so policies like revoke / close-reversal were impossible to
+  build on the public surface). Flips a completed event `complete`→`open`, clears
+  `completed_at`, optionally **retracts** named counted signatures by salted
+  `sender_hash` (so the crypto engine's count drops), and appends a
+  tamper-evident `event_reopen` commit to the ledger (`gitrepo.appendReopenCommit`;
+  retracted senders recorded as salted hashes only — never plaintext). The kernel
+  holds **no policy opinion** on *why* — `reason` is opaque, supplied by the
+  consumer; this keeps revoke *logic* in consumer policy (per the locked design)
+  while exposing the lifecycle *primitive* it needs. No-op (`reopened:false`) on a
+  non-complete event; refuses archived events. Exposed on the `create()` instance
+  and from `createEventStore`. New event fields `reopened_at` / `reopened_reason`.
+  Workflow step state is not auto-rewound (consumer's call via `editEvent`).
+
 ## [0.8.0] - 2026-05-29
 
 ### Changed

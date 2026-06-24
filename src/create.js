@@ -79,6 +79,7 @@ import {
  *   createEvent: (partialEvent: Partial<MailproofEvent> & Record<string, any>) => Promise<MailproofEvent>,
  *   activateEvent: (eventId: string, opts?: { now?: string }) => Promise<Record<string, any>>,
  *   editEvent: (eventId: string, patch: any, opts?: any) => Promise<Record<string, any>>,
+ *   reopenEvent: (eventId: string, opts?: { reason?: string | null, retractSignatures?: string[], now?: string, organiserHandle?: string | null }) => Promise<Record<string, any>>,
  *   loadEvent: (eventId: string) => Promise<MailproofEvent | null>,
  *   listCommits: (eventId: string) => Promise<Record<string, any>[]>,
  *   loadCommit: (eventId: string, sequence: number) => Promise<Record<string, any> | null>,
@@ -258,6 +259,10 @@ function create({
     createEvent: eventStore.createEvent,
     activateEvent,
     editEvent,
+    // Sequence — reopen a completed event (the neutral lifecycle primitive that
+    // consumer policies like revoke build on: flips complete→open, optionally
+    // retracts counted signatures, appends an `event_reopen` audit commit).
+    reopenEvent: eventStore.reopenEvent,
     // Read model — event JSON + the per-event commit ledger
     loadEvent: eventStore.loadEvent,
     listCommits: gitrepo.listCommits,

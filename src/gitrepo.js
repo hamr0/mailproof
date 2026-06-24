@@ -479,6 +479,54 @@ function createGitrepo({ dataDir, ots = null } = {}) {
     };
   }
 
+  /**
+   * Append a tamper-evident reopen record (a completed event flipped back to
+   * `open` by consumer-policy lifecycle, e.g. an attestor was retracted). Same
+   * OTS-stamp + git-commit shape as appendEditCommit; `kind: 'event_reopen'` so
+   * an auditor sees the reopen distinctly from a field edit. Retracted signers
+   * are recorded as salted hashes only (never plaintext). The reason is opaque
+   * to the kernel — the consumer's policy supplies it.
+   * @param {string} eventId
+   * @param {{ reopened_at: string, reason?: string | null, retracted_hashes?: string[], organiser_handle?: string | null }} reopenCtx
+   * @param {MailproofEvent} event
+   * @returns {Promise<{ sequence: number, sha: string, file: string, ots_proof_file: string | null, repo_path: string }>}
+   */
+  async function appendReopenCommit(eventId, reopenCtx, event) {
+    const { root } = await initRepoIfNeeded(eventId, event);
+    const seq = await nextSequence(root);
+    const seqStr = padSeq(seq);
+    const rel = path.join('commits', `commit-${seqStr}.json`);
+    const abs = path.join(root, rel);
+
+    const metadata = {
+      schema_version: 1,
+      sequence: seq,
+      kind: 'event_reopen',
+      event_id: eventId,
+      reopened_at: reopenCtx.reopened_at,
+      reason: reopenCtx.reason || null,
+      // Already salted hashes (the caller hashes; we never see plaintext here).
+      retracted_hashes: Array.isArray(reopenCtx.retracted_hashes) ? reopenCtx.retracted_hashes : [],
+      organiser_handle: reopenCtx.organiser_handle || null,
+      ots_proof_file: null,
+    };
+    const filesToAdd = [rel];
+
+    await writeJson(abs, metadata);
+    await maybeStamp(abs, root, path.join('ots_proofs', `commit-${seqStr}.ots`), metadata, filesToAdd);
+
+    await git(root, ['add', ...filesToAdd]);
+    await git(root, ['commit', '-m', `reopen: ${eventId}${metadata.retracted_hashes.length ? ` (-${metadata.retracted_hashes.length})` : ''}`]);
+
+    return {
+      sequence: seq,
+      sha: await git(root, ['rev-parse', 'HEAD']),
+      file: rel,
+      ots_proof_file: metadata.ots_proof_file,
+      repo_path: root,
+    };
+  }
+
   // Write the one-shot completion record (SPEC §4): `commits/completion.json`,
   // committed once when the event reaches `complete`. Idempotent — a second
   // call returns { alreadyWritten } without a new commit. Records the
@@ -743,6 +791,7 @@ function createGitrepo({ dataDir, ots = null } = {}) {
     commitReply,
     commitReverify,
     appendEditCommit,
+    appendReopenCommit,
     commitCompletion,
     loadCommit,
     loadDkimPem,

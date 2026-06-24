@@ -308,6 +308,7 @@ function buildEventRecord(partialEvent, { now = new Date().toISOString() } = {})
  *   createEvent: (partialEvent: Partial<MailproofEvent> & Record<string, any>) => Promise<MailproofEvent>,
  *   activateEvent: (eventId: string, opts?: { now?: string }) => Promise<{ event: MailproofEvent, alreadyActive: boolean }>,
  *   editEvent: (eventId: string, patch: any, opts?: { now?: string, organiserHandle?: string | null }) => Promise<{ event: MailproofEvent, prev: MailproofEvent, changes: any[], commitSequence: number | null }>,
+ *   reopenEvent: (eventId: string, opts?: { reason?: string | null, retractSignatures?: string[], now?: string, organiserHandle?: string | null }) => Promise<{ event: MailproofEvent, reopened: boolean, retracted: string[], commitSequence: number | null, reason?: string }>,
  *   writeEventAtomic: (id: string, event: MailproofEvent) => Promise<void>,
  *   recordStepSendErrors: (eventId: string, errorsByStepId: Record<string, any>) => Promise<MailproofEvent | null>,
  *   recordProofEmailMessageId: (eventId: string, messageId: string) => Promise<string | null>,
@@ -484,6 +485,65 @@ function createEventStore({ dataDir } = {}) {
     });
   }
 
+  /**
+   * Reopen a completed event (the neutral lifecycle primitive consumer policies
+   * like revoke / close-reversal build on). Flips `status` complete→open, clears
+   * `completed_at`, optionally retracts named counted signatures (by salted
+   * `sender_hash`) so the engine's count drops, and appends a tamper-evident
+   * `event_reopen` commit. The kernel holds NO opinion on WHY — the consumer's
+   * policy supplies `reason` (opaque). No-op (`reopened:false`) when the event
+   * is not complete; refuses archived events. Workflow step state is NOT
+   * auto-rewound — that's the consumer's call via editEvent on the now-open event.
+   * @param {string} eventId
+   * @param {{ reason?: string | null, retractSignatures?: string[], now?: string, organiserHandle?: string | null }} [opts]
+   * @returns {Promise<{ event: MailproofEvent, reopened: boolean, retracted: string[], commitSequence: number | null, reason?: string }>}
+   */
+  async function reopenEvent(eventId, { reason = null, retractSignatures = [], now = new Date().toISOString(), organiserHandle = null } = {}) {
+    return withEventMutex(eventId, async () => {
+      const event = await loadEvent(eventId);
+      if (!event) throw Object.assign(new Error(`reopenEvent: ${eventId} not found`), { code: 'NOT_FOUND' });
+      if (event.archived_at) {
+        throw Object.assign(new Error('reopenEvent: event is archived'), { code: 'EVENT_ARCHIVED' });
+      }
+      if (!isComplete(event)) {
+        return { event, reopened: false, retracted: [], commitSequence: null, reason: 'not_complete' };
+      }
+
+      const retractSet = new Set((retractSignatures || []).filter(Boolean));
+      const sigs = Array.isArray(event.signatures) ? event.signatures : [];
+      const retracted = sigs.filter((s) => s && retractSet.has(s.sender_hash)).map((s) => s.sender_hash);
+      const nextSigs = retractSet.size ? sigs.filter((s) => !(s && retractSet.has(s.sender_hash))) : sigs;
+
+      /** @type {MailproofEvent} */
+      const next = {
+        ...event,
+        status: 'open',
+        completed_at: null,
+        signatures: nextSigs,
+        reopened_at: now,
+        reopened_reason: reason,
+      };
+      await writeEventAtomic(eventId, next);
+
+      let commitSequence = null;
+      if (event.activated_at) {
+        const repo = gitrepo();
+        const result = await repo.appendReopenCommit(eventId, {
+          reopened_at: now,
+          reason,
+          retracted_hashes: retracted,
+          organiser_handle: organiserHandle,
+        }, next);
+        commitSequence = result.sequence;
+        try {
+          await repo.syncEventJson(eventId, next, `event reopened: ${reason || 'unspecified'}`);
+        } catch { /* sync failure shouldn't undo the reopen */ }
+      }
+
+      return { event: next, reopened: true, retracted, commitSequence };
+    });
+  }
+
   // Persist per-step send-error flags after an outbound notification batch.
   // `errorsByStepId` is { [stepId]: { reason, code, at } | null }; null clears
   // any previous error. Steps absent from the map are untouched. Returns the
@@ -556,6 +616,7 @@ function createEventStore({ dataDir } = {}) {
     createEvent,
     activateEvent,
     editEvent,
+    reopenEvent,
     // Raw atomic overwrite of an existing event's master JSON. UNGUARDED — it
     // takes no mutex, so the caller MUST already hold withEventMutex(eventId).
     // ingest() needs this: the in-process mutex is non-reentrant, so ingest
