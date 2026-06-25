@@ -17,14 +17,18 @@
   <img src="https://img.shields.io/badge/license-Apache%202.0-2a4f8c" alt="license: Apache 2.0">
 </p>
 
-**Email-native multi-party coordination + a DKIM-backed digital notary. Git-native, offline-verifiable, 2 runtime deps.**
+**Turn an email reply into proof. Multi-party sign-offs and document notarization over plain email — verifiable by anyone, offline, forever.**
 
-Email is already a verifiable identity layer: DKIM/DMARC let any receiver confirm a message was authorized by the sending domain — cold, with no prior relationship and no shared secret. mailproof treats email as a first-class citizen on top of that. It **arranges** multi-party replies, **records** each one to a per-event git repository, and **verifies** it (DKIM/DMARC/SPF/ARC) — so the commit chain *is* the proof: checkable with stock `git`, offline, forever, even if the service disappears. No app and no login for participants; they reply from their normal inbox.
+You get a record that a *specific person* agreed to a *specific thing* — and it holds up **without you**. No app to install, no account to create: people reply from their normal inbox. Each reply is cryptographically tied to its sender by the email they already trust (DKIM), and the whole history is a git repository anyone can verify with stock tooling — even if your service is long gone.
 
-## Two things it does
+## What you can do with it
 
-1. **Coordinate over email.** Ask named people to confirm something, in an order, and prove they did. Each reply is DKIM-verified, committed to a tamper-evident git ledger (every reply — even rejected ones — with a `counted` flag), and triggers the next email. Optionally Bitcoin-anchored via [OpenTimestamps](https://opentimestamps.org).
-2. **Digital notary.** Bind a verified signature to a hashed document. A **declaration** — one verified signer (a contract or a pink slip between two parties) — or an **attestation** — a threshold of distinct signers (a petition, a multi-witness statement). The document itself never leaves your server; only its `sha256` and the DKIM proof are committed.
+- **Get a contract signed** — one counterparty, one verified reply, bound to the exact document. A **declaration** (a contract, a pink slip): the signed file never leaves your server, only its fingerprint + the proof.
+- **Run a petition or collect attestations** — N distinct, provably-real people sign one thing, counted to a threshold. Open to anyone via a single address, or an explicit allow-list.
+- **Drive an approval chain** — release gates, vendor sign-offs, onboarding — in order, where every step is proven by the person who actually did it, and clearing one step emails the next automatically.
+- **Notarize that something existed when you say it did** — optionally **stamp every record against Bitcoin via [OpenTimestamps](https://opentimestamps.org)**, so the proof of *when* needs no trust in you or any server.
+
+Under all four: every reply — even a rejected one — is committed to a tamper-evident ledger, graded for trust (DKIM/DMARC/SPF/ARC), with a `counted` flag for whether it advanced. The audit trail is complete; trust gates the *decision*, never the *record*.
 
 ## Quick start
 
