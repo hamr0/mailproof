@@ -19,6 +19,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Validated
+- **P2 surface validation complete (`mailproof-probe`).** A throwaway consumer on
+  the public package surface (gitdone untouched) exercised gitdone's full
+  capability set: **Bucket A (19 core) passed on stock `0.8.0`**; **Bucket C (7
+  candidate-gaps) all resolved** — C1/C2 forced exactly the two neutral primitives
+  below (`reopenEvent`/`completeEvent`), and **C3 reference-doc manifest/attach+,
+  C4 close+ two-step close, C5 bundle+ proof export, C6 forward-to-initiator, and
+  C7 attestor redaction needed no kernel change.** Structural finding:
+  accept-with-flag + `listCommits` already give consumers a durable, tamper-evident
+  per-event store (the committed inbound email is the record), so the heavy
+  attestation tail stays consumer policy over the existing surface; C7 is moot
+  because the privacy invariant means no plaintext is ever at rest. The surface
+  grew by exactly the two lifecycle primitives. (See the decisions log + the
+  probe's verdict table.)
+
 ### Added
 - **`completeEvent(eventId, opts)` — the mirror of `reopenEvent`** (forced by the
   `mailproof-probe` C2/strict-signing validation: a consumer that owns its own
