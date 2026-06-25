@@ -19,7 +19,7 @@
 
 **Turn an email reply into proof. Multi-party sign-offs and document notarization over plain email — verifiable by anyone, offline, forever.**
 
-You get a record that a *specific person* agreed to a *specific thing* — and it holds up **without you**. No app to install, no account to create: people reply from their normal inbox. Each reply is cryptographically tied to its sender by the email they already trust (DKIM), and the whole history is a git repository anyone can verify with stock tooling — even if your service is long gone.
+You get a record that a *specific person* agreed to a *specific thing* — and it holds up **without you**. No app to install, no account to create: people reply from their normal inbox. Each reply is cryptographically tied to its sender by the email they already trust (DKIM), and the whole history is a git repository anyone can verify with stock tooling — even if your service is long gone. It's the opposite of a signing SaaS: nothing to log into, no vendor to trust, no proof that evaporates when a company pivots or shuts down.
 
 ## What you can do with it
 
@@ -93,85 +93,55 @@ This table is the map, not the manual — per-option wiring and API detail live 
 
 ## Recipes
 
-### Coordinate three sign-offs in order
+The 80% path is short; full wiring — every option, the `ingest()` result, the trust model — is in the [Integration Guide](mailproof.context.md).
+
+**An ordered approval chain, proven** — each step confirmed by the person who did it, the chain emailing the next automatically:
 
 ```js
 import { create } from 'mailproof';
 
 const core = create({ dataDir: './data', domain: 'app.example', sendmailBin: '/usr/sbin/sendmail' });
 
-const id = 'onboarding42';      // your unique event id (alphanumeric)
 await core.createEvent({
-  id, type: 'workflow', flow: 'sequential', initiator: 'boss@app.example',
+  id: 'onboarding42', type: 'workflow', flow: 'sequential', initiator: 'boss@app.example',
   steps: [
     { id: 'legal',   participant: 'alice@corp.example' },
     { id: 'finance', participant: 'bob@corp.example' },
   ],
 });
-await core.activateEvent(id);   // fires the kickoff email to the first eligible step
+await core.activateEvent('onboarding42');        // emails the first step
 
-// Postfix pipes each inbound reply in (raw RFC-822 + the SMTP envelope):
+// Postfix pipes each reply in; mailproof verifies, commits, advances, emails the next:
 const res = await core.ingest(rawEmail, { sender, recipient, clientIp, clientHelo });
-// → { routed, mode, eventId, trustLevel, committedSeq, counted, eventComplete, notified }
+// res.counted → did it advance?   res.eventComplete → all done?
 ```
 
-### Notarize a contract (declaration — one verified signer + a hashed doc)
+**A two-party contract, signed and provable offline** — bound to the exact document, nothing sensitive stored:
 
 ```js
 import fs from 'node:fs/promises';
 
 const doc = await fs.readFile('./contract.pdf');
-const id = 'contract42';
 await core.createEvent({
-  id, type: 'crypto', initiator: 'boss@app.example',
+  id: 'contract42', type: 'crypto', initiator: 'you@app.example',
   signers: ['counterparty@firm.example'],
-  threshold: 1,                              // 1 = declaration
-  requiredDocHash: core.hashDocument(doc),   // the counting reply must attach exactly this file
+  threshold: 1,                              // one verified signer = a declaration
+  requiredDocHash: core.hashDocument(doc),   // the reply must attach exactly this file
 });
-await core.activateEvent(id);
-// counterparty replies with the file attached → DKIM-verified + hash-matched → committed + complete.
-// Only the sha256 + DKIM proof are stored; the document stays on your server.
+await core.activateEvent('contract42');
+// They reply with the file → DKIM-verified + hash-matched → committed + complete.
+// Only the sha256 + DKIM proof are stored; the document never leaves your server.
 ```
 
-### Run a petition (attestation — N distinct verified signers, open to anyone)
-
-```js
-await core.createEvent({
-  id: 'petition2026', type: 'crypto', initiator: 'org@app.example',
-  open: true,        // any verified sender counts ("the link")
-  threshold: 100,    // 100 distinct DKIM-verified signers to complete
-});
-```
-
-### Verify a proof offline (no live DNS, no mailproof server)
-
-```js
-// Re-check a forwarded reply against its ARCHIVED key — works even if the signer rotated DNS:
-const result = await core.verify(id, await fs.readFile('./forwarded.eml'));
-
-// Or confirm a document matches what a verified signer committed:
-const { found, matches } = await core.verifyDocument(id, doc, { email: 'counterparty@firm.example' });
-```
+Same `crypto` shape scales to a **petition** (`open: true, threshold: 100` — anyone verified counts), and anyone can re-check a proof later, offline, with `core.verify(id, bytes)` against the archived DKIM key.
 
 ---
 
 ## Grounded, not just claimed
 
-- **Verification is tested against real-world mail.** The path reaches `verified` end to end on a genuine production opendkim-signed message over **live DNS**, a committed offline regression (`tests/integration/dkim-interop.test.js`) pins the interop deterministically, and deprecated **rsa-sha1** signatures are refused (RFC 8301). A manual harness (`tests/manual/verify-live.mjs`) drives the live path.
-- **The surface is validated against a real consumer's full capability set.** P2 ran a throwaway probe consumer (public surface only; the origin app untouched) over the complete corner-case surface: **Bucket A 19/19 + Bucket C 7/7**. The kernel needed only the neutral `reopenEvent`/`completeEvent` lifecycle pair — every other capability (reference-doc manifests, two-step close, proof export, forwarding, redaction) rides the existing surface as consumer policy.
-- **317 `node --test` tests pass** with 2 runtime deps; the public surface ships JSDoc-generated, `checkJs`-gated TypeScript declarations.
-
-## Status
-
-| Phase | State |
-|---|---|
-| P0 — composition proof (POC) | ✅ `npm run poc` |
-| P1 — lift real modules + tests | ✅ COMPLETE — verify + inbound decoder, sequence routing, preprocessing, outbound, git-ledger storage, workflow + crypto engines, document notary, `create()`/`ingest()` assembly |
-| m7c — verification surface | ✅ COMPLETE — durable DKIM-key archive, offline `verify()`/`reverify()`, OTS anchoring, public `verify+`/`reverify+` email endpoints |
-| m7d — trigger pillar | ✅ COMPLETE — every kernel-derivable occasion as one of 12 neutral `kind`s over one `composeNotification` hook |
-| P2 — surface validation | ✅ COMPLETE — via a throwaway probe consumer (public surface only). Bucket A 19/19 + Bucket C 7/7; only `reopenEvent`/`completeEvent` forced |
-
-> **Stable (1.0).** The public API follows SemVer — breaking changes land only in a future major.
+- **Verification is tested against real-world mail**, not just fixtures — it reaches `verified` end to end on a genuine production DKIM-signed message over **live DNS**, a committed regression keeps it that way, and deprecated **rsa-sha1** is refused (RFC 8301).
+- **Validated against a real consumer's entire feature set** — every capability of a mature, corner-case-heavy email-coordination app was rebuilt on the public surface. All of it fits; the heavy parts (document manifests, two-step close, proof export, forwarding) ride the existing hooks as thin policy, not kernel changes.
+- **317 tests, 2 runtime deps**, a JSDoc-sourced TypeScript surface. **Stable under SemVer** — breaking changes only in a future major.
 
 ## Docs
 
