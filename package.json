@@ -1,6 +1,6 @@
 {
   "name": "mailproof",
-  "version": "0.9.3",
+  "version": "1.0.0",
   "description": "Email-native multi-party coordination kernel: turns a promise made over email into proof. DKIM/DMARC-verified replies, a tamper-evident git ledger, workflow sequencing, and email triggers. Extracted from gitdone.",
   "type": "module",
   "main": "src/index.js",

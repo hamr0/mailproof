@@ -13,11 +13,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > **`0.7.0` is the first published library release** (the `create()` / `ingest()`
 > API + verify/trigger surfaces + shipped TypeScript declarations), cut from the
 > `v0.7.0` GitHub release via the trusted-publishing workflow.
-> Pre-1.0 minor bumps may include breaking shape changes per SemVer 0.x
-> conventions. See [`docs/02-design/DESIGN.md`](docs/02-design/DESIGN.md) for
-> the phasing.
+> The `0.x` line was the pre-1.0 phase (minor bumps could change API shape);
+> **`1.0.0` is the first stable release** — the public API now follows SemVer,
+> with breaking changes only in a future major. See
+> [`docs/02-design/DESIGN.md`](docs/02-design/DESIGN.md) for the phasing.
 
 ## [Unreleased]
+
+## [1.0.0] - 2026-06-25
+
+**First stable release.** mailproof graduates out of pre-1.0. The four pillars
+(verify → sequence → git ledger → triggers), both coordination modes (an
+**events** workflow + a **crypto sign-off** — declaration / attestation), and the
+document notary are complete and validated. P1 (lift), m7c (verification
+surface), m7d (trigger pillar), and P2 (surface validation against a real
+consumer's full capability set — **Bucket A 19/19 + Bucket C 7/7**, only the
+neutral `reopenEvent`/`completeEvent` lifecycle pair forced) are all done. The
+verify pillar is grounded against real-world DKIM — `verified` end to end on a
+genuine production opendkim message over **live DNS**, with a committed offline
+regression and deprecated rsa-sha1 refused (RFC 8301). 317 `node --test` tests,
+**2 runtime deps**, JSDoc-sourced TypeScript declarations. **The public API is
+now stable under SemVer** — breaking changes only in a future major.
 
 ### Tests
 - **DKIM-verify interop pinned against a real production opendkim key.** Added

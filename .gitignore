@@ -16,3 +16,5 @@ poc/.data/
 
 # local friction telemetry — contains PII + cross-project session data, never publish
 .claude/friction/
+# local agent memory — not published
+.claude/memory/

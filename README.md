@@ -171,7 +171,7 @@ const { found, matches } = await core.verifyDocument(id, doc, { email: 'counterp
 | m7d — trigger pillar | ✅ COMPLETE — every kernel-derivable occasion as one of 12 neutral `kind`s over one `composeNotification` hook |
 | P2 — surface validation | ✅ COMPLETE — via a throwaway probe consumer (public surface only). Bucket A 19/19 + Bucket C 7/7; only `reopenEvent`/`completeEvent` forced |
 
-> **Pre-1.0:** the API can still change shape between `0.x` minors (SemVer 0.x).
+> **Stable (1.0).** The public API follows SemVer — breaking changes land only in a future major.
 
 ## Docs
 
