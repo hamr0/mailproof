@@ -104,6 +104,8 @@ the same `dataDir`. There are no env-var defaults (that's the consumer's glue).
 | `createEvent(partial)` | Create + persist an event (both modes). Created **pending** (`activated_at: null`). |
 | `activateEvent(id)` | Mark activated + fire the `activation` kickoff to initially-eligible participants/signers (once). `{ event, alreadyActive, notified }`. **Replies don't count until activated.** |
 | `editEvent(id, patch)` | Patch a non-finalised event; writes an audit commit if activated; re-notifies (`reassigned`) a participant moved onto a currently-eligible step. Returns `{ event, prev, changes, commitSequence, notified }`. |
+| `completeEvent(id, {reason?})` | **Consumer-driven completion** — flips `open`→`complete`, stamps `completed_at`, writes the canonical completion record. Policy-free (`reason` opaque, sends no mail). For consumers that own their completion semantics: create with an unreachable `threshold` so the engine never auto-completes, then complete by policy. No-op when already complete; refuses archived. |
+| `reopenEvent(id, {reason?, retractSignatures?})` | **Neutral lifecycle primitive** (the mirror of `completeEvent`) — flips `complete`→`open`, clears `completed_at`, optionally retracts named counted signatures by salted `sender_hash` (the crypto count drops), and appends a tamper-evident `event_reopen` commit (retracted senders as salted hashes only). The seam consumer policies like revoke / close-reversal build on; `reason` opaque. No-op on a non-complete event; refuses archived. |
 | `loadEvent(id)` | Read the event JSON (the master record). |
 | `listCommits(id)` | The per-event commit ledger (every reply, counted or not). |
 | `loadCommit(id, seq)` | One `commit-NNN.json`. |

@@ -9,7 +9,7 @@
 
 **Email-native multi-party coordination kernel.** Verify a reply, sequence it through a workflow, commit it to a tamper-evident git ledger, trigger the next email.
 
-> **Status — P1 (lift) + m7c (verification) + m7d (triggers) are COMPLETE.** Being extracted from [gitdone](https://github.com/hamr0/gitdone). A consumer can `create()` a bound instance and `ingest()` inbound replies end to end: verify + the inbound decoder (DKIM/DMARC auth + MIME parse), sequence routing, inbound preprocessing, outbound, the full git-ledger storage, both sequencing engines (**events** workflow + **crypto sign-off**), the document notary with inbound auto-hash capture, the offline `verify()`/`reverify()` primitives + their public email endpoints, and the trigger pillar (12 neutral-templated occasion `kind`s). 307 `node --test` tests pass with 2 runtime deps; the public surface ships JSDoc-generated, checkJs-gated TypeScript declarations. Next is **P2** — validate by rebuilding gitdone on mailproof. See [`docs/`](docs/) ([PRD](docs/01-product/PRD.md), [DESIGN](docs/02-design/DESIGN.md), [SPEC](docs/02-design/SPEC.md)).
+> **Status — P1 (lift) + m7c (verification) + m7d (triggers) are COMPLETE, and P2 surface validation is COMPLETE.** Being extracted from [gitdone](https://github.com/hamr0/gitdone). A consumer can `create()` a bound instance and `ingest()` inbound replies end to end: verify + the inbound decoder (DKIM/DMARC auth + MIME parse), sequence routing, inbound preprocessing, outbound, the full git-ledger storage, both sequencing engines (**events** workflow + **crypto sign-off**), the document notary with inbound auto-hash capture, the offline `verify()`/`reverify()` primitives + their public email endpoints, and the trigger pillar (12 neutral-templated occasion `kind`s). 310 `node --test` tests pass with 2 runtime deps; the public surface ships JSDoc-generated, checkJs-gated TypeScript declarations. **P2 validated the surface against gitdone's full capability set via a throwaway probe consumer (public surface only, gitdone untouched): the kernel needed only the neutral `reopenEvent`/`completeEvent` lifecycle pair (this `0.9.0`); every other capability — reference-doc manifests, two-step close, proof export, forwarding, redaction — rides the existing surface as consumer policy.** See [`docs/`](docs/) ([PRD](docs/01-product/PRD.md), [DESIGN](docs/02-design/DESIGN.md), [SPEC](docs/02-design/SPEC.md)).
 
 ## The idea
 
@@ -32,7 +32,7 @@ Every inbound reply is committed — *even rejected ones* (wrong sender, failed 
 | P1 — lift real modules + tests | ✅ COMPLETE — verify + inbound decoder (DKIM/DMARC auth + MIME parse), sequence routing, inbound preprocessing, outbound, git-ledger storage, workflow + crypto sign-off engines, document notary (incl. auto-hash capture), and the `create()`/`ingest()` assembly |
 | m7c — verification surface | ✅ COMPLETE — durable DKIM-key archive, offline `verify()`/`reverify()`, OTS-proof anchoring, public `verify+`/`reverify+` email endpoints |
 | m7d — trigger pillar | ✅ COMPLETE — every kernel-derivable occasion (state/time/bounce/verify) as one of 12 neutral-templated `kind`s over one `composeNotification` hook |
-| P2 — gitdone depends on mailproof | ⬜ next — validate by rebuilding gitdone on mailproof (non-merging branch) |
+| P2 — surface validation | ✅ COMPLETE — validated via a throwaway probe consumer (public surface only; gitdone untouched). Bucket A 19/19 + Bucket C 7/7; only `reopenEvent`/`completeEvent` forced (this `0.9.0`) |
 
 ## Install
 

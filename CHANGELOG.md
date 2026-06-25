@@ -19,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-06-25
+
 ### Validated
 - **P2 surface validation complete (`mailproof-probe`).** A throwaway consumer on
   the public package surface (gitdone untouched) exercised gitdone's full
