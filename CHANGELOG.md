@@ -14,17 +14,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > API + verify/trigger surfaces + shipped TypeScript declarations), cut from the
 > `v0.7.0` GitHub release via the trusted-publishing workflow.
 > The `0.x` line was the pre-1.0 phase (minor bumps could change API shape);
-> **`1.0.1` is the first stable release** — the public API now follows SemVer,
-> with breaking changes only in a future major. (`1.0.0` was skipped: that exact
-> version was published and unpublished under this name in 2025 and npm
-> permanently reserves it, so it can never be re-published.) See
+> **`1.3.0` is the first stable release** — the public API now follows SemVer,
+> with breaking changes only in a future major. (`1.0.0`–`1.2.0` were skipped:
+> those versions were published and unpublished under this name in 2025 and npm
+> permanently reserves a once-published version, so the stable 1.x line starts at
+> the first free clean minor, `1.3.0`.) See
 > [`docs/02-design/DESIGN.md`](docs/02-design/DESIGN.md) for the phasing.
 
 ## [Unreleased]
 
-## [1.0.1] - 2026-06-25
+## [1.3.0] - 2026-06-25
 
-**First stable release** (`1.0.0` was permanently reserved by a prior unpublish on npm, so 1.x starts at `1.0.1`). mailproof graduates out of pre-1.0. The four pillars
+**First stable release** (`1.0.0`–`1.2.0` were permanently reserved by prior unpublishes on npm, so the stable 1.x line starts at the first free clean minor, `1.3.0`). mailproof graduates out of pre-1.0. The four pillars
 (verify → sequence → git ledger → triggers), both coordination modes (an
 **events** workflow + a **crypto sign-off** — declaration / attestation), and the
 document notary are complete and validated. P1 (lift), m7c (verification
