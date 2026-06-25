@@ -187,6 +187,12 @@ mailproof pins `trustReceived: false` — it never trusts pre-existing
 `Received`/`Authentication-Results` headers, only its own check against the
 envelope.
 
+This path is grounded against real-world mail, not just fixtures: it reaches
+`verified` on a genuine production opendkim-signed message over **live DNS**, and
+**refuses deprecated rsa-sha1** signatures (RFC 8301 — inherited from the
+`mailauth`/OpenSSL digest policy). A committed offline regression
+(`tests/integration/dkim-interop.test.js`) pins the interop deterministically.
+
 ## Workflow events
 
 ```js

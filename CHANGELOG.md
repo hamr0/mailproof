@@ -19,6 +19,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Tests
+- **DKIM-verify interop pinned against a real production opendkim key.** Added
+  `tests/integration/dkim-interop.test.js` — a deterministic, offline regression
+  that verifies a message signed by a real production opendkim key to `verified`
+  against the committed public-key record (injected resolver, no network).
+  Confirmed end to end against a genuine production message over **live DNS** via
+  the new manual harness `tests/manual/verify-live.mjs`; the verification path
+  also correctly **refuses deprecated rsa-sha1** signatures (RFC 8301, inherited
+  from the `mailauth`/OpenSSL digest policy). Captured live mail is gitignored so
+  sign-in tokens never enter git.
+
 ## [0.9.3] - 2026-06-25
 
 ### Security

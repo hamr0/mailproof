@@ -17,6 +17,10 @@
 // Optional envelope for SPF (mode A): pass --sender / --ip / --helo if you have
 // the original SMTP envelope. Without it, DKIM-aligned DMARC alone can still
 // reach `verified` (DMARC passes on DKIM alignment).
+//
+// Env DKIM_PUB_RECORD: set to a public-key record (opendkim `.txt` format) to
+// verify against it via an injected resolver instead of live DNS — used when the
+// signing domain's selector isn't published. DMARC is synthesised (p=none).
 
 import fs from 'node:fs';
 import { dkimSign } from 'mailauth';
@@ -108,7 +112,7 @@ const summary = summariseAuth(auth);
 const trust = classifyTrust(auth);
 
 const sig = summary.dkim.signatures[0] || {};
-console.log('── live DKIM verification (real DNS) ─────────────────────');
+console.log(`── DKIM verification (${pubRecord ? 'injected key' : 'live DNS'}) ───────────────────`);
 console.log('DKIM   :', sig.result, '| d=' + sig.domain, 's=' + sig.selector, sig.algorithm || '');
 console.log('         ', sig.info || '');
 console.log('SPF    :', summary.spf.result);
