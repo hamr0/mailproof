@@ -62,6 +62,11 @@ function authenticateMessage(raw, envelope = {}, { mtaHostname = null, resolver 
     sender: envelope.sender || undefined,
     mta: mtaHostname || undefined,
     resolver: resolver || undefined,
+    // mailproof surfaces only DKIM/DMARC/ARC trust (summariseAuth never reads
+    // BIMI). BIMI's VMC fetch is mailauth's ONLY outbound-HTTP path (undici), so
+    // disabling it removes that network call + its CVE surface entirely. DKIM /
+    // DMARC / ARC stay DNS-only via the injected resolver.
+    disableBimi: true,
   });
 }
 

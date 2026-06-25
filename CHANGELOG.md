@@ -19,6 +19,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.3] - 2026-06-25
+
+### Security
+- **Disabled BIMI verification in the inbound auth path** (`disableBimi: true` on
+  the `mailauth.authenticate` call). mailproof surfaces only DKIM/DMARC/ARC trust
+  (`summariseAuth` never reads BIMI), and BIMI's VMC fetch is mailauth's **only
+  outbound-HTTP path** — the sole route to the transitive `undici` CVEs. Disabling
+  it removes that network call and its CVE surface for every consumer (DKIM /
+  DMARC / ARC stay DNS-only via the injected resolver). This is the consumer-facing
+  fix: it ships in source, independent of the lockfile.
+- **Pinned patched transitive deps** via `overrides` + a `mailparser` bump, so
+  this repo's lockfile carries no known advisories (`npm audit` → 0):
+  `undici` → `^7.28.0` (patches the 7.x TLS-bypass / header-injection / cache /
+  keep-alive advisories; same major as mailauth's pin), `nodemailer` → `^9.0.1`
+  (patches the CRLF-header-injection / jsonTransport / OAuth2-TLS / raw-SSRF
+  advisories), and `mailparser` `^3.9.8` → `^3.9.11`. **Reachability:** the
+  nodemailer advisories are all message-*sending* paths — mailproof sends via
+  bundled Postfix/sendmail (`child_process`), never nodemailer — so they were
+  never reachable; the bump is hygiene. (Note: npm `overrides` clear *this repo's*
+  audit/Dependabot; they are not inherited by downstream consumers — for them the
+  `disableBimi` source change is what reduces surface.)
+
 ## [0.9.2] - 2026-06-25
 
 ### Fixed
