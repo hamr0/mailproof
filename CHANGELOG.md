@@ -23,6 +23,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-06-25
+
+### Documentation
+- **README polish (the README ships in the npm tarball).** Value-first framing:
+  leads with what you get (sign a contract, run a petition, drive an approval
+  chain, notarize *when* something existed), with OpenTimestamps surfaced as a
+  value line. Removed the internal build-phase "Status" table (P0/P1/m7c/P2
+  codenames) that read as work-in-progress under a stable release; trimmed the
+  recipes to two outcome-framed flagships (kept the code); de-jargoned the
+  validation section; added a point-of-view line. No code change.
+
 ## [1.3.0] - 2026-06-25
 
 **First stable release** (`1.0.0`–`1.2.0` were permanently reserved by prior unpublishes on npm, so the stable 1.x line starts at the first free clean minor, `1.3.0`). mailproof graduates out of pre-1.0. The four pillars
