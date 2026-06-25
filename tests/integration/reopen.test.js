@@ -9,6 +9,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import fss from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -103,6 +104,67 @@ test('completeEvent: consumer-driven completion flips open→complete + writes t
     const again = await core.completeEvent('cmp1', { reason: 'again' });
     assert.equal(again.completed, false);
     assert.equal(again.reason, 'already_complete');
+  } finally {
+    cap.cleanup();
+    await fs.rm(tmp, { recursive: true, force: true });
+  }
+});
+
+test('completeEvent after reopenEvent refreshes the ledger record (no stale completion.json)', async () => {
+  // Regression: reopenEvent made completion repeatable, but commitCompletion was
+  // idempotent on the singleton completion.json — so a re-completion left the
+  // ledger recording the FIRST completion while the master event showed the
+  // second (the revoke / strict-signing re-completion flow m7e is built for).
+  // completeEvent now supersedes: completion.json tracks the CURRENT completion,
+  // and the prior record stays in the git chain (the tamper-evidence).
+  const tmp = await tmpDir();
+  const cap = fakeSendmail();
+  try {
+    const core = create({ dataDir: tmp, domain: OPERATOR, sendmailBin: cap.script });
+    await core.createEvent({
+      id: 'rc1', type: 'crypto', title: 'Recompletion', initiator: 'boss@signer.example',
+      open: true, threshold: 999, activated_at: '2026-01-01T00:00:00Z',
+    });
+    const completionPath = path.join(tmp, 'repos', 'rc1', 'commits', 'completion.json');
+    const repoRoot = path.join(tmp, 'repos', 'rc1');
+    const gitLog = () => execFileSync('git', ['log', '--oneline'], { cwd: repoRoot }).toString();
+
+    // First completion → record written, not a supersede.
+    const c1 = await core.completeEvent('rc1', { reason: 'first', completedAt: '2026-02-01T00:00:00Z' });
+    assert.equal(c1.completed, true);
+    assert.equal(c1.completionRecord.superseded, false);
+    let rec = JSON.parse(await fs.readFile(completionPath, 'utf8'));
+    assert.equal(rec.completed_at, '2026-02-01T00:00:00Z');
+    assert.equal(rec.summary, 'first');
+
+    // Reopen, then re-complete with new data.
+    await core.reopenEvent('rc1', { reason: 'mistake' });
+    assert.equal((await core.loadEvent('rc1')).status, 'open');
+    const c2 = await core.completeEvent('rc1', { reason: 'second', completedAt: '2026-03-01T00:00:00Z' });
+    assert.equal(c2.completed, true);
+    assert.equal(c2.completionRecord.superseded, true);
+
+    // The ledger record now matches the master event (the bug: it used to be stale).
+    rec = JSON.parse(await fs.readFile(completionPath, 'utf8'));
+    assert.equal(rec.completed_at, '2026-03-01T00:00:00Z');
+    assert.equal(rec.summary, 'second');
+    assert.equal((await core.loadEvent('rc1')).completed_at, '2026-03-01T00:00:00Z');
+
+    // Tamper-evidence preserved: the first completion is still in the git chain.
+    const log = gitLog();
+    assert.match(log, /completion: rc1 complete/, 'first completion still in history');
+    assert.match(log, /completion: rc1 re-completed/, 'supersede commit recorded');
+    assert.match(log, /reopen: rc1/, 'reopen recorded between them');
+
+    // A byte-identical re-completion writes no completion commit (no empty-diff
+    // churn): the record is unchanged, so commitCompletion short-circuits.
+    const reCompletions = () => (gitLog().match(/completion: rc1 re-completed/g) || []).length;
+    const before = reCompletions();
+    await core.reopenEvent('rc1', { reason: 'again' });
+    const c3 = await core.completeEvent('rc1', { reason: 'second', completedAt: '2026-03-01T00:00:00Z' });
+    assert.equal(c3.completed, true);
+    assert.equal(c3.completionRecord.alreadyWritten, true, 'byte-identical completion is a no-op');
+    assert.equal(reCompletions(), before, 'no new completion commit for an identical record');
   } finally {
     cap.cleanup();
     await fs.rm(tmp, { recursive: true, force: true });

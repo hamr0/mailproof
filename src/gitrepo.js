@@ -527,33 +527,43 @@ function createGitrepo({ dataDir, ots = null } = {}) {
     };
   }
 
-  // Write the one-shot completion record (SPEC §4): `commits/completion.json`,
-  // committed once when the event reaches `complete`. Idempotent — a second
-  // call returns { alreadyWritten } without a new commit. Records the
-  // `completed_at` and the `triggering_commit_sequence` (the reply that tipped
-  // it). gitdone's per-mode `event_mode` is dropped — the two-mode model has no
-  // `mode`; `event_type` ("workflow" | "crypto") is enough.
+  // Write the completion record (SPEC §4): `commits/completion.json`, committed
+  // when the event reaches `complete`. Records the `completed_at` and the
+  // `triggering_commit_sequence` (the reply that tipped it). gitdone's per-mode
+  // `event_mode` is dropped — the two-mode model has no `mode`; `event_type`
+  // ("workflow" | "crypto") is enough.
+  //
+  // Idempotent by default: a re-entrant call (same completing edge processed
+  // twice — the ingest path) returns { alreadyWritten } without a duplicate
+  // commit. `reopenEvent` made completion repeatable, so a consumer-driven
+  // RE-completion (after a reopen cleared the prior `complete`) passes
+  // `{ supersede: true }`: the record is overwritten so `completion.json` always
+  // reflects the CURRENT completion (matching the master event), while the prior
+  // record stays in the git commit chain — which is the actual tamper-evidence.
+  // A supersede that would write an identical record is still a no-op.
   /**
-   * Context for the one-shot completion record.
+   * Context for the completion record.
    * @typedef {Object} CompletionCtx
    * @property {string | null} [completedAt]
    * @property {number | null} [triggeringSequence]
    * @property {Object | null} [summary]
+   * @property {boolean} [supersede]  Overwrite an existing record (re-completion after reopen).
    */
 
   /**
-   * Write the one-shot completion record (SPEC §4). Idempotent — a second call
-   * returns { alreadyWritten } without a new commit.
+   * Write the completion record (SPEC §4). Idempotent unless `supersede` is set.
    * @param {string} eventId
    * @param {MailproofEvent} event
    * @param {CompletionCtx} [completionCtx]
-   * @returns {Promise<{ alreadyWritten: boolean, file: string, sha?: string, ots_proof_file?: string | null, repo_path?: string }>}
+   * @returns {Promise<{ alreadyWritten: boolean, superseded?: boolean, file: string, sha?: string, ots_proof_file?: string | null, repo_path?: string }>}
    */
   async function commitCompletion(eventId, event, completionCtx = {}) {
     const { root } = await initRepoIfNeeded(eventId, event);
     const rel = path.join('commits', 'completion.json');
     const abs = path.join(root, rel);
-    if (await readFileSafe(abs)) return { alreadyWritten: true, file: rel };
+    const existing = await readFileSafe(abs);
+    // One-shot flow: idempotent. Re-completion must pass supersede to refresh.
+    if (existing && !completionCtx.supersede) return { alreadyWritten: true, file: rel };
 
     const metadata = {
       schema_version: 1,
@@ -566,16 +576,31 @@ function createGitrepo({ dataDir, ots = null } = {}) {
       summary: completionCtx.summary || null,
       ots_proof_file: null,
     };
+
+    // A supersede with nothing to change writes no commit (avoids an empty-diff
+    // commit when the new completion is byte-identical to the recorded one).
+    if (existing) {
+      let prev = null;
+      try { prev = JSON.parse(existing); } catch { /* corrupt → overwrite */ }
+      if (prev
+        && prev.completed_at === metadata.completed_at
+        && JSON.stringify(prev.summary ?? null) === JSON.stringify(metadata.summary)
+        && (prev.triggering_commit_sequence ?? null) === metadata.triggering_commit_sequence) {
+        return { alreadyWritten: true, file: rel };
+      }
+    }
+
     const filesToAdd = [rel];
 
     await writeJson(abs, metadata);
     await maybeStamp(abs, root, path.join('ots_proofs', 'completion.ots'), metadata, filesToAdd);
 
     await git(root, ['add', ...filesToAdd]);
-    await git(root, ['commit', '-m', `completion: ${eventId} complete`]);
+    await git(root, ['commit', '-m', `completion: ${eventId} ${existing ? 're-completed' : 'complete'}`]);
 
     return {
       alreadyWritten: false,
+      superseded: !!existing,
       sha: await git(root, ['rev-parse', 'HEAD']),
       file: rel,
       ots_proof_file: metadata.ots_proof_file,

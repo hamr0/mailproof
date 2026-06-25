@@ -577,7 +577,10 @@ function createEventStore({ dataDir } = {}) {
       let completionRecord = null;
       if (event.activated_at) {
         const repo = gitrepo();
-        completionRecord = await repo.commitCompletion(eventId, next, { completedAt: at, summary: reason });
+        // supersede: completeEvent only reaches here with status open, so an
+        // existing completion.json means this is a RE-completion after a reopen
+        // — refresh the ledger record (the prior one stays in the git chain).
+        completionRecord = await repo.commitCompletion(eventId, next, { completedAt: at, summary: reason, supersede: true });
         try {
           await repo.syncEventJson(eventId, next, `event completed: ${reason || 'consumer policy'}`);
         } catch { /* sync failure shouldn't undo the completion */ }

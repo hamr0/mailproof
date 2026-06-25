@@ -19,6 +19,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-06-25
+
+### Fixed
+- **`completeEvent` after `reopenEvent` no longer leaves the ledger stale.**
+  `reopenEvent` (0.9.0) made completion repeatable, but `gitrepo.commitCompletion`
+  was idempotent on the singleton `commits/completion.json` — so a re-completion
+  (the revoke / strict-signing flow m7e exists for) silently kept the *first*
+  completion's `completed_at`/`summary` on the tamper-evident ledger while the
+  master event recorded the second, a ledger-vs-master divergence. `completeEvent`
+  now passes `supersede: true`: `completion.json` is rewritten + re-committed to
+  reflect the current completion, and the prior record stays in the git commit
+  chain (the actual tamper-evidence — nothing is erased). A byte-identical
+  re-completion still writes no commit. `commitCompletion` gains an opt-in
+  `supersede` flag (default off — the `ingest` one-shot path is unchanged) and a
+  `superseded` field on its result. Regression test in `tests/integration/reopen.test.js`;
+  SPEC §4 wording updated. (Found by `/diff-review` of the 0.9.0 delivery.)
+
 ## [0.9.0] - 2026-06-25
 
 ### Validated

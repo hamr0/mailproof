@@ -204,7 +204,7 @@ working tree *is* the inspectable, `git clone`-able proof. Layout:
     commit-001.json           # one per accepted reply, zero-padded, monotonic
     commit-002.json
     reverify-001.json         # durable re-verification records (separate namespace)
-    completion.json           # written once when the event completes
+    completion.json           # the current completion; rewritten + re-committed if reopened then re-completed (prior records stay in the chain)
   dkim_keys/                  # archived signer PEMs for durable verify (optional)
     commit-001.pem
   ots_proofs/                 # optional OpenTimestamps anchors (one per commit)
