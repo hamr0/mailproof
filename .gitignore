@@ -10,3 +10,6 @@ poc/.data/
 /src/**/*.d.ts
 .claude/settings.local.json
 .claude/stash/
+
+# litectx local context index (sqlite + WAL) — never commit
+.litectx/
