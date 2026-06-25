@@ -171,6 +171,62 @@ test('completeEvent after reopenEvent refreshes the ledger record (no stale comp
   }
 });
 
+test('engine-driven re-completion after reopen refreshes the ledger record (ingest path)', async () => {
+  // Regression sibling of the completeEvent supersede fix: the SAME stale-ledger
+  // bug, but on the ingest engine path. A crypto event auto-completes via a
+  // counted reply; reopenEvent retracts a signature; a NEW counted reply tips it
+  // over the threshold again. commitCompletion was called with the default
+  // supersede:false, so the singleton completion.json kept the FIRST completion's
+  // triggering sequence while the master JSON showed the second — the ledger went
+  // stale. ingest now supersedes when the event was reopened.
+  const tmp = await tmpDir();
+  const signer = verifiedSigner({ domain: 'corp.example' });
+  try {
+    const core = create({ dataDir: tmp, domain: OPERATOR, resolver: signer.resolver });
+    await core.createEvent({
+      id: 'rc2', type: 'crypto', title: 'Two-of-two sign-off',
+      activated_at: '2026-01-01T00:00:00Z',
+      signers: ['alice@corp.example', 'bob@corp.example'], threshold: 2,
+    });
+    const to = `attest+rc2@${OPERATOR}`;
+    const completionPath = path.join(tmp, 'repos', 'rc2', 'commits', 'completion.json');
+
+    // alice (seq 1) → 1/2, not complete. bob (seq 2) → 2/2, completes.
+    const a1 = await core.ingest(await signer.sign({ from: 'alice@corp.example', to }), envOf(to, 'alice@corp.example'));
+    assert.equal(a1.eventComplete, false);
+    const b1 = await core.ingest(await signer.sign({ from: 'bob@corp.example', to }), envOf(to, 'bob@corp.example'));
+    assert.equal(b1.eventComplete, true);
+    assert.equal(b1.committedSeq, 2);
+    let rec = JSON.parse(await fs.readFile(completionPath, 'utf8'));
+    assert.equal(rec.triggering_commit_sequence, 2, 'first completion tipped by bob (seq 2)');
+
+    // Reopen, retracting bob — the count drops to 1/2 and the event opens.
+    const bobHash = (await core.loadEvent('rc2')).signatures.find((s) => s.commit_sequence === 2).sender_hash;
+    const re = await core.reopenEvent('rc2', { reason: 'mistake', retractSignatures: [bobHash] });
+    assert.equal(re.reopened, true);
+    assert.equal(re.event.signatures.length, 1);
+
+    // bob re-signs (seq 4 — the reopen took seq 3) → 2/2 again, engine re-completes.
+    const b2 = await core.ingest(await signer.sign({ from: 'bob@corp.example', to }), envOf(to, 'bob@corp.example'));
+    assert.equal(b2.eventComplete, true);
+    assert.equal(b2.committedSeq, 4);
+
+    // The ledger record now tracks the CURRENT completion, not the stale first one.
+    rec = JSON.parse(await fs.readFile(completionPath, 'utf8'));
+    assert.equal(rec.triggering_commit_sequence, 4, 'completion.json refreshed to the re-completing reply');
+    assert.equal((await core.loadEvent('rc2')).status, 'complete');
+
+    // Tamper-evidence intact: the first completion stays in the git chain, with
+    // the reopen and the supersede commit recorded after it, in order.
+    const log = execFileSync('git', ['-C', path.join(tmp, 'repos', 'rc2'), 'log', '--format=%s'], { encoding: 'utf8' });
+    assert.match(log, /completion: rc2 complete/, 'first completion still in history');
+    assert.match(log, /completion: rc2 re-completed/, 'supersede commit recorded');
+    assert.match(log, /reopen: rc2/, 'reopen recorded between them');
+  } finally {
+    await fs.rm(tmp, { recursive: true, force: true });
+  }
+});
+
 test('reopenEvent: no-op on a non-complete event; refuses an archived event', async () => {
   const tmp = await tmpDir();
   const cap = fakeSendmail();

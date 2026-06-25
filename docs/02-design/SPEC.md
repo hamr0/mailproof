@@ -277,8 +277,12 @@ document hash is the notary's `verifyDocument` (§4.1), never a completion gate.
 
 **Other kernel commit kinds:** `event_edit` (participant/deadline/title change
 as a before/after audit record; participant changes stored as salted
-`from_hash`/`to_hash`), `completion` (written once at threshold; records
-`completed_at` + `triggering_commit_sequence`), `reverify` (durable
+`from_hash`/`to_hash`), `completion` (records `completed_at` +
+`triggering_commit_sequence`; written when the event reaches `complete`, and
+*rewritten + re-committed* if the event is reopened then re-completes — via
+either `completeEvent` or a fresh inbound reply through `ingest` — so the record
+tracks the current completion while every prior record stays in the git chain;
+a byte-identical re-completion writes no commit), `reverify` (durable
 re-verification against an archived PEM; never mutates the target commit).
 
 **gitdone-only commit kinds (policy, NOT core):** `attach`, `revoke`.

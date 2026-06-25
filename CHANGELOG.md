@@ -19,6 +19,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Engine-driven re-completion after `reopenEvent` no longer leaves the ledger
+  stale.** Completes the 0.9.1 fix on the remaining path: when a reopened event
+  re-reaches its threshold via a *new inbound reply* (the `ingest` engine path,
+  not consumer-driven `completeEvent`), `commits/completion.json` was kept at the
+  *first* completion's `triggering_commit_sequence`/`completed_at`/`summary` while
+  the master event recorded the second — the same ledger-vs-master divergence 0.9.1
+  fixed for `completeEvent`. `ingest` now passes `supersede: true` to
+  `commitCompletion` when the event carries `reopened_at`, so the ledger record
+  tracks the current completion; the prior record stays in the git chain (the
+  tamper-evidence), and a byte-identical re-completion still writes no commit.
+  First-completion behaviour (never-reopened events) is unchanged — `reopened_at`
+  is absent, so `supersede` stays off. Regression test in
+  `tests/integration/reopen.test.js`. (Stash follow-up #2 from the 0.9.1 review.)
+
 ## [0.9.1] - 2026-06-25
 
 ### Fixed

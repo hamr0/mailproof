@@ -604,7 +604,11 @@ function createIngest({
         else signatureCount = applied.signatureCount;
 
         // 8. One-shot completion commit on the edge the event newly completes.
-        //    commitCompletion is itself idempotent (m7b-1).
+        //    commitCompletion is idempotent on the first completion (m7b-1). When
+        //    the event was reopened, this is a RE-completion — supersede so the
+        //    ledger record tracks the current completion instead of leaving the
+        //    stale first one (the engine-path mirror of completeEvent's fix). The
+        //    prior record stays in the git chain; a byte-identical record no-ops.
         if (eventComplete) {
           const summary = mode === 'workflow'
             ? { steps_completed: applied.event.steps.length }
@@ -614,6 +618,7 @@ function createIngest({
               completedAt: receivedAt,
               triggeringSequence: commit.sequence,
               summary,
+              supersede: !!applied.event.reopened_at,
             });
           } catch { /* completion commit best-effort; event.json already complete */ }
         }
