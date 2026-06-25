@@ -1,7 +1,7 @@
 # mailproof — Integration Guide
 
 > For AI assistants and developers wiring mailproof into a project.
-> `1.0.0` (stable) — P1 lift + m7c verification + m7d triggers + P2 validation COMPLETE | Node.js >= 22.5 | 2 deps (`mailauth`, `mailparser`) | Apache-2.0
+> `1.0.1` (stable) — P1 lift + m7c verification + m7d triggers + P2 validation COMPLETE | Node.js >= 22.5 | 2 deps (`mailauth`, `mailparser`) | Apache-2.0
 
 ## What this is
 
