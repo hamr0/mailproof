@@ -642,6 +642,23 @@ function createGitrepo({ dataDir, ots = null } = {}) {
     catch { return null; }
   }
 
+  // Read the canonical completion record (commits/completion.json), or null if
+  // the event hasn't completed. The numbered reply/reopen/edit records surface
+  // via listCommits; this is the one non-numbered ledger record, so consumers
+  // get a first-class reader instead of inferring completion from event.status.
+  /**
+   * Read the completion record (SPEC §4), or null if not yet complete.
+   * @param {string} eventId
+   * @returns {Promise<Record<string, any> | null>}
+   */
+  async function loadCompletion(eventId) {
+    if (!EVENT_ID_RE.test(eventId)) throw new Error(`invalid eventId: ${eventId}`);
+    const raw = await readFileSafe(path.join(repoPath(eventId), 'commits', 'completion.json'));
+    if (!raw) return null;
+    try { return JSON.parse(raw); }
+    catch { return null; }
+  }
+
   // List all reply commits under an event, ordered by sequence ascending.
   // Reads the filesystem (not `git log`) — surfaces replies committed for
   // audit even when they didn't count.
@@ -819,6 +836,7 @@ function createGitrepo({ dataDir, ots = null } = {}) {
     appendReopenCommit,
     commitCompletion,
     loadCommit,
+    loadCompletion,
     loadDkimPem,
     listCommits,
     listProofFiles,
@@ -832,4 +850,4 @@ function createGitrepo({ dataDir, ots = null } = {}) {
   };
 }
 
-export { createGitrepo };
+export { createGitrepo, saltedSenderHash };

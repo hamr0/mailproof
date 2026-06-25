@@ -218,7 +218,9 @@ function applyReply(event, commit, { now = new Date().toISOString() } = {}) {
       ? { ...s, status: 'complete', commit_sequence: commit.sequence }
       : s
   ));
-  const allDone = steps.every((s) => s.status === 'complete');
+  // manualCompletion: steps still complete + commit, but the consumer owns the
+  // event's finalisation (via completeEvent) — the engine never auto-locks.
+  const allDone = !event.manualCompletion && steps.every((s) => s.status === 'complete');
   /** @type {MailproofEvent} */
   const updated = {
     ...event,

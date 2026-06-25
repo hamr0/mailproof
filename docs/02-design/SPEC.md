@@ -152,6 +152,7 @@ and serialization invariant as §3, and the same lifecycle fields
   "open": false,                      // true ⇒ ANY verified sender may sign (a shared address)
   "threshold": 2,                     // distinct signatures to complete; 1 = single-signer declaration
   "requiredDocHash": "sha256:…",      // optional; a counting reply must attach a file whose sha256 matches (notary format) | null
+  "manualCompletion": false,          // optional; true ⇒ engine never auto-locks — replies still count, but only completeEvent finalises (consumer owns completion)
 
   "signatures": [                     // the distinct count-to-threshold record (non-PII, §6)
     {
@@ -172,7 +173,10 @@ is **not** the initiator (`initiator_self_reply` — anti-self-dealing); the
 sender is a signer (or `open`); the sender is **distinct** from those already in
 `signatures` (`already_signed`); and, if `requiredDocHash` is set, some
 attachment's sha256 matches (`doc_hash_mismatch`). The event locks
-(`status:"complete"` + `completed_at`) when `signatures.length ≥ threshold`.
+(`status:"complete"` + `completed_at`) when `signatures.length ≥ threshold`,
+**unless `manualCompletion` is set** — then the count still accrues but the
+engine never auto-locks, and the consumer finalises via `completeEvent` (the
+same flag suppresses the workflow engine's all-steps-done auto-complete).
 
 **Signer-identity resolution is the orchestrator's**, mirroring workflow's
 `participant_match`: it compares the plaintext sender against

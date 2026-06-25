@@ -19,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-06-25
+
 ### Fixed
 - **Engine-driven re-completion after `reopenEvent` no longer leaves the ledger
   stale.** Completes the 0.9.1 fix on the remaining path: when a reopened event
@@ -32,7 +34,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tamper-evidence), and a byte-identical re-completion still writes no commit.
   First-completion behaviour (never-reopened events) is unchanged — `reopened_at`
   is absent, so `supersede` stays off. Regression test in
-  `tests/integration/reopen.test.js`. (Stash follow-up #2 from the 0.9.1 review.)
+  `tests/integration/reopen.test.js`.
+
+### Added (consumer ergonomics — surfaced by the P2 mailproof-probe validation)
+- **`manualCompletion: true` event flag** — suppresses the engine's auto-complete
+  in both modes: replies still count and commit (accept-with-flag is unchanged),
+  but the event only finalises when the consumer calls `completeEvent`. The honest
+  replacement for the `threshold: 999` workaround a consumer that owns its own
+  completion semantics (e.g. strict-signing) previously needed. (Probe gap G3a.)
+- **`saltedSenderHash` is now a top-level export** — the pure salted-sender hasher
+  (SPEC §0.1) consumers need to map an attestor email → its stored ledger hash,
+  available without constructing a `createGitrepo` instance. Same function the
+  ledger uses (no divergence). (Probe gap G2.)
+- **`loadCompletion(eventId)`** on `create()` (and the `gitrepo` factory) — reads
+  the canonical `commits/completion.json` record (or `null` if not complete). The
+  one non-numbered ledger record, now a first-class reader instead of inferring
+  completion from `event.status`. (Probe gap G4.)
+- **`exports` map now exposes `./package.json`** — consumers can
+  `import pkg from 'mailproof/package.json'` (e.g. to read the version). (Probe gap G0.)
 
 ## [0.9.1] - 2026-06-25
 

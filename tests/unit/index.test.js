@@ -52,6 +52,7 @@ const EXPECTED = {
   createEventStore: 'function',
   withEventMutex: 'function',
   createGitrepo: 'function',
+  saltedSenderHash: 'function',
   // Git ledger — optional OTS anchoring
   createOts: 'function',
   parseOtsBlockHeight: 'function',

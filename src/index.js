@@ -24,7 +24,7 @@ import {
 } from './outbound.js';
 import { createEventStore } from './event-store.js';
 import { withEventMutex } from './event-mutex.js';
-import { createGitrepo } from './gitrepo.js';
+import { createGitrepo, saltedSenderHash } from './gitrepo.js';
 import { createOts, parseOtsBlockHeight } from './ots.js';
 import {
   shouldCount, applyReply, isComplete, firstPendingStep,
@@ -86,6 +86,10 @@ export {
   createEventStore,
   withEventMutex,
   createGitrepo,
+  // Git ledger — pure salted-sender hasher (SPEC §0.1), top-level so a consumer
+  // can map an attestor email → its stored salted hash without constructing a
+  // gitrepo (the durable-manifest / reference-doc fold needs exactly this).
+  saltedSenderHash,
   // Git ledger — optional OTS anchoring + Bitcoin-anchor upgrade/read (m7c-4;
   // factory-bound to otsBin). parseOtsBlockHeight is the pure `ots info` parser.
   createOts,

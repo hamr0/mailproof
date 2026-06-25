@@ -84,6 +84,7 @@ import {
  *   loadEvent: (eventId: string) => Promise<MailproofEvent | null>,
  *   listCommits: (eventId: string) => Promise<Record<string, any>[]>,
  *   loadCommit: (eventId: string, sequence: number) => Promise<Record<string, any> | null>,
+ *   loadCompletion: (eventId: string) => Promise<Record<string, any> | null>,
  *   verifyDocument: (eventId: string, docBytes: Buffer | Uint8Array | string, opts?: { email?: string }) => Promise<Record<string, any>>,
  *   hashDocument: (bytes: Buffer | Uint8Array | string) => string,
  *   verify: (eventId: string, candidateBytes: Buffer | string, opts?: Record<string, any>) => Promise<Record<string, any>>,
@@ -272,6 +273,9 @@ function create({
     loadEvent: eventStore.loadEvent,
     listCommits: gitrepo.listCommits,
     loadCommit: gitrepo.loadCommit,
+    // Read model — the canonical completion record (commits/completion.json),
+    // or null if the event hasn't completed. The one non-numbered ledger record.
+    loadCompletion: gitrepo.loadCompletion,
     // Verify — document notary (PRD §4.1)
     verifyDocument: notary.verifyDocument,
     hashDocument: notary.hashDocument,

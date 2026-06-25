@@ -177,7 +177,9 @@ function applyReply(event, commit, { now = new Date().toISOString() } = {}) {
   };
   const sigs = [...signatures(event), signature];
   const threshold = event.threshold || 1;
-  const reached = sigs.length >= threshold;
+  // manualCompletion: the signature still counts + commits, but the consumer
+  // owns finalisation (via completeEvent) — the engine never auto-locks.
+  const reached = !event.manualCompletion && sigs.length >= threshold;
   /** @type {MailproofEvent} */
   const updated = {
     ...event,

@@ -99,6 +99,7 @@
  * @property {string[]} [signers]                 Crypto only (lowercased).
  * @property {boolean} [open]                     Crypto only — any sender may sign.
  * @property {number} [threshold]                 Crypto only — distinct sigs to complete.
+ * @property {boolean} [manualCompletion]         Suppress engine auto-complete — replies still count + commit, but only completeEvent finalises (consumer owns completion semantics).
  * @property {string | null} [requiredDocHash]    Crypto only — optional doc gate.
  * @property {Signature[]} [signatures]           Crypto only.
  * @property {string} [archive_reason]
