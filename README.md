@@ -1,61 +1,178 @@
-# mailproof
+```
+    ╭─────────────────────────────────╮
+    │  ╔╦╗╔═╗╦╦  ╔═╗╦═╗╔═╗╔═╗╔═╗      │
+    │  ║║║╠═╣║║  ╠═╝╠╦╝║ ║║ ║╠╣       │
+    │  ╩ ╩╩ ╩╩╩═╝╩  ╩╚═╚═╝╚═╝╩        │
+    │   reply ──→ verify ──→ commit   │
+    │      ↑                  │       │
+    │      └──────────────────┘       │
+    ╰──╮──────────────────────────────╯
+       ╰── proof, from the inbox
+```
 
 <p align="center">
+  <a href="https://github.com/hamr0/mailproof/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/hamr0/mailproof/ci.yml?branch=main&label=CI" alt="CI status"></a>
   <img src="https://img.shields.io/npm/v/mailproof?label=npm&color=2a4f8c" alt="npm version">
   <img src="https://img.shields.io/github/package-json/v/hamr0/mailproof?label=version&color=2a4f8c" alt="version (auto from package.json)">
   <img src="https://img.shields.io/badge/license-Apache%202.0-2a4f8c" alt="license: Apache 2.0">
-  <img src="https://img.shields.io/github/actions/workflow/status/hamr0/mailproof/ci.yml?branch=main&label=CI" alt="CI status">
 </p>
 
-**Email-native multi-party coordination kernel.** Verify a reply, sequence it through a workflow, commit it to a tamper-evident git ledger, trigger the next email.
+**Email-native multi-party coordination + a DKIM-backed digital notary. Git-native, offline-verifiable, 2 runtime deps.**
 
-> **Status — P1 (lift) + m7c (verification) + m7d (triggers) are COMPLETE, and P2 surface validation is COMPLETE.** Being extracted from [gitdone](https://github.com/hamr0/gitdone). A consumer can `create()` a bound instance and `ingest()` inbound replies end to end: verify + the inbound decoder (DKIM/DMARC auth + MIME parse), sequence routing, inbound preprocessing, outbound, the full git-ledger storage, both sequencing engines (**events** workflow + **crypto sign-off**), the document notary with inbound auto-hash capture, the offline `verify()`/`reverify()` primitives + their public email endpoints, and the trigger pillar (12 neutral-templated occasion `kind`s). 317 `node --test` tests pass with 2 runtime deps; the public surface ships JSDoc-generated, checkJs-gated TypeScript declarations. **P2 validated the surface against gitdone's full capability set via a throwaway probe consumer (public surface only, gitdone untouched): the kernel needed only the neutral `reopenEvent`/`completeEvent` lifecycle pair (this `0.9.0`); every other capability — reference-doc manifests, two-step close, proof export, forwarding, redaction — rides the existing surface as consumer policy.** See [`docs/`](docs/) ([PRD](docs/01-product/PRD.md), [DESIGN](docs/02-design/DESIGN.md), [SPEC](docs/02-design/SPEC.md)).
+Email is already a verifiable identity layer: DKIM/DMARC let any receiver confirm a message was authorized by the sending domain — cold, with no prior relationship and no shared secret. mailproof treats email as a first-class citizen on top of that. It **arranges** multi-party replies, **records** each one to a per-event git repository, and **verifies** it (DKIM/DMARC/SPF/ARC) — so the commit chain *is* the proof: checkable with stock `git`, offline, forever, even if the service disappears. No app and no login for participants; they reply from their normal inbox.
 
-## The idea
+## Two things it does
 
-A lot of coordination is just: ask some named people to confirm something, in an order, and prove they did. mailproof does that **entirely over email** — **no app, no login** for participants. They reply from their normal inbox; that's it.
+1. **Coordinate over email.** Ask named people to confirm something, in an order, and prove they did. Each reply is DKIM-verified, committed to a tamper-evident git ledger (every reply — even rejected ones — with a `counted` flag), and triggers the next email. Optionally Bitcoin-anchored via [OpenTimestamps](https://opentimestamps.org).
+2. **Digital notary.** Bind a verified signature to a hashed document. A **declaration** — one verified signer (a contract or a pink slip between two parties) — or an **attestation** — a threshold of distinct signers (a petition, a multi-witness statement). The document itself never leaves your server; only its `sha256` and the DKIM proof are committed.
 
-- **Verify** — each inbound reply is graded by DKIM/DMARC trust level (via [`mailauth`](https://github.com/postalsys/mailauth)); the signer's public key is archived so the reply still verifies after key rotation. Grounded against real-world mail: `verified` end to end on a genuine production opendkim message over live DNS, with a committed offline regression pinning the interop and deprecated rsa-sha1 refused (RFC 8301).
-- **Sequence** — replies advance one of two generic modes: an **events** workflow (ordered / parallel steps among named participants) or a **crypto sign-off** (verified signers — one, several named, or open via a shared address — counted toward a threshold, optionally bound to a hashed document).
-- **Git ledger** — every reply is committed to a per-event git repo. The commit chain *is* the tamper-evident, offline-verifiable proof: clone it and check it with stock `git`, forever, even if the service disappears.
-- **Email triggers** — composes and sends the next notification / reminder through your own MTA (Postfix + opendkim). Self-hosted: more config, full control, no third-party mail dependency.
+## Quick start
 
-### Accept-with-flag
+```bash
+npm i mailproof   # 2 runtime deps (mailauth, mailparser); Node ≥ 22.5
+```
 
-Every inbound reply is committed — *even rejected ones* (wrong sender, failed DKIM, out of order). A `counted` flag records whether it advanced state. The audit trail stays complete; trust gates the *transition*, never the *record*.
+**1. Give your AI assistant the integration guide**
+
+```
+Read mailproof.context.md from node_modules/mailproof/mailproof.context.md
+```
+
+This single file is the complete wiring contract — every `create()` option, the API + `ingest()` result shape, the plus-tag address space, the `composeNotification` hook + 12 occasion kinds, the trust model, and the gotchas. It's structured for LLM consumption: your agent reads it once and knows how to wire the library correctly.
+
+**2. Describe what you want**
+
+```
+I need to collect three sign-offs by email, in order, and end up with an
+offline-verifiable proof each person really replied. Use mailproof. The
+integration guide is in mailproof.context.md.
+```
+
+**Not sure what you need?** Paste this into any AI assistant:
+
+```
+I want to build an email-coordination or digital-notary flow with mailproof.
+Read the integration guide at node_modules/mailproof/mailproof.context.md,
+then ask me up to 5 questions about what I need. Based on my answers, tell me
+which mode to use (workflow vs crypto sign-off) and show me the wiring code.
+```
+
+---
+
+## What's inside
+
+One `create()` binds four decoupled pillars over a single data dir; take the bound methods, or the lower-level named exports to compose your own pipeline.
+
+| Piece | What it does |
+|---|---|
+| **`create({ dataDir, domain, … })`** | Composition root — binds verify + sequence + git ledger + triggers over one dir |
+| **`ingest(raw, envelope)`** | The inbound pipeline: prefilter → DKIM/DMARC verify → route → **commit (accept-with-flag)** → advance state → trigger the next email |
+| **Trust classify** | `classifyTrust` grades each reply `verified` / `forwarded` / `authorized` / `unverified` from DKIM + DMARC + SPF + ARC |
+| **Events (workflow)** | Ordered / parallel / custom steps among named participants; completion = all steps done |
+| **Crypto sign-off** | **Declaration** (1 signer) or **attestation** (threshold of distinct signers), open or allow-listed, with an optional `requiredDocHash` |
+| **Notary** | `hashDocument` / `verifyDocument` — bind a hashed document to a verified signature; plaintext addresses + bytes are never stored |
+| **Git ledger** | A per-event git repo; `listCommits` is the tamper-evident chain — every reply committed, `counted` records whether it advanced state |
+| **Offline verify** | `verify()` / `reverify()` re-check a commit against the **archived** DKIM key — holds even with live DNS down |
+| **OTS anchoring** | Optional `otsBin` → `upgradeProofs()` folds a Bitcoin OpenTimestamps anchor into each commit's proof |
+| **Triggers** | 12 neutral occasion `kind`s (activation, advance, completion, overdue, bounce, verify_report, …) over one `composeNotification` hook |
+| **Lifecycle** | `activateEvent` · `editEvent` · `completeEvent` · `reopenEvent` · `sweep()` (overdue nudge + auto-archive) |
+
+**Modes:** two generic ones — an **events** workflow and a **crypto sign-off** (declaration / attestation). Branding, web UI, auth, and the heavy attestation tail (revoke, multi-doc manifests, alternate dedup) are *consumer policy*, not kernel.
+
+**Transport:** bundled self-hosted **Postfix/sendmail**, with opendkim signing outbound at the MTA — not a pluggable third-party mail provider.
+
+**Deps:** 2 runtime — [`mailauth`](https://github.com/postalsys/mailauth) (DKIM/DMARC/ARC) + [`mailparser`](https://github.com/nodemailer/mailparser) (MIME), both required because verifying/parsing untrusted mail is security-critical. The git ledger shells out to the `git` binary (no `simple-git`); `ots` is an optional external binary. Pure ESM + JSDoc, no consumer build step; ships generated `strictNullChecks`-checked `.d.ts`.
+
+This table is the map, not the manual — per-option wiring and API detail live in the **[Integration Guide](mailproof.context.md)** and [`docs/`](docs/).
+
+---
+
+## Recipes
+
+### Coordinate three sign-offs in order
+
+```js
+import { create } from 'mailproof';
+
+const core = create({ dataDir: './data', domain: 'app.example', sendmailBin: '/usr/sbin/sendmail' });
+
+const id = 'onboarding42';      // your unique event id (alphanumeric)
+await core.createEvent({
+  id, type: 'workflow', flow: 'sequential', initiator: 'boss@app.example',
+  steps: [
+    { id: 'legal',   participant: 'alice@corp.example' },
+    { id: 'finance', participant: 'bob@corp.example' },
+  ],
+});
+await core.activateEvent(id);   // fires the kickoff email to the first eligible step
+
+// Postfix pipes each inbound reply in (raw RFC-822 + the SMTP envelope):
+const res = await core.ingest(rawEmail, { sender, recipient, clientIp, clientHelo });
+// → { routed, mode, eventId, trustLevel, committedSeq, counted, eventComplete, notified }
+```
+
+### Notarize a contract (declaration — one verified signer + a hashed doc)
+
+```js
+import fs from 'node:fs/promises';
+
+const doc = await fs.readFile('./contract.pdf');
+const id = 'contract42';
+await core.createEvent({
+  id, type: 'crypto', initiator: 'boss@app.example',
+  signers: ['counterparty@firm.example'],
+  threshold: 1,                              // 1 = declaration
+  requiredDocHash: core.hashDocument(doc),   // the counting reply must attach exactly this file
+});
+await core.activateEvent(id);
+// counterparty replies with the file attached → DKIM-verified + hash-matched → committed + complete.
+// Only the sha256 + DKIM proof are stored; the document stays on your server.
+```
+
+### Run a petition (attestation — N distinct verified signers, open to anyone)
+
+```js
+await core.createEvent({
+  id: 'petition2026', type: 'crypto', initiator: 'org@app.example',
+  open: true,        // any verified sender counts ("the link")
+  threshold: 100,    // 100 distinct DKIM-verified signers to complete
+});
+```
+
+### Verify a proof offline (no live DNS, no mailproof server)
+
+```js
+// Re-check a forwarded reply against its ARCHIVED key — works even if the signer rotated DNS:
+const result = await core.verify(id, await fs.readFile('./forwarded.eml'));
+
+// Or confirm a document matches what a verified signer committed:
+const { found, matches } = await core.verifyDocument(id, doc, { email: 'counterparty@firm.example' });
+```
+
+---
+
+## Grounded, not just claimed
+
+- **Verification is tested against real-world mail.** The path reaches `verified` end to end on a genuine production opendkim-signed message over **live DNS**, a committed offline regression (`tests/integration/dkim-interop.test.js`) pins the interop deterministically, and deprecated **rsa-sha1** signatures are refused (RFC 8301). A manual harness (`tests/manual/verify-live.mjs`) drives the live path.
+- **The surface is validated against a real consumer's full capability set.** P2 ran a throwaway probe consumer (public surface only; the origin app untouched) over the complete corner-case surface: **Bucket A 19/19 + Bucket C 7/7**. The kernel needed only the neutral `reopenEvent`/`completeEvent` lifecycle pair — every other capability (reference-doc manifests, two-step close, proof export, forwarding, redaction) rides the existing surface as consumer policy.
+- **317 `node --test` tests pass** with 2 runtime deps; the public surface ships JSDoc-generated, `checkJs`-gated TypeScript declarations.
 
 ## Status
 
 | Phase | State |
 |---|---|
 | P0 — composition proof (POC) | ✅ `npm run poc` |
-| P1 — lift real modules + tests | ✅ COMPLETE — verify + inbound decoder (DKIM/DMARC auth + MIME parse), sequence routing, inbound preprocessing, outbound, git-ledger storage, workflow + crypto sign-off engines, document notary (incl. auto-hash capture), and the `create()`/`ingest()` assembly |
-| m7c — verification surface | ✅ COMPLETE — durable DKIM-key archive, offline `verify()`/`reverify()`, OTS-proof anchoring, public `verify+`/`reverify+` email endpoints |
-| m7d — trigger pillar | ✅ COMPLETE — every kernel-derivable occasion (state/time/bounce/verify) as one of 12 neutral-templated `kind`s over one `composeNotification` hook |
-| P2 — surface validation | ✅ COMPLETE — validated via a throwaway probe consumer (public surface only; gitdone untouched). Bucket A 19/19 + Bucket C 7/7; only `reopenEvent`/`completeEvent` forced (this `0.9.0`) |
+| P1 — lift real modules + tests | ✅ COMPLETE — verify + inbound decoder, sequence routing, preprocessing, outbound, git-ledger storage, workflow + crypto engines, document notary, `create()`/`ingest()` assembly |
+| m7c — verification surface | ✅ COMPLETE — durable DKIM-key archive, offline `verify()`/`reverify()`, OTS anchoring, public `verify+`/`reverify+` email endpoints |
+| m7d — trigger pillar | ✅ COMPLETE — every kernel-derivable occasion as one of 12 neutral `kind`s over one `composeNotification` hook |
+| P2 — surface validation | ✅ COMPLETE — via a throwaway probe consumer (public surface only). Bucket A 19/19 + Bucket C 7/7; only `reopenEvent`/`completeEvent` forced |
 
-## Install
-
-```bash
-npm i mailproof   # 2 runtime deps (mailauth, mailparser); Node ≥ 22.5
-```
-
-Pure ESM (`import`, `"type": "module"`) + JSDoc, no consumer build step. The public surface ships JSDoc-generated, `strictNullChecks` checkJs-gated TypeScript declarations, so `import … from 'mailproof'` gives TS consumers a checked surface. The git ledger shells out to the `git` binary directly (no `simple-git`), so storage stays dependency-free.
-
-> **Pre-1.0:** the API can still change shape between `0.x` minors (SemVer 0.x). P2 (rebuilding gitdone on it) is the surface-validation phase.
-
-## Try the POC
-
-```bash
-npm run poc   # stdlib + git only: runs a 2-step workflow, prints the ledger + outbox, self-asserts
-```
-
-Requires Node ≥ 22.5. The POC has no dependencies; the lifted library has **2 runtime deps** — `mailauth` (DKIM/DMARC/ARC) and `mailparser` (MIME), both required because verifying/parsing untrusted mail is security-critical (a vetted library, never hand-rolled). Budget: ≤3.
+> **Pre-1.0:** the API can still change shape between `0.x` minors (SemVer 0.x).
 
 ## Docs
 
-Start at [`docs/README.md`](docs/README.md). The [PRD](docs/01-product/PRD.md) covers what mailproof is, who adopts it, and the NO-GO table; [DESIGN](docs/02-design/DESIGN.md) covers the extraction boundary (what's in mailproof vs. what stays gitdone policy), the planned public API, and the phasing; the [decisions log](docs/03-logs/decisions-log.md) records the design forks with rationale.
+Start at [`docs/README.md`](docs/README.md): the [PRD](docs/01-product/PRD.md) (what mailproof is, who adopts it, the NO-GO table), [DESIGN](docs/02-design/DESIGN.md) (the extraction boundary + planned API), [SPEC](docs/02-design/SPEC.md) (wire formats), and the [decisions log](docs/03-logs/decisions-log.md). For wiring an adopter, the **[Integration Guide](mailproof.context.md)** is the single source.
 
 ## License
 
-[Apache-2.0](LICENSE) © hamr0
+Apache License, Version 2.0 — see [LICENSE](LICENSE). © hamr0
