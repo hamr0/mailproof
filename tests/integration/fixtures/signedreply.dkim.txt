@@ -1,0 +1,3 @@
+gd202604._domainkey	IN	TXT	( "v=DKIM1; k=rsa; "
+	  "p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA+hiP+P+ovo7h9St7V80YSuavif7nprhZCNXgUZbgxUbFZWP45udqwcnRD58G6TrY9WzydZg3svE5MfK6qlOQuPp1bz8qz1Ejetb+7sfW3cG1OZGHDo4JoWvglNjkmJPEm8kZJ+whdnoSvVcrA9pN19dAUmpRYblgtHiYdVfYnJODujJJEO7x9j0Cr4MGbRkCQ4lcizc+Z6Vyjk"
+	  "LFDS1xjTmtt2CJu9qwevTi9lXTklelhkYbML1CzhhcW6Kads7PsDnQoZQKTt16jRBMdQjc1HWD7X7tU3xRSW6riXB6etqiOPj4Tlh+2vHamyQM5Sb3jEC/eozRZ3jOqgx7Y1ZGlQIDAQAB" )  ; ----- DKIM key gd202604 for git-done.com

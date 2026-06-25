@@ -1,0 +1,18 @@
+DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed; d=signedreply.com;
+ h=Content-Type: MIME-Version: Message-ID: Date: Subject: To: From;
+ q=dns/txt; s=gd202604; t=1782388800;
+ bh=59MyekgODmVDTpe7iddKo+IOkRtLeaiYQFx3IVfoGVs=;
+ b=vOIo7VZdMh62vmPcQ933cbERFoE2dbXLsM21OWyzOiu8aHLTzyLdFDrF3To+JM7pmqc0ETMS2
+ 7gYWHILWHf+QGJ1eLWAxawkbXs5DuCyA5eWmJheMIGMetGS5kPLIv98o5Z63vfB31TN3ZFhbnvq
+ ieW81a875K120oLiUL/uySkA2vrBuIgAGShyhGhx8pUmgW+S+ceEyc3dPbHC0fihqGMyCPyg/Nz
+ /lVk6vCv2xlb0CGOem9gb8MNO8h2YngXscsoyKBK2ZG/C8ZWJmVZ56OkkE2ph0zdiPs404Z7Zy4
+ dQXPdovgVEdXUqYyqqVh0fVZf5Lr1rXQI8vDhBGU4mCA==
+From: signedreply <noreply@signedreply.com>
+To: auditor@example.org
+Subject: mailproof DKIM interop fixture (benign, no token)
+Date: Thu, 25 Jun 2026 12:00:00 GMT
+Message-ID: <fixture.interop@signedreply.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Deterministic offline fixture for the DKIM-verify regression test.

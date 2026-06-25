@@ -1,0 +1,3 @@
+# live captured mail may carry sign-in tokens — never commit
+*.eml
+inbox/

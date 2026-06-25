@@ -13,3 +13,6 @@ poc/.data/
 
 # litectx local context index (sqlite + WAL) — never commit
 .litectx/
+
+# local friction telemetry — contains PII + cross-project session data, never publish
+.claude/friction/
