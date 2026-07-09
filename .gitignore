@@ -18,3 +18,8 @@ poc/.data/
 .claude/friction/
 # local agent memory — not published
 .claude/memory/
+
+# Agent / IDE scratch — never commit (per hamr0 LIBRARY_CONVENTIONS §7)
+.claude/
+.litectx/
+.idea/
