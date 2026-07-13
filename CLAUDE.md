@@ -43,3 +43,13 @@ This project follows the standards in **`.claude/memory/AGENT_RULES.md`** (POC-f
 
 ## Relationship to gitdone
 **`gitdone`** (`~/PycharmProjects/gitdone`) is the source of the extraction and mailproof's eventual first consumer — P2 refactors it to depend on mailproof, reimplementing its crypto modes as policy on mailproof's hooks.
+
+<!-- MEMORY:START -->
+@.claude/remember/MEMORY.md
+<!-- MEMORY:END -->
+
+<!-- AGENT_RULES:START -->
+Consult when building something new or adding a feature — a standards guide, not hot
+context like MEMORY.md above:
+@.claude/remember/AGENT_RULES.md
+<!-- AGENT_RULES:END -->
