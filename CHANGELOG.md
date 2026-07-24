@@ -23,6 +23,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.2] - 2026-07-24
+
+### Security
+
+- **Bumped `mailparser` 3.9.11 → 3.9.14, pulling in `linkify-it` 5.0.2 (transitive).** `linkify-it` 5.0.2 fixes a ReDoS in `mailto:` link parsing (user/pass parts now length-capped). This path is reachable: mailparser runs `linkify-it` over inbound message bodies, and mailproof parses *untrusted* inbound mail — so this is a real hardening of the decode surface, not a sending-only path. `nodemailer` stays pinned at 9.0.1 via the existing `overrides` (its CVE surface is message-sending, unreachable behind the Postfix/sendmail transport). `npm audit` clean; 317 tests + typecheck green. (Also refreshed the committed `package-lock.json`, which had drifted to `0.9.2` while `package.json` advanced through the 1.x line.)
+
 ### Fixed
 
 - **Publish workflow pinned to `npm@11` — npm 12.0.0's `npm publish --provenance` is broken.** The job ran `npm install -g npm@latest`, which started resolving to npm 12.0.0 (released 2026-07-09) on the Node 22 runner. npm 12's `libnpmpublish` provenance code does `require('sigstore')`, but the tarball bundles only the `@sigstore/*` scoped packages — so `--provenance` dies with `MODULE_NOT_FOUND` and the publish fails outright. npm@11 bundles `sigstore` and publishes fine. Pinned to the major rather than floating on `@latest`. Revisit once npm ships a provenance fix. CI only — no runtime or published-artifact change.
