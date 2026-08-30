@@ -23,6 +23,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.3] - 2026-08-30
+
+### Security
+
+- **Bumped `mailparser` 3.9.14 → 3.9.17 and the `undici` override 7.28.0 → 7.29.0 (Dependabot #2, #3).** mailparser 3.9.16 *bounds `linkify-it`'s scan of untrusted text bodies* — a reachable hardening, since `simpleParser` runs over inbound mail mailproof does not control; it also pulls `html-to-text` 10.0.1 → `deepmerge-ts` 8.0.2, which resolves the ancestor half of #2 (`deepmerge-ts` sits two levels under mailparser and mailproof never calls it directly — the kernel reads only `from`/`messageId`/`attachments` off `ParsedMail`, never the html-to-text-derived `text`). undici 7.29.0 carries one high and four medium advisories (Cache-Control parsing, blob `content-type` CRLF injection, retry `Content-Length` desync, cookie attribute injection); mailproof's exposure stays *nil* — undici is reachable only through mailauth's BIMI VMC fetch, which `parse.js` disables with `disableBimi: true` — so this is defence in depth for the override, not a live fix. `nodemailer` stays pinned at 9.0.1 (sending-only surface, unreachable behind the Postfix/sendmail transport). `npm audit` clean; 317 tests + typecheck green.
+
 ### Added
 
 - **Publish workflow gates on the types being usable BY AN ADOPTER, not just internally.** `npm run typecheck` (`tsc --noEmit`) checks the *source*; it cannot see the generated `.d.ts` as an adopter resolves it from inside `node_modules`, which is the one thing consumers actually get. The publish workflow now packs the tarball, installs it into a clean consumer project, and compiles a quickstart against it, so a release whose published types are broken cannot reach the registry.  The consumer pins `@types/node` to the major this package builds against instead of floating to the newest, so a stricter DefinitelyTyped release cannot turn the publish gate red for reasons unrelated to the commit being published. Verified locally: the quickstart compiles green against a packed tarball, and a deliberately broken dereference fails it. CI only — no runtime or published-artifact change.
