@@ -18,7 +18,8 @@
     "test": "node --test 'tests/unit/**/*.test.js' 'tests/integration/**/*.test.js'",
     "typecheck": "tsc --noEmit",
     "build:types": "tsc",
-    "prepublishOnly": "npm run build:types"
+    "prepublishOnly": "npm run build:types",
+    "check:lockfile": "node scripts/check-lockfile.mjs"
   },
   "keywords": [
     "email",
