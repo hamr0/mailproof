@@ -8,6 +8,7 @@ import crypto from 'node:crypto';
 import { generateCanonicalizedHeader } from 'mailauth/lib/dkim/header';
 import { dkimBody } from 'mailauth/lib/dkim/body';
 import { parseTags, canonPair, splitMessage } from './signed-headers.js';
+import { getAlignment } from 'mailauth/lib/tools';
 import { hashDocument } from './hash.js';
 
 /** @typedef {import('./types.js').MpRecord} MpRecord */
@@ -83,18 +84,48 @@ function verifySignature(sig, atMs, nowMs) {
 }
 
 /**
+ * The single author domain of the signed `From:` line, or null when the line is
+ * missing/ambiguous (a signature that does not cover From can never align).
+ * @param {RecordSignature} sig
+ * @returns {string | null}
+ */
+function signedFromDomain(sig) {
+  try {
+    const line = sig.signed_headers.map((x) => Buffer.from(x, 'base64').toString('binary')).find((l) => /^from\s*:/i.test(l));
+    if (!line) return null;
+    const addrs = line.slice(line.indexOf(':') + 1).match(/[^\s<>,;"()]+@[^\s<>,;"()]+/g) || [];
+    const domains = new Set(addrs.map((a) => a.slice(a.lastIndexOf('@') + 1).toLowerCase()));
+    return domains.size === 1 ? [...domains][0] : null;
+  } catch { return null; }
+}
+
+/**
+ * @param {RecordSignature} sig
+ * @param {string | undefined} d  The signature's d= domain.
+ * @param {boolean} strict  adkim=s from the stored DMARC record.
+ * @returns {boolean}
+ */
+function fromDomainAligned(sig, d, strict) {
+  const from = signedFromDomain(sig);
+  return Boolean(from && d && getAlignment(from, d, strict));
+}
+
+/**
  * Offline re-check of a stored record (JSON object or string). Pure and sync.
  * `at` defaults to `record.captured`; a missing or garbled `captured` fails
  * every signature closed. Never throws.
  * @param {MpRecord | string} recordOrJson
  * @param {{ at?: Date | number | string, now?: number }} [opts]
- * @returns {{ ok: boolean, at: string | null, signatures: Array<{ index: number, d: string | null, s: string | null, ok: boolean, why: string, expires: number | null, expired_now: boolean, partial_body: boolean }> }}
+ * @returns {{ ok: boolean, trust: 'verified' | 'unverified', basis: 'dkim' | 'none', passing: number[], at: string | null, signatures: Array<{ index: number, d: string | null, s: string | null, ok: boolean, aligned: boolean, why: string, expires: number | null, expired_now: boolean, partial_body: boolean }> }}
  */
 function verifyRecord(recordOrJson, opts = {}) {
   /** @type {MpRecord | null} */
   let rec = null;
   try { rec = typeof recordOrJson === 'string' ? JSON.parse(recordOrJson) : recordOrJson; } catch { rec = null; }
-  if (!rec || rec.v !== 2 || !Array.isArray(rec.signatures)) return { ok: false, at: null, signatures: [] };
+  if (!rec || rec.v !== 2 || !Array.isArray(rec.signatures)) {
+    return { ok: false, trust: 'unverified', basis: 'none', passing: [], at: null, signatures: [] };
+  }
+  const strict = /\badkim\s*=\s*s\b/i.test(String(rec.verdicts?.live?.dmarc?.rr || ''));
   const atMs = opts.at !== undefined ? toMs(opts.at) : toMs(rec.captured);
   const nowMs = opts.now ?? Date.now();
   const signatures = rec.signatures.map((sig, index) => {
@@ -103,11 +134,15 @@ function verifyRecord(recordOrJson, opts = {}) {
     try { tags = parseTags(Buffer.from(sig.dkim_signature, 'base64').toString('binary')); } catch { /* fail closed above */ }
     return {
       index, d: /** @type {any} */ (tags).d ?? null, s: /** @type {any} */ (tags).s ?? null,
-      ok: r.ok, why: r.why, expires: r.expires, expired_now: r.expired_now, partial_body: !!sig.partial_body,
+      ok: r.ok, aligned: r.ok && fromDomainAligned(sig, /** @type {any} */ (tags).d, strict), why: r.why, expires: r.expires, expired_now: r.expired_now, partial_body: !!sig.partial_body,
     };
   });
+  const passing = signatures.filter((x) => x.ok && x.aligned).map((x) => x.index);
   return {
     ok: signatures.some((s) => s.ok),
+    trust: passing.length ? 'verified' : 'unverified',
+    basis: passing.length ? 'dkim' : 'none',
+    passing,
     at: Number.isFinite(atMs) ? new Date(atMs).toISOString() : null,
     signatures,
   };
