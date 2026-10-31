@@ -38,4 +38,8 @@ jobs:
       - run: npm run check:lockfile
 
       # node --test over unit + integration; hermetic, token-free.
+      # Expect "# skipped 2": the two real-`ots` tests in
+      # tests/integration/ots.test.js skip when the OpenTimestamps client is not
+      # on PATH. Deliberately not installed here (no PyPI download in the gate);
+      # they run locally where `ots` is installed. Any other skip is a regression.
       - run: npm test
