@@ -59,4 +59,32 @@
  * @property {string} [lookup]
  */
 
+/**
+ * One stored DKIM signature (SPEC Part B1).
+ * @typedef {Object} RecordSignature
+ * @property {string} dkim_signature  Base64 of the raw DKIM-Signature header line.
+ * @property {Record<string, string | null>} tags  Informational copy of d,s,a,c,h,bh,l,t,x.
+ * @property {string[]} signed_headers  Base64 raw lines, in hashing order.
+ * @property {{ k: string, p: string } | null} key
+ * @property {string | null} key_error
+ * @property {string | null} key_file
+ * @property {boolean} partial_body  l= present and shorter than the canonical body.
+ */
+
+/**
+ * A stored record (SPEC Part B1). The verdict, message and ots shapes are open
+ * here and pinned by SPEC.
+ * @typedef {Object} MpRecord
+ * @property {number} v
+ * @property {string} id
+ * @property {string} captured
+ * @property {'in' | 'out'} direction
+ * @property {string} source
+ * @property {Record<string, any>} message
+ * @property {Array<{ filename: string | null, size: number, sha256: string }>} attachments
+ * @property {RecordSignature[]} signatures
+ * @property {Record<string, any>} verdicts
+ * @property {Record<string, any> | null} ots
+ */
+
 export {};
