@@ -7,8 +7,9 @@ import { authenticateMessage, parseMessage } from './parse.js';
 import { fetchDkimKey } from './keys.js';
 import { splitMessage, parseTags } from './signed-headers.js';
 import { buildSignatureEntry } from './record.js';
-import { buildLive, buildPortable } from './verdict.js';
-import { TRAIL_NAME_RE, commitRecord, readRecord, listIds } from './trail.js';
+import { buildLive, buildPortable, engine } from './verdict.js';
+import { verifyRecord, matchBodyRecord, matchFileRecord } from './recheck.js';
+import { TRAIL_NAME_RE, RECORD_ID_RE, commitRecord, readRecord, listIds } from './trail.js';
 
 /** @typedef {import('./types.js').MpRecord} MpRecord */
 /** @typedef {import('./types.js').Envelope} Envelope */
@@ -38,7 +39,11 @@ class Mailproof {
     this.otsBin = opts.otsBin || null;
     this.now = opts.now || (() => new Date());
     this.trustedSealers = opts.trustedSealers || [];
+    this.check = this.check.bind(this);
     this.record = this.record.bind(this);
+    this.verify = this.verify.bind(this);
+    this.matchBody = this.matchBody.bind(this);
+    this.matchFile = this.matchFile.bind(this);
     this.get = this.get.bind(this);
     this.list = this.list.bind(this);
   }
@@ -114,6 +119,39 @@ class Mailproof {
   }
 
   /**
+   * Resolve a record argument: a record object, its JSON text, or a trail id.
+   * @param {MpRecord | string} recordOrId
+   * @returns {Promise<MpRecord | null>}
+   */
+  async _resolve(recordOrId) {
+    if (typeof recordOrId === 'string') {
+      if (RECORD_ID_RE.test(recordOrId)) return this.get(recordOrId);
+      try { return JSON.parse(recordOrId); } catch { return null; }
+    }
+    return recordOrId && typeof recordOrId === 'object' ? recordOrId : null;
+  }
+
+  /**
+   * One-off check of a message (e.g. a saved .eml): both verdicts, nothing written.
+   * Judged as of now, so a signature whose key has left DNS shows up as
+   * `key_errors` and an `unverified` portable verdict.
+   * @param {Buffer | string} raw
+   * @param {{ envelope?: Envelope }} [opts]
+   * @returns {Promise<{ live: Record<string, any>, portable: Record<string, any>, signatures: number, unsigned: boolean, partial_body: boolean, key_errors: string[] }>}
+   */
+  async check(raw, { envelope } = {}) {
+    const { record } = await this._build(raw, { direction: 'in', source: 'check', envelope });
+    return {
+      live: record.verdicts.live,
+      portable: record.verdicts.portable,
+      signatures: record.signatures.length,
+      unsigned: record.signatures.length === 0,
+      partial_body: record.signatures.some((x) => x.partial_body),
+      key_errors: record.signatures.filter((x) => x.key_error).map((x) => /** @type {string} */ (x.key_error)),
+    };
+  }
+
+  /**
    * Record a message: verdicts + signed-header record + key archive + one git commit.
    * @param {Buffer | string} raw  The raw RFC-822 bytes.
    * @param {{ direction: 'in' | 'out', source?: string, envelope?: Envelope }} ctx
@@ -128,6 +166,46 @@ class Mailproof {
     return res.duplicate
       ? { id: record.id, duplicate: true, commit: res.commit }
       : { id: record.id, duplicate: false, commit: res.commit, record };
+  }
+
+  /**
+   * Offline re-check from the record alone (no DNS, no raw email). `at`
+   * defaults to the record's capture time; a bad capture time fails closed.
+   * `trust` is the portable level recomputed now, never read from the stored verdict.
+   * @param {MpRecord | string} recordOrId  A record, its JSON, or a trail id.
+   * @param {{ at?: Date | number | string }} [opts]
+   * @returns {Promise<{ ok: boolean, trust: 'verified' | 'unverified', basis: 'dkim' | 'none', at: string | null, engine: { rules: string, mailauth: string }, signatures: Array<Record<string, any>>, error?: string }>}
+   */
+  async verify(recordOrId, { at } = {}) {
+    const rec = await this._resolve(recordOrId);
+    if (!rec) return { ok: false, trust: 'unverified', basis: 'none', at: null, engine: engine(), signatures: [], error: 'record not found' };
+    const v = verifyRecord(rec, at === undefined ? {} : { at });
+    return { ok: v.ok, trust: v.trust, basis: v.basis, at: v.at, engine: engine(), signatures: v.signatures };
+  }
+
+  /**
+   * Body-match: hash a raw email's body against the record's `bh=`. A match
+   * that also verifies at capture time is a full proof (`full`).
+   * @param {MpRecord | string} recordOrId
+   * @param {Buffer | string} raw
+   * @returns {Promise<{ match: boolean, full: boolean, signatures: Array<{ index: number, d: string | null, s: string | null, match: boolean }> }>}
+   */
+  async matchBody(recordOrId, raw) {
+    const rec = await this._resolve(recordOrId);
+    if (!rec) return { match: false, full: false, signatures: [] };
+    return matchBodyRecord(rec, raw);
+  }
+
+  /**
+   * File-match: is this file one of the record's attachments (by sha256)?
+   * @param {MpRecord | string} recordOrId
+   * @param {Buffer | Uint8Array | string} bytes
+   * @returns {Promise<{ match: boolean, attachment: { index: number, filename: string | null, size: number, sha256: string } | null }>}
+   */
+  async matchFile(recordOrId, bytes) {
+    const rec = await this._resolve(recordOrId);
+    if (!rec) return { match: false, attachment: null };
+    return matchFileRecord(rec, bytes);
   }
 
   /**
