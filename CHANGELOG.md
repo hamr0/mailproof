@@ -23,6 +23,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+mailproof v2 (planned 2.0.0): a new, smaller product. 1.x is frozen at tag `v1.4.0`. See `docs/product/PRD.md`.
+
+### Added
+- `Mailproof` class (bound methods): `check`, `record`, `verify`, `matchBody`, `matchFile`, `list`, `get`, plus root exports `verifyRecord`, `hashDocument`, `TRUST_LEVELS`, `RULES_VERSION`.
+- The signed-header record (SPEC Part B): the exact headers each DKIM signature covers, the signature, the archived key, both verdicts, attachment hashes, threading ids. Never the body or the raw email.
+- Two verdicts per email, each stamped with the engine/rules version: **live** (DKIM + DMARC + SPF + ARC) and **portable** (recomputable offline from the record alone, DKIM only).
+- Offline re-check from the record alone; `x=`/`t=` judged at capture time; a bad capture time fails closed.
+- One git repo per trail, one commit per record, a key archive deduped per domain+selector+key; optional OpenTimestamps stamp (off by default).
+
+### Changed (breaking)
+- Root export is now the proof core. `create()`/`ingest()` and the v1 barrel are no longer exported; there is no compatibility layer.
+- Trust rule: `verified` = aligned DKIM pass AND DMARC pass **if the domain publishes DMARC**. A domain with no DMARC record is now `verified` on an aligned DKIM pass (v1 said `unverified`). DMARC temperror/permerror fails closed.
+- `forwarded` can be restricted to ARC chains sealed by `trustedSealers`.
+
 ## [1.4.0] - 2026-10-31
 
 Minor, not patch: the DKIM/DMARC engine moves three majors (mailauth 4 → 8), and its stricter DMARC evaluation can change the **trust level** `ingest()`/`verify()` assign to some senders. The public API, types, and Node floor (≥ 22.5) are unchanged.

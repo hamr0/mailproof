@@ -1,7 +1,7 @@
 {
   "name": "mailproof",
   "version": "1.4.0",
-  "description": "Email-native multi-party coordination kernel: turns a promise made over email into proof. DKIM/DMARC-verified replies, a tamper-evident git ledger, workflow sequencing, and email triggers. Extracted from gitdone.",
+  "description": "Re-checkable proof of an email: the signed headers, never the body, recorded in a local git trail and verifiable offline forever. Two verdicts (live, portable), DKIM key archive, optional OpenTimestamps.",
   "type": "module",
   "main": "src/index.js",
   "types": "./types/index.d.ts",
@@ -14,7 +14,6 @@
     "./package.json": "./package.json"
   },
   "scripts": {
-    "poc": "node poc/pipeline.cjs",
     "test": "node --test 'tests/unit/**/*.test.js' 'tests/integration/**/*.test.js'",
     "typecheck": "tsc --noEmit",
     "build:types": "tsc",
@@ -25,13 +24,11 @@
     "email",
     "dkim",
     "dmarc",
+    "proof",
     "git",
-    "ledger",
     "audit-trail",
     "tamper-evident",
-    "workflow",
-    "coordination",
-    "multi-party",
+    "opentimestamps",
     "verification",
     "vanilla-js",
     "nodejs"
@@ -54,13 +51,12 @@
     "node": ">=22.5"
   },
   "files": [
-    "src/",
+    "src/index.js",
+    "src/proof/",
     "types/",
     "README.md",
     "mailproof.context.md",
-    "OPS.md",
     "CHANGELOG.md",
-    "config.example.env",
     "LICENSE",
     "NOTICE"
   ],
