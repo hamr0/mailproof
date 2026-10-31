@@ -1,38 +1,45 @@
+# Push / PR gate: npm ci -> typecheck -> build:types -> check:lockfile -> test.
+# Follows the suite CI template (CI_TEMPLATE.md, core job + JS-library variant).
+# No lint step (tsc checkJs + strictNullChecks covers it). Tests are hermetic and
+# token-free: each builds its own tmp git repos with the runner's `git`, so no
+# system deps and no history (default fetch-depth). publish.yml re-runs this gate.
 name: CI
 
-# Type-check + tests on every push and PR. The publish workflow re-runs the
-# tests before releasing; this is the fast feedback gate for ordinary commits.
 on:
   push:
-    branches: [main]
   pull_request:
 
 permissions:
   contents: read
 
 jobs:
-  check:
+  build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
         with:
           node-version: 22
-      - name: Install dev dependencies
-        run: npm ci
+          cache: npm
+      - run: npm ci
 
-      # Check the JSDoc types against the implementation (checkJs +
-      # strictNullChecks). A wrong call, argument shape, or null-safety bug
-      # inside src/ fails here — the gate that makes the JSDoc a checked contract.
-      - name: Typecheck
-        run: npm run typecheck
+      # tsc --noEmit (checkJs + strictNullChecks): a JSDoc/code mismatch blocks merge.
+      - run: npm run typecheck
 
       # The shipped .d.ts are generated from the JSDoc and never committed
-      # (git-ignored, built on publish via prepublishOnly). Build them here so
-      # CI fails if the declaration emit itself errors. No "is it current?"
-      # check is needed — there's no committed artifact that can drift.
-      - name: Build types
-        run: npm run build:types
+      # (git-ignored, built on publish via prepublishOnly). Build them here so a
+      # declaration-emit error fails the PR, not the release.
+      - run: npm run build:types
 
-      - name: Test
-        run: npm test
+      # package-lock.json's own version must match package.json. `npm ci` only
+      # checks the dependency entries, never this field, so a version bump made
+      # without an install drifts silently. Also gated in publish.yml; run here
+      # so the drift fails the PR instead of the release.
+      - run: npm run check:lockfile
+
+      # node --test over unit + integration; hermetic, token-free.
+      # Expect "# skipped 2": the two real-`ots` tests in
+      # tests/integration/ots.test.js skip when the OpenTimestamps client is not
+      # on PATH. Deliberately not installed here (no PyPI download in the gate);
+      # they run locally where `ots` is installed. Any other skip is a regression.
+      - run: npm test
