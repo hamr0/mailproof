@@ -39,9 +39,9 @@ const result = await core.ingest(rawRfc822Buffer, envelope);
 //     completedStep, signatureCount, eventComplete, notified }
 ```
 
-This is the dense reference. For the *why*, see `docs/01-product/PRD.md`; for
-the wire formats, `docs/02-design/SPEC.md`; for the extraction boundary,
-`docs/02-design/DESIGN.md`.
+This is the dense reference. For the *why*, see `docs/product/PRD.md`; for
+the wire formats, `docs/product/SPEC.md`; for the extraction boundary,
+`docs/archive/DESIGN.md`.
 
 ## What mailproof is and is NOT
 

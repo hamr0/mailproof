@@ -145,7 +145,7 @@ Same `crypto` shape scales to a **petition** (`open: true, threshold: 100` — a
 
 ## Docs
 
-Start at [`docs/README.md`](docs/README.md): the [PRD](docs/01-product/PRD.md) (what mailproof is, who adopts it, the NO-GO table), [DESIGN](docs/02-design/DESIGN.md) (the extraction boundary + planned API), [SPEC](docs/02-design/SPEC.md) (wire formats), and the [decisions log](docs/03-logs/decisions-log.md). For wiring an adopter, the **[Integration Guide](mailproof.context.md)** is the single source.
+Start at [`docs/README.md`](docs/README.md): the [PRD](docs/product/PRD.md) (what mailproof is, who adopts it, the NO-GO table), [DESIGN](docs/archive/DESIGN.md) (the extraction boundary + planned API), [SPEC](docs/product/SPEC.md) (wire formats), and the [decisions log](docs/product/decisions-log.md). For wiring an adopter, the **[Integration Guide](mailproof.context.md)** is the single source.
 
 ## License
 
