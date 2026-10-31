@@ -36,11 +36,11 @@
                   "dmarc": { "result": "", "published": false, "policy": null, "rr": null },
                   "spf": { "result": "" } | null, "arc": { "result": "", "sealers": [] } | null },
     "portable": { "trust": "verified|unverified", "engine": { }, "basis": "dkim|none", "passing": [0] }
-  },
-  "ots": { "proof_file": "records/<id>.json.ots", "state": "pending" } | null
+  }
 }
 ```
 
+- OpenTimestamps state is not a record field (the stamp hashes the record file's own bytes): the proof is the sibling file `records/<id>.json.ots`, present only when OTS was on.
 - Never the body, never the raw email. No `Subject` outside `signed_headers`.
 - Serialisation: fixed key order, 2-space indent, trailing newline (stable bytes, stable OTS stamps).
 - Signed header lines are byte-exact (base64). Names in `h=` with no matching header are oversigned and add nothing.

@@ -8,6 +8,7 @@ import { fetchDkimKey } from './keys.js';
 import { splitMessage, parseTags } from './signed-headers.js';
 import { buildSignatureEntry } from './record.js';
 import { buildLive, buildPortable, engine } from './verdict.js';
+import { createOts } from './ots.js';
 import { verifyRecord, matchBodyRecord, matchFileRecord } from './recheck.js';
 import { TRAIL_NAME_RE, RECORD_ID_RE, commitRecord, readRecord, listIds } from './trail.js';
 
@@ -37,6 +38,7 @@ class Mailproof {
     this.root = path.resolve(opts.trailDir, trail);
     this.resolver = opts.resolver;
     this.otsBin = opts.otsBin || null;
+    this.ots = this.otsBin ? createOts({ otsBin: this.otsBin }) : null;
     this.now = opts.now || (() => new Date());
     this.trustedSealers = opts.trustedSealers || [];
     this.check = this.check.bind(this);
@@ -155,17 +157,28 @@ class Mailproof {
    * Record a message: verdicts + signed-header record + key archive + one git commit.
    * @param {Buffer | string} raw  The raw RFC-822 bytes.
    * @param {{ direction: 'in' | 'out', source?: string, envelope?: Envelope }} ctx
-   * @returns {Promise<{ id: string, duplicate: boolean, commit: string, record?: MpRecord }>}
+   * @returns {Promise<{ id: string, duplicate: boolean, commit: string, record?: MpRecord, ots?: 'off' | 'pending' | { error: string } }>}
+   *   `ots`: 'off' unless `otsBin` is set; 'pending' once the stamp is committed beside the record; `{ error }`
+   *   when stamping failed (the record is committed regardless: accept-with-flag).
    */
   async record(raw, ctx) {
     if (!ctx || (ctx.direction !== 'in' && ctx.direction !== 'out')) throw new Error("record: ctx.direction must be 'in' or 'out'");
     const source = typeof ctx.source === 'string' && ctx.source ? ctx.source.slice(0, 200) : 'api';
     const { record, keyFiles } = await this._build(raw, { direction: ctx.direction, source, envelope: ctx.envelope });
     const message = `record ${record.id.slice(0, 12)} ${record.direction} ${record.verdicts.live.trust}/${record.verdicts.portable.trust}`;
-    const res = await commitRecord(this.root, this.trail, { record, keyFiles, message, now: this.now });
+    const ots = this.ots;
+    /** @type {'off' | 'pending' | { error: string }} */
+    let otsState = ots ? { error: 'not attempted' } : 'off';
+    const afterWrite = ots ? async (/** @type {string} */ recordAbs) => {
+      const st = await ots.stampFile(recordAbs);
+      if ('error' in st) { otsState = { error: st.error }; return []; }
+      otsState = 'pending';
+      return [`records/${record.id}.json.ots`];
+    } : undefined;
+    const res = await commitRecord(this.root, this.trail, { record, keyFiles, message, now: this.now, afterWrite });
     return res.duplicate
       ? { id: record.id, duplicate: true, commit: res.commit }
-      : { id: record.id, duplicate: false, commit: res.commit, record };
+      : { id: record.id, duplicate: false, commit: res.commit, record, ots: otsState };
   }
 
   /**
