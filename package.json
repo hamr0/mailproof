@@ -11,14 +11,17 @@
       "import": "./src/index.js",
       "default": "./src/index.js"
     },
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./primitives.json": "./primitives.json"
   },
   "scripts": {
-    "test": "node --test 'tests/unit/**/*.test.js' 'tests/integration/**/*.test.js'",
+    "test": "node --test 'tests/unit/**/*.test.js' 'tests/integration/**/*.test.js' tests/primitives-core.test.mjs tests/primitives-completeness.test.js",
     "typecheck": "tsc --noEmit",
     "build:types": "tsc",
-    "prepublishOnly": "npm run build:types",
-    "check:lockfile": "node scripts/check-lockfile.mjs"
+    "prepublishOnly": "npm run build:primitives && npm run build:types",
+    "check:lockfile": "node scripts/check-lockfile.mjs",
+    "build:primitives": "node scripts/gen-primitives.mjs",
+    "check:primitives": "node scripts/gen-primitives.mjs --check"
   },
   "keywords": [
     "email",
@@ -53,6 +56,7 @@
   "files": [
     "src/index.js",
     "src/proof/",
+    "primitives.json",
     "types/",
     "README.md",
     "mailproof.context.md",
@@ -72,5 +76,6 @@
     "undici": "^7.30.1",
     "nodemailer": "^10.3.1",
     "joi": "^18.3.1"
-  }
+  },
+  "primitives": "./primitives.json"
 }

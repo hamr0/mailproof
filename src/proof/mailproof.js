@@ -29,7 +29,18 @@ import { TRAIL_NAME_RE, RECORD_ID_RE, commitRecord, readRecord, listIds } from '
 const sha256hex = (raw) => crypto.createHash('sha256').update(raw).digest('hex');
 
 class Mailproof {
-  /** @param {MailproofOptions} opts */
+  /**
+   * @param {MailproofOptions} opts
+   * @signature new Mailproof({ trailDir: string, trail?: string, resolver?: Function, otsBin?: string|null, now?: () => Date, trustedSealers?: string[] })
+   * @when Start here. Construct one per trail (a git repo of records under `trailDir`), then `record()` each email you want a re-checkable proof of and `verify()` it later, offline. All methods are bound, so `const { verify } = mp` works.
+   * @category proof
+   * @fails Throws at construction when `trailDir` is missing or `trail` is not `[a-z0-9][a-z0-9_-]{0,63}`. Nothing touches the disk until the first `record()`.
+   * @example
+   * import { Mailproof } from 'mailproof';
+   * const mp = new Mailproof({ trailDir: './trails' });
+   * const { id } = await mp.record(rawEmailBytes, { direction: 'in', source: 'imap' });
+   * const v = await mp.verify(id);   // v.ok, v.trust
+   */
   constructor(opts) {
     if (!opts || typeof opts.trailDir !== 'string' || !opts.trailDir) throw new Error('Mailproof: trailDir required');
     const trail = opts.trail ?? 'default';
@@ -140,6 +151,14 @@ class Mailproof {
    * @param {Buffer | string} raw
    * @param {{ envelope?: Envelope }} [opts]
    * @returns {Promise<{ live: Record<string, any>, portable: Record<string, any>, signatures: number, unsigned: boolean, partial_body: boolean, key_errors: string[] }>}
+   * @name Mailproof#check
+   * @when Use for a one-off look at an email you were handed (a saved .eml), when you do NOT want it recorded. It returns both verdicts and writes nothing. Use `record()` instead to keep a proof.
+   * @category proof
+   * @signature mp.check(raw: Buffer|string, opts?: { envelope?: Envelope }) => Promise<{ live, portable, signatures: number, unsigned: boolean, partial_body: boolean, key_errors: string[] }>
+   * @fails Rejects on an empty message. Unsigned or unverifiable mail does not throw: it comes back `unverified`. Judged as of now, so a key that has left DNS appears in `key_errors` and the portable verdict is `unverified`.
+   * @example
+   * const mp = new Mailproof({ trailDir: './trails' });
+   * const c = await mp.check(fs.readFileSync('mail.eml'));   // c.live.trust, c.portable.trust
    */
   async check(raw, { envelope } = {}) {
     const { record } = await this._build(raw, { direction: 'in', source: 'check', envelope });
@@ -160,6 +179,13 @@ class Mailproof {
    * @returns {Promise<{ id: string, duplicate: boolean, commit: string, record?: MpRecord, ots?: 'off' | 'pending' | { error: string } }>}
    *   `ots`: 'off' unless `otsBin` is set; 'pending' once the stamp is committed beside the record; `{ error }`
    *   when stamping failed (the record is committed regardless: accept-with-flag).
+   * @name Mailproof#record
+   * @when Use to keep a proof of an email: it stores the signed headers, the signature, the archived key and both verdicts as one git commit, and never the body. Call it for every email you may need to prove later, including ones that fail verification (they are recorded as `unverified`).
+   * @category proof
+   * @signature mp.record(raw: Buffer|string, ctx: { direction: 'in'|'out', source?: string, envelope?: Envelope }) => Promise<{ id, duplicate, commit, record?, ots? }>
+   * @fails Throws on an empty message, a `direction` other than 'in'/'out', or a git failure (the tree is rolled back). Never throws because the mail is unsigned or fails verification. Recording the same email twice returns `duplicate: true` and writes nothing. An OTS failure is reported in `ots`, not thrown.
+   * @example
+   * const { id, duplicate } = await mp.record(fs.readFileSync('mail.eml'), { direction: 'in', source: 'file' });
    */
   async record(raw, ctx) {
     if (!ctx || (ctx.direction !== 'in' && ctx.direction !== 'out')) throw new Error("record: ctx.direction must be 'in' or 'out'");
@@ -188,6 +214,14 @@ class Mailproof {
    * @param {MpRecord | string} recordOrId  A record, its JSON, or a trail id.
    * @param {{ at?: Date | number | string }} [opts]
    * @returns {Promise<{ ok: boolean, trust: 'verified' | 'unverified', basis: 'dkim' | 'none', at: string | null, engine: { rules: string, mailauth: string }, signatures: Array<Record<string, any>>, error?: string }>}
+   * @name Mailproof#verify
+   * @when Use to re-check a recorded email later, offline, from the record alone (no DNS, no raw email). It judges `x=`/`t=` as of capture time, so a valid record stays valid after the signature's expiry. Pass `at` only to ask "was it valid at T?".
+   * @category verify
+   * @signature mp.verify(recordOrId: Record|string, opts?: { at?: Date|number|string }) => Promise<{ ok, trust, basis, at, engine, signatures[] }>
+   * @fails Never throws. An unknown id, junk input, a tampered record or a missing or garbled `captured` comes back `ok: false` (fail closed). `ok` means at least one signature verifies; `trust` is the portable level recomputed now.
+   * @example
+   * const v = await mp.verify(id);
+   * if (v.ok && v.trust === 'verified') console.log('signature holds against the archived key');
    */
   async verify(recordOrId, { at } = {}) {
     const rec = await this._resolve(recordOrId);
@@ -202,6 +236,13 @@ class Mailproof {
    * @param {MpRecord | string} recordOrId
    * @param {Buffer | string} raw
    * @returns {Promise<{ match: boolean, full: boolean, signatures: Array<{ index: number, d: string | null, s: string | null, match: boolean }> }>}
+   * @name Mailproof#matchBody
+   * @when Use when the original email turns up later (a mailbox copy, an .eml) and you want to know it is the one the record signed. A match upgrades the record to a full proof (`full`).
+   * @category verify
+   * @signature mp.matchBody(recordOrId: Record|string, raw: Buffer|string) => Promise<{ match, full, signatures[] }>
+   * @fails Never throws. Returns `match: false` for a different email, an unknown record or a body altered in transit (mail exported by some clients is altered; `verify()` can still pass in that case).
+   * @example
+   * const m = await mp.matchBody(id, fs.readFileSync('mail.eml'));   // m.full
    */
   async matchBody(recordOrId, raw) {
     const rec = await this._resolve(recordOrId);
@@ -214,6 +255,13 @@ class Mailproof {
    * @param {MpRecord | string} recordOrId
    * @param {Buffer | Uint8Array | string} bytes
    * @returns {Promise<{ match: boolean, attachment: { index: number, filename: string | null, size: number, sha256: string } | null }>}
+   * @name Mailproof#matchFile
+   * @when Use to check that a file is the attachment recorded at capture time (its sha256 matches). The hash is self-recorded and timestamped; it is tied to the DKIM signature only if you also produce the body (`matchBody`).
+   * @category verify
+   * @signature mp.matchFile(recordOrId: Record|string, bytes: Buffer|Uint8Array|string) => Promise<{ match, attachment }>
+   * @fails Never throws. `match: false` for any other bytes or an unknown record.
+   * @example
+   * const f = await mp.matchFile(id, fs.readFileSync('contract.pdf'));   // f.attachment.filename
    */
   async matchFile(recordOrId, bytes) {
     const rec = await this._resolve(recordOrId);
@@ -225,6 +273,13 @@ class Mailproof {
    * Read one record from the trail.
    * @param {string} id  32 hex chars.
    * @returns {Promise<MpRecord | null>}
+   * @name Mailproof#get
+   * @when Use to read one stored record (to export it, or to hand to `verifyRecord`). Use `list()` first if you do not have an id.
+   * @category read
+   * @signature mp.get(id: string) => Promise<Record|null>
+   * @fails Never throws. Returns null for an unknown id or anything that is not 32 hex characters.
+   * @example
+   * const rec = await mp.get(id);
    */
   async get(id) {
     return readRecord(this.root, id);
@@ -234,6 +289,13 @@ class Mailproof {
    * List records, newest capture first.
    * @param {{ limit?: number, direction?: 'in' | 'out' }} [opts]
    * @returns {Promise<Array<{ id: string, captured: string, direction: string, live: string, portable: string, message_id: string | null }>>}
+   * @name Mailproof#list
+   * @when Use to find recorded emails, newest capture first, optionally by direction. It returns summaries; use `get(id)` for the full record.
+   * @category read
+   * @signature mp.list(opts?: { limit?: number, direction?: 'in'|'out' }) => Promise<Array<{ id, captured, direction, live, portable, message_id }>>
+   * @fails Never throws. An empty or missing trail returns `[]`.
+   * @example
+   * const recent = await mp.list({ limit: 10 });
    */
   async list({ limit, direction } = {}) {
     const recs = (await Promise.all((await listIds(this.root)).map((id) => readRecord(this.root, id))))

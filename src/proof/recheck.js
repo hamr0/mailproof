@@ -117,6 +117,13 @@ function fromDomainAligned(sig, d, strict) {
  * @param {MpRecord | string} recordOrJson
  * @param {{ at?: Date | number | string, now?: number }} [opts]
  * @returns {{ ok: boolean, trust: 'verified' | 'unverified', basis: 'dkim' | 'none', passing: number[], at: string | null, signatures: Array<{ index: number, d: string | null, s: string | null, ok: boolean, aligned: boolean, why: string, expires: number | null, expired_now: boolean, partial_body: boolean }> }}
+ * @when Use to verify an exported record with no trail and no instance: a pure, synchronous, offline re-check from the record alone. Reach for `mp.verify(id)` instead when the record lives in your trail.
+ * @category verify
+ * @signature verifyRecord(record: Record|string, opts?: { at?: Date|number|string, now?: number }) => { ok, trust, basis, passing, at, signatures[] }
+ * @fails Never throws. A record that is not version 2, junk JSON, a tampered signature, a swapped key or a missing or garbled `captured` returns `ok: false`.
+ * @example
+ * import { verifyRecord } from 'mailproof';
+ * const v = verifyRecord(JSON.parse(fs.readFileSync('record.json', 'utf8')));
  */
 function verifyRecord(recordOrJson, opts = {}) {
   /** @type {MpRecord | null} */

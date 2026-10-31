@@ -1,4 +1,4 @@
-# Push / PR gate: npm ci -> typecheck -> build:types -> check:lockfile -> test.
+# Push / PR gate: npm ci -> typecheck -> check:primitives -> build:types -> check:lockfile -> test.
 # Follows the suite CI template (CI_TEMPLATE.md, core job + JS-library variant).
 # No lint step (tsc checkJs + strictNullChecks covers it). Tests are hermetic and
 # token-free: each builds its own tmp git repos with the runner's `git`, so no
@@ -25,6 +25,10 @@ jobs:
 
       # tsc --noEmit (checkJs + strictNullChecks): a JSDoc/code mismatch blocks merge.
       - run: npm run typecheck
+
+      # primitives.json (the agent menu) is generated from the JSDoc @when/@fails/
+      # @example tags; the committed file must match the source.
+      - run: npm run check:primitives
 
       # The shipped .d.ts are generated from the JSDoc and never committed
       # (git-ignored, built on publish via prepublishOnly). Build them here so a
