@@ -106,7 +106,7 @@ salted hashes only" posture for headers**. Erasure is whole-trail deletion.
 **Technical fact (verified):** mailauth 8 exports its DKIM header canonicalization
 (`mailauth/lib/dkim/header`, confirmed in the installed mailauth 8.0.4 `package.json` exports), so the
 header-only re-check can use vetted canonicalization plus Node's built-in crypto. No hand-rolled
-crypto. Whether it works end to end on real mail is **unproven**; that is M0's POC.
+crypto. M0's POC shows it works end to end on real Gmail mail (GO, [findings](findings.md) F1/F6).
 
 ## 5. Two-party transactions
 
@@ -116,8 +116,9 @@ tags.
 
 Honest limits for "I sent you this":
 
-- My own sent record is self-recorded and timestamped. A provider's Sent-folder copy is probably saved
-  without a DKIM signature, so it would be `unverified` (M1 POC checks).
+- My own sent record is self-recorded and timestamped. A provider's Sent-folder copy is saved
+  without a DKIM signature (msn.com Sent copies: 0 of 4 signed, [F3](findings.md)), so it is `unverified`
+  (a Gmail-address Sent copy is checked in M1).
 - The strong proof is the counterparty's **signed reply** that references my Message-ID.
 - If they never reply, only my own timestamped record exists.
 - Only self-hosting (M5) gives signed copies of what I send.
@@ -129,6 +130,8 @@ archived key), **passes on real mail from the owner's Gmail account and fails wh
 tampered with.** Real, uncrafted mail only: AGENT_RULES requires a test that can fail.
 
 If it fails on real mail: stop and rethink the record format.
+
+**Status (2026-10-31): GO**, see [findings](findings.md) F1/F2/F6. Expiry (`x=`/`t=`) is judged as of capture time, not now (F2).
 
 ## 7. Modules (sharp near, loose far)
 
@@ -150,7 +153,7 @@ Raw email bytes in (plus capture context: direction, source, time) →
 
 Also sets up the agent menu (§8).
 
-**POC:** the go/no-go in §6.
+**POC:** the go/no-go in §6. Done: GO ([findings](findings.md) F1).
 
 API sketch (**sketch; names finalised during M0**). A class instance with bound methods, so
 `const { verify } = mp` works:
@@ -177,7 +180,8 @@ IMAP needs a **third runtime dependency** (candidate: `imapflow`, same author as
 It must pass the AGENT_RULES External Dependency Checklist, and it reaches the ≤3 runtime-dep ceiling.
 
 **POC:** fetched mail still verifies; whether Gmail's Sent copies carry a DKIM signature; which Gmail
-login method works.
+login method works. Already known: msn.com Sent copies are unsigned ([F3](findings.md)); Outlook/Exchange mail
+exported via Thunderbird has altered bodies, so M1 is Gmail-first (F4).
 
 ### M2 — Reading replies (specified: goals and design)
 

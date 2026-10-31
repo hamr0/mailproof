@@ -17,7 +17,7 @@ counts and section ranges.
 
 | Tier | Path | What lives here |
 |------|------|-----------------|
-| **Product** | [`product/`](product/) | The **v2 PRD** (problem, trust rule, record format, go/no-go, modules, out of scope), **SPEC.md** (wire formats; still describes **v1**, superseded once the v2 M0 record format is specified), and the **decisions log** (design forks, dated, with rationale) |
+| **Product** | [`product/`](product/) | The **v2 PRD** (problem, trust rule, record format, go/no-go, modules, out of scope), **SPEC.md** (wire formats; still describes **v1**, superseded once the v2 M0 record format is specified), the **decisions log** (design forks, dated, with rationale), and **findings.md** (POC/test results with evidence) |
 | **Archive** | [`archive/`](archive/) | v1 history: the v1 PRD in [`archive/v1/`](archive/v1/) (multi-party kernel), [`DESIGN.md`](archive/DESIGN.md) (extraction boundary), and the [P2 gitdone boundary audit](archive/audit-p2-step1-gitdone-boundary.md) |
 
 Further tiers (process, ops) and docs (GUIDE) appear as they earn their place.
@@ -33,6 +33,8 @@ the npm package.
    [`archive/DESIGN.md`](archive/DESIGN.md) and
    [`product/SPEC.md`](product/SPEC.md) (v1; being superseded).
 3. **Why was X decided?** → [`product/decisions-log.md`](product/decisions-log.md).
+4. **What did the POCs prove, with what evidence?** →
+   [`product/findings.md`](product/findings.md).
 
 ## Document precedence
 
