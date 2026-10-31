@@ -36,6 +36,8 @@
  * @typedef {Object} ParsedMessage
  * @property {{ address: string | null, name: string | null }} from
  * @property {string | null} messageId
+ * @property {string | null} inReplyTo
+ * @property {string[]} references
  * @property {Attachment[]} attachments
  * @property {string} rawSha256  `sha256:`-prefixed hex of the raw bytes.
  */
@@ -54,6 +56,8 @@
  * @typedef {Object} DkimArchive
  * @property {string | null} pem
  * @property {string | null} base64
+ * @property {string} [k]
+ * @property {string} [txt]
  * @property {string} [error]
  * @property {string} [fetched_at]
  * @property {string} [lookup]
@@ -84,7 +88,6 @@
  * @property {Array<{ filename: string | null, size: number, sha256: string }>} attachments
  * @property {RecordSignature[]} signatures
  * @property {Record<string, any>} verdicts
- * @property {Record<string, any> | null} ots
  */
 
 export {};

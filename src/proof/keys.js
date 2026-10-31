@@ -28,13 +28,23 @@ import { promises as dns } from 'node:dns';
  * @returns {string | null}
  */
 function extractPublicKey(txtRecord) {
+  return extractTag(txtRecord, 'p');
+}
+
+/**
+ * Extract one tag from a DKIM key record (`k=rsa; p=...`). Pure.
+ * @param {string | string[] | null} txtRecord
+ * @param {string} tag
+ * @returns {string | null}
+ */
+function extractTag(txtRecord, tag) {
   if (!txtRecord) return null;
   const joined = Array.isArray(txtRecord) ? txtRecord.join('') : String(txtRecord);
   for (const chunk of joined.split(';')) {
     const eq = chunk.indexOf('=');
     if (eq < 0) continue;
     const key = chunk.slice(0, eq).trim().toLowerCase();
-    if (key === 'p') return chunk.slice(eq + 1).trim().replace(/\s+/g, '');
+    if (key === tag) return chunk.slice(eq + 1).trim().replace(/\s+/g, '');
   }
   return null;
 }
@@ -76,7 +86,7 @@ async function fetchDkimKey(domain, selector, { resolver = resolveTxt, timeoutMs
   // Defensive input validation: selectors and domains in valid DKIM records are
   // ASCII labels. Reject anything weirder so we can't be coerced into looking up
   // an attacker-controlled hostname.
-  if (!/^[a-zA-Z0-9._-]+$/.test(domain) || !/^[a-zA-Z0-9._-]+$/.test(selector)) {
+  if (!/^[a-zA-Z0-9._-]+$/.test(domain) || !/^[a-zA-Z0-9._-]+$/.test(selector) || /(^|\.)\.|\.\./.test(domain + '.' + selector) || /^\.|\.$/.test(domain)) {
     return { pem: null, base64: null, error: 'invalid domain/selector' };
   }
   const name = `${selector}._domainkey.${domain}`;
@@ -91,9 +101,13 @@ async function fetchDkimKey(domain, selector, { resolver = resolveTxt, timeoutMs
     }
     // records is [[chunk1, chunk2, ...], ...]; DKIM is generally a single
     // record — take the first and join its chunks.
-    const base64 = extractPublicKey(records[0]);
+    const rec = records.find((r) => extractPublicKey(r)) || records[0];
+    const base64 = extractPublicKey(rec);
     if (!base64) return { pem: null, base64: null, error: 'no p= tag', fetched_at: fetchedAt, lookup: name };
-    return { pem: toPem(base64), base64, fetched_at: fetchedAt, lookup: name };
+    return {
+      pem: toPem(base64), base64, k: (extractTag(rec, 'k') || 'rsa').toLowerCase(), txt: rec.join(''),
+      fetched_at: fetchedAt, lookup: name,
+    };
   } catch (err) {
     return { pem: null, base64: null, error: (err instanceof Error ? err.message : null) || String(err), fetched_at: fetchedAt, lookup: name };
   }
@@ -119,4 +133,4 @@ function pickSignatureToArchive(auth) {
   );
 }
 
-export { fetchDkimKey, extractPublicKey, toPem, pickSignatureToArchive };
+export { fetchDkimKey, extractPublicKey, extractTag, toPem, pickSignatureToArchive };

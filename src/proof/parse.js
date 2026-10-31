@@ -26,6 +26,8 @@ import { hashDocument } from './hash.js';
  * @typedef {Object} ParsedMail
  * @property {{ value?: Array<{ address?: string, name?: string }> } | null} [from]
  * @property {string | null} [messageId]
+ * @property {string | null} [inReplyTo]
+ * @property {string | string[] | null} [references]
  * @property {Array<{ filename?: string, size?: number, content?: Buffer }>} [attachments]
  */
 // mailparser ships no type declarations. The JSDoc cast supplies the real shape
@@ -90,6 +92,8 @@ async function parseMessage(raw) {
   return {
     from: { address: from.address || null, name: from.name || null },
     messageId: parsed.messageId || null,
+    inReplyTo: parsed.inReplyTo || null,
+    references: Array.isArray(parsed.references) ? parsed.references : (parsed.references ? String(parsed.references).split(/\s+/).filter(Boolean) : []),
     attachments,
     rawSha256: hashDocument(raw),
   };
