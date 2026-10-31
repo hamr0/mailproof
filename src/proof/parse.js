@@ -17,7 +17,7 @@
 
 import { authenticate } from 'mailauth';
 import mailparserPkg from 'mailparser';
-import { hashDocument } from '../notary.js';
+import { hashDocument } from './hash.js';
 
 /**
  * The subset of mailparser's `ParsedMail` the kernel reads. mailparser ships no
@@ -41,10 +41,10 @@ const { simpleParser } = /** @type {{ simpleParser: (source: Buffer | string) =>
 // `envelope` is the m3 parseEnvelope shape; `mtaHostname`/`resolver` are
 // injected config (no env singleton). `resolver` lets tests run offline and the
 // future verify+@ endpoint re-check against an archived key.
-/** @typedef {import('../types.js').Envelope} Envelope */
-/** @typedef {import('../types.js').ParsedMessage} ParsedMessage */
-/** @typedef {import('../types.js').AuthSummary} AuthSummary */
-/** @typedef {import('../types.js').MailauthResult} MailauthResult */
+/** @typedef {import('./types.js').Envelope} Envelope */
+/** @typedef {import('./types.js').ParsedMessage} ParsedMessage */
+/** @typedef {import('./types.js').AuthSummary} AuthSummary */
+/** @typedef {import('./types.js').MailauthResult} MailauthResult */
 
 /**
  * Authenticate an inbound message via mailauth (DKIM/DMARC/ARC/SPF). Pins

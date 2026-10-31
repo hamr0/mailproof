@@ -21,35 +21,10 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
-
-const _execFile = promisify(execFile);
+import { git, GIT_IDENTITY } from './proof/git.js';
 
 const EVENT_ID_RE = /^[a-zA-Z0-9]+$/;
-// Git author for ledger commits. Cosmetic — the proof is the commit chain and
-// its content, not the author. Neutral + non-routable (RFC 2606 .invalid).
-const GIT_IDENTITY = { name: 'mailproof', email: 'noreply@mailproof.invalid' };
 
-// Run a git subcommand in `cwd`; resolve trimmed stdout, reject with git's
-// stderr on a non-zero exit. Outputs we read are tiny (a sha, a filename), so
-// the default maxBuffer is ample — raised anyway for safety.
-/**
- * Run a git subcommand in `cwd`; resolve trimmed stdout, reject with git's stderr.
- * @param {string} cwd
- * @param {string[]} args
- * @returns {Promise<string>}
- */
-async function git(cwd, args) {
-  try {
-    const { stdout } = await _execFile('git', args, { cwd, maxBuffer: 16 * 1024 * 1024 });
-    return stdout.trim();
-  } catch (err) {
-    const e = /** @type {{ stderr?: string, message?: string }} */ (err);
-    const detail = (e.stderr || '').trim() || e.message;
-    throw new Error(`git ${args[0]} failed: ${detail}`);
-  }
-}
 
 /**
  * Hex SHA-256 of the string form of `s`. Pure.

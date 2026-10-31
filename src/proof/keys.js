@@ -19,8 +19,8 @@ import { promises as dns } from 'node:dns';
 
 // Parse a DKIM record's `p=` value. DKIM records are semicolon-separated
 // tag=value; we only need p (public key). Returns base64 string or null.
-/** @typedef {import('../types.js').DkimArchive} DkimArchive */
-/** @typedef {import('../types.js').MailauthResult} MailauthResult */
+/** @typedef {import('./types.js').DkimArchive} DkimArchive */
+/** @typedef {import('./types.js').MailauthResult} MailauthResult */
 
 /**
  * Extract a DKIM record's `p=` base64 public key. Pure.
