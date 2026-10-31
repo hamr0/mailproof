@@ -23,6 +23,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-10-31
+
+Minor, not patch: the DKIM/DMARC engine moves three majors (mailauth 4 → 8), and its stricter DMARC evaluation can change the **trust level** `ingest()`/`verify()` assign to some senders. The public API, types, and Node floor (≥ 22.5) are unchanged.
+
+### Security
+
+- **Inbound address parsing moved off vulnerable `nodemailer` — this one IS reachable, correcting the earlier "sending-only" triage.** Both the DKIM verifier (`mailauth` → `dkim-verifier` parses the `From:` and `Return-Path:` headers) and `mailparser` (every address header) run `nodemailer/lib/addressparser` over *untrusted inbound* mail. nodemailer ≤ 10.1.3 carries 15 advisories; the ones that matter here are the addressparser parsing bugs (RFC 5322 comment mis-parsing, a `>` inside a quoted local part ending the angle-addr early, `;` ending a group early, nested comments, quadratic backtracking): the parsed `From:` domain is what DMARC alignment is computed against, so a parser that disagrees with what the header names is a trust-spoofing path, not just a DoS. The previous `overrides` pin of `nodemailer@^9.0.1` was holding the vulnerable parser *in place*. Fixed at the source so adopters get it too (npm `overrides` are **not** inherited by consumers): `mailauth` ^4.13.3 → **^8.0.4** (pins nodemailer 10.2.0) and `mailparser` ^3.9.17 → **^3.14.1** (pins nodemailer 10.3.1). The repo override is lifted to `nodemailer ^10.3.1`.
+- **`undici` override ^7.29.0 → ^7.30.1** (Dependabot #6, #8). Exposure remains nil — undici is reachable only through mailauth's BIMI VMC fetch, which `parse.js` disables (`disableBimi: true`).
+- **`joi` override ^18.3.1** (Dependabot #7 brought joi in via mailauth). The advisory (quadratic `string().email({ multiple: true })`) is **unreachable**: mailauth never calls `.email()` — joi only validates mailauth's own options. mailauth pins `joi@18.3.0` exactly, so a fresh adopter install still reports it until mailauth ships a bump; there is nothing to fix on mailproof's side.
+
+Verified: `npm audit` 0 vulnerabilities in-repo; a clean adopter install of the packed tarball (no overrides) resolves nodemailer 10.2.0 / 10.3.1 on both paths, with only the unreachable joi finding left.
+
+### Changed
+
+- **`mailauth` ^4.13.3 → ^8.0.4 (Dependabot #7, extended from 7.1.0).** Every 7.x still pins a vulnerable nodemailer, so #7's 7.1.0 was taken on to 8.0.4. Breaking changes upstream and what they mean here:
+  - *DMARC strict alignment is now enforced (5.0).* `adkim=s` / `aspf=s` used to fall through to relaxed comparison, so a sender publishing strict alignment but signing from a sibling host under the same org domain passed. It now fails, and `dkim.results[].status.aligned` is `false` for org-level-only matches. **Such a reply now classifies below `verified`** — the previous result was over-trusting.
+  - *RFC 9989 DNS Tree Walk for org domains (6.0) and `np` / `t=y` / invalid-policy rules (7.0).* DMARC verdicts can change for subdomains, in the direction RFC 9989 defines.
+  - *`pct` removed from the DMARC result (7.0); TypeScript build, deep imports go through an exports map (8.0).* No effect: mailproof reads only `dkim.results[].status.{result,aligned}` and `dmarc.status.result`, and imports only root named exports (`authenticate`, `dkimSign`).
+  - *Node floor.* mailauth 5–7 required Node ≥ 22.19; 8.0.4 is back to ≥ 20.18.1, and every package in the tree is at or below 20.19, so mailproof's `engines` stays at **≥ 22.5**.
+- **`mailparser` ^3.9.17 → ^3.14.1** — same major; carries the fixed nodemailer.
+
 ### Fixed
 - **The publish workflow now fails when `package-lock.json`'s version drifts from `package.json`.** npm writes that field on install, so a release that bumps `package.json` without running one leaves it behind — and nothing caught it: `npm ci` fails when the lockfile's *dependency* entries disagree, but never checks the lockfile's copy of the project's own version. `scripts/check-lockfile.mjs` (`npm run check:lockfile`) compares both places npm writes it and runs in the publish workflow. No lockfile is not a failure.
 
