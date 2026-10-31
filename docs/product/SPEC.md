@@ -1,3 +1,75 @@
+# mailproof v2 — SPEC Part B (record, trail, verdicts)
+
+> **Part B is the v2 wire format and wins over everything below it.** The sections
+> after "Part A" describe v1 and are archived module by module as v2 lands (M3).
+> Rationale for the choices here: [findings F7](findings.md).
+
+## B1. Record (`records/<id>.json`, `"v": 2`)
+
+```jsonc
+{
+  "v": 2,
+  "id": "32 hex",
+  "captured": "ISO-8601",          // stamped by mailproof's clock, never from Received:
+  "direction": "in" | "out",
+  "source": "string",              // capture source, default "api"
+  "message": {
+    "message_id": "<..>|null", "in_reply_to": "<..>|null", "references": ["<..>"],
+    "raw_sha256": "sha256:<hex>", "size": 0,
+    "from": "addr|null"            // only on unsigned records
+  },
+  "attachments": [ { "filename": "str|null", "size": 0, "sha256": "sha256:<hex>" } ],
+  "signatures": [                  // one per DKIM-Signature header; [] when unsigned
+    {
+      "dkim_signature": "base64 of the raw header line",
+      "tags": { "d": "", "s": "", "a": "", "c": "", "h": "", "bh": "", "l": null, "t": null, "x": null },
+      "signed_headers": ["base64 raw line, RFC 6376 5.4.2 hashing order (bottom-up)"],
+      "key": { "k": "rsa|ed25519", "p": "base64" } | null,
+      "key_error": "str|null",
+      "key_file": "keys/<domain>/<selector>/<h16>.json|null",
+      "partial_body": false        // l= present and shorter than the canonical body
+    }
+  ],
+  "verdicts": {
+    "live":     { "trust": "...", "engine": { "rules": "mp-rules/1", "mailauth": "x.y.z" },
+                  "dkim": [ { "d": "", "s": "", "result": "", "aligned": false } ],
+                  "dmarc": { "result": "", "published": false, "policy": null, "rr": null },
+                  "spf": { "result": "" } | null, "arc": { "result": "", "sealers": [] } | null },
+    "portable": { "trust": "verified|unverified", "engine": { }, "basis": "dkim|none", "passing": [0] }
+  },
+  "ots": { "proof_file": "records/<id>.json.ots", "state": "pending" } | null
+}
+```
+
+- Never the body, never the raw email. No `Subject` outside `signed_headers`.
+- Serialisation: fixed key order, 2-space indent, trailing newline (stable bytes, stable OTS stamps).
+- Signed header lines are byte-exact (base64). Names in `h=` with no matching header are oversigned and add nothing.
+- `id = sha256("mp2\n" + identity)` first 32 hex; `identity` = first DKIM-Signature's raw `b=` value, else sha256 of the raw header block.
+- Offline re-check (`verifyRecord`): canonicalise with `mailauth/lib/dkim/header`, verify with Node crypto. `at` defaults to `captured`; a signature expired at `at` (`x=`), a `t=` more than 300 s after `at`, or an unusable `captured` fails closed.
+
+## B2. Verdicts
+
+Trust levels `verified`, `forwarded`, `authorized`, `unverified` (PRD §3).
+- **Live**: `verified` = aligned DKIM pass AND (`dmarc.published` ? DMARC pass : true), with `published = result !== 'none' || rr present` (temperror/permerror count as published, so they fail closed). `forwarded` = ARC pass and a sealer on `trustedSealers`. `authorized` = SPF pass + DMARC pass (live only). Else `unverified`.
+- **Portable**: recomputed from the record only. `verified` = at least one signature passes at `at` and is aligned with the signed `From:` domain (relaxed unless the stored `dmarc.rr` has `adkim=s`). A signature whose `h=` omits `From` never aligns. Never uses SPF or ARC.
+- Each verdict carries its `engine` stamp and is never recomputed in place.
+
+## B3. Trail (one git repo per trail)
+
+```
+<trailDir>/<trail>/        trail name /^[a-z0-9][a-z0-9_-]{0,63}$/, default "default"
+  trail.json               {v:2, name, created}
+  records/<id>.json        (+ records/<id>.json.ots when OTS is on)
+  keys/<domain>/<selector>/<sha256(p)[0:16]>.json   {v:2, domain, selector, k, p, txt, lookup, first_fetched}
+```
+- One commit per record (record, new key files, `.ots`). Message: `record <id[0:12]> <direction> <live.trust>/<portable.trust>`; never header or body text.
+- A key file is written once per domain+selector+key-hash and never rewritten.
+- Capturing an email whose id exists is a no-op (`duplicate:true`).
+
+---
+
+# Part A — v1 (archived at M3)
+
 # mailproof — SPEC (wire formats)
 
 > The authority on **mechanism**: byte layouts, schemas, and grammars. If

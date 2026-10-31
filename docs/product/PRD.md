@@ -4,7 +4,7 @@
 > **Owner:** hamr0 · **Last updated:** 2026-10-31
 >
 > **For future Claude:** this PRD wins on intent and scope. The *why* behind each choice is in
-> [`../03-logs/decisions-log.md`](decisions-log.md). The v1 PRD is archived at
+> [`decisions-log.md`](decisions-log.md). The v1 PRD is archived at
 > [`../archive/v1/PRD.md`](../archive/v1/PRD.md); `DESIGN.md` and `SPEC.md` still describe v1 and are
 > replaced module by module as v2 lands. v2 is a **new, smaller product**, not an edit of v1.
 
@@ -47,6 +47,8 @@ Every email gets two verdicts:
 |---|---|---|---|
 | **Live** | at capture | DKIM + DMARC + SPF + ARC | No for SPF. SPF is only evaluable when we are the receiving MTA (Postfix pipe) or when taken from a receiving provider's results header; it can never be re-checked from stored data. |
 | **Portable** | at capture, recomputable by anyone from the stored record alone | DKIM signatures, plus ARC seals from a configurable list of trusted sealers | Yes. Never uses SPF. |
+
+M0 ships the portable verdict from DKIM only; the offline re-check of ARC seals is deferred to a follow-up POC (see [findings F7](findings.md#f7--m0-design-decisions)).
 
 Each verdict records the **engine/rules version** that produced it. Verdicts are not timeless:
 upgrading mailauth 4→8 already changed DMARC outcomes.

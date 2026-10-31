@@ -91,3 +91,18 @@ POC script: [`poc/m0-header-recheck.js`](../../poc/m0-header-recheck.js) (throwa
 - **Result:** 0 negatives pass. Both sets stay consistent with F1 and F4. The Outlook-sourced set is INCONCLUSIVE on live agreement (0 live passes, from the body alteration), so only its negatives count; the header-side cases behave the same as on the Gmail set.
 - **Decision:** the M0 GO rule now includes d-i. Fail-closed on a bad `captured` is part of the contract.
 - **Affects:** PRD §6.
+
+## F7 — M0 design decisions
+
+- **Date:** 2026-11-01
+- **Question:** what shape does the M0 implementation take where the PRD left forks open?
+- **Decisions:**
+  - **D1 Portable verdict is DKIM only.** `trustedSealers` (constructor option, default `[]`) gates only the live `forwarded` level. Offline re-check of ARC seals needs archived ARC headers and sealer keys, an unproven mechanism, so it is a separate follow-up POC.
+  - **D2 Stored fields.** `raw_sha256` and attachment `filename` are kept in the record (dedupe/match value; the trail owner's own data, like `Subject`).
+  - **D3 Key stored twice.** Embedded in the record (`{k,p}`, so it verifies standalone) and in the trail key archive (provenance: TXT as fetched, lookup name, time).
+  - **D4 Second capture of the same email** returns `duplicate:true` and writes nothing; its ctx is not kept. A `captures[]` log can come in M1.
+  - **D5 OTS** stamps per record in M0; per-sync batching is an M1 decision.
+  - **D6 SPEC** gets a new Part B for v2 on top of the v1 text; v1 sections are archived at M3.
+- **Record id:** `id = sha256("mp2\n" + identity)[0:32]`, `identity` = the first DKIM-Signature's raw `b=` value when signed, else sha256 of the raw header block. A signed mail gets the same id on every capture route; unsigned mail can differ by route (the MTA adds `Received:`).
+- **Observation:** DMARC passes whenever aligned DKIM passes, by definition. So "DMARC must pass if the domain publishes it" (PRD §3) differs from "aligned DKIM pass" only on DMARC errors (temperror/permerror), where mailproof fails closed. This is why the portable verdict needs no DMARC input.
+- **Affects:** PRD §3, §4, M0; SPEC Part B.
