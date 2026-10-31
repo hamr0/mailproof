@@ -106,3 +106,14 @@ POC script: [`poc/m0-header-recheck.js`](../../poc/m0-header-recheck.js) (throwa
 - **Record id:** `id = sha256("mp2\n" + identity)[0:32]`, `identity` = the first DKIM-Signature's raw `b=` value when signed, else sha256 of the raw header block. A signed mail gets the same id on every capture route; unsigned mail can differ by route (the MTA adds `Received:`).
 - **Observation:** DMARC passes whenever aligned DKIM passes, by definition. So "DMARC must pass if the domain publishes it" (PRD §3) differs from "aligned DKIM pass" only on DMARC errors (temperror/permerror), where mailproof fails closed. This is why the portable verdict needs no DMARC input.
 - **Affects:** PRD §3, §4, M0; SPEC Part B.
+
+## F8 — M0 library on the real sample sets
+
+- **Date:** 2026-11-01
+- **Question:** does the rewritten M0 library (not the POC) agree with live mailauth on real mail, and does every F6 negative still fail?
+- **Run:** `tests/manual/real-mail.mjs` (public API: `record` into a trail outside the repo, then `verify`/`matchBody` and the F6 tampers on each signature) over the same two sample sets as F1/F4. Captured = the run time (2026-11-01), so `x=` is judged as of that day.
+- **Gmail set** (9 emails, 14 signatures: ietf.org x10, corp.mail.ru x2, google.com, lists.camaraproject.org): offline agrees with live on 14/14 (10 pass/pass; the 4 signatures carrying `x=` are expired by the capture date, so live and offline both fail them). `matchBody` own-raw passes 14/14, other-raw fails 14/14. Negatives a, b, c, e, f, x, d, h, i: all fail (0 pass). Live/portable trust per email: 5 verified/verified, 4 unverified/unverified (the 4 expired).
+- **Outlook-sourced set** (8 emails, 11 signatures: dhlecommerce.nl, uzsc.onmicrosoft.com, venmo.com, amazonses.com x3, email.meta.com, tello.com, infotip.eu, email.apple.com): live DKIM 0/11 (body altered, same as F4), so live agreement is n/a(body) on 11/11; `matchBody` own-raw fails 11/11 (F4). Header side: offline passes 10/11 at capture (dhlecommerce.nl is `x=`-expired); all negatives fail (0 pass).
+- **Observation:** on the Outlook-sourced set the portable verdict is `verified` for 6 of 8 emails while the live verdict is `unverified` (body altered). That is by design: the portable verdict covers the signed headers only, and the body claim is separate (`matchBody` / `full`). A consumer that wants a body guarantee must call `matchBody`.
+- **Decision:** none; the library reproduces F1/F4/F6. M0 go/no-go stays GO.
+- **Affects:** PRD §6, M0.
