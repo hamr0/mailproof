@@ -24,7 +24,7 @@
 
 import fs from 'node:fs';
 import { dkimSign } from 'mailauth';
-import { authenticateMessage, classifyTrust, summariseAuth, parseMessage } from '../../src/index.js';
+import { authenticateMessage, classifyTrust, summariseAuth, parseMessage } from '../../src/legacy-index.js';
 
 function arg(name, def = undefined) {
   const i = process.argv.indexOf(`--${name}`);

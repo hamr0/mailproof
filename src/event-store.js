@@ -13,7 +13,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { withEventMutex } from './event-mutex.js';
+import { withMutex } from './proof/mutex.js';
 import { createGitrepo } from './gitrepo.js';
 
 const EVENT_ID_RE = /^[a-zA-Z0-9]+$/;
@@ -419,7 +419,7 @@ function createEventStore({ dataDir } = {}) {
    * @returns {Promise<{ event: MailproofEvent, alreadyActive: boolean }>}
    */
   async function activateEvent(eventId, { now = new Date().toISOString() } = {}) {
-    return withEventMutex(eventId, async () => {
+    return withMutex(eventId, async () => {
       const event = await loadEvent(eventId);
       if (!event) throw new Error(`activateEvent: event ${eventId} not found`);
       if (event.activated_at) return { event, alreadyActive: true };
@@ -450,7 +450,7 @@ function createEventStore({ dataDir } = {}) {
    * @returns {Promise<{ event: MailproofEvent, prev: MailproofEvent, changes: Array<{ step_id: string | null, field: string, from: any, to: any }>, commitSequence: number | null }>}
    */
   async function editEvent(eventId, patch, { now = new Date().toISOString(), organiserHandle = null } = {}) {
-    return withEventMutex(eventId, async () => {
+    return withMutex(eventId, async () => {
       const event = await loadEvent(eventId);
       if (!event) throw Object.assign(new Error(`editEvent: ${eventId} not found`), { code: 'NOT_FOUND' });
       if (isComplete(event)) {
@@ -500,7 +500,7 @@ function createEventStore({ dataDir } = {}) {
    * @returns {Promise<{ event: MailproofEvent, reopened: boolean, retracted: string[], commitSequence: number | null, reason?: string }>}
    */
   async function reopenEvent(eventId, { reason = null, retractSignatures = [], now = new Date().toISOString(), organiserHandle = null } = {}) {
-    return withEventMutex(eventId, async () => {
+    return withMutex(eventId, async () => {
       const event = await loadEvent(eventId);
       if (!event) throw Object.assign(new Error(`reopenEvent: ${eventId} not found`), { code: 'NOT_FOUND' });
       if (event.archived_at) {
@@ -560,7 +560,7 @@ function createEventStore({ dataDir } = {}) {
    * @returns {Promise<{ event: MailproofEvent, completed: boolean, reason?: string, completionRecord: any }>}
    */
   async function completeEvent(eventId, { reason = null, completedAt = null, now = new Date().toISOString() } = {}) {
-    return withEventMutex(eventId, async () => {
+    return withMutex(eventId, async () => {
       const event = await loadEvent(eventId);
       if (!event) throw Object.assign(new Error(`completeEvent: ${eventId} not found`), { code: 'NOT_FOUND' });
       if (event.archived_at) {
@@ -604,7 +604,7 @@ function createEventStore({ dataDir } = {}) {
     if (!errorsByStepId || typeof errorsByStepId !== 'object') return null;
     const ids = Object.keys(errorsByStepId);
     if (ids.length === 0) return null;
-    return withEventMutex(eventId, async () => {
+    return withMutex(eventId, async () => {
       const event = await loadEvent(eventId);
       if (!event || !Array.isArray(event.steps)) return null;
       let dirty = false;
@@ -643,7 +643,7 @@ function createEventStore({ dataDir } = {}) {
    */
   async function recordProofEmailMessageId(eventId, messageId) {
     if (!messageId) return null;
-    return withEventMutex(eventId, async () => {
+    return withMutex(eventId, async () => {
       const event = await loadEvent(eventId);
       if (!event) return null;
       if (event.proof_email_message_id) return event.proof_email_message_id;
@@ -665,7 +665,7 @@ function createEventStore({ dataDir } = {}) {
     reopenEvent,
     completeEvent,
     // Raw atomic overwrite of an existing event's master JSON. UNGUARDED — it
-    // takes no mutex, so the caller MUST already hold withEventMutex(eventId).
+    // takes no mutex, so the caller MUST already hold withMutex(eventId).
     // ingest() needs this: the in-process mutex is non-reentrant, so ingest
     // holds the lock for its whole commit→advance→persist section and cannot
     // call the mutex-taking helpers (activateEvent/editEvent) from inside it.

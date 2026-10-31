@@ -10,8 +10,8 @@
 // sequencing module) compares against this ordering.
 
 
-/** @typedef {import('./types.js').TrustLevel} TrustLevel */
-/** @typedef {import('./types.js').MailauthResult} MailauthResult */
+/** @typedef {import('../types.js').TrustLevel} TrustLevel */
+/** @typedef {import('../types.js').MailauthResult} MailauthResult */
 
 /** @type {readonly TrustLevel[]} */
 const TRUST_LEVELS = ['verified', 'forwarded', 'authorized', 'unverified'];

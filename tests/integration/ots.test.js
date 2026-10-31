@@ -14,7 +14,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { spawnSync } from 'node:child_process';
-import { createOts } from '../../src/ots.js';
+import { createOts } from '../../src/proof/ots.js';
 
 // Is a real `ots` client on PATH? Skip the real-binary smoke tests if not.
 const HAS_OTS = (() => {

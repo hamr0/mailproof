@@ -9,23 +9,23 @@
 // The high-level create({ ... }) factory arrives once the pillars compose.
 
 
-import { classifyTrust, TRUST_LEVELS } from './classifier.js';
+import { classifyTrust, TRUST_LEVELS } from './proof/trust.js';
 import {
   parseAddress, parseEventTag, parseVerifyTag, parseReverifyTag, parseAttestTag, parseInitiatorCommand,
 } from './router.js';
 import { preFilter, extractHeaderBlock, rawHeader } from './prefilter.js';
 import { parseEnvelope } from './envelope.js';
-import { authenticateMessage, parseMessage, summariseAuth } from './parse.js';
+import { authenticateMessage, parseMessage, summariseAuth } from './proof/parse.js';
 import {
   fetchDkimKey, pickSignatureToArchive, extractPublicKey, toPem,
-} from './dkim-archive.js';
+} from './proof/keys.js';
 import {
   sendmail, buildRawMessage, sanitizeSubject, newMessageId, rfc5322Date, withSignature,
 } from './outbound.js';
 import { createEventStore } from './event-store.js';
-import { withEventMutex } from './event-mutex.js';
+import { withMutex } from './proof/mutex.js';
 import { createGitrepo, saltedSenderHash } from './gitrepo.js';
-import { createOts, parseOtsBlockHeight } from './ots.js';
+import { createOts, parseOtsBlockHeight } from './proof/ots.js';
 import {
   shouldCount, applyReply, isComplete, firstPendingStep,
   stepDepsMet, eligibleSteps, meetsTrust, COUNT_REASONS,
@@ -84,7 +84,7 @@ export {
   withSignature,
   // Git ledger — storage (factory-bound to dataDir)
   createEventStore,
-  withEventMutex,
+  withMutex,
   createGitrepo,
   // Git ledger — pure salted-sender hasher (SPEC §0.1), top-level so a consumer
   // can map an attestor email → its stored salted hash without constructing a

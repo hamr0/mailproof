@@ -12,7 +12,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { create } from '../../src/create.js';
-import { saltedSenderHash as topLevelHash } from '../../src/index.js';
+import { saltedSenderHash as topLevelHash } from '../../src/legacy-index.js';
 import { createGitrepo } from '../../src/gitrepo.js';
 import { verifiedSigner } from '../helpers/dkim.js';
 

@@ -12,7 +12,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import * as mailproof from '../../src/index.js';
+import * as mailproof from '../../src/legacy-index.js';
 
 const EXPECTED = {
   // Composition root
@@ -50,7 +50,7 @@ const EXPECTED = {
   withSignature: 'function',
   // Git ledger — storage
   createEventStore: 'function',
-  withEventMutex: 'function',
+  withMutex: 'function',
   createGitrepo: 'function',
   saltedSenderHash: 'function',
   // Git ledger — optional OTS anchoring

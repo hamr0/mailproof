@@ -36,7 +36,7 @@
 // verification is the notary (PRD §4.1), not part of this engine.
 
 
-import { TRUST_LEVELS } from './classifier.js';
+import { TRUST_LEVELS } from './proof/trust.js';
 
 /** @typedef {import('./types.js').TrustLevel} TrustLevel */
 

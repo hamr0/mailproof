@@ -14,7 +14,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { authenticateMessage, classifyTrust, summariseAuth } from '../../src/index.js';
+import { authenticateMessage, classifyTrust, summariseAuth } from '../../src/legacy-index.js';
 
 const here = fileURLToPath(new URL('./fixtures/', import.meta.url));
 const eml = fs.readFileSync(here + 'signedreply-sample.eml');

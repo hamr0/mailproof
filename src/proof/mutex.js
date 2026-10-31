@@ -1,7 +1,7 @@
 // Per-event in-process write mutex.
 //
 // Every code path that writes events/{id}.json AND/OR commits to the
-// per-event git repo must run inside withEventMutex(eventId, fn) so:
+// per-event git repo must run inside withMutex(eventId, fn) so:
 //   - two concurrent activations can't both observe !activated_at
 //   - an edit can't race with first-visit activation
 //   - atomic event-json updates can't race with each other
@@ -28,7 +28,7 @@ const _writeMutex = new Map();
  * @param {() => Promise<T>} work
  * @returns {Promise<T>}
  */
-async function withEventMutex(eventId, work) {
+async function withMutex(eventId, work) {
   const prev = _writeMutex.get(eventId);
   const p = (async () => {
     if (prev) { try { await prev; } catch { /* ignore prior failure */ } }
@@ -43,4 +43,4 @@ async function withEventMutex(eventId, work) {
   }
 }
 
-export { withEventMutex };
+export { withMutex };

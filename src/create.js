@@ -14,7 +14,7 @@
 
 import { createEventStore } from './event-store.js';
 import { createGitrepo } from './gitrepo.js';
-import { createOts } from './ots.js';
+import { createOts } from './proof/ots.js';
 import { createNotary } from './notary.js';
 import { createVerifier } from './verifier.js';
 import { createNotifier } from './notify.js';
@@ -24,9 +24,9 @@ import { createSweep } from './sweep.js';
 import { createProofAnchor } from './proof-anchor.js';
 import * as completion from './completion.js';
 import * as crypto from './crypto.js';
-import { parseMessage, authenticateMessage, summariseAuth, extractVerifyCandidates } from './parse.js';
-import { classifyTrust } from './classifier.js';
-import { fetchDkimKey, pickSignatureToArchive } from './dkim-archive.js';
+import { parseMessage, authenticateMessage, summariseAuth, extractVerifyCandidates } from './proof/parse.js';
+import { classifyTrust } from './proof/trust.js';
+import { fetchDkimKey, pickSignatureToArchive } from './proof/keys.js';
 import { parseEventTag, parseAttestTag, parseInitiatorCommand, parseVerifyTag, parseReverifyTag } from './router.js';
 import { preFilter, extractHeaderBlock } from './prefilter.js';
 import { isDeliveryStatusReport, extractDsn, permanentFailures } from './dsn.js';

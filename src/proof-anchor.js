@@ -28,7 +28,7 @@
 // undo state already written elsewhere.
 
 
-import { withEventMutex } from './event-mutex.js';
+import { withMutex } from './proof/mutex.js';
 import { renderDefault } from './templates.js';
 
 /**
@@ -92,7 +92,7 @@ function createProofAnchor({
 
       // Record + decide-to-notify under the per-event mutex, so a concurrent
       // ingest can't interleave a reply commit with our proof-upgrade commit.
-      const locked = await withEventMutex(eventId, async () => {
+      const locked = await withMutex(eventId, async () => {
         let committed = null;
         if (anchored.length > 0) {
           try { committed = await commitProofUpgrade(eventId, { anchored, stamp: now }); }
