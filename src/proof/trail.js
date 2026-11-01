@@ -1,8 +1,11 @@
 // The on-disk trail (SPEC Part B3): one git repo per trail, one commit per
 // record. Records and archived keys are plain files in the working tree, so a
 // `git clone` is the portable proof. Writers are serialised in-process by a
-// mutex keyed on the trail path; cross-process safety rests on git's own
-// index.lock (the same documented limit as v1).
+// mutex keyed on the trail path. There is NO cross-process guard: concurrent
+// processes writing one trail are unsupported (use a single writer). They can
+// fail on git's `index.lock`, and a failed process's rollback below removes
+// files it wrote, which can include records another process already
+// committed, leaving the working tree dirty.
 
 import fs from 'node:fs/promises';
 import path from 'node:path';

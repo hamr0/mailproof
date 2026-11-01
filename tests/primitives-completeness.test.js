@@ -61,7 +61,7 @@ test('exclusion list has no stale entries', async () => {
 });
 
 test('manifest includes every Mailproof method (a dropped @when would silently drop it)', () => {
-  const required = ['check', 'record', 'verify', 'matchBody', 'matchFile', 'list', 'get'].map((m) => `Mailproof#${m}`);
+  const required = ['check', 'record', 'verify', 'matchBody', 'matchFile', 'copies', 'list', 'get'].map((m) => `Mailproof#${m}`);
   assert.deepEqual(required.filter((n) => !manifested.has(n)), []);
 });
 
