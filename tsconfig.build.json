@@ -1,0 +1,7 @@
+{
+  // Declaration emit for the SHIPPED surface only (src/index.js + src/proof).
+  // The v1 modules are still type-checked by `npm run typecheck` (tsconfig.json)
+  // but are not shipped, so their .d.ts must not be either.
+  "extends": "./tsconfig.json",
+  "include": ["src/index.js", "src/proof/**/*.js"]
+}

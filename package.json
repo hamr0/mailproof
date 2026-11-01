@@ -17,7 +17,7 @@
   "scripts": {
     "test": "node --test 'tests/unit/**/*.test.js' 'tests/integration/**/*.test.js' tests/primitives-core.test.mjs tests/primitives-completeness.test.js",
     "typecheck": "tsc --noEmit",
-    "build:types": "tsc",
+    "build:types": "node -e \"require('node:fs').rmSync('types',{recursive:true,force:true})\" && tsc -p tsconfig.build.json",
     "prepack": "npm run build:primitives && npm run build:types",
     "check:lockfile": "node scripts/check-lockfile.mjs",
     "check:types": "node scripts/check-types.mjs",

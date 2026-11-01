@@ -36,6 +36,7 @@ mailproof v2 (planned 2.0.0): a new, smaller product. 1.x is frozen at tag `v1.4
 - `npm run check:types`: fails when an exported function or method in the generated `.d.ts` returns a bare `object`.
 
 ### Changed
+- `build:types` emits declarations for the shipped surface only (`tsconfig.build.json`: `src/index.js` + `src/proof/`) after cleaning `types/`; the tarball no longer carries v1 `.d.ts` (18 `types/` files, was 42). `typecheck` still checks all of `src/`.
 - Types are built on `prepack` (pack and publish) instead of `prepublishOnly`; the publish workflow's adopter gate now compiles a v2 quickstart; `mailproof.context.md` follows the context template sections.
 
 ### Changed (breaking)
