@@ -11,7 +11,7 @@ import { MessageParser } from 'mailauth/lib/dkim/message-parser';
 import { parseHeaders } from 'mailauth/lib/tools';
 import { admit, overLimitReason } from '../../src/proof/admit.js';
 import { splitMessage, signedNames, parseTags } from '../../src/proof/signed-headers.js';
-import { MAX_BODY_LINE, MAX_MIME_PARTS, MAX_HEADER_BYTES } from '../../src/proof/limits.js';
+import { MAX_BODY_LINE, MAX_MIME_PARTS, MAX_HEADER_BYTES, MAX_H_NAMES } from '../../src/proof/limits.js';
 
 const { simpleParser } = /** @type {any} */ (mailparserPkg);
 
@@ -115,6 +115,15 @@ const SIG_PIECES = [
   'xDKIM-Signature: v=1',
   'DKIM-Signature :',
   ' ',
+  // whitespace parseTags trims (String.trim: HT LF VT FF CR SP NBSP) before, after and inside a tag name
+  'DKIM-Signature: v=1;\x0bh=a:b:c:d:e',
+  'DKIM-Signature: v=1;\x0ch=a:b:c:d',
+  'DKIM-Signature: v=1;\xa0h=a:b:c',
+  'DKIM-Signature: v=1;\rh=a:b:c:d:e:f',
+  'DKIM-Signature: v=1; h\x0b=a:b:c:d',
+  'DKIM-Signature: v=1; h\xa0\x0c =a:b:c',
+  'DKIM-Signature: v=1;\x0b \xa0\x0c\th=a:b:c:d:e:f:g',
+  'DKIM-Signature: x\x0bh=a:b; \xa0h=a:b:c',   // "x\x0bh" is one name (not h); the second is h
 ];
 
 test('signatures: the gate counts every DKIM-Signature mailauth reads, and sizes each as mailauth does (600 random header blocks)', () => {
@@ -138,6 +147,18 @@ test('signatures: the gate counts every DKIM-Signature mailauth reads, and sizes
     assert.ok(g.m.maxHNames >= names, `case ${k} h= names: gate ${g.m.maxHNames} < ${names}`);
   }
   assert.ok(seen > 200 && folded > 30, `weak corpus: ${seen} with signatures, ${folded} folded`);
+});
+
+test('h_names: whitespace parseTags trims before a tag name does not hide h= from the limit', () => {
+  const names = Array.from({ length: MAX_H_NAMES + 1 }, (_, i) => `n${i}`).join(':');
+  for (const ws of ['\x0b', '\x0c', '\xa0', '\r', '\t', ' ', '\x0b\xa0 \x0c']) {
+    const buf = Buffer.from(`DKIM-Signature: v=1;${ws}h=${names}; b=AA\r\nFrom: x@y\r\n\r\nbody`, 'binary');
+    assert.equal(signedNames(parseTags(buf.toString('binary').split('\r\n')[0]).h).length, MAX_H_NAMES + 1, `the parser reads the names after ${JSON.stringify(ws)}`);
+    assert.equal(admit(buf).limit, 'h_names', `refused after ${JSON.stringify(ws)}`);
+  }
+  // ... and between the name and the = sign
+  const buf = Buffer.from(`DKIM-Signature: v=1; h\x0b=${names}\r\n\r\nbody`, 'binary');
+  assert.equal(admit(buf).limit, 'h_names');
 });
 
 test('signatures: a DKIM-Signature whose colon sits on the next line, or hides behind junk lines, is counted and sized', () => {

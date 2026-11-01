@@ -19,6 +19,7 @@ import {
   MAX_TOTAL_BYTES, MAX_HEADER_BYTES, MAX_HEADER_LINES, MAX_HEADER_FIELDS, MAX_SIGNATURES, MAX_H_NAMES,
   MAX_SIG_BYTES, MAX_MIME_PARTS, MAX_BODY_LINE,
 } from './limits.js';
+import { TAG_SPACE } from './signed-headers.js';
 
 const LF = 10, CR = 13, SP = 32, TAB = 9, DASH = 45, COLON = 58, SEMI = 59, EQ = 61;
 const DKIM = Buffer.from('dkim-signature');
@@ -174,7 +175,7 @@ function admit(buf) {
           continue;
         }
         if (c === SEMI) { tag = 0; continue; }
-        if (c === SP || c === TAB) continue;
+        if (TAG_SPACE[c]) continue;   // blanks around a tag name, as parseTags trims them
         if (tag === 0) tag = lower(c) === 104 ? 1 : 3;
         else if (tag === 1) {
           if (c === EQ) { tag = 2; hCount = 1; if (m.maxHNames < 1) m.maxHNames = 1; } else tag = 3;

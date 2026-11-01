@@ -218,3 +218,28 @@ test('work budget: 10 valid signatures on one tampered body: the later ones are 
   assert.equal(c.portable.trust, 'verified', 'the signed headers are fine: the body search cannot move a verdict');
   assert.equal(c.live.trust, 'unverified', 'mailauth fails the altered body on its own, whatever the search did');
 });
+
+// The budget governs only the super-linear appended/prepended searches. The canonicalisation and
+// line-ending detectors are one linear pass each and must still run on a message whose budget is gone,
+// and on a body big enough that its own prepended search used the whole budget.
+test('work budget: the linear detectors (canonicalisation, line_endings) are never starved by it', () => {
+  const hashOf = (mode, buf) => { const h = dkimBody(mode, 'sha256', false); h.update(buf); return h.digest('base64'); };
+  const line = 'The quick brown fox jumps over the lazy dog and keeps going for a while longer';
+  // ~200 KB of ~80-byte lines, signed simple/simple, then a trailing space added to every line: only relaxed matches
+  const signed = Buffer.from(Array(2500).fill(line).join('\r\n') + '\r\n');
+  const spaced = Buffer.from(Array(2500).fill(line + ' ').join('\r\n') + '\r\n');
+  assert.ok(spaced.length >= 200_000);
+  const tags = { a: 'rsa-sha256', c: 'simple/simple', bh: hashOf('relaxed', spaced) };
+  const canon = [{ kind: 'canonicalisation', detail: { signed_as: 'simple', matches_as: 'relaxed' } }];
+  assert.deepEqual(analyseBody(tags, spaced).explain, canon, 'fresh budget: its own prepended search must not use it all up');
+  assert.deepEqual(analyseBody(tags, spaced, { budget: { left: 0 } }).explain, canon, 'budget already gone');
+  // lone CRs for the line breaks; bh from the CRLF original
+  const loneCr = Buffer.from(signed.toString('binary').replace(/\r\n/g, '\r'), 'binary');
+  const le = [{ kind: 'line_endings', detail: { lone_cr: 2500 } }];
+  const crTags = { a: 'rsa-sha256', c: 'simple/simple', bh: hashOf('simple', signed) };
+  assert.deepEqual(analyseBody(crTags, loneCr).explain, le);
+  assert.deepEqual(analyseBody(crTags, loneCr, { budget: { left: 0 } }).explain, le, 'budget already gone');
+  // the searches themselves are still capped by an empty budget (nothing found by them, so the cap is reported)
+  const none = analyseBody({ a: 'rsa-sha256', c: 'simple/simple', bh: hashOf('simple', Buffer.from('other\r\n')) }, spaced, { budget: { left: 0 } });
+  assert.deepEqual(kinds(none), ['search_capped', 'unknown']);
+});

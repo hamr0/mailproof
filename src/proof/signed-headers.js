@@ -46,6 +46,14 @@ function splitMessage(input) {
 }
 
 /**
+ * Which bytes `parseTags` trims off a tag name: `TAG_SPACE[byte]` is 1 for exactly the characters
+ * `String.prototype.trim` strips, taken from `trim` itself, so the admission gate (which has to see
+ * a tag name where this parser does) and this parser cannot disagree. For a binary string that is
+ * HT, LF, VT, FF, CR, SP and NBSP.
+ */
+const TAG_SPACE = Uint8Array.from({ length: 256 }, (_, c) => (String.fromCharCode(c).trim() === '' ? 1 : 0));
+
+/**
  * Parse a DKIM-style tag list (`d=..; s=..`) out of a raw header line. Keys are
  * lower-cased, whitespace inside values collapsed. Pure.
  * @param {string} raw  A header line including its `Name:` prefix.
@@ -131,4 +139,4 @@ function hTooLong(raw) {
   return signedNames(parseTags(raw).h || '').length > MAX_H_NAMES;
 }
 
-export { splitMessage, parseTags, canonPair, selectSigned, signedNames, hTooLong, H_TOO_LONG };
+export { splitMessage, parseTags, TAG_SPACE, canonPair, selectSigned, signedNames, hTooLong, H_TOO_LONG };

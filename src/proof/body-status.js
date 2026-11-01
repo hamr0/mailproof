@@ -179,26 +179,29 @@ function analyseBody(tags, body, ctx = {}) {
     }
     if (!bh) return { status: 'mismatch', explain: [{ kind: 'unknown' }] };
 
-    // mismatch: try to explain it. Every search pays for the bytes it processes out of the message's
-    // budget; one the budget cannot cover is skipped and reported as `search_capped`.
+    // mismatch: try to explain it. The appended/prepended searches are super-linear, so each pays for the
+    // bytes it processes out of the message's budget; one the budget cannot cover is skipped and reported
+    // as `search_capped`. The canonicalisation and line-ending detectors are one linear pass each, already
+    // bounded by MAX_TOTAL_BYTES x MAX_SIGNATURES, so they are never charged to the budget nor blocked by it.
     let capped = false;
     /** @type {BodyExplain | null} */
     let found = null;
-    /** @param {number} bytes */
-    const afford = (bytes) => { const ok = spend(budget, bytes); if (!ok) capped = true; return ok; };
-    if (l === null && afford(body.length)) {
-      const lines = canonLines(body, mode);
-      const a = findAppended(lines, mode, alg, bh, budget);
-      found = a.found; capped = a.capped;
-      if (!found) { const p = findPrepended(lines, mode, alg, bh, budget); found = p.found; capped = capped || p.capped; }
+    if (l === null) {
+      if (!spend(budget, body.length)) capped = true;   // entering the searches (the line split) is charged too
+      else {
+        const lines = canonLines(body, mode);
+        const a = findAppended(lines, mode, alg, bh, budget);
+        found = a.found; capped = a.capped;
+        if (!found) { const p = findPrepended(lines, mode, alg, bh, budget); found = p.found; capped = capped || p.capped; }
+      }
     }
-    if (!found && afford(body.length)) {
+    if (!found) {
       const other = mode === 'simple' ? 'relaxed' : 'simple';
       const o = dkimBody(other, alg, l === null ? false : l);
       o.update(body);
       if (o.digest('base64') === bh) found = { kind: 'canonicalisation', detail: { signed_as: mode, matches_as: other } };
     }
-    if (!found && afford(body.length) && /\r(?!\n)/.test(body.toString('binary'))) {
+    if (!found && /\r(?!\n)/.test(body.toString('binary'))) {
       const fixed = Buffer.from(body.toString('binary').replace(/\r\n|\r|\n/g, '\r\n'), 'binary');
       const n = dkimBody(mode, alg, l === null ? false : l);
       n.update(fixed);
