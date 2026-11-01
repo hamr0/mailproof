@@ -36,7 +36,10 @@ mailproof v2 (planned 2.0.0): a new, smaller product. 1.x is frozen at tag `v1.4
 - `npm run check:types`: fails when an exported function or method in the generated `.d.ts` returns a bare `object`.
 
 ### Fixed
-- The OTS stamp now runs with a timeout of `min(30000, floor(lockTimeoutMs / 3))` ms inside the writer lock, so a hanging calendar can no longer make every concurrent writer hit `ERR_TRAIL_LOCKED` (on timeout the record is still committed, `ots: {error}`).
+- The OTS stamp now runs with a timeout of `clamp(floor(lockTimeoutMs / 3), 5000, 30000)` ms inside the writer lock, so a hanging calendar can no longer make every concurrent writer hit `ERR_TRAIL_LOCKED` (on timeout the record is still committed, `ots: {error}`).
+- The lock wait always honours its deadline: only `ENOENT` counts as a vanished lock file, so an unreadable lock or break lock (a directory, `EACCES`) no longer makes `record()` spin forever instead of throwing `ERR_TRAIL_LOCKED`.
+- Crash cleanup removes only files mailproof itself writes (`records/<32 hex>.json`, `records/<32 hex>.json.ots`, `keys/<domain>/<selector>/<16 hex>.json`) instead of every untracked file under `records/` and `keys/`; your own files there are left alone (README Concurrency, SPEC Part B).
+- The OTS timeout has a 5 s floor (a short or zero `lockTimeoutMs` no longer cuts the stamp to ~0 ms; concurrent writers can wait up to that long behind a slow stamp) and one default: `DEFAULT_OTS_TIMEOUT_MS` in `ots.js`.
 - `fetchDkimKey` clears its DNS-timeout timer, so a one-shot process that called `record()` exits at once instead of lingering about 5 s.
 - `matchBody` / `matchFile` (and `matchBodyRecord` / `matchFileRecord`) fail closed on a malformed record (non-array `signatures` / `attachments`, junk entries) with `match: false` instead of throwing; `matchFile` with bytes that are not bytes or a string also returns `match: false`.
 - Docs: a Recovery note for a stuck `ERR_TRAIL_LOCKED` (SPEC Concurrency, README).
