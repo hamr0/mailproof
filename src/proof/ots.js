@@ -48,10 +48,24 @@ function parseOtsBlockHeight(stdout) {
   const patterns = [
     /Bitcoin\s+block\s+(?:height\s+)?(\d+)/i,           // "Bitcoin block 850123"
     /Block\s+height[:\s]+(\d+)/i,                        // "Block height: 850123"
-    /BitcoinBlockHeaderAttestation[^]*?\b(\d{6,})\b/i,   // attestation node + first 6+ digit run
   ];
   for (const re of patterns) {
     const m = stdout.match(re);
+    if (m) {
+      const n = parseInt(m[1], 10);
+      if (Number.isFinite(n) && n > 0) return n;
+    }
+  }
+  // Attestation node + the first 6+ digit run after it. Written as a search from the FIRST
+  // node, not as `Attestation[^]*?\b(\d{6,})\b`: that rescans to the end from every node
+  // when no digit run follows (quadratic). If the first node has no run after it, no later
+  // node can, so one search is the same answer. The sticky-style lastIndex keeps `\b` aware
+  // of the character before the start, as the single regex was.
+  const node = /BitcoinBlockHeaderAttestation/i.exec(stdout);
+  if (node) {
+    const run = /\b(\d{6,})\b/g;
+    run.lastIndex = node.index + node[0].length;
+    const m = run.exec(stdout);
     if (m) {
       const n = parseInt(m[1], 10);
       if (Number.isFinite(n) && n > 0) return n;

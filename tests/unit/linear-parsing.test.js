@@ -9,6 +9,7 @@ import path from 'node:path';
 import { trimTrailingWs } from '../../src/proof/body-status.js';
 import { extractAddresses, verifyRecord } from '../../src/proof/recheck.js';
 import { listIdInner } from '../../src/proof/relay.js';
+import { parseOtsBlockHeight, createOts } from '../../src/proof/ots.js';
 import { Mailproof } from '../../src/index.js';
 import { signedMail, recordOf } from '../helpers/proof.js';
 
@@ -59,6 +60,44 @@ test('listIdInner matches the regex it replaced (generated + edge inputs)', () =
   const edge = ['', '<', '>', '<>', '<a>', 'x <a.b> y', '<<a>', '<a<b>', '<a>>', '><', '>a<', '<a', 'a>', '<<<', '<a> <b>', 'name <list.example.org>', 'plain.example.org', '<a>\n<b>'];
   const inputs = corpus(3, 800, 14, edge);
   for (const s of inputs) assert.equal(listIdInner(s), oracleListId(s), JSON.stringify(s));
+});
+
+// parseOtsBlockHeight: the whole function as it was (three regexes), as the oracle.
+function oracleOtsHeight(stdout) {
+  if (!stdout) return null;
+  const patterns = [
+    /Bitcoin\s+block\s+(?:height\s+)?(\d+)/i,
+    /Block\s+height[:\s]+(\d+)/i,
+    /BitcoinBlockHeaderAttestation[^]*?\b(\d{6,})\b/i,
+  ];
+  for (const re of patterns) {
+    const m = stdout.match(re);
+    if (m) {
+      const n = parseInt(m[1], 10);
+      if (Number.isFinite(n) && n > 0) return n;
+    }
+  }
+  return null;
+}
+
+test('parseOtsBlockHeight matches the three-regex original (generated + edge inputs)', () => {
+  const NODE = 'BitcoinBlockHeaderAttestation';
+  const toks = [NODE, NODE.toLowerCase(), '123456', '12345', '1234567', '000000', '0', 'a', '_', ' ', '\n', '(', ')', ':', 'Bitcoin block ', 'Bitcoin  block  height ', 'Block height: ', 'Block height', '850123', 'x9', '9x'];
+  const edge = ['', NODE, NODE + '123456', NODE + ' 123456', NODE + '(862500)', 'a' + NODE + '1', NODE + '12345 ' + NODE + ' 999999', NODE + ' 000000 123456', NODE + ' 123456a 654321', 'Bitcoin block 850123 ' + NODE + ' 111111', NODE + '_123456 7654321'];
+  const rand = rng(4);
+  const inputs = [...edge];
+  for (let i = 0; i < 800; i++) {
+    let v = '';
+    for (let j = Math.floor(rand() * 9); j > 0; j--) v += toks[Math.floor(rand() * toks.length)];
+    inputs.push(v);
+  }
+  let hits = 0;
+  for (const v of inputs) {
+    const got = parseOtsBlockHeight(v);
+    assert.equal(got, oracleOtsHeight(v), JSON.stringify(v));
+    if (got !== null) hits++;
+  }
+  assert.ok(hits > 100, 'the corpus must reach the attestation branch');
 });
 
 // --- timing: 1 MB adversarial inputs through the public path -----------------
@@ -112,4 +151,16 @@ test('record(): a 1 MB List-Id of "<" characters costs about what a benign 1 MB 
   const m = await signedMail({ body: 'x\r\n', extraHeaders: ['List-Id: ' + '<'.repeat(MB)] });
   const adv = await recordMs(m, m.raw);
   assert.ok(adv.ms < slack(control.ms), `adversarial ${Math.round(adv.ms)} ms vs control ${Math.round(control.ms)} ms`);
+});
+
+test('readBlockHeight(): 1 MB of attestation nodes with no 6-digit run is parsed in < 500 ms (the old regex rescanned per node)', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-ots-'));
+  const bin = path.join(dir, 'ots');
+  fs.writeFileSync(bin, `#!/bin/sh\nyes 'BitcoinBlockHeaderAttestation 12345 ' | head -c ${MB}\n`, { mode: 0o755 });
+  const ots = createOts({ otsBin: bin, timeoutMs: 20000 });
+  let h;
+  const control = await timed(async () => { await ots.readBlockHeight(bin); });   // also warms spawn
+  const ms = await timed(async () => { h = await ots.readBlockHeight(bin); });
+  assert.equal(h, null);
+  assert.ok(ms < LIMIT_MS, `took ${Math.round(ms)} ms (first run ${Math.round(control)} ms)`);
 });
