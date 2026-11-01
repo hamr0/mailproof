@@ -18,8 +18,9 @@
     "test": "node --test 'tests/unit/**/*.test.js' 'tests/integration/**/*.test.js' tests/primitives-core.test.mjs tests/primitives-completeness.test.js",
     "typecheck": "tsc --noEmit",
     "build:types": "tsc",
-    "prepublishOnly": "npm run build:primitives && npm run build:types",
+    "prepack": "npm run build:primitives && npm run build:types",
     "check:lockfile": "node scripts/check-lockfile.mjs",
+    "check:types": "node scripts/check-types.mjs",
     "build:primitives": "node scripts/gen-primitives.mjs",
     "check:primitives": "node scripts/gen-primitives.mjs --check"
   },

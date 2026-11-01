@@ -31,9 +31,13 @@ jobs:
       - run: npm run check:primitives
 
       # The shipped .d.ts are generated from the JSDoc and never committed
-      # (git-ignored, built on publish via prepublishOnly). Build them here so a
+      # (git-ignored, built on pack/publish via prepack). Build them here so a
       # declaration-emit error fails the PR, not the release.
       - run: npm run build:types
+
+      # Property of the whole generated surface: no exported function returns a
+      # bare `object` (LIBRARY_CONVENTIONS section 5). Needs the .d.ts built above.
+      - run: npm run check:types
 
       # package-lock.json's own version must match package.json. `npm ci` only
       # checks the dependency entries, never this field, so a version bump made

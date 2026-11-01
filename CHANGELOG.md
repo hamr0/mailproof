@@ -19,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > those versions were published and unpublished under this name in 2025 and npm
 > permanently reserves a once-published version, so the stable 1.x line starts at
 > the first free clean minor, `1.3.0`.) See
-> [`docs/02-design/DESIGN.md`](docs/02-design/DESIGN.md) for the phasing.
+> [`docs/archive/DESIGN.md`](docs/archive/DESIGN.md) for the phasing.
 
 ## [Unreleased]
 
