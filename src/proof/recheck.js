@@ -107,7 +107,7 @@ function signedFromDomain(sig) {
  */
 function fromDomainAligned(sig, d, strict) {
   const from = signedFromDomain(sig);
-  return Boolean(from && d && getAlignment(from, d, strict));
+  try { return Boolean(from && d && getAlignment(from, d, strict)); } catch { return false; }
 }
 
 /**
@@ -126,33 +126,42 @@ function fromDomainAligned(sig, d, strict) {
  * const v = verifyRecord(JSON.parse(fs.readFileSync('record.json', 'utf8')));
  */
 function verifyRecord(recordOrJson, opts = {}) {
-  /** @type {MpRecord | null} */
-  let rec = null;
-  try { rec = typeof recordOrJson === 'string' ? JSON.parse(recordOrJson) : recordOrJson; } catch { rec = null; }
-  if (!rec || rec.v !== 2 || !Array.isArray(rec.signatures)) {
-    return { ok: false, trust: 'unverified', basis: 'none', passing: [], at: null, signatures: [] };
-  }
-  const strict = /\badkim\s*=\s*s\b/i.test(String(rec.verdicts?.live?.dmarc?.rr || ''));
-  const atMs = opts.at !== undefined ? toMs(opts.at) : toMs(rec.captured);
-  const nowMs = opts.now ?? Date.now();
-  const signatures = rec.signatures.map((sig, index) => {
-    const r = verifySignature(sig, atMs, nowMs);
-    let tags = {};
-    try { tags = parseTags(Buffer.from(sig.dkim_signature, 'base64').toString('binary')); } catch { /* fail closed above */ }
+  /** @type {ReturnType<typeof verifyRecord>} */
+  const failed = { ok: false, trust: 'unverified', basis: 'none', passing: [], at: null, signatures: [] };
+  try {
+    /** @type {any} */
+    let rec = null;
+    try { rec = typeof recordOrJson === 'string' ? JSON.parse(recordOrJson) : recordOrJson; } catch { rec = null; }
+    if (!rec || typeof rec !== 'object' || rec.v !== 2 || !Array.isArray(rec.signatures)) return failed;
+    const o = opts && typeof opts === 'object' ? opts : {};
+    const strict = /\badkim\s*=\s*s\b/i.test(String(rec.verdicts?.live?.dmarc?.rr || ''));
+    const atMs = o.at !== undefined ? toMs(o.at) : toMs(rec.captured);
+    const nowMs = o.now ?? Date.now();
+    // Array.from visits holes too, so a sparse array cannot skip an entry.
+    const signatures = Array.from(/** @type {any[]} */ (rec.signatures), (/** @type {any} */ sig, index) => {
+      if (!sig || typeof sig !== 'object' || Array.isArray(sig)) {
+        return { index, d: null, s: null, ok: false, aligned: false, why: 'malformed signature entry', expires: null, expired_now: false, partial_body: false };
+      }
+      const r = verifySignature(sig, atMs, nowMs);
+      let tags = {};
+      try { tags = parseTags(Buffer.from(sig.dkim_signature, 'base64').toString('binary')); } catch { /* fail closed above */ }
+      return {
+        index, d: /** @type {any} */ (tags).d ?? null, s: /** @type {any} */ (tags).s ?? null,
+        ok: r.ok, aligned: r.ok && fromDomainAligned(sig, /** @type {any} */ (tags).d, strict), why: r.why, expires: r.expires, expired_now: r.expired_now, partial_body: !!sig.partial_body,
+      };
+    });
+    const passing = signatures.filter((x) => x.ok && x.aligned).map((x) => x.index);
     return {
-      index, d: /** @type {any} */ (tags).d ?? null, s: /** @type {any} */ (tags).s ?? null,
-      ok: r.ok, aligned: r.ok && fromDomainAligned(sig, /** @type {any} */ (tags).d, strict), why: r.why, expires: r.expires, expired_now: r.expired_now, partial_body: !!sig.partial_body,
+      ok: signatures.some((s) => s.ok),
+      trust: passing.length ? 'verified' : 'unverified',
+      basis: passing.length ? 'dkim' : 'none',
+      passing,
+      at: Number.isFinite(atMs) ? new Date(atMs).toISOString() : null,
+      signatures,
     };
-  });
-  const passing = signatures.filter((x) => x.ok && x.aligned).map((x) => x.index);
-  return {
-    ok: signatures.some((s) => s.ok),
-    trust: passing.length ? 'verified' : 'unverified',
-    basis: passing.length ? 'dkim' : 'none',
-    passing,
-    at: Number.isFinite(atMs) ? new Date(atMs).toISOString() : null,
-    signatures,
-  };
+  } catch {
+    return failed; // last net: hostile getters/proxies must not escape the "never throws" contract
+  }
 }
 
 /**

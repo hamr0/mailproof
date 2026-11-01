@@ -38,6 +38,8 @@ mailproof v2 (planned 2.0.0): a new, smaller product. 1.x is frozen at tag `v1.4
 ### Fixed
 - Single writer per trail across processes: `record()` now holds a lock file (`<trailDir>/.<trail>.lock`, `O_EXCL`, `{pid, host, started}`) across the whole write, so concurrent processes (one per mail under Postfix) no longer hit git's `index.lock` or race the first `git init`. New `lockTimeoutMs` option (default 30000); on timeout `record()` throws `ERR_TRAIL_LOCKED` (map to exit 75 in a pipe consumer). Dead-pid locks on the same host are taken over. A failed write now removes only the files it newly created and git does not track, so it can no longer delete records another process committed.
 
+- `verifyRecord` (and `mp.verify`) no longer throw on malformed input: a non-object signature entry (for example `null`) is reported as `ok: false, why: 'malformed signature entry'` in its own slot, and junk options are ignored.
+
 ### Removed
 - `OPS.md` and `config.example.env` (v1 operator checklist and `MAILPROOF_*` env template for the bundled Postfix stack) moved to `docs/archive/v1/`; they were not in the package `files` and describe the v1 `create()` API.
 

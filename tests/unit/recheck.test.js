@@ -166,3 +166,68 @@ test('partial_body flags an l= shorter than the canonical body', async () => {
   assert.equal(rec.signatures[0].partial_body, true);
   assert.equal(crypto.createHash('sha256').update('x').digest().length, 32);
 });
+
+test('verifyRecord fails closed on junk and never throws', async () => {
+  const MALFORMED = 'malformed signature entry';
+  for (const junk of [null, undefined, 'x', '', '{', 'null', '[]', [], 5, true, {}, { v: 1 }, { v: 2 }]) {
+    const r = verifyRecord(junk);
+    assert.equal(r.ok, false, String(junk));
+    assert.equal(r.trust, 'unverified');
+    assert.deepEqual(r.signatures, []);
+  }
+  for (const signatures of [undefined, null, 'x', 5, {}, { length: 1 }]) {
+    assert.equal(verifyRecord({ v: 2, captured: new Date().toISOString(), signatures }).ok, false);
+  }
+  const bad = [null, 1, 'x', [], {}, undefined, true];
+  const r = verifyRecord({ v: 2, captured: new Date().toISOString(), signatures: bad });
+  assert.equal(r.ok, false);
+  assert.equal(r.signatures.length, bad.length, 'no entry is skipped');
+  r.signatures.forEach((s, i) => {
+    assert.equal(s.index, i);
+    assert.equal(s.ok, false);
+    assert.equal(s.aligned, false);
+    assert.equal(s.d, null);
+    assert.equal(s.s, null);
+    if (i !== 4) assert.equal(s.why, MALFORMED, `entry ${i}`);
+    assert.equal(typeof s.partial_body, 'boolean');
+  });
+  const sparse = verifyRecord({ v: 2, captured: new Date().toISOString(), signatures: new Array(2) });
+  assert.equal(sparse.signatures.length, 2);
+  assert.equal(sparse.signatures[0].why, MALFORMED);
+  // junk opts
+  const { rec } = await fixture();
+  assert.equal(verifyRecord(rec, null).ok, true);
+  assert.equal(verifyRecord(rec, { at: {} }).ok, false);
+  // a hostile getter cannot escape the contract
+  const hostile = { v: 2, get signatures() { throw new Error('boom'); } };
+  assert.equal(verifyRecord(hostile).ok, false);
+});
+
+test('one valid signature next to a null entry: the valid one still reports, the null is ok:false', async () => {
+  const { rec } = await fixture();
+  const mixed = clone(rec);
+  mixed.signatures.push(null);
+  const r = verifyRecord(mixed);
+  assert.equal(r.ok, true);
+  assert.equal(r.signatures[0].ok, true);
+  assert.equal(r.signatures[1].ok, false);
+  assert.equal(r.signatures[1].why, 'malformed signature entry');
+  assert.deepEqual(r.passing, [0]);
+  const first = clone(rec);
+  first.signatures.unshift(null);
+  const r2 = verifyRecord(first);
+  assert.equal(r2.signatures[0].ok, false);
+  assert.equal(r2.signatures[1].ok, true);
+  assert.deepEqual(r2.passing, [1]);
+});
+
+test('mp.verify never throws on junk input or junk opts', async () => {
+  const { Mailproof } = await import('../../src/proof/mailproof.js');
+  const mp = new Mailproof({ trailDir: '/nonexistent-mailproof-dir' });
+  for (const junk of [null, undefined, 'x', 5, [], {}, { v: 2, signatures: [null] }, '{"v":2,"signatures":[null]}', 'a'.repeat(32)]) {
+    for (const opts of [undefined, null, 'x', { at: 'garbage' }]) {
+      const r = await mp.verify(junk, opts);
+      assert.equal(r.ok, false, String(junk));
+    }
+  }
+});

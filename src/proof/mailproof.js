@@ -281,7 +281,8 @@ class Mailproof {
    * const v = await mp.verify(id);
    * if (v.ok && v.trust === 'verified') console.log('signature holds against the archived key');
    */
-  async verify(recordOrId, { at } = {}) {
+  async verify(recordOrId, opts) {
+    const at = opts && typeof opts === 'object' ? opts.at : undefined;
     const rec = await this._resolve(recordOrId);
     if (!rec) return { ok: false, trust: 'unverified', basis: 'none', at: null, engine: engine(), signatures: [], error: 'record not found' };
     const v = verifyRecord(rec, at === undefined ? {} : { at });
