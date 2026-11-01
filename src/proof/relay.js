@@ -7,6 +7,19 @@ import { parseTags } from './signed-headers.js';
 /** @typedef {import('./signed-headers.js').HeaderRow} HeaderRow */
 
 /**
+ * The text between the first `<` and the first `>` after it, or `v` when there
+ * is no such pair. Two `indexOf`s: the equivalent regex (`<([^>]*)>`) rescans to
+ * the end of the value from every `<` when no `>` follows.
+ * @param {string} v
+ * @returns {string}
+ */
+function listIdInner(v) {
+  const open = v.indexOf('<');
+  const close = open === -1 ? -1 : v.indexOf('>', open + 1);
+  return close === -1 ? v : v.slice(open + 1, close);
+}
+
+/**
  * ARC sealer domains (the `d=` of every ARC-Seal, lower-cased, deduped, in order)
  * and the List-Id domain (the List-Id minus its first label, the list name).
  * @param {HeaderRow[]} rows
@@ -18,11 +31,11 @@ function relayEvidence(rows) {
   let list_id_domain = null;
   if (lid) {
     const v = lid.raw.slice(lid.raw.indexOf(':') + 1).trim();
-    const inner = (/<([^>]*)>/.exec(v)?.[1] ?? v).trim().toLowerCase();
+    const inner = listIdInner(v).trim().toLowerCase();
     const dot = inner.indexOf('.');
     list_id_domain = (dot >= 0 ? inner.slice(dot + 1) : inner) || null;
   }
   return { arc_sealers, list_id_domain };
 }
 
-export { relayEvidence };
+export { relayEvidence, listIdInner };

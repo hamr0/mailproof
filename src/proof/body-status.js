@@ -27,6 +27,18 @@ const MAX_WORK = 64 * 1024 * 1024;
 const RANK = { matched: 3, partial: 2, mismatch: 1 };
 
 /**
+ * `s` without its trailing spaces and tabs, in one backwards pass (a regex for
+ * this is quadratic on a long run of spaces that does not end the line).
+ * @param {string} s
+ * @returns {string}
+ */
+function trimTrailingWs(s) {
+  let end = s.length;
+  while (end > 0 && (s[end - 1] === ' ' || s[end - 1] === '\t')) end--;
+  return end === s.length ? s : s.slice(0, end);
+}
+
+/**
  * Canonical body lines (no CRLF), after the signature's body canonicalization:
  * relaxed takes a bare LF as a line break and folds whitespace; simple breaks
  * lines on CRLF only (a bare LF stays content); trailing empty lines go. This
@@ -40,7 +52,7 @@ function canonLines(body, mode) {
   if (s === '') return [];
   const parts = s.split(mode === 'relaxed' ? /\r?\n/ : '\r\n');
   if (mode === 'relaxed' ? /\n$/.test(s) : s.endsWith('\r\n')) parts.pop();
-  const lines = mode === 'relaxed' ? parts.map((l) => l.replace(/[ \t]+$/, '').replace(/[ \t]+/g, ' ')) : parts;
+  const lines = mode === 'relaxed' ? parts.map((l) => trimTrailingWs(l).replace(/[ \t]+/g, ' ')) : parts;
   while (lines.length && lines[lines.length - 1] === '') lines.pop();
   return lines;
 }
@@ -191,4 +203,4 @@ function summariseBody(signatures, verifies) {
   return /** @type {BodyStatus} */ (pool.map((x) => /** @type {'matched' | 'partial' | 'mismatch'} */ (x.s)).sort((a, b) => RANK[b] - RANK[a])[0]);
 }
 
-export { analyseBody, summariseBody, canonLines, MAX_LINES, MAX_BYTES };
+export { analyseBody, summariseBody, canonLines, trimTrailingWs, MAX_LINES, MAX_BYTES };

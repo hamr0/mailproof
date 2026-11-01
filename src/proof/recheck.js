@@ -84,6 +84,24 @@ function verifySignature(sig, atMs, nowMs) {
 }
 
 /**
+ * Address-like tokens of a header value: each maximal run of characters that are
+ * not whitespace or one of `<>,;"()`, kept when it has an `@` with at least one
+ * character before it and one after it. Linear; the equivalent regex
+ * (`[^\s<>,;"()]+@[^\s<>,;"()]+` with `g`) backtracks quadratically on a long
+ * run with no usable `@`.
+ * @param {string} v
+ * @returns {string[]}
+ */
+function extractAddresses(v) {
+  const out = [];
+  for (const run of v.split(/[\s<>,;"()]+/)) {
+    const at = run.indexOf('@', 1);
+    if (at !== -1 && at <= run.length - 2) out.push(run);
+  }
+  return out;
+}
+
+/**
  * The single author domain of the signed `From:` line, or null when the line is
  * missing/ambiguous (a signature that does not cover From can never align).
  * @param {RecordSignature} sig
@@ -93,7 +111,7 @@ function signedFromDomain(sig) {
   try {
     const line = sig.signed_headers.map((x) => Buffer.from(x, 'base64').toString('binary')).find((l) => /^from\s*:/i.test(l));
     if (!line) return null;
-    const addrs = line.slice(line.indexOf(':') + 1).match(/[^\s<>,;"()]+@[^\s<>,;"()]+/g) || [];
+    const addrs = extractAddresses(line.slice(line.indexOf(':') + 1));
     const domains = new Set(addrs.map((a) => a.slice(a.lastIndexOf('@') + 1).toLowerCase()));
     return domains.size === 1 ? [...domains][0] : null;
   } catch { return null; }
@@ -241,4 +259,4 @@ function matchFileRecord(rec, bytes) {
   }
 }
 
-export { verifyRecord, verifySignature, matchBodyRecord, matchFileRecord, bodyMatchesSignature };
+export { extractAddresses, verifyRecord, verifySignature, matchBodyRecord, matchFileRecord, bodyMatchesSignature };
