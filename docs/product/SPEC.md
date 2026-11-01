@@ -10,7 +10,7 @@
 {
   "v": 2,
   "id": "32 hex",                  // first 32 hex of message.raw_sha256: one record per distinct byte string
-  "message_key": "32 hex|null",    // shared by every copy of one signed message
+  "message_key": "32 hex|null",    // shared by every copy of one signed message; null for an over-limit message (see Limits)
   "captured": "ISO-8601",          // stamped by mailproof's clock, never from Received:
   "direction": "in" | "out",
   "source": "string",              // capture source, default "api"
@@ -20,7 +20,7 @@
     "from": "addr|null"            // only on unsigned records
   },
   "attachments": [ { "filename": "str|null", "size": 0, "sha256": "sha256:<hex>" } ],
-  "signatures": [                  // one per DKIM-Signature header; [] when unsigned
+  "signatures": [                  // one per DKIM-Signature header (at most 10); [] when unsigned or over a limit
     {
       "dkim_signature": "base64 of the raw header line",
       "tags": { "d": "", "s": "", "a": "", "c": "", "h": "", "bh": "", "l": null, "t": null, "x": null },
@@ -32,7 +32,6 @@
       "body": { "status": "matched|partial|mismatch|not-checked", "explain": [ { "kind": "", "detail": {} } ] }
     }
   ],
-  "signatures_skipped": 0,         // present only when > 0: DKIM-Signature headers not evaluated (past the first 10, or all of them over the header-field limit)
   "body_status": "matched|partial|mismatch|not-checked",   // best over the signatures that verify
   "copy": { "kind": "direct|relayed|forward|digest|unknown", "evidence": { } },
   "verdicts": {
@@ -41,22 +40,42 @@
                   "dmarc": { "result": "", "published": false, "policy": null, "rr": null },
                   "spf": { "result": "" } | null, "arc": { "result": "", "sealers": [] } | null },
     "portable": { "trust": "verified|unverified", "engine": { }, "basis": "dkim|none", "passing": [0] }
-    // both verdicts carry "reason": "too many header fields" when the header-field limit was hit (see Limits)
+    // both verdicts carry "reason": "over limit: <name>" when the message was refused by the admission gate (see Limits)
   }
 }
 ```
 
-- **Body status (`signatures[].body`, `body_status`).** Computed from the raw email at capture (`record()` and `check()`); it never changes a trust verdict. The portable verdict covers the signed headers only: read `body_status` for the body. Per signature: `matched` = the body hashes to the signed `bh=` (mailauth's canonicalization, honouring `l=`); `partial` = `l=` is shorter than the canonical body and the signed prefix matches (`explain` = `l_tag` with `signed`/`canonical`/`unsigned` byte counts); `mismatch` = it does not; `not-checked` = nothing to check against (unsigned, or no raw email; unreachable in M0 for signed mail). `body_status` = the best (`matched` > `partial` > `mismatch`) over the signatures whose headers verify at capture, over all signatures when none does, `not-checked` when there is none. `explain` is machine-readable and **never contains body text**, only counts, byte sizes and domains. On a mismatch the detectors run cheapest first and stop at the first that explains it: `appended` (a canonical prefix cut at a line boundary hashes to `bh=`; `detail.bytes`/`lines` appended, e.g. a mailing-list footer), `prepended` (a canonical suffix does; e.g. an external-sender banner), `canonicalisation` (the body hashes under the other `c=` body rule), `line_endings` (it hashes after lone CRs become CRLF), else `unknown`. `appended`/`prepended` are skipped when `l=` is present. Search caps: 5,000 lines, 2 MB of changed bytes, 64 MB hashed; hitting a cap adds a `search_capped` entry before `unknown`. Context hints sit alongside whenever the status is not `matched`: `forwarded` (`{sealers:[d...], arc}` from ARC-Seal `d=` tags and the ARC result at capture) and `mailing_list` (`{list_id_domain}`, the List-Id minus its first label). Hints are not explanations. `matchBody` stays the later check against a produced body, and `full` is unchanged.
+- **Body status (`signatures[].body`, `body_status`).** Computed from the raw email at capture (`record()` and `check()`); it never changes a trust verdict. The portable verdict covers the signed headers only: read `body_status` for the body. Per signature: `matched` = the body hashes to the signed `bh=` (mailauth's canonicalization, honouring `l=`); `partial` = `l=` is shorter than the canonical body and the signed prefix matches (`explain` = `l_tag` with `signed`/`canonical`/`unsigned` byte counts); `mismatch` = it does not; `not-checked` = nothing to check against (unsigned, or no raw email; unreachable in M0 for signed mail). `body_status` = the best (`matched` > `partial` > `mismatch`) over the signatures whose headers verify at capture, over all signatures when none does, `not-checked` when there is none. `explain` is machine-readable and **never contains body text**, only counts, byte sizes and domains. On a mismatch the detectors run cheapest first and stop at the first that explains it: `appended` (a canonical prefix cut at a line boundary hashes to `bh=`; `detail.bytes`/`lines` appended, e.g. a mailing-list footer), `prepended` (a canonical suffix does; e.g. an external-sender banner), `canonicalisation` (the body hashes under the other `c=` body rule), `line_endings` (it hashes after lone CRs become CRLF), else `unknown`. `appended`/`prepended` are skipped when `l=` is present. Search caps (all in `src/proof/limits.js`): 5,000 lines, 2 MB of changed bytes, and ONE work budget of 64 MiB of bytes processed per message, drawn on by every signature and every attached original together (`MAX_WORK`; it used to be 64 MiB per signature, so ten signatures on one tampered body cost ten searches). A search the remaining budget cannot cover is skipped; hitting any cap adds a `search_capped` entry before `unknown`. The budget changes only which explanation is attempted: never a status, never a verdict, and a message that fits the budget gets the same explanations as with an unlimited one. Context hints sit alongside whenever the status is not `matched`: `forwarded` (`{sealers:[d...], arc}` from ARC-Seal `d=` tags and the ARC result at capture) and `mailing_list` (`{list_id_domain}`, the List-Id minus its first label). Hints are not explanations. `matchBody` stays the later check against a produced body, and `full` is unchanged.
 - OpenTimestamps state is not a record field (the stamp hashes the record file's own bytes): the proof is the sibling file `records/<id>.json.ots`, present only when OTS was on.
-- **Signature cap (`MAX_SIGNATURES = 10`).** At most the first 10 DKIM-Signature headers, in header order, are evaluated per message (`record()`, `check()`, and each attached original): key fetch, signature check, body analysis. Each further header is only counted, in `signatures_skipped` (absent when there are no more; an attached original carries the same field in its `attached_original` entry). The live verdict (mailauth) is computed on the message with the extra headers removed, so it reflects the evaluated signatures only. A message whose only valid signature is the 11th is therefore recorded as unsigned-by-a-valid-key: this is the intended tradeoff, since each signature costs a DNS fetch of up to 5 s and a body hash, and an uncapped count lets a sender hold a call for as long as they like. Messages with 10 or fewer signatures are unaffected and produce the same record as before.
-- **Limits.** A sender controls every one of these numbers and each costs real work, so each has a hard cap, defined once in `src/proof/signed-headers.js` (the first three) and enforced identically by `record()`, `check()` and for each attached original:
+- **Limits (the admission gate).** A sender controls every one of these numbers and each costs real work (DNS, hashing, header matching, parsing), so each has a hard cap, defined once in `src/proof/limits.js`. `admit()` (`src/proof/admit.js`) checks all of them in ONE linear pass over the raw bytes, with no regex and no per-line re-scan, before mailparser, mailauth or any search sees the message. It runs in `record()`, `check()`, `matchBody()` (an over-limit message matches nothing) and on each attached original. The first limit the scan meets is the one reported; the total size is checked before anything is read.
 
-  | Limit | Value | Over the limit |
-  |---|---|---|
-  | DKIM-Signature headers evaluated (`MAX_SIGNATURES`) | 10 | The first 10 are evaluated; the rest are only counted in `signatures_skipped`. |
-  | Names in one `h=` (`MAX_H_NAMES`) | 200 | That signature is not evaluated (no key fetch, no verify, no body analysis, and mailauth is not shown it). It is recorded as a failing entry: `key: null`, `key_error: "h= too long"`, `signed_headers: []`, `body.status: "not-checked"`; `verify()` reports `why: "h= too long"`. It occupies one of the 10 slots. It can never verify, so it cannot raise a verdict. |
-  | Header fields in a message (`MAX_HEADER_FIELDS`) | 1000 | Still recorded (accept-and-flag), but unverifiable: no signature is evaluated (`signatures: []`, every DKIM-Signature counted in `signatures_skipped`), mailauth is not called (so no DNS), `body_status` is `not-checked`, and both verdicts are `unverified` with `reason: "too many header fields"`. Never an error. |
-  | Header block size | 1 MiB | The message is rejected, not recorded: the decoder (mailsplit, inside mailparser) throws `EMAXLEN`. The decode runs before any DNS, so a rejected message asks no DNS question. |
+  | Limit | Value | `over limit:` name | Why it exists |
+  |---|---|---|---|
+  | Whole message | 25 MiB | `total_bytes` | A common mail-provider size limit; the cost of everything behind the gate is linear in it. Over it nothing is scanned. |
+  | Header block, up to and including its empty line | 256 KiB | `header_bytes` | Header-only parsing costs about 0.27 ms a KiB. |
+  | Header lines, folds included | 4,000 | `header_lines` | |
+  | Header fields (lines that do not start with a space or tab) | 1,000 | `header_fields` | Header matching by name. |
+  | DKIM-Signature fields | 10 | `signatures` | Each costs a DNS key fetch (up to 5 s) and a body hash. |
+  | Names in one `h=` | 200 | `h_names` | Counted as the colons in the tag plus one. |
+  | One DKIM-Signature field, folds and continuation lines included | 16 KiB | `sig_bytes` | A padded `b=`/`bh=` costs more than its size. |
+  | Body lines that can be a MIME delimiter: start with `--` (or a lone CR then `--`, which mailsplit also takes) | 200 | `mime_parts` | Part handling costs more than the count of parts. |
+  | Longest body line, its line ending not counted | 256 KiB | `body_line` | mailauth's relaxed body canonicaliser is super-linear in a long line (a 1/2/4/8 MiB single line with a matching `bh=` cost 0.11/0.24/0.71/2.5 s of CPU). |
+
+  The header block and the fields are read the way the parsers read them, so the gate cannot be shown fewer signatures or a shorter header block than they see: the block ends at the first empty line (`\n` or `\r\n`), an empty FIRST line included (then the message has no headers); a bare CR is not a line end. A DKIM-Signature field is `DKIM-Signature`, optional blanks, then the colon (on the same line or, after a fold, the next), and it runs until the next line that opens a field, so junk lines with no colon belong to the signature above them, as in mailauth's header parser. These are checked against mailsplit, mailauth's `MessageParser` and `parseHeaders` in `tests/unit/admit.test.js`.
+
+  **Over any limit the message is still recorded (accept-with-flag), but never parsed**: mailauth and mailparser do not run, no DNS is asked, nothing throws. The record holds only what the raw bytes give without a parser:
+
+  ```jsonc
+  { "v": 2, "id": "<first 32 hex of the sha256 of the raw bytes>", "message_key": null,
+    "captured": "...", "direction": "in|out", "source": "...",
+    "message": { "message_id": null, "in_reply_to": null, "references": [], "raw_sha256": "sha256:<hex>", "size": 0 },  // no "from"
+    "attachments": [], "signatures": [], "body_status": "not-checked", "copy": { "kind": "unknown", "evidence": {} },
+    "verdicts": {
+      "live":     { "trust": "unverified", "engine": {}, "dkim": [], "dmarc": { "result": "none", "published": false, "policy": null, "rr": null }, "spf": null, "arc": null, "reason": "over limit: body_line" },
+      "portable": { "trust": "unverified", "engine": {}, "basis": "none", "passing": [], "reason": "over limit: body_line" } } }
+  ```
+
+  The reason has one form, `over limit: <name>`, with the name from the table. `check()` returns the same: `signatures` 0, `unsigned` false (the message was not looked at, so it is not reported as unsigned), `body_status` `not-checked`. The id is the hash of the bytes, so the same bytes recorded twice are one record, as for any message. An attached original over a limit is not examined: its `attached_original` entry is `{ message_key: null, dkim: "none", d: null, body_status: "not-checked", over_limit: "<name>" }`. More than 10 signatures refuses the WHOLE message (it is not trimmed to the first 10: a message whose only valid signature is the 11th is recorded `unverified`, `over limit: signatures`), and mailauth is handed the message exactly as received. A header block over 1 MiB, which the decoder used to reject with `EMAXLEN` and record nothing, is now recorded as `header_bytes`. `verifyRecord` still refuses to canonicalise a stored signature whose `h=` lists more than 200 names (`why: "h= too long"`): an offline record does not carry the raw bytes the gate reads, and a stored or hand-made record may hold one.
 - Never the body, never the raw email. No `Subject` outside `signed_headers`.
 - Serialisation: fixed key order, 2-space indent, trailing newline (stable bytes, stable OTS stamps).
 - Signed header lines are byte-exact (base64). Names in `h=` with no matching header are oversigned and add nothing.
