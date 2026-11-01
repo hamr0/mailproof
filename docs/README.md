@@ -21,8 +21,8 @@ counts and section ranges.
 | **Archive** | [`archive/`](archive/) | v1 history: the v1 PRD in [`archive/v1/`](archive/v1/) (multi-party kernel), [`DESIGN.md`](archive/DESIGN.md) (extraction boundary), and the [P2 gitdone boundary audit](archive/audit-p2-step1-gitdone-boundary.md) |
 
 Further tiers (process, ops) and docs (GUIDE) appear as they earn their place.
-`OPS.md` and `mailproof.context.md` live at the repo root because they ship in
-the npm package.
+`mailproof.context.md` lives at the repo root because it ships in the npm package.
+(The v1 `OPS.md` and `config.example.env` are archived in [`archive/v1/`](archive/v1/).)
 
 ## Start here
 
@@ -51,5 +51,5 @@ If two documents disagree:
 - [`/README.md`](../README.md) — project pitch and POC entry point
 - [`/CLAUDE.md`](../CLAUDE.md) — guidance for Claude Code working in this repo
 - [`/CHANGELOG.md`](../CHANGELOG.md) — version history (Keep a Changelog + SemVer)
-- [`/OPS.md`](../OPS.md) — Postfix/opendkim/PTR/port-25 operator checklist
+- [`archive/v1/OPS.md`](archive/v1/OPS.md) — v1 Postfix/opendkim operator checklist (archived)
 - [`/mailproof.context.md`](../mailproof.context.md) — dense AI-agent integration guide

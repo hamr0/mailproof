@@ -55,8 +55,9 @@ _(none)_
 
 - [mailproof — Design](archive/DESIGN.md) — 62 lines
 - [P2 Step 1 — gitdone → mailproof API audit (boundary table)](archive/audit-p2-step1-gitdone-boundary.md) — 218 lines
+- [OPS — running the bundled mail stack](archive/v1/OPS.md) — 157 lines
 - [mailproof — Product Requirements Document (PRD)](archive/v1/PRD.md) — 333 lines
 
 ---
 
-Total: 7 row(s) — 4 product, 0 logs, 3 archive.
+Total: 8 row(s) — 4 product, 0 logs, 4 archive.

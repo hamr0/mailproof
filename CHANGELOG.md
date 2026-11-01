@@ -35,6 +35,9 @@ mailproof v2 (planned 2.0.0): a new, smaller product. 1.x is frozen at tag `v1.4
 - One record per distinct copy: the record `id` is now the first 32 hex of the raw bytes' sha256 (was the `b=`-based hash), so a mailing-list or forwarded copy no longer collides with the direct one. New `message_key` groups the copies of a signed message, and `copy: { kind, evidence }` (`direct` / `relayed` / `forward` / `digest` / `unknown`) marks the route; a forward-as-attachment links its signed original by key + verdict (`attached_original`, max 10, one level). New `copies(idOrKey)` returns `{ message_key, original, copies, contained_in }`. The same bytes captured twice are still a no-op.
 - `npm run check:types`: fails when an exported function or method in the generated `.d.ts` returns a bare `object`.
 
+### Removed
+- `OPS.md` and `config.example.env` (v1 operator checklist and `MAILPROOF_*` env template for the bundled Postfix stack) moved to `docs/archive/v1/`; they were not in the package `files` and describe the v1 `create()` API.
+
 ### Changed
 - `build:types` emits declarations for the shipped surface only (`tsconfig.build.json`: `src/index.js` + `src/proof/`) after cleaning `types/`; the tarball no longer carries v1 `.d.ts` (18 `types/` files, was 42). `typecheck` still checks all of `src/`.
 - Types are built on `prepack` (pack and publish) instead of `prepublishOnly`; the publish workflow's adopter gate now compiles a v2 quickstart; `mailproof.context.md` follows the context template sections.
