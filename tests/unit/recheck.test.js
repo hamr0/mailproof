@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import { authenticate } from 'mailauth';
-import { verifyRecord, verifySignature, matchBodyRecord } from '../../src/proof/recheck.js';
+import { verifyRecord, verifySignature, matchBodyRecord, matchFileRecord } from '../../src/proof/recheck.js';
+import { hashDocument } from '../../src/proof/hash.js';
 import { signedMail, recordOf, makeKey } from '../helpers/proof.js';
 
 const b64 = (s) => Buffer.from(s, 'binary').toString('base64');
@@ -229,5 +230,55 @@ test('mp.verify never throws on junk input or junk opts', async () => {
       const r = await mp.verify(junk, opts);
       assert.equal(r.ok, false, String(junk));
     }
+  }
+});
+
+test('matchBodyRecord fails closed on a malformed record and never throws', async () => {
+  const { rec, m } = await fixture();
+  const shape = (r) => { assert.equal(r.match, false); assert.equal(r.full, false); assert.ok(Array.isArray(r.signatures)); };
+  for (const junk of [null, undefined, 'x', 5, true, [], {}, { v: 2 }, { v: 2, signatures: {} }, { v: 2, signatures: 5 }, { v: 2, signatures: 'x' }, { v: 2, signatures: null }, { signatures: { length: 1 } }]) {
+    const r = matchBodyRecord(junk, m.raw);
+    shape(r);
+    assert.deepEqual(r.signatures, [], String(junk));
+  }
+  const bad = [null, 1, 'x', [], {}, undefined, true];
+  const r = matchBodyRecord({ ...rec, signatures: bad }, m.raw);
+  shape(r);
+  assert.equal(r.signatures.length, bad.length, 'no entry is skipped');
+  assert.ok(r.signatures.every((x, i) => x.index === i && x.match === false));
+  assert.equal(matchBodyRecord({ ...rec, signatures: new Array(2) }, m.raw).signatures.length, 2, 'holes are visited');
+  // junk entries do not hide a good one
+  const mixed = matchBodyRecord({ ...rec, signatures: [null, rec.signatures[0]] }, m.raw);
+  assert.equal(mixed.match, true);
+  assert.deepEqual(mixed.signatures.map((x) => x.match), [false, true]);
+  // junk raw / opts
+  for (const raw of [null, undefined, 5, {}, []]) shape(matchBodyRecord(rec, raw));
+  assert.equal(matchBodyRecord(rec, m.raw, null).match, true);
+});
+
+test('matchFileRecord fails closed on a malformed record and never throws', async () => {
+  const bytes = Buffer.from('contract');
+  const att = { filename: 'c.pdf', size: bytes.length, sha256: hashDocument(bytes) };
+  for (const junk of [null, undefined, 'x', 5, true, [], {}, { attachments: 'x' }, { attachments: {} }, { attachments: 5 }, { attachments: null }, { attachments: { length: 1 } }]) {
+    assert.deepEqual(matchFileRecord(junk, bytes), { match: false, attachment: null }, String(junk));
+  }
+  for (const entries of [[null], [1, 'x', [], {}, undefined, true], new Array(2)]) {
+    assert.deepEqual(matchFileRecord({ attachments: entries }, bytes), { match: false, attachment: null });
+  }
+  // junk entries do not hide a good one
+  assert.deepEqual(matchFileRecord({ attachments: [null, 'x', att] }, bytes), { match: true, attachment: { index: 2, filename: 'c.pdf', size: bytes.length, sha256: att.sha256 } });
+  // bad bytes match nothing instead of throwing a TypeError
+  for (const bad of [null, undefined, 5, {}, []]) {
+    assert.deepEqual(matchFileRecord({ attachments: [att] }, bad), { match: false, attachment: null }, String(bad));
+  }
+});
+
+test('mp.matchBody / mp.matchFile resolve match:false on a malformed record', async () => {
+  const { Mailproof } = await import('../../src/proof/mailproof.js');
+  const mp = new Mailproof({ trailDir: '/nonexistent-mailproof-dir' });
+  for (const junk of [{ v: 2, signatures: {} }, { v: 2, signatures: 5 }, '{"v":2,"signatures":"x"}', { v: 2, attachments: 'x' }, '{"attachments":{}}']) {
+    const b = await mp.matchBody(junk, Buffer.from('a\r\n\r\nb'));
+    assert.equal(b.match, false); assert.equal(b.full, false);
+    assert.deepEqual(await mp.matchFile(junk, Buffer.from('x')), { match: false, attachment: null });
   }
 });

@@ -343,3 +343,15 @@ test('a break lock older than max(lockTimeoutMs, 10 s) is stale even if its pid 
   const r = await run(trailDir, files[0], mapFile, 10000);
   assert.equal(r.out.ok, true, JSON.stringify(r));
 });
+
+test('a record() child ends on its own right after it answers (no lingering DNS-timeout timer)', async () => {
+  const trailDir = tmp();
+  const { files, mapFile } = await fixtures(1);
+  const child = spawn(process.execPath, [HELPER, trailDir, files[0], mapFile], { stdio: ['ignore', 'pipe', 'inherit'] });
+  let answeredAt = 0;
+  child.stdout.on('data', () => { answeredAt ||= Date.now(); });
+  await new Promise((resolve, reject) => { child.on('error', reject); child.on('close', resolve); });
+  assert.ok(answeredAt > 0, 'child answered');
+  const lag = Date.now() - answeredAt;
+  assert.ok(lag < 3000, `child lingered ${lag} ms after answering (was ~5000 with the uncleared timer)`);
+});

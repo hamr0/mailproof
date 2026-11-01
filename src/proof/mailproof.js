@@ -14,6 +14,8 @@ import { createOts } from './ots.js';
 import { verifyRecord, matchBodyRecord, matchFileRecord } from './recheck.js';
 import { TRAIL_NAME_RE, RECORD_ID_RE, DEFAULT_LOCK_TIMEOUT_MS, commitRecord, readRecord, listIds } from './trail.js';
 
+const OTS_TIMEOUT_MS = 30000; // the configured `ots` timeout (ots.js default)
+
 /** @typedef {import('./types.js').MpRecord} MpRecord */
 /** @typedef {import('./types.js').Envelope} Envelope */
 /** @typedef {{ id: string, captured: string, direction: string, copy: string, body_status: string, live: string, portable: string }} CopySummary */
@@ -54,10 +56,11 @@ class Mailproof {
     this.root = path.resolve(opts.trailDir, trail);
     this.resolver = opts.resolver;
     this.otsBin = opts.otsBin || null;
-    this.ots = this.otsBin ? createOts({ otsBin: this.otsBin }) : null;
     this.now = opts.now || (() => new Date());
     this.trustedSealers = opts.trustedSealers || [];
     this.lockTimeoutMs = Number.isFinite(opts.lockTimeoutMs) && /** @type {number} */ (opts.lockTimeoutMs) >= 0 ? /** @type {number} */ (opts.lockTimeoutMs) : DEFAULT_LOCK_TIMEOUT_MS;
+    // The stamp runs inside the trail lock, so it must give up well before other writers' lock deadline.
+    this.ots = this.otsBin ? createOts({ otsBin: this.otsBin, timeoutMs: Math.min(OTS_TIMEOUT_MS, Math.floor(this.lockTimeoutMs / 3)) }) : null;
     this.check = this.check.bind(this);
     this.record = this.record.bind(this);
     this.verify = this.verify.bind(this);
@@ -241,7 +244,7 @@ class Mailproof {
    * @when Use to keep a proof of an email (one record per distinct copy, marked `direct` / `relayed` / `forward` / `digest`): it stores the signed headers, the signature, the archived key, both verdicts and the body status (`body_status`: did the body match the signed `bh=`, with hints on what changed) as one git commit, and never the body. Call it for every email you may need to prove later, including ones that fail verification (they are recorded as `unverified`).
    * @category proof
    * @signature mp.record(raw: Buffer|string, ctx: { direction: 'in'|'out', source?: string, envelope?: Envelope }) => Promise<{ id, duplicate, commit, record?, ots? }>
-   * @fails Throws on an empty message, a `direction` other than 'in'/'out', a git failure (the tree is rolled back: only files this call created are removed), or `err.code === 'ERR_TRAIL_LOCKED'` when another process holds the trail's writer lock for longer than `lockTimeoutMs` (nothing is written; retry later). Never throws because the mail is unsigned or fails verification. The id is the hash of the raw bytes: the identical bytes recorded twice return `duplicate: true` and write nothing, while a copy with any byte difference (a list footer, an added header) is its own record, linked by `message_key` (see `copies()`). An OTS failure is reported in `ots`, not thrown.
+   * @fails Throws on an empty message, a `direction` other than 'in'/'out', a git failure (the tree is rolled back: only files this call created are removed), or `err.code === 'ERR_TRAIL_LOCKED'` when another process holds the trail's writer lock for longer than `lockTimeoutMs` (nothing is written; retry later). Never throws because the mail is unsigned or fails verification. The id is the hash of the raw bytes: the identical bytes recorded twice return `duplicate: true` and write nothing, while a copy with any byte difference (a list footer, an added header) is its own record, linked by `message_key` (see `copies()`). An OTS failure or timeout is reported in `ots`, not thrown; the stamp runs inside the writer lock, so it is cut off after `min(30000, lockTimeoutMs / 3)` ms.
    * @example
    * const { id, duplicate } = await mp.record(fs.readFileSync('mail.eml'), { direction: 'in', source: 'file' });
    */
@@ -299,7 +302,7 @@ class Mailproof {
    * @when Use when the original email turns up later (a mailbox copy, an .eml) and you want to know it is the one the record signed. A match upgrades the record to a full proof (`full`).
    * @category verify
    * @signature mp.matchBody(recordOrId: Record|string, raw: Buffer|string) => Promise<{ match, full, signatures[] }>
-   * @fails Never throws. Returns `match: false` for a different email, an unknown record or a body altered in transit (mail exported by some clients is altered; `verify()` can still pass in that case).
+   * @fails Never throws on a malformed record (non-array `signatures`, junk entries: `match: false`). Returns `match: false` for a different email, an unknown record or a body altered in transit (mail exported by some clients is altered; `verify()` can still pass in that case).
    * @example
    * const m = await mp.matchBody(id, fs.readFileSync('mail.eml'));   // m.full
    */
@@ -318,7 +321,7 @@ class Mailproof {
    * @when Use to check that a file is the attachment recorded at capture time (its sha256 matches). The hash is self-recorded and timestamped; it is tied to the DKIM signature only if you also produce the body (`matchBody`).
    * @category verify
    * @signature mp.matchFile(recordOrId: Record|string, bytes: Buffer|Uint8Array|string) => Promise<{ match, attachment }>
-   * @fails Never throws. `match: false` for any other bytes or an unknown record.
+   * @fails Never throws on a malformed record (non-array `attachments`, junk entries: `match: false`). `match: false` for any other bytes or an unknown record.
    * @example
    * const f = await mp.matchFile(id, fs.readFileSync('contract.pdf'));   // f.attachment.filename
    */

@@ -13,8 +13,8 @@ const resolver = async (name, type) => {
   return [[map[name]]];
 };
 const mp = new Mailproof({ trailDir, resolver, ...(timeout ? { lockTimeoutMs: Number(timeout) } : {}) });
-// mailauth leaves a ~5 s handle open after the work is done; exit as soon as the line is flushed.
-const finish = (line, code) => process.stdout.write(JSON.stringify(line) + '\n', () => process.exit(code));
+// No process.exit: the child must end on its own once record() is done (a lingering timer shows up as a slow test).
+const finish = (line, code) => { process.stdout.write(JSON.stringify(line) + '\n'); process.exitCode = code; };
 try {
   const r = await mp.record(fs.readFileSync(mailFile), { direction: 'in', source: 'proc' });
   finish({ ok: true, id: r.id, duplicate: r.duplicate }, 0);

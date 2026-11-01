@@ -91,10 +91,12 @@ async function fetchDkimKey(domain, selector, { resolver = resolveTxt, timeoutMs
   }
   const name = `${selector}._domainkey.${domain}`;
   const fetchedAt = new Date().toISOString();
+  /** @type {ReturnType<typeof setTimeout> | undefined} */
+  let timer;
   try {
     const records = await Promise.race([
       resolver(name),
-      new Promise((_, rej) => setTimeout(() => rej(new Error('dns timeout')), timeoutMs)),
+      new Promise((_, rej) => { timer = setTimeout(() => rej(new Error('dns timeout')), timeoutMs); }),
     ]);
     if (!records || records.length === 0) {
       return { pem: null, base64: null, error: 'no TXT record', fetched_at: fetchedAt, lookup: name };
@@ -110,6 +112,8 @@ async function fetchDkimKey(domain, selector, { resolver = resolveTxt, timeoutMs
     };
   } catch (err) {
     return { pem: null, base64: null, error: (err instanceof Error ? err.message : null) || String(err), fetched_at: fetchedAt, lookup: name };
+  } finally {
+    clearTimeout(timer); // the race loser must not keep the process alive
   }
 }
 

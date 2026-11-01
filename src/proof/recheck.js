@@ -183,39 +183,62 @@ function bodyMatchesSignature(sig, body) {
 /**
  * Body-match: hash a raw email's body against each stored signature's `bh=`.
  * `full` is true when some signature both verifies at capture time and matches.
+ * Fails closed: a record whose `signatures` is not an array counts as having none,
+ * and a non-object entry is skipped (`match: false`), like verifyRecord does.
  * @param {MpRecord} rec
  * @param {Buffer | string} raw
  * @param {{ at?: Date | number | string }} [opts]
  * @returns {{ match: boolean, full: boolean, signatures: Array<{ index: number, d: string | null, s: string | null, match: boolean }> }}
+ * @fails Never throws on a malformed record.
  */
 function matchBodyRecord(rec, raw, opts = {}) {
-  const verified = verifyRecord(rec, opts);
-  /** @type {Buffer} */
-  let body;
-  try { body = splitMessage(raw).body; } catch { body = Buffer.alloc(0); }
-  const signatures = (rec.signatures || []).map((sig, index) => ({
-    index, d: verified.signatures[index]?.d ?? null, s: verified.signatures[index]?.s ?? null,
-    match: bodyMatchesSignature(sig, body),
-  }));
-  return {
-    match: signatures.some((s) => s.match),
-    full: signatures.some((s) => s.match && verified.signatures[s.index]?.ok),
-    signatures,
-  };
+  /** @type {ReturnType<typeof matchBodyRecord>} */
+  const none = { match: false, full: false, signatures: [] };
+  try {
+    const sigs = rec && typeof rec === 'object' && Array.isArray(rec.signatures) ? rec.signatures : [];
+    const verified = verifyRecord(rec, opts);
+    /** @type {Buffer} */
+    let body;
+    try { body = splitMessage(raw).body; } catch { body = Buffer.alloc(0); }
+    // Array.from visits holes too, so a sparse array cannot skip an entry.
+    const signatures = Array.from(/** @type {any[]} */ (sigs), (/** @type {any} */ sig, index) => {
+      const isObj = sig !== null && typeof sig === 'object' && !Array.isArray(sig);
+      return {
+        index, d: verified.signatures[index]?.d ?? null, s: verified.signatures[index]?.s ?? null,
+        match: isObj && bodyMatchesSignature(sig, body),
+      };
+    });
+    return {
+      match: signatures.some((s) => s.match),
+      full: signatures.some((s) => s.match && verified.signatures[s.index]?.ok),
+      signatures,
+    };
+  } catch {
+    return none; // last net: hostile getters/proxies must not escape the "never throws" contract
+  }
 }
 
 /**
  * File-match: does `bytes` equal one of the record's attachments by sha256?
+ * Fails closed: a record whose `attachments` is not an array counts as having
+ * none, and a non-object entry never matches. `bytes` that are not bytes or a
+ * string match nothing (no TypeError).
  * @param {MpRecord} rec
  * @param {Buffer | Uint8Array | string} bytes
  * @returns {{ match: boolean, attachment: { index: number, filename: string | null, size: number, sha256: string } | null }}
+ * @fails Never throws on a malformed record or on bad `bytes`.
  */
 function matchFileRecord(rec, bytes) {
-  const want = hashDocument(bytes);
-  const index = (rec.attachments || []).findIndex((a) => a && a.sha256 === want);
-  if (index < 0) return { match: false, attachment: null };
-  const a = rec.attachments[index];
-  return { match: true, attachment: { index, filename: a.filename ?? null, size: a.size, sha256: a.sha256 } };
+  try {
+    const want = hashDocument(bytes);
+    const list = rec && typeof rec === 'object' && Array.isArray(rec.attachments) ? rec.attachments : [];
+    const index = Array.from(/** @type {any[]} */ (list)).findIndex((a) => a !== null && typeof a === 'object' && !Array.isArray(a) && a.sha256 === want);
+    if (index < 0) return { match: false, attachment: null };
+    const a = /** @type {any} */ (list[index]);
+    return { match: true, attachment: { index, filename: a.filename ?? null, size: a.size, sha256: a.sha256 } };
+  } catch {
+    return { match: false, attachment: null };
+  }
 }
 
 export { verifyRecord, verifySignature, matchBodyRecord, matchFileRecord, bodyMatchesSignature };
