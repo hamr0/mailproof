@@ -72,7 +72,7 @@
  * @property {Record<string, string | null>} tags  Informational copy of d,s,a,c,h,bh,l,t,x.
  * @property {string[]} signed_headers  Base64 raw lines, in hashing order.
  * @property {{ k: string, p: string } | null} key
- * @property {string | null} key_error
+ * @property {string | null} key_error  Why there is no key; `'h= too long'` when the signature was skipped for listing more than 200 names in `h=`.
  * @property {string | null} key_file
  * @property {boolean} partial_body  l= present and shorter than the canonical body.
  * @property {BodyResult} body  Body status of this signature (never affects a trust verdict).

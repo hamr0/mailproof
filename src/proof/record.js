@@ -3,7 +3,7 @@
 // class, so this is testable with a plain key object.
 
 import { dkimBody } from 'mailauth/lib/dkim/body';
-import { parseTags, canonPair, selectSigned } from './signed-headers.js';
+import { parseTags, canonPair, selectSigned, H_TOO_LONG } from './signed-headers.js';
 import { analyseBody } from './body-status.js';
 
 /** @typedef {import('./types.js').RecordSignature} RecordSignature */
@@ -56,4 +56,25 @@ function buildSignatureEntry(rows, sigRow, body, keyInfo, ctx = {}) {
   };
 }
 
-export { buildSignatureEntry, canonicalBodyLength };
+/**
+ * The entry for a signature that is NOT evaluated because its `h=` lists more than `MAX_H_NAMES`
+ * names: the raw line is kept, no key is fetched, nothing is verified or hashed. It can never
+ * verify (`key` is null; `verifyRecord` reports `why: 'h= too long'`).
+ * @param {HeaderRow} sigRow
+ * @returns {RecordSignature}
+ */
+function buildRejectedSignatureEntry(sigRow) {
+  const t = parseTags(sigRow.raw);
+  return {
+    dkim_signature: b64(sigRow.raw),
+    tags: { d: t.d ?? null, s: t.s ?? null, a: t.a ?? null, c: t.c || 'simple/simple', h: null, bh: t.bh ?? null, l: t.l ?? null, t: t.t ?? null, x: t.x ?? null },
+    signed_headers: [],
+    key: null,
+    key_error: H_TOO_LONG,
+    key_file: null,
+    partial_body: false,
+    body: { status: 'not-checked', explain: [] },
+  };
+}
+
+export { buildSignatureEntry, buildRejectedSignatureEntry, canonicalBodyLength };

@@ -62,6 +62,16 @@ function canonPair(c) {
 }
 
 /**
+ * The header names an `h=` value lists: lower-cased, trimmed, empty entries dropped. The one
+ * definition of "how many names": `selectSigned` and the `MAX_H_NAMES` check both use it.
+ * @param {string} h  The `h=` tag value.
+ * @returns {string[]}
+ */
+function signedNames(h) {
+  return h.split(':').map((x) => x.trim().toLowerCase()).filter(Boolean);
+}
+
+/**
  * The header lines a signature covers, in hashing order: each `h=` name takes
  * the next unused instance counting from the bottom; a name with no remaining
  * instance is oversigned and adds nothing. Pure.
@@ -81,7 +91,7 @@ function selectSigned(rows, h) {
   const used = new Map();
   /** @type {string[]} */
   const out = [];
-  for (const nm of h.split(':').map((x) => x.trim().toLowerCase()).filter(Boolean)) {
+  for (const nm of signedNames(h)) {
     const idxs = byName.get(nm);
     if (!idxs) continue;
     const n = used.get(nm) || 0;
@@ -93,6 +103,38 @@ function selectSigned(rows, h) {
   return out;
 }
 
+/*
+ * Input limits (SPEC Part B, "Limits"). A sender controls every one of these numbers, and each
+ * costs real work (DNS, hashing, header matching), so each has a hard cap, defined here once.
+ * The fourth limit is not defined here: the header block is capped at 1 MiB by mailsplit
+ * (inside mailparser), which REJECTS the message with `EMAXLEN` before anything is recorded.
+ */
+
+/**
+ * Most names in one DKIM-Signature `h=`. A signature past it is not evaluated (no key fetch,
+ * no verify, no body analysis): it is recorded failing with `key_error: 'h= too long'`.
+ */
+const MAX_H_NAMES = 200;
+
+/** `key_error` (record) and `why` (offline re-check) of a signature skipped for exceeding `MAX_H_NAMES`. */
+const H_TOO_LONG = 'h= too long';
+
+/**
+ * Most header fields in one message. A message past it is still recorded (accept-and-flag) but
+ * as unverifiable: no signature is evaluated, mailauth is not called (so no DNS), both verdicts
+ * are `unverified` with a `reason`, and `body_status` is `not-checked`.
+ */
+const MAX_HEADER_FIELDS = 1000;
+
+/**
+ * Does this DKIM-Signature header line list more than `MAX_H_NAMES` names in `h=`?
+ * @param {string} raw  The header line (binary string).
+ * @returns {boolean}
+ */
+function hTooLong(raw) {
+  return signedNames(parseTags(raw).h || '').length > MAX_H_NAMES;
+}
+
 /**
  * Most DKIM-Signature headers evaluated per message, in header order. A signature costs a
  * DNS key fetch (up to 5 s) and a body hash, so an uncapped count lets a sender hold a call
@@ -102,8 +144,9 @@ function selectSigned(rows, h) {
 const MAX_SIGNATURES = 10;
 
 /**
- * The message bytes with every DKIM-Signature header past the first `max` removed (whole
- * header, folded lines included), so a verifier handed these bytes never evaluates them.
+ * The message bytes with every DKIM-Signature header past the first `max` removed, and every
+ * one whose `h=` is over `MAX_H_NAMES` (whole header, folded lines included), so a verifier
+ * handed these bytes never evaluates them.
  * Returns the SAME buffer when there is nothing to remove. Everything else is untouched.
  * @param {Buffer} buf
  * @param {number} [max]
@@ -119,7 +162,10 @@ function dropExtraSignatures(buf, max = MAX_SIGNATURES) {
   let seen = 0;
   /** @type {number} */ let start = -1;
   let isSig = false;
-  const flush = (/** @type {number} */ end) => { if (start >= 0 && isSig && seen > max) cut.push([start, end]); };
+  // A signature past the cap, or one whose h= is over MAX_H_NAMES, is not evaluated: removed.
+  const flush = (/** @type {number} */ end) => {
+    if (start >= 0 && isSig && (seen > max || hTooLong(s.slice(start, end)))) cut.push([start, end]);
+  };
   for (let pos = 0; pos < headEnd; ) {
     const c = s.charCodeAt(pos);
     const eol = s.indexOf('\n', pos);
@@ -144,4 +190,4 @@ function dropExtraSignatures(buf, max = MAX_SIGNATURES) {
   return Buffer.from(out + s.slice(from), 'binary');
 }
 
-export { splitMessage, parseTags, canonPair, selectSigned, MAX_SIGNATURES, dropExtraSignatures };
+export { splitMessage, parseTags, canonPair, selectSigned, signedNames, hTooLong, MAX_SIGNATURES, MAX_H_NAMES, H_TOO_LONG, MAX_HEADER_FIELDS, dropExtraSignatures };

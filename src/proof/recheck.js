@@ -7,7 +7,7 @@
 import crypto from 'node:crypto';
 import { generateCanonicalizedHeader } from 'mailauth/lib/dkim/header';
 import { dkimBody } from 'mailauth/lib/dkim/body';
-import { parseTags, canonPair, splitMessage } from './signed-headers.js';
+import { parseTags, canonPair, splitMessage, hTooLong, H_TOO_LONG } from './signed-headers.js';
 import { getAlignment } from 'mailauth/lib/tools';
 import { hashDocument } from './hash.js';
 
@@ -54,6 +54,7 @@ function verifySignature(sig, atMs, nowMs) {
     const tags = parseTags(sigRaw.toString('binary'));
     const expires = tags.x ? Number(tags.x) : null;
     const expired_now = expires !== null && nowMs / 1000 > expires;
+    if (hTooLong(sigRaw.toString('binary'))) return { ok: false, why: H_TOO_LONG, expires, expired_now };   // never canonicalised: cost is bounded
     if (!sig.key || !sig.key.p) return { ok: false, why: 'no archived key', expires, expired_now };
     const [alg, hash] = (tags.a || '').toLowerCase().split('-');
     if (hash !== 'sha256' || !['rsa', 'ed25519'].includes(alg)) {
