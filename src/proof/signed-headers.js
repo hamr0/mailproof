@@ -70,12 +70,20 @@ function canonPair(c) {
  * @returns {string[]}  Raw header lines (binary strings).
  */
 function selectSigned(rows, h) {
+  // Row indices per name, built once, so the work is rows + names rather than rows x names.
+  /** @type {Map<string, number[]>} */
+  const byName = new Map();
+  rows.forEach((r, i) => {
+    const l = byName.get(r.name);
+    if (l) l.push(i); else byName.set(r.name, [i]);
+  });
   /** @type {Map<string, number>} */
   const used = new Map();
   /** @type {string[]} */
   const out = [];
   for (const nm of h.split(':').map((x) => x.trim().toLowerCase()).filter(Boolean)) {
-    const idxs = rows.map((r, i) => (r.name === nm ? i : -1)).filter((i) => i >= 0);
+    const idxs = byName.get(nm);
+    if (!idxs) continue;
     const n = used.get(nm) || 0;
     if (n < idxs.length) {
       out.push(rows[idxs[idxs.length - 1 - n]].raw);
@@ -114,15 +122,17 @@ function dropExtraSignatures(buf, max = MAX_SIGNATURES) {
   const flush = (/** @type {number} */ end) => { if (start >= 0 && isSig && seen > max) cut.push([start, end]); };
   for (let pos = 0; pos < headEnd; ) {
     const c = s.charCodeAt(pos);
+    const eol = s.indexOf('\n', pos);
     if (start < 0 || !(c === 32 || c === 9)) {                // a new header (a folded line belongs to the previous one)
       flush(pos);
       start = pos;
-      const colon = s.indexOf(':', pos);
-      const eol = s.indexOf('\n', pos);
-      isSig = colon > pos && (eol === -1 || colon < eol) && s.slice(pos, colon).trim().toLowerCase() === 'dkim-signature';
+      // The colon is searched for on this line only: an unbounded search runs to the end of the
+      // block for every colon-less line, which is quadratic in the number of lines.
+      const colon = (eol === -1 ? s.slice(pos) : s.slice(pos, eol)).indexOf(':');
+      isSig = colon > 0 && s.slice(pos, pos + colon).trim().toLowerCase() === 'dkim-signature';
       if (isSig) seen++;
     }
-    const nl = s.indexOf('\n', pos);
+    const nl = eol;
     if (nl === -1 || nl >= headEnd) break;
     pos = nl + 1;
   }
