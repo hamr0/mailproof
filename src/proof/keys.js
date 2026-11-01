@@ -72,6 +72,9 @@ async function resolveTxt(name) {
   return dns.resolveTxt(name);
 }
 
+/** Characters a DKIM domain or selector may have (lookups and `keys/<domain>/<selector>/` paths). */
+const DKIM_LABEL_RE = /^[a-zA-Z0-9._-]+$/;
+
 /**
  * Fetch + PEM-wrap the DKIM public key at `{selector}._domainkey.{domain}`.
  * Never throws; failure is reported in the `error` field. The resolver is
@@ -86,7 +89,7 @@ async function fetchDkimKey(domain, selector, { resolver = resolveTxt, timeoutMs
   // Defensive input validation: selectors and domains in valid DKIM records are
   // ASCII labels. Reject anything weirder so we can't be coerced into looking up
   // an attacker-controlled hostname.
-  if (!/^[a-zA-Z0-9._-]+$/.test(domain) || !/^[a-zA-Z0-9._-]+$/.test(selector) || /(^|\.)\.|\.\./.test(domain + '.' + selector) || /^\.|\.$/.test(domain)) {
+  if (!DKIM_LABEL_RE.test(domain) || !DKIM_LABEL_RE.test(selector) || /(^|\.)\.|\.\./.test(domain + '.' + selector) || /^\.|\.$/.test(domain)) {
     return { pem: null, base64: null, error: 'invalid domain/selector' };
   }
   const name = `${selector}._domainkey.${domain}`;
@@ -137,4 +140,4 @@ function pickSignatureToArchive(auth) {
   );
 }
 
-export { fetchDkimKey, extractPublicKey, extractTag, toPem, pickSignatureToArchive };
+export { DKIM_LABEL_RE, fetchDkimKey, extractPublicKey, extractTag, toPem, pickSignatureToArchive };

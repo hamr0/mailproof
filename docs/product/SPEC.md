@@ -82,6 +82,7 @@ Trust levels `verified`, `forwarded`, `authorized`, `unverified` (PRD §3).
 - On failure a writer removes only the files it newly created and that git does not track; it never deletes a committed file.
 - The OTS stamp runs inside the lock, so it is cut off after `min(30000, floor(lockTimeoutMs / 3))` ms (reported as `ots: {error: 'ots timeout'}`; the record is still committed), so a hanging calendar cannot make every waiting writer hit `ERR_TRAIL_LOCKED`.
 - Local filesystems only: `O_EXCL` is not reliable on NFS.
+- `records/` and `keys/` are library-managed. At the start of every write (under the lock) the writer runs `git reset -q`, then deletes the untracked files under `records/` and `keys/` that match the library's own paths, and nothing else: `records/<32 lowercase hex>.json`, `records/<32 lowercase hex>.json.ots`, `keys/<domain>/<selector>/<16 hex>.json` (domain and selector lowercase, characters `[a-z0-9._-]`, no `..`, no leading `.`). Key directories this pass emptied are removed. Any other file there is left alone (so `git status` may show it), but a trail is not a place for your own files.
 - **Recovery.** If `ERR_TRAIL_LOCKED` persists and no writer is running (check the `pid` and `host` in `<trailDir>/.<trail>.lock`), delete that file, and `.<trail>.lock.break` if present. A lock from another host is never taken over automatically, including after a hostname change or from a killed container on a shared volume. Volumes shared across hosts are unsupported beyond that manual step.
 
 ---

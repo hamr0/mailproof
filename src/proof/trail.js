@@ -11,6 +11,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { git, GIT_IDENTITY } from './git.js';
+import { DKIM_LABEL_RE } from './keys.js';
 import { withMutex } from './mutex.js';
 
 /** @typedef {import('./types.js').MpRecord} MpRecord */
@@ -239,16 +240,50 @@ async function ensureTrail(root, name, createdIso) {
 }
 
 /**
- * Clear what a crashed writer left half-done: staged changes, and untracked
- * files under `records/` and `keys/`. Safe because only the lock holder writes,
- * and tracked files and everything else are never touched. Needs a HEAD.
+ * Is `rel` (a trail-relative, `/`-separated path) a file mailproof itself writes?
+ *   records/<32 lowercase hex>.json         the record
+ *   records/<32 lowercase hex>.json.ots     its OpenTimestamps proof
+ *   keys/<domain>/<selector>/<16 hex>.json  an archived DKIM key (domain and selector
+ *                                           lowercase, the characters fetchDkimKey allows)
+ * @param {string} rel
+ * @returns {boolean}
+ */
+function isLibraryFile(rel) {
+  const parts = rel.split('/');
+  if (parts[0] === 'records' && parts.length === 2) {
+    const m = /^(.+)\.json(\.ots)?$/.exec(parts[1]);
+    return m !== null && RECORD_ID_RE.test(m[1]);
+  }
+  if (parts[0] === 'keys' && parts.length === 4) {
+    const label = (/** @type {string} */ l) => DKIM_LABEL_RE.test(l) && l === l.toLowerCase() && !l.startsWith('.') && !l.includes('..');
+    return label(parts[1]) && label(parts[2]) && /^[0-9a-f]{16}\.json$/.test(parts[3]);
+  }
+  return false;
+}
+
+/**
+ * Clear what a crashed writer left half-done: staged changes, and the untracked
+ * files mailproof itself writes under `records/` and `keys/` (see isLibraryFile).
+ * Anything else there is left alone. Safe because only the lock holder writes,
+ * and tracked files are never touched. Needs a HEAD.
  * @param {string} root
  * @returns {Promise<void>}
  */
 async function clearLeftovers(root) {
   await git(root, ['reset', '-q']);
-  await git(root, ['clean', '-fdq', '--', 'records', 'keys']);
-  await fs.mkdir(path.join(root, 'records'), { recursive: true }); // clean removes the dir while nothing in it is tracked
+  const untracked = (await git(root, ['ls-files', '--others', '--exclude-standard', '-z', '--', 'records', 'keys'])).split('\0').filter(Boolean);
+  /** @type {Set<string>} */
+  const dirs = new Set();
+  for (const rel of untracked) {
+    if (!isLibraryFile(rel)) continue;
+    await fs.rm(path.join(root, rel), { force: true });
+    if (rel.startsWith('keys/')) { dirs.add(path.dirname(rel)); dirs.add(path.dirname(path.dirname(rel))); }
+  }
+  // drop the key directories this pass emptied (deepest first); rmdir refuses a non-empty one
+  for (const d of [...dirs].sort((a, b) => b.length - a.length)) {
+    try { await fs.rmdir(path.join(root, d)); } catch { /* not empty, or gone */ }
+  }
+  await fs.mkdir(path.join(root, 'records'), { recursive: true });
 }
 
 /**

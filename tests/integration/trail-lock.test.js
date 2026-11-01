@@ -387,3 +387,61 @@ test('an unreadable main lock (a directory at the lock path): ERR_TRAIL_LOCKED a
   assert.equal(outcome, 'ERR_TRAIL_LOCKED');
   assert.ok(ms < 2000, `took ${ms} ms`);
 });
+
+// --- crash cleanup removes only the files mailproof itself writes ---
+
+test('user files in records/ and keys/ survive record(); library leftovers are still cleared', async () => {
+  const trailDir = tmp();
+  const m1 = await signedMail({ body: 'one\r\n' });
+  const mp = new Mailproof({ trailDir, resolver: m1.resolver });
+  await mp.record(m1.raw, { direction: 'in' });
+  const root = path.join(trailDir, 'default');
+  fs.writeFileSync(path.join(root, 'records/notes.txt'), 'mine\n');
+  fs.mkdirSync(path.join(root, 'keys/sub'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'keys/sub/u.txt'), 'mine\n');
+  // look-alikes that are NOT the library's patterns: uppercase / short id, wrong key-file name, uppercase domain
+  fs.writeFileSync(path.join(root, `records/${'AB'.repeat(16)}.json`), 'mine\n');
+  fs.writeFileSync(path.join(root, 'records/abcd.json'), 'mine\n');
+  fs.mkdirSync(path.join(root, 'keys/Upper.example/s'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'keys/Upper.example/s/0123456789abcdef.json'), 'mine\n');
+  // simulated crash leftovers: exactly what the library writes
+  const id = 'cd'.repeat(16);
+  const leftKey = 'keys/left.example/sel/0123456789abcdef.json';
+  fs.mkdirSync(path.join(root, 'keys/left.example/sel'), { recursive: true });
+  fs.writeFileSync(path.join(root, `records/${id}.json`), 'stale\n');
+  fs.writeFileSync(path.join(root, `records/${id}.json.ots`), 'stale\n');
+  fs.writeFileSync(path.join(root, leftKey), 'stale\n');
+
+  const m2 = await signedMail({ body: 'two\r\n', domain: 'two.example' });
+  const mp2 = new Mailproof({ trailDir, resolver: m2.resolver });
+  const rec = await mp2.record(m2.raw, { direction: 'in' });
+  assert.equal(rec.duplicate, false);
+
+  for (const keep of ['records/notes.txt', 'keys/sub/u.txt', `records/${'AB'.repeat(16)}.json`, 'records/abcd.json', 'keys/Upper.example/s/0123456789abcdef.json']) {
+    assert.equal(fs.readFileSync(path.join(root, keep), 'utf8'), 'mine\n', `${keep} survives`);
+  }
+  assert.equal(fs.existsSync(path.join(root, `records/${id}.json`)), false, 'leftover record cleared');
+  assert.equal(fs.existsSync(path.join(root, `records/${id}.json.ots`)), false, 'leftover proof cleared');
+  assert.equal(fs.existsSync(path.join(root, leftKey)), false, 'leftover key cleared');
+  assert.equal(fs.existsSync(path.join(root, 'keys/left.example')), false, 'emptied key dirs removed');
+  assert.equal(fs.existsSync(path.join(root, 'keys/sub')), true);
+  assert.equal(gitOut(root, 'show', '--name-only', '--format=', 'HEAD').split('\n').filter((f) => !f.startsWith('keys/')).join(','), `records/${rec.id}.json`);
+  // only the user's own files are untracked
+  const dirty = gitOut(root, 'status', '--porcelain', '-uall').split('\n').map((l) => l.slice(3)).sort();
+  assert.deepEqual(dirty, ['keys/Upper.example/s/0123456789abcdef.json', 'keys/sub/u.txt', 'records/abcd.json', `records/${'AB'.repeat(16)}.json`, 'records/notes.txt'].sort());
+});
+
+test('a trail with only library-written untracked files still ends with a clean tree and a records/ dir', async () => {
+  const trailDir = tmp();
+  const m1 = await signedMail({ body: 'one\r\n' });
+  await new Mailproof({ trailDir, resolver: m1.resolver }).record(m1.raw, { direction: 'in' });
+  const root = path.join(trailDir, 'default');
+  fs.rmSync(path.join(root, 'records'), { recursive: true, force: true });
+  execFileSync('git', ['reset', '-q', '--hard'], { cwd: root });
+  fs.mkdirSync(path.join(root, 'records'), { recursive: true });
+  fs.writeFileSync(path.join(root, `records/${'ee'.repeat(16)}.json`), 'stale\n');
+  const m2 = await signedMail({ body: 'two\r\n', domain: 'two.example' });
+  await new Mailproof({ trailDir, resolver: m2.resolver }).record(m2.raw, { direction: 'in' });
+  assert.equal(gitOut(root, 'status', '--porcelain'), '');
+  assert.equal(fs.existsSync(path.join(root, `records/${'ee'.repeat(16)}.json`)), false);
+});
