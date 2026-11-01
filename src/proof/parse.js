@@ -28,7 +28,8 @@ import { hashDocument } from './hash.js';
  * @property {string | null} [messageId]
  * @property {string | null} [inReplyTo]
  * @property {string | string[] | null} [references]
- * @property {Array<{ filename?: string, size?: number, content?: Buffer }>} [attachments]
+ * @property {string | false} [subject]
+ * @property {Array<{ filename?: string, size?: number, content?: Buffer, contentType?: string }>} [attachments]
  */
 // mailparser ships no type declarations. The JSDoc cast supplies the real shape
 // (the fields the kernel reads — see ParsedMail) instead of an implicit `any`,
@@ -96,6 +97,9 @@ async function parseMessage(raw) {
     references: Array.isArray(parsed.references) ? parsed.references : (parsed.references ? String(parsed.references).split(/\s+/).filter(Boolean) : []),
     attachments,
     rawSha256: hashDocument(raw),
+    subject: parsed.subject || null,
+    // message/rfc822 parts (forwards as attachment): transient, for the copy link only
+    rfc822: (parsed.attachments || []).filter((a) => a.contentType === 'message/rfc822' && Buffer.isBuffer(a.content)).map((a) => /** @type {Buffer} */ (a.content)),
   };
 }
 

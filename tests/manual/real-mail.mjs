@@ -77,8 +77,10 @@ for (const it of items) {
 console.log(['file#', 'd=', 's=', 'a=', 'c=', 'live DKIM', 'offline@captured', 'agrees', 'l=', 'tamper a', 'b', 'c', 'e', 'f', 'x-edit', 'd key-replay', 'g body', 'h expired/future', 'i captured'].join(' | '));
 for (const r of rows) console.log([r.f, r.d, r.s, r.a, r.c, r.live, r.off, r.agree, r.partial, r.ta, r.tb, r.tc, r.te, r.tf, r.tx, r.td, r.tg, r.th, r.ti].join(' | '));
 console.log('\nBODY STATUS (per signature; kinds + counts/domains only)');
-console.log('file# | d= | body | explain');
-for (const it of items) for (const sg of it.rec.signatures) console.log([it.n, sg.tags.d, sg.body.status, sg.body.explain.map((e) => e.kind + (e.detail ? JSON.stringify(e.detail) : '')).join(' ') || '-'].join(' | '));
+console.log('file# | d= | copy.kind | body | explain');
+for (const it of items) for (const sg of it.rec.signatures) console.log([it.n, sg.tags.d, it.rec.copy.kind, sg.body.status, sg.body.explain.map((e) => e.kind + (e.detail ? JSON.stringify(e.detail) : '')).join(' ') || '-'].join(' | '));
+const ck = {}; for (const it of items) ck[it.rec.copy.kind] = (ck[it.rec.copy.kind] || 0) + 1;
+console.log('copy.kind:', JSON.stringify(ck), ' distinct message_keys:', new Set(items.map((i) => i.rec.message_key)).size, 'of', items.length);
 const bs = {}; for (const it of items) bs[it.rec.body_status] = (bs[it.rec.body_status] || 0) + 1;
 console.log('record body_status:', JSON.stringify(bs));
 const verdicts = items.map((it) => `${it.rec.verdicts.live.trust}/${it.rec.verdicts.portable.trust}`);

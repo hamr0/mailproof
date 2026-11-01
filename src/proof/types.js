@@ -40,6 +40,8 @@
  * @property {string[]} references
  * @property {Attachment[]} attachments
  * @property {string} rawSha256  `sha256:`-prefixed hex of the raw bytes.
+ * @property {string | null} [subject]  Decoded Subject (transient; never stored outside signed_headers).
+ * @property {Buffer[]} [rfc822]  Raw bytes of each `message/rfc822` part (transient).
  */
 
 /**
@@ -102,7 +104,9 @@
  * here and pinned by SPEC.
  * @typedef {Object} MpRecord
  * @property {number} v
- * @property {string} id
+ * @property {string} id  First 32 hex of the raw bytes' sha256 (`message.raw_sha256`): one record per distinct copy.
+ * @property {string | null} message_key  Shared by every copy of one signed message (see SPEC B1); null for unsigned mail with no Message-ID.
+ * @property {MessageCopy} copy  Which kind of copy this is.
  * @property {string} captured
  * @property {'in' | 'out'} direction
  * @property {string} source
@@ -111,6 +115,29 @@
  * @property {RecordSignature[]} signatures
  * @property {BodyStatus} body_status  Best body status over the signatures that verify (see BodyStatus).
  * @property {Record<string, any>} verdicts
+ */
+
+/**
+ * `direct`: signed, no ARC-Seal and no List-Id. `relayed`: ARC-Seal and/or List-Id present.
+ * `forward`: the message is itself a forward (Subject prefix and/or an attached original).
+ * `unknown`: no evidence (e.g. unsigned mail with no relay headers).
+ * @typedef {'direct' | 'relayed' | 'forward' | 'unknown'} CopyKind
+ */
+
+/**
+ * The signed original found attached to a forward (`message/rfc822`): the link is only
+ * its key and verdict. The inner headers and body are NOT stored.
+ * @typedef {Object} AttachedOriginal
+ * @property {string | null} message_key
+ * @property {'pass' | 'fail' | 'none'} dkim
+ * @property {string | null} d
+ * @property {BodyStatus} body_status
+ */
+
+/**
+ * @typedef {Object} MessageCopy
+ * @property {CopyKind} kind
+ * @property {{ arc_sealers?: string[], list_id_domain?: string | null, subject_prefix?: true, attached_original?: AttachedOriginal[], capped?: true }} evidence  Domains and flags only.
  */
 
 export {};

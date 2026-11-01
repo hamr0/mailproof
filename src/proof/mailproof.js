@@ -8,6 +8,7 @@ import { fetchDkimKey } from './keys.js';
 import { splitMessage, parseTags } from './signed-headers.js';
 import { buildSignatureEntry } from './record.js';
 import { summariseBody } from './body-status.js';
+import { messageKeyOf, classifyCopy, MAX_INNER } from './copy.js';
 import { buildLive, buildPortable, engine } from './verdict.js';
 import { createOts } from './ots.js';
 import { verifyRecord, matchBodyRecord, matchFileRecord } from './recheck.js';
@@ -15,6 +16,7 @@ import { TRAIL_NAME_RE, RECORD_ID_RE, commitRecord, readRecord, listIds } from '
 
 /** @typedef {import('./types.js').MpRecord} MpRecord */
 /** @typedef {import('./types.js').Envelope} Envelope */
+/** @typedef {{ id: string, captured: string, direction: string, copy: string, body_status: string, live: string, portable: string }} CopySummary */
 /** @typedef {import('./types.js').MailauthResult} MailauthResult */
 
 /**
@@ -61,6 +63,7 @@ class Mailproof {
     this.matchFile = this.matchFile.bind(this);
     this.get = this.get.bind(this);
     this.list = this.list.bind(this);
+    this.copies = this.copies.bind(this);
   }
 
   /**
@@ -81,36 +84,26 @@ class Mailproof {
     ]);
 
     const sigRows = rows.filter((r) => r.name === 'dkim-signature');
-    /** @type {Array<{ rel: string, json: unknown }>} */
-    const keyFiles = [];
-    const signatures = [];
-    const resolver = this.resolver;
-    for (const sr of sigRows) {
-      const t = parseTags(sr.raw);
-      const k = await fetchDkimKey(t.d, t.s, { resolver: resolver ? (name) => resolver(name, 'TXT') : undefined });
-      /** @type {{ k: string, p: string } | null} */
-      let key = null;
-      let key_file = null;
-      if (k.base64) {
-        key = { k: k.k || 'rsa', p: k.base64 };
-        key_file = `keys/${t.d.toLowerCase()}/${t.s.toLowerCase()}/${sha256hex(k.base64).slice(0, 16)}.json`;
-        keyFiles.push({
-          rel: key_file,
-          json: { v: 2, domain: t.d.toLowerCase(), selector: t.s.toLowerCase(), k: key.k, p: key.p, txt: k.txt, lookup: k.lookup, first_fetched: k.fetched_at },
-        });
-      }
-      signatures.push(buildSignatureEntry(rows, sr, body, { key, key_error: k.base64 ? null : (k.error || 'no key'), key_file }, { arc: auth?.arc?.status?.result }));
+    const { signatures, keyFiles } = await this._signatures(rows, body, auth?.arc?.status?.result);
+
+    // Forward as attachment: verify each signed original (key + verdict only; nothing of it is stored).
+    const inner = parsed.rfc822 || [];
+    /** @type {import('./types.js').AttachedOriginal[]} */
+    const attached = [];
+    for (const m of inner.slice(0, MAX_INNER)) {
+      const r = await this._inner(m, captured);
+      attached.push(r.entry);
+      keyFiles.push(...r.keyFiles);
     }
 
-    const identity = sigRows.length
-      ? (parseTags(sigRows[0].raw).b || '').replace(/\s+/g, '')
-      : sha256hex(rows.map((r) => r.raw).join('\r\n'));
-    const id = sha256hex('mp2\n' + identity).slice(0, 32);
+    // One record per distinct copy: the id is the raw bytes' hash; `message_key` groups the copies.
+    const id = parsed.rawSha256.replace(/^sha256:/, '').slice(0, 32);
 
     /** @type {MpRecord} */
     const record = {
       v: 2,
       id,
+      message_key: messageKeyOf(rows),
       captured,
       direction: ctx.direction,
       source: ctx.source,
@@ -125,6 +118,7 @@ class Mailproof {
       attachments: parsed.attachments.map((a) => ({ filename: a.filename, size: a.size, sha256: /** @type {string} */ (a.sha256) })),
       signatures,
       body_status: 'not-checked',
+      copy: classifyCopy({ rows, subject: parsed.subject || null, signed: sigRows.length > 0, attached, capped: inner.length > MAX_INNER }),
       verdicts: {},
     };
     const sigOk = verifyRecord(record).signatures.map((x) => x.ok);
@@ -134,6 +128,61 @@ class Mailproof {
       portable: buildPortable(record),
     };
     return { record, keyFiles };
+  }
+
+  /**
+   * Signature entries (+ the DKIM keys to archive) for a header block and body.
+   * @param {import('./signed-headers.js').HeaderRow[]} rows
+   * @param {Buffer} body
+   * @param {string | null | undefined} arc  ARC chain result (a body-status hint).
+   * @returns {Promise<{ signatures: import('./types.js').RecordSignature[], keyFiles: Array<{ rel: string, json: unknown }> }>}
+   */
+  async _signatures(rows, body, arc) {
+    /** @type {Array<{ rel: string, json: unknown }>} */
+    const keyFiles = [];
+    /** @type {import('./types.js').RecordSignature[]} */
+    const signatures = [];
+    const resolver = this.resolver;
+    for (const sr of rows.filter((r) => r.name === 'dkim-signature')) {
+      const t = parseTags(sr.raw);
+      const k = await fetchDkimKey(t.d, t.s, { resolver: resolver ? (name) => resolver(name, 'TXT') : undefined });
+      /** @type {{ k: string, p: string } | null} */
+      let key = null;
+      let key_file = null;
+      if (k.base64) {
+        key = { k: k.k || 'rsa', p: k.base64 };
+        key_file = `keys/${t.d.toLowerCase()}/${t.s.toLowerCase()}/${sha256hex(k.base64).slice(0, 16)}.json`;
+        keyFiles.push({
+          rel: key_file,
+          json: { v: 2, domain: t.d.toLowerCase(), selector: t.s.toLowerCase(), k: key.k, p: key.p, txt: k.txt, lookup: k.lookup, first_fetched: k.fetched_at },
+        });
+      }
+      signatures.push(buildSignatureEntry(rows, sr, body, { key, key_error: k.base64 ? null : (k.error || 'no key'), key_file }, { arc }));
+    }
+    return { signatures, keyFiles };
+  }
+
+  /**
+   * Check one attached original (`message/rfc822`) the way a record is checked, keeping
+   * only its key and verdict. One level deep: its own attachments are not examined.
+   * @param {Buffer} buf
+   * @param {string} captured
+   * @returns {Promise<{ entry: import('./types.js').AttachedOriginal, keyFiles: Array<{ rel: string, json: unknown }> }>}
+   */
+  async _inner(buf, captured) {
+    const { rows, body } = splitMessage(buf);
+    const { signatures, keyFiles } = await this._signatures(rows, body, null);
+    const v = verifyRecord({ v: 2, id: '', message_key: null, copy: { kind: 'unknown', evidence: {} }, captured, direction: 'in', source: 'inner', message: {}, attachments: [], signatures, body_status: 'not-checked', verdicts: {} });
+    const passing = v.signatures.find((x) => x.ok);
+    return {
+      entry: {
+        message_key: messageKeyOf(rows),
+        dkim: !signatures.length ? 'none' : passing ? 'pass' : 'fail',
+        d: (passing || v.signatures[0])?.d ?? null,
+        body_status: summariseBody(signatures, v.signatures.map((x) => x.ok)),
+      },
+      keyFiles,
+    };
   }
 
   /**
@@ -187,10 +236,10 @@ class Mailproof {
    *   `ots`: 'off' unless `otsBin` is set; 'pending' once the stamp is committed beside the record; `{ error }`
    *   when stamping failed (the record is committed regardless: accept-with-flag).
    * @name Mailproof#record
-   * @when Use to keep a proof of an email: it stores the signed headers, the signature, the archived key, both verdicts and the body status (`body_status`: did the body match the signed `bh=`, with hints on what changed) as one git commit, and never the body. Call it for every email you may need to prove later, including ones that fail verification (they are recorded as `unverified`).
+   * @when Use to keep a proof of an email (one record per distinct copy, marked `direct` / `relayed` / `forward`): it stores the signed headers, the signature, the archived key, both verdicts and the body status (`body_status`: did the body match the signed `bh=`, with hints on what changed) as one git commit, and never the body. Call it for every email you may need to prove later, including ones that fail verification (they are recorded as `unverified`).
    * @category proof
    * @signature mp.record(raw: Buffer|string, ctx: { direction: 'in'|'out', source?: string, envelope?: Envelope }) => Promise<{ id, duplicate, commit, record?, ots? }>
-   * @fails Throws on an empty message, a `direction` other than 'in'/'out', or a git failure (the tree is rolled back). Never throws because the mail is unsigned or fails verification. Recording the same email twice returns `duplicate: true` and writes nothing. An OTS failure is reported in `ots`, not thrown.
+   * @fails Throws on an empty message, a `direction` other than 'in'/'out', or a git failure (the tree is rolled back). Never throws because the mail is unsigned or fails verification. The id is the hash of the raw bytes: the identical bytes recorded twice return `duplicate: true` and write nothing, while a copy with any byte difference (a list footer, an added header) is its own record, linked by `message_key` (see `copies()`). An OTS failure is reported in `ots`, not thrown.
    * @example
    * const { id, duplicate } = await mp.record(fs.readFileSync('mail.eml'), { direction: 'in', source: 'file' });
    */
@@ -290,6 +339,36 @@ class Mailproof {
    */
   async get(id) {
     return readRecord(this.root, id);
+  }
+
+  /**
+   * Every recorded copy of one message, plus the forwards that carry it as an attachment.
+   * @param {string} idOrKey  A record id or a `message_key` (32 hex each).
+   * @returns {Promise<{ message_key: string | null, original: string | null, copies: Array<CopySummary>, forwards: Array<CopySummary> }>}
+   * @name Mailproof#copies
+   * @when Use to see every route one signed message reached you by (direct, via a mailing list, forwarded), given the id of any copy or the shared `message_key`. `copies` share the key; `forwards` are other records whose attached original has that key. `original` is the earliest `direct` copy whose body matched, or null. Use `get(id)` for a full record.
+   * @category read
+   * @signature mp.copies(idOrKey: string) => Promise<{ message_key, original, copies[], forwards[] }>
+   * @fails Never throws. An unknown id or key, or a record with no `message_key` (unsigned mail with no Message-ID), returns just that record (or nothing) with empty `forwards`.
+   * @example
+   * const { copies, forwards, original } = await mp.copies(id);
+   */
+  async copies(idOrKey) {
+    const all = (await Promise.all((await listIds(this.root)).map((id) => readRecord(this.root, id)))).filter((r) => r !== null);
+    const self = typeof idOrKey === 'string' ? all.find((r) => r.id === idOrKey) : undefined;
+    const key = self ? self.message_key : (typeof idOrKey === 'string' && RECORD_ID_RE.test(idOrKey) ? idOrKey : null);
+    /** @type {(r: MpRecord) => CopySummary} */
+    const sum = (r) => ({
+      id: r.id, captured: r.captured, direction: r.direction, copy: r.copy?.kind ?? 'unknown', body_status: r.body_status,
+      live: r.verdicts?.live?.trust, portable: r.verdicts?.portable?.trust,
+    });
+    const byTime = (/** @type {MpRecord} */ a, /** @type {MpRecord} */ b) => (a.captured < b.captured ? -1 : a.captured > b.captured ? 1 : 0);
+    const copies = (key ? all.filter((r) => r.message_key === key) : self ? [self] : []).sort(byTime);
+    const forwards = key
+      ? all.filter((r) => r.message_key !== key && (r.copy?.evidence?.attached_original || []).some((o) => o.message_key === key)).sort(byTime)
+      : [];
+    const original = copies.find((r) => r.copy?.kind === 'direct' && r.body_status === 'matched');
+    return { message_key: key, original: original ? original.id : null, copies: copies.map(sum), forwards: forwards.map(sum) };
   }
 
   /**

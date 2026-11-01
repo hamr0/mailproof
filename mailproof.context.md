@@ -40,11 +40,12 @@ All methods are bound: `const { verify } = mp` works.
 ## Public API
 
 - `check(raw, { envelope? })` -> `{ live, portable, signatures, unsigned, partial_body, key_errors, body_status, body[] }`. Writes nothing. Judged as of now.
-- `record(raw, { direction: 'in'|'out', source?, envelope? })` -> `{ id, duplicate, commit, record?, ots? }`. One commit per record. Never throws on unverifiable mail (it is recorded `unverified`); throws on empty input, a bad `direction`, or a git failure. A repeat capture returns `duplicate: true` and writes nothing. `ots` is `'off'`, `'pending'` or `{ error }` (an OTS failure never blocks the commit).
+- `record(raw, { direction: 'in'|'out', source?, envelope? })` -> `{ id, duplicate, commit, record?, ots? }`. One commit per record. Never throws on unverifiable mail (it is recorded `unverified`); throws on empty input, a bad `direction`, or a git failure. The same bytes captured again return `duplicate: true` and write nothing; a copy with any byte difference is a new record. `ots` is `'off'`, `'pending'` or `{ error }` (an OTS failure never blocks the commit).
 - `verify(recordOrId, { at? })` -> `{ ok, trust, basis, at, engine, signatures[] }`. Offline, from the record alone. `at` defaults to the record's `captured`; a missing or garbled `captured` fails closed. `trust` is recomputed now.
 - `matchBody(recordOrId, raw)` -> `{ match, full, signatures[] }`. `full` = body matches `bh=` AND the signature verifies at capture time.
 - `matchFile(recordOrId, bytes)` -> `{ match, attachment }`.
 - `list({ limit?, direction? })`, `get(id)`.
+- `copies(idOrKey)` -> `{ message_key, original, copies[], forwards[] }`: every recorded copy of one signed message (the id is the raw-bytes hash, so a list-relayed or forwarded copy is its own record; `message_key` groups them), the derived `original` (earliest `direct` copy with a matched body), and the records that carry it as an attached original. Each record has `copy: { kind: direct|relayed|forward|unknown, evidence }`.
 
 `verifyRecord(record, { at? })` is the same offline check as a pure function, so a third party can verify an exported record with no trail.
 

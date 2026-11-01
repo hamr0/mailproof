@@ -10,7 +10,8 @@
 
 import crypto from 'node:crypto';
 import { dkimBody } from 'mailauth/lib/dkim/body';
-import { parseTags, canonPair } from './signed-headers.js';
+import { canonPair } from './signed-headers.js';
+import { relayEvidence } from './relay.js';
 
 /** @typedef {import('./types.js').BodyResult} BodyResult */
 /** @typedef {import('./types.js').BodyExplain} BodyExplain */
@@ -109,16 +110,9 @@ function findPrepended(lines, mode, alg, bh) {
 function contextHints(rows, arcResult) {
   /** @type {BodyExplain[]} */
   const out = [];
-  const sealers = [...new Set(rows.filter((r) => r.name === 'arc-seal').map((r) => (parseTags(r.raw).d || '').toLowerCase()).filter(Boolean))];
-  if (sealers.length) out.push({ kind: 'forwarded', detail: { sealers, arc: arcResult || 'none' } });
-  const lid = rows.find((r) => r.name === 'list-id');
-  if (lid) {
-    const v = lid.raw.slice(lid.raw.indexOf(':') + 1).trim();
-    const inner = (/<([^>]*)>/.exec(v)?.[1] ?? v).trim().toLowerCase();
-    const dot = inner.indexOf('.');
-    const domain = dot >= 0 ? inner.slice(dot + 1) : inner;
-    if (domain) out.push({ kind: 'mailing_list', detail: { list_id_domain: domain } });
-  }
+  const { arc_sealers, list_id_domain } = relayEvidence(rows);
+  if (arc_sealers.length) out.push({ kind: 'forwarded', detail: { sealers: arc_sealers, arc: arcResult || 'none' } });
+  if (list_id_domain) out.push({ kind: 'mailing_list', detail: { list_id_domain } });
   return out;
 }
 

@@ -9,7 +9,8 @@
 ```jsonc
 {
   "v": 2,
-  "id": "32 hex",
+  "id": "32 hex",                  // first 32 hex of message.raw_sha256: one record per distinct byte string
+  "message_key": "32 hex|null",    // shared by every copy of one signed message
   "captured": "ISO-8601",          // stamped by mailproof's clock, never from Received:
   "direction": "in" | "out",
   "source": "string",              // capture source, default "api"
@@ -32,6 +33,7 @@
     }
   ],
   "body_status": "matched|partial|mismatch|not-checked",   // best over the signatures that verify
+  "copy": { "kind": "direct|relayed|forward|unknown", "evidence": { } },
   "verdicts": {
     "live":     { "trust": "...", "engine": { "rules": "mp-rules/1", "mailauth": "x.y.z" },
                   "dkim": [ { "d": "", "s": "", "result": "", "aligned": false } ],
@@ -47,7 +49,11 @@
 - Never the body, never the raw email. No `Subject` outside `signed_headers`.
 - Serialisation: fixed key order, 2-space indent, trailing newline (stable bytes, stable OTS stamps).
 - Signed header lines are byte-exact (base64). Names in `h=` with no matching header are oversigned and add nothing.
-- `id = sha256("mp2\n" + identity)` first 32 hex; `identity` = first DKIM-Signature's raw `b=` value, else sha256 of the raw header block.
+- **Identity: one record per distinct copy.** `id` = the first 32 hex of `message.raw_sha256` (the sha256 of the raw bytes; one definition). The same bytes captured again are a no-op (`duplicate: true`, the existing commit); any byte difference (a list footer, an added `Received:`, an ARC seal) is its own record, so a relayed copy never hides the direct one. The capture route (`source`, `direction`, `captured`) is the first capture's; later captures of the same bytes are not logged.
+- **`message_key`** groups the copies of one message: `sha256("mp2\n" + identity)` first 32 hex, `identity` = the first DKIM-Signature's raw `b=` value (copies of a signed message share it, whatever they added around it). Unsigned mail: `sha256("mp2\nmid\n" + normalised Message-ID)` first 32 hex (angle brackets stripped, lower-cased), else `null`.
+- **`copy`** (separate from `body_status`; evidence is domains and flags only, never text), decided in this order: `forward` = the Subject starts with `Fwd:`/`Fw:`/`WG:`/`TR:`/`RV:` (case-insensitive; `Re:` is not a forward) and/or the message has `message/rfc822` parts; evidence `{subject_prefix: true}` and/or `{attached_original: [...]}`, `capped: true` if more than 10 inner messages were present. `relayed` = an ARC-Seal and/or a List-Id header; evidence `{arc_sealers: [d...], list_id_domain}` (relay evidence is also kept on a `forward`). `direct` = signed, with no ARC-Seal and no List-Id. `unknown` = no evidence (unsigned mail with no relay headers). `direct` is the absence of relay evidence, not proof of the route.
+- **Forward as attachment.** For each `message/rfc822` part (at most 10, one level deep: an inner message's own attachments are not examined) mailproof runs the same signature check on the inner message at capture, using the key from DNS, and archives the inner signer's key in the same key archive (same dedupe). `attached_original[i]` = `{ message_key, dkim: "pass|fail|none", d, body_status }`: only the key and the verdict; the inner headers and body are NOT stored. A user who wants the inner email's full record calls `record()` on it separately. Inline forwards (quoted text) cannot be verified; `subject_prefix` alone marks them. A `message/rfc822` part is not always a forward (digests, bounce reports carry them too); the evidence says what was found, not why.
+- **Deriving the "original".** There is no per-record `original` flag. Across the copies sharing a `message_key`, the original is the earliest `direct` copy whose `body_status` is `matched` (`copies()` returns it as `original`, or `null`). Records whose `attached_original` carries that key are reported separately as `forwards`.
 - Offline re-check (`verifyRecord`): canonicalise with `mailauth/lib/dkim/header`, verify with Node crypto. `at` defaults to `captured`; a signature expired at `at` (`x=`), a `t=` more than 300 s after `at`, or an unusable `captured` fails closed.
 
 ## B2. Verdicts
@@ -67,7 +73,7 @@ Trust levels `verified`, `forwarded`, `authorized`, `unverified` (PRD §3).
 ```
 - One commit per record (record, new key files, `.ots`). Message: `record <id[0:12]> <direction> <live.trust>/<portable.trust>`; never header or body text.
 - A key file is written once per domain+selector+key-hash and never rewritten.
-- Capturing an email whose id exists is a no-op (`duplicate:true`).
+- Capturing the same bytes again (the id exists) is a no-op (`duplicate:true`).
 
 ---
 

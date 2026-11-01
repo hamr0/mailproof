@@ -29,6 +29,15 @@
       "example": "const mp = new Mailproof({ trailDir: './trails' });\nconst c = await mp.check(fs.readFileSync('mail.eml'));   // c.live.trust, c.portable.trust"
     },
     {
+      "name": "Mailproof#copies",
+      "category": "read",
+      "when": "Use to see every route one signed message reached you by (direct, via a mailing list, forwarded), given the id of any copy or the shared `message_key`. `copies` share the key; `forwards` are other records whose attached original has that key. `original` is the earliest `direct` copy whose body matched, or null. Use `get(id)` for a full record.",
+      "import": "import { Mailproof } from 'mailproof'",
+      "signature": "mp.copies(idOrKey: string) => Promise<{ message_key, original, copies[], forwards[] }>",
+      "fails": "Never throws. An unknown id or key, or a record with no `message_key` (unsigned mail with no Message-ID), returns just that record (or nothing) with empty `forwards`.",
+      "example": "const { copies, forwards, original } = await mp.copies(id);"
+    },
+    {
       "name": "Mailproof#get",
       "category": "read",
       "when": "Use to read one stored record (to export it, or to hand to `verifyRecord`). Use `list()` first if you do not have an id.",
@@ -67,10 +76,10 @@
     {
       "name": "Mailproof#record",
       "category": "proof",
-      "when": "Use to keep a proof of an email: it stores the signed headers, the signature, the archived key, both verdicts and the body status (`body_status`: did the body match the signed `bh=`, with hints on what changed) as one git commit, and never the body. Call it for every email you may need to prove later, including ones that fail verification (they are recorded as `unverified`).",
+      "when": "Use to keep a proof of an email (one record per distinct copy, marked `direct` / `relayed` / `forward`): it stores the signed headers, the signature, the archived key, both verdicts and the body status (`body_status`: did the body match the signed `bh=`, with hints on what changed) as one git commit, and never the body. Call it for every email you may need to prove later, including ones that fail verification (they are recorded as `unverified`).",
       "import": "import { Mailproof } from 'mailproof'",
       "signature": "mp.record(raw: Buffer|string, ctx: { direction: 'in'|'out', source?: string, envelope?: Envelope }) => Promise<{ id, duplicate, commit, record?, ots? }>",
-      "fails": "Throws on an empty message, a `direction` other than 'in'/'out', or a git failure (the tree is rolled back). Never throws because the mail is unsigned or fails verification. Recording the same email twice returns `duplicate: true` and writes nothing. An OTS failure is reported in `ots`, not thrown.",
+      "fails": "Throws on an empty message, a `direction` other than 'in'/'out', or a git failure (the tree is rolled back). Never throws because the mail is unsigned or fails verification. The id is the hash of the raw bytes: the identical bytes recorded twice return `duplicate: true` and write nothing, while a copy with any byte difference (a list footer, an added header) is its own record, linked by `message_key` (see `copies()`). An OTS failure is reported in `ots`, not thrown.",
       "example": "const { id, duplicate } = await mp.record(fs.readFileSync('mail.eml'), { direction: 'in', source: 'file' });"
     },
     {

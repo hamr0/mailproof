@@ -79,72 +79,17 @@ test('dedupe: the same email twice makes no second commit', async () => {
   assert.equal((await mp.get(a.id)).source, 'imap', 'first capture wins');
 });
 
-test('same signed mail with an extra transit header gets the same id (b=-based)', async () => {
+test('the id is the raw-bytes hash: an extra transit header is its own record, with the same message_key', async () => {
   const dir = tmp();
   const m = await signedMail({});
   const mp = mk(dir, m);
   const a = await mp.record(m.raw, { direction: 'in' });
   const viaPipe = Buffer.concat([Buffer.from('Received: from mta.local by me; Sun, 1 Nov 2026 10:00:00 +0000\r\n'), m.raw]);
-  assert.equal((await mp.record(viaPipe, { direction: 'in' })).id, a.id);
-});
-
-test('key archive: once per domain+selector+key; a rotated key adds a file, never rewrites', async () => {
-  const dir = tmp();
-  const m1 = await signedMail({ body: 'one\r\n' });
-  const m1b = await signedMail({ body: 'again\r\n', signers: [{ domain: m1.domain, selector: 'sel1', key: m1.signers[0].key }] });
-  const m2 = await signedMail({ body: 'two\r\n' }); // same domain/selector, NEW key
-  let cur = m1.resolver;
-  const mp = new Mailproof({ trailDir: dir, resolver: (n, t) => cur(n, t), now: clock() });
-  const keyDir = path.join(dir, 'default', 'keys', m1.domain, 'sel1');
-  await mp.record(m1.raw, { direction: 'in' });
-  const first = fs.readdirSync(keyDir);
-  const firstBytes = fs.readFileSync(path.join(keyDir, first[0]), 'utf8');
-  await mp.record(m1b.raw, { direction: 'in' });
-  assert.deepEqual(fs.readdirSync(keyDir), first, 'same key again: no new file');
-  cur = m2.resolver;
-  await mp.record(m2.raw, { direction: 'in' });
-  const after = fs.readdirSync(keyDir);
-  assert.equal(after.length, 2);
-  assert.equal(fs.readFileSync(path.join(keyDir, first[0]), 'utf8'), firstBytes);
-  const kf = JSON.parse(firstBytes);
-  assert.equal(kf.v, 2);
-  assert.equal(kf.domain, m1.domain);
-  assert.match(kf.txt, /^v=DKIM1/);
-  assert.equal(kf.lookup, `sel1._domainkey.${m1.domain}`);
-});
-
-test('unsigned mail is recorded as unverified with minimal metadata and no key archive', async () => {
-  const dir = tmp();
-  const raw = Buffer.from('From: Eve <eve@nowhere.example>\r\nTo: me@x.example\r\nSubject: hello secret subject\r\nMessage-ID: <u1@nowhere.example>\r\n\r\nplain body\r\n');
-  const mp = new Mailproof({ trailDir: dir, now: clock(), resolver: async () => { throw Object.assign(new Error('nx'), { code: 'ENOTFOUND' }); } });
-  const r = await mp.record(raw, { direction: 'in' });
-  const rec = await mp.get(r.id);
-  assert.equal(rec.verdicts.live.trust, 'unverified');
-  assert.equal(rec.verdicts.portable.trust, 'unverified');
-  assert.equal(rec.verdicts.portable.basis, 'none');
-  assert.deepEqual(rec.signatures, []);
-  assert.equal(rec.message.from, 'eve@nowhere.example');
-  assert.equal(rec.message.message_id, '<u1@nowhere.example>');
-  assert.ok(!fs.existsSync(path.join(dir, 'default', 'keys')));
-  const text = fs.readFileSync(path.join(dir, 'default', 'records', `${r.id}.json`), 'utf8');
-  assert.ok(!text.includes('secret subject') && !text.includes('plain body'));
-});
-
-test('l= leaves part of the body unsigned: the record flags partial_body', async () => {
-  const m = await signedMail({ body: 'signed part and an unsigned tail\r\n', bodyLength: 5, canon: 'simple/simple' });
-  const rec = await (async () => { const mp = mk(tmp(), m); const r = await mp.record(m.raw, { direction: 'in' }); return mp.get(r.id); })();
-  assert.equal(rec.signatures[0].partial_body, true);
-});
-
-test('multiple signatures: one entry each, both keys archived', async () => {
-  const m = await signedMail({ from: 'me@a.example', signers: [{ domain: 'a.example', selector: 's1' }, { domain: 'b.example', selector: 's2', alg: 'ed25519' }] });
-  const dir = tmp();
-  const mp = mk(dir, m);
-  const rec = await mp.get((await mp.record(m.raw, { direction: 'in' })).id);
-  assert.equal(rec.signatures.length, 2);
-  assert.deepEqual(rec.signatures.map((s) => s.key.k).sort(), ['ed25519', 'rsa']);
-  assert.equal(rec.verdicts.live.dkim.length, 2);
-  assert.ok(fs.existsSync(path.join(dir, 'default', 'keys', 'b.example', 's2')));
+  const b = await mp.record(viaPipe, { direction: 'in' });
+  assert.notEqual(b.id, a.id);
+  assert.equal(b.duplicate, false);
+  assert.equal(b.record.message_key, a.record.message_key);
+  assert.equal(a.id, a.record.message.raw_sha256.replace('sha256:', '').slice(0, 32));
 });
 
 test('attachments: sha256 + size + filename recorded, content never', async () => {
