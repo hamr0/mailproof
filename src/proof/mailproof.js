@@ -5,7 +5,7 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 import { authenticateMessage, parseMessage } from './parse.js';
 import { fetchDkimKey } from './keys.js';
-import { splitMessage, parseTags } from './signed-headers.js';
+import { splitMessage, parseTags, MAX_SIGNATURES, dropExtraSignatures } from './signed-headers.js';
 import { buildSignatureEntry } from './record.js';
 import { summariseBody } from './body-status.js';
 import { messageKeyOf, classifyCopy, MAX_INNER } from './copy.js';
@@ -93,12 +93,12 @@ class Mailproof {
     const { rows, body } = splitMessage(buf);
     const hasEnvelope = Boolean(ctx.envelope && (ctx.envelope.clientIp || ctx.envelope.sender));
     const [auth, parsed] = await Promise.all([
-      authenticateMessage(buf, ctx.envelope || {}, { resolver: this.resolver }).catch(() => /** @type {MailauthResult} */ ({})),
+      authenticateMessage(dropExtraSignatures(buf), ctx.envelope || {}, { resolver: this.resolver }).catch(() => /** @type {MailauthResult} */ ({})),
       parseMessage(buf),
     ]);
 
     const sigRows = rows.filter((r) => r.name === 'dkim-signature');
-    const { signatures, keyFiles } = await this._signatures(rows, body, auth?.arc?.status?.result);
+    const { signatures, keyFiles, skipped } = await this._signatures(rows, body, auth?.arc?.status?.result);
 
     // Forward as attachment: verify each signed original (key + verdict only; nothing of it is stored).
     const inner = parsed.rfc822 || [];
@@ -131,6 +131,7 @@ class Mailproof {
       },
       attachments: parsed.attachments.map((a) => ({ filename: a.filename, size: a.size, sha256: /** @type {string} */ (a.sha256) })),
       signatures,
+      ...(skipped ? { signatures_skipped: skipped } : {}),
       body_status: 'not-checked',
       copy: classifyCopy({ rows, subject: parsed.subject || null, signed: sigRows.length > 0, attached, capped: inner.length > MAX_INNER, multipartDigest: /^content-type:[ \t]*multipart\/digest/im.test(body.toString('binary')) || rows.some((r) => r.name === 'content-type' && /multipart\/digest/i.test(r.raw)) }),
       verdicts: {},
@@ -149,7 +150,7 @@ class Mailproof {
    * @param {import('./signed-headers.js').HeaderRow[]} rows
    * @param {Buffer} body
    * @param {string | null | undefined} arc  ARC chain result (a body-status hint).
-   * @returns {Promise<{ signatures: import('./types.js').RecordSignature[], keyFiles: Array<{ rel: string, json: unknown }> }>}
+   * @returns {Promise<{ signatures: import('./types.js').RecordSignature[], keyFiles: Array<{ rel: string, json: unknown }>, skipped: number }>}
    */
   async _signatures(rows, body, arc) {
     /** @type {Array<{ rel: string, json: unknown }>} */
@@ -157,7 +158,9 @@ class Mailproof {
     /** @type {import('./types.js').RecordSignature[]} */
     const signatures = [];
     const resolver = this.resolver;
-    for (const sr of rows.filter((r) => r.name === 'dkim-signature')) {
+    const all = rows.filter((r) => r.name === 'dkim-signature');
+    // Only the first MAX_SIGNATURES are evaluated (key fetch, verify, body analysis); the rest are counted.
+    for (const sr of all.slice(0, MAX_SIGNATURES)) {
       const t = parseTags(sr.raw);
       const k = await fetchDkimKey(t.d, t.s, { resolver: resolver ? (name) => resolver(name, 'TXT') : undefined });
       /** @type {{ k: string, p: string } | null} */
@@ -173,7 +176,7 @@ class Mailproof {
       }
       signatures.push(buildSignatureEntry(rows, sr, body, { key, key_error: k.base64 ? null : (k.error || 'no key'), key_file }, { arc }));
     }
-    return { signatures, keyFiles };
+    return { signatures, keyFiles, skipped: Math.max(0, all.length - MAX_SIGNATURES) };
   }
 
   /**
@@ -185,7 +188,7 @@ class Mailproof {
    */
   async _inner(buf, captured) {
     const { rows, body } = splitMessage(buf);
-    const { signatures, keyFiles } = await this._signatures(rows, body, null);
+    const { signatures, keyFiles, skipped } = await this._signatures(rows, body, null);
     const v = verifyRecord({ v: 2, id: '', message_key: null, copy: { kind: 'unknown', evidence: {} }, captured, direction: 'in', source: 'inner', message: {}, attachments: [], signatures, body_status: 'not-checked', verdicts: {} });
     const passing = v.signatures.find((x) => x.ok);
     return {
@@ -194,6 +197,7 @@ class Mailproof {
         dkim: !signatures.length ? 'none' : passing ? 'pass' : 'fail',
         d: (passing || v.signatures[0])?.d ?? null,
         body_status: summariseBody(signatures, v.signatures.map((x) => x.ok)),
+        ...(skipped ? { signatures_skipped: skipped } : {}),
       },
       keyFiles,
     };
@@ -218,12 +222,12 @@ class Mailproof {
    * `key_errors` and an `unverified` portable verdict.
    * @param {Buffer | string} raw
    * @param {{ envelope?: Envelope }} [opts]
-   * @returns {Promise<{ live: Record<string, any>, portable: Record<string, any>, signatures: number, unsigned: boolean, partial_body: boolean, key_errors: string[], body_status: import('./types.js').BodyStatus, body: import('./types.js').BodyResult[] }>}
+   * @returns {Promise<{ live: Record<string, any>, portable: Record<string, any>, signatures: number, unsigned: boolean, partial_body: boolean, key_errors: string[], body_status: import('./types.js').BodyStatus, body: import('./types.js').BodyResult[], signatures_skipped?: number }>}
    * @name Mailproof#check
    * @when Use for a one-off look at an email you were handed (a saved .eml), when you do NOT want it recorded. It returns both verdicts and writes nothing. Use `record()` instead to keep a proof.
    * @category proof
-   * @signature mp.check(raw: Buffer|string, opts?: { envelope?: Envelope }) => Promise<{ live, portable, signatures: number, unsigned: boolean, partial_body: boolean, key_errors: string[], body_status, body[] }>
-   * @fails Rejects on an empty message. Unsigned or unverifiable mail does not throw: it comes back `unverified`. Judged as of now, so a key that has left DNS appears in `key_errors` and the portable verdict is `unverified`. The portable verdict covers the signed headers only: read `body_status` (and `body[i].explain`) for the body.
+   * @signature mp.check(raw: Buffer|string, opts?: { envelope?: Envelope }) => Promise<{ live, portable, signatures: number, unsigned: boolean, partial_body: boolean, key_errors: string[], body_status, body[], signatures_skipped?: number }>
+   * @fails Rejects on an empty message. Unsigned or unverifiable mail does not throw: it comes back `unverified`. Only the first 10 DKIM-Signature headers are evaluated (`signatures` counts those); any further ones are counted in `signatures_skipped`, present only when there are some. Judged as of now, so a key that has left DNS appears in `key_errors` and the portable verdict is `unverified`. The portable verdict covers the signed headers only: read `body_status` (and `body[i].explain`) for the body.
    * @example
    * const mp = new Mailproof({ trailDir: './trails' });
    * const c = await mp.check(fs.readFileSync('mail.eml'));   // c.live.trust, c.portable.trust
@@ -239,6 +243,7 @@ class Mailproof {
       key_errors: record.signatures.filter((x) => x.key_error).map((x) => /** @type {string} */ (x.key_error)),
       body_status: record.body_status,
       body: record.signatures.map((x) => x.body),
+      ...(record.signatures_skipped ? { signatures_skipped: record.signatures_skipped } : {}),
     };
   }
 
@@ -253,7 +258,7 @@ class Mailproof {
    * @when Use to keep a proof of an email (one record per distinct copy, marked `direct` / `relayed` / `forward` / `digest`): it stores the signed headers, the signature, the archived key, both verdicts and the body status (`body_status`: did the body match the signed `bh=`, with hints on what changed) as one git commit, and never the body. Call it for every email you may need to prove later, including ones that fail verification (they are recorded as `unverified`).
    * @category proof
    * @signature mp.record(raw: Buffer|string, ctx: { direction: 'in'|'out', source?: string, envelope?: Envelope }) => Promise<{ id, duplicate, commit, record?, ots? }>
-   * @fails Throws on an empty message, a `direction` other than 'in'/'out', a git failure (the tree is rolled back: only files this call created are removed), or `err.code === 'ERR_TRAIL_LOCKED'` when another process holds the trail's writer lock for longer than `lockTimeoutMs` (nothing is written; retry later). Never throws because the mail is unsigned or fails verification. The id is the hash of the raw bytes: the identical bytes recorded twice return `duplicate: true` and write nothing, while a copy with any byte difference (a list footer, an added header) is its own record, linked by `message_key` (see `copies()`). An OTS failure or timeout is reported in `ots`, not thrown; the stamp runs inside the writer lock, so it is cut off after `clamp(floor(lockTimeoutMs / 3), 5000, 30000)` ms.
+   * @fails Throws on an empty message, a `direction` other than 'in'/'out', a git failure (the tree is rolled back: only files this call created are removed), or `err.code === 'ERR_TRAIL_LOCKED'` when another process holds the trail's writer lock for longer than `lockTimeoutMs` (nothing is written; retry later). Never throws because the mail is unsigned or fails verification. Only the first 10 DKIM-Signature headers are evaluated (no key fetch, verify or body analysis for the rest); they are counted in `record.signatures_skipped`, present only when there are some. The id is the hash of the raw bytes: the identical bytes recorded twice return `duplicate: true` and write nothing, while a copy with any byte difference (a list footer, an added header) is its own record, linked by `message_key` (see `copies()`). An OTS failure or timeout is reported in `ots`, not thrown; the stamp runs inside the writer lock, so it is cut off after `clamp(floor(lockTimeoutMs / 3), 5000, 30000)` ms.
    * @example
    * const { id, duplicate } = await mp.record(fs.readFileSync('mail.eml'), { direction: 'in', source: 'file' });
    */

@@ -85,4 +85,53 @@ function selectSigned(rows, h) {
   return out;
 }
 
-export { splitMessage, parseTags, canonPair, selectSigned };
+/**
+ * Most DKIM-Signature headers evaluated per message, in header order. A signature costs a
+ * DNS key fetch (up to 5 s) and a body hash, so an uncapped count lets a sender hold a call
+ * for as long as they like. The rest are only counted (`signatures_skipped`), never fetched,
+ * verified or analysed. Defined once; every signature loop and the mailauth input use it.
+ */
+const MAX_SIGNATURES = 10;
+
+/**
+ * The message bytes with every DKIM-Signature header past the first `max` removed (whole
+ * header, folded lines included), so a verifier handed these bytes never evaluates them.
+ * Returns the SAME buffer when there is nothing to remove. Everything else is untouched.
+ * @param {Buffer} buf
+ * @param {number} [max]
+ * @returns {Buffer}
+ */
+function dropExtraSignatures(buf, max = MAX_SIGNATURES) {
+  const s = buf.toString('binary');
+  const sep = /\r?\n\r?\n/.exec(s);
+  const headEnd = sep ? sep.index : s.length;                 // where the last header's text ends
+  const lastEnd = sep ? headEnd + (sep[0][0] === '\r' ? 2 : 1) : s.length;   // ...plus its own line break
+  /** @type {Array<[number, number]>} */
+  const cut = [];
+  let seen = 0;
+  /** @type {number} */ let start = -1;
+  let isSig = false;
+  const flush = (/** @type {number} */ end) => { if (start >= 0 && isSig && seen > max) cut.push([start, end]); };
+  for (let pos = 0; pos < headEnd; ) {
+    const c = s.charCodeAt(pos);
+    if (start < 0 || !(c === 32 || c === 9)) {                // a new header (a folded line belongs to the previous one)
+      flush(pos);
+      start = pos;
+      const colon = s.indexOf(':', pos);
+      const eol = s.indexOf('\n', pos);
+      isSig = colon > pos && (eol === -1 || colon < eol) && s.slice(pos, colon).trim().toLowerCase() === 'dkim-signature';
+      if (isSig) seen++;
+    }
+    const nl = s.indexOf('\n', pos);
+    if (nl === -1 || nl >= headEnd) break;
+    pos = nl + 1;
+  }
+  flush(lastEnd);
+  if (!cut.length) return buf;
+  let out = '';
+  let from = 0;
+  for (const [a, b] of cut) { out += s.slice(from, a); from = b; }
+  return Buffer.from(out + s.slice(from), 'binary');
+}
+
+export { splitMessage, parseTags, canonPair, selectSigned, MAX_SIGNATURES, dropExtraSignatures };

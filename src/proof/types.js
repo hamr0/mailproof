@@ -112,7 +112,8 @@
  * @property {string} source
  * @property {Record<string, any>} message
  * @property {Array<{ filename: string | null, size: number, sha256: string }>} attachments
- * @property {RecordSignature[]} signatures
+ * @property {RecordSignature[]} signatures  The first 10 DKIM-Signature headers, in header order (`MAX_SIGNATURES`).
+ * @property {number} [signatures_skipped]  How many further DKIM-Signature headers were not evaluated; absent when none.
  * @property {BodyStatus} body_status  Best body status over the signatures that verify (see BodyStatus).
  * @property {Record<string, any>} verdicts
  */
@@ -133,6 +134,7 @@
  * @property {'pass' | 'fail' | 'none'} dkim
  * @property {string | null} d
  * @property {BodyStatus} body_status
+ * @property {number} [signatures_skipped]  DKIM-Signature headers past the first 10, not evaluated; absent when none.
  */
 
 /**

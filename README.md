@@ -22,7 +22,7 @@ await mp.check(emlBytes);             // one-off: verdicts only, writes nothing
 - If the body turns up later, it hashes to the signed `bh=`.
 - Attachment hashes are self-recorded at capture. They are tied to the signature only if the body is produced.
 
-Honest limits: an unsigned email is recorded as `unverified`; a signature with `l=` leaves part of the body unsigned (flagged `partial_body`); SPF can never be re-checked from stored data, so the **portable** verdict uses DKIM only. `captured` is mailproof's own clock; use OpenTimestamps (`otsBin`) to make "captured no later than T" provable.
+Honest limits: only the first 10 DKIM-Signature headers of a message are evaluated (the rest are counted in `signatures_skipped`; a message whose only valid signature is the 11th is not verified); an unsigned email is recorded as `unverified`; a signature with `l=` leaves part of the body unsigned (flagged `partial_body`); SPF can never be re-checked from stored data, so the **portable** verdict uses DKIM only. `captured` is mailproof's own clock; use OpenTimestamps (`otsBin`) to make "captured no later than T" provable.
 
 Portable `verified` covers the signed headers; read `body_status` for the body (`matched`, `partial`, `mismatch`, with `explain` hints on what changed).
 
