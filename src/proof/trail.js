@@ -50,34 +50,95 @@ function pidAlive(pid) {
 }
 
 /**
+ * Parse a `{pid, host, started}` lock file's text, or null when it is not one.
+ * @param {string} text
+ * @returns {{ pid: number, host: string } | null}
+ */
+function parseLock(text) {
+  try {
+    const info = JSON.parse(text);
+    if (info && typeof info === 'object' && Number.isInteger(info.pid) && typeof info.host === 'string') return info;
+  } catch { /* unparseable */ }
+  return null;
+}
+
+/** A break lock is held for milliseconds; past this age it is stale whoever owns it. */
+const BREAK_MIN_STALE_MS = 10000;
+
+/**
+ * Remove an abandoned break lock by a plain unlink (never by taking it over
+ * through another lock: that would recurse). Stale = same host with a dead pid,
+ * or older than max(timeoutMs, 10 s). The content is re-read just before the
+ * unlink so a break lock re-acquired in between is left alone.
+ * @param {string} breakPath
+ * @param {number} timeoutMs
+ * @returns {Promise<boolean>}  True when the break lock is gone or was removed (caller retries).
+ */
+async function clearStaleBreakLock(breakPath, timeoutMs) {
+  let text;
+  let mtimeMs;
+  try { text = await fs.readFile(breakPath, 'utf8'); mtimeMs = (await fs.stat(breakPath)).mtimeMs; }
+  catch { return true; } // vanished: just retry
+  const info = parseLock(text);
+  const old = Date.now() - mtimeMs > Math.max(timeoutMs, BREAK_MIN_STALE_MS);
+  const stale = old || (info !== null && info.host === os.hostname() && !pidAlive(info.pid));
+  if (!stale) return false;
+  try {
+    if ((await fs.readFile(breakPath, 'utf8')) !== text) return false; // re-acquired meanwhile
+    await fs.unlink(breakPath);
+  } catch (e) {
+    return /** @type {NodeJS.ErrnoException} */ (e).code === 'ENOENT'; // gone already; any other failure: back off
+  }
+  return true;
+}
+
+/**
  * Remove the lock at `lockPath` only when it is provably stale: written by a
  * dead pid on THIS host, or unparseable and older than `timeoutMs`. A live or
- * other-host lock is never touched. The content is re-read just before the
- * unlink so a lock re-acquired in between is not removed.
+ * other-host lock is never touched.
+ *
+ * Why this is atomic enough. Read-then-unlink is two steps, so two takers could
+ * both judge the same dead lock stale and the second unlink could hit a live
+ * lock the first taker had just created. The unlink therefore happens only
+ * while holding the break lock `<lock>.break` (an `O_EXCL` file, so one holder
+ * at a time). While the main lock is held by a dead owner, nothing but a
+ * break-lock holder may remove it: the owner never releases (it is dead), a
+ * live writer's release only removes its own lock, and acquirers need the file
+ * absent. So between the holder's re-read ("still the content judged stale")
+ * and its unlink the main lock cannot change, and the unlink cannot hit a live
+ * lock. A waiter that does not get the break lock does not touch the main lock;
+ * it backs off. The one residual window is a break lock abandoned by a crash and
+ * removed by two waiters at once (the stale rule in clearStaleBreakLock).
  * @param {string} lockPath
  * @param {number} timeoutMs
- * @returns {Promise<boolean>}  True when the lock is gone or was removed (caller retries the open).
+ * @returns {Promise<boolean>}  True when the caller should retry the open at once; false to back off.
  */
 async function takeOverIfStale(lockPath, timeoutMs) {
   let text;
   let mtimeMs;
   try { text = await fs.readFile(lockPath, 'utf8'); mtimeMs = (await fs.stat(lockPath)).mtimeMs; }
   catch { return true; } // vanished: just retry the open
-  /** @type {any} */
-  let info = null;
-  try { info = JSON.parse(text); } catch { /* unparseable */ }
-  let stale;
-  if (info && typeof info === 'object' && Number.isInteger(info.pid) && typeof info.host === 'string') {
-    stale = info.host === os.hostname() && !pidAlive(info.pid);
-  } else {
-    stale = Date.now() - mtimeMs > timeoutMs;
-  }
+  const info = parseLock(text);
+  const stale = info ? info.host === os.hostname() && !pidAlive(info.pid) : Date.now() - mtimeMs > timeoutMs;
   if (!stale) return false;
+
+  const breakPath = `${lockPath}.break`;
+  const mine = JSON.stringify({ pid: process.pid, host: os.hostname(), started: new Date().toISOString() });
   try {
-    if ((await fs.readFile(lockPath, 'utf8')) !== text) return false;
-    await fs.unlink(lockPath);
-  } catch { /* someone else removed it */ }
-  return true;
+    const fh = await fs.open(breakPath, 'wx');
+    try { await fh.writeFile(mine); } finally { await fh.close(); }
+  } catch (e) {
+    if (/** @type {NodeJS.ErrnoException} */ (e).code !== 'EEXIST') throw e;
+    return clearStaleBreakLock(breakPath, timeoutMs); // held by someone else: back off, unless it is abandoned
+  }
+  try {
+    try { if ((await fs.readFile(lockPath, 'utf8')) !== text) return false; }
+    catch { return true; } // vanished meanwhile
+    try { await fs.unlink(lockPath); } catch { /* already gone */ }
+    return true;
+  } finally {
+    try { if ((await fs.readFile(breakPath, 'utf8')) === mine) await fs.unlink(breakPath); } catch { /* already gone */ }
+  }
 }
 
 /**
@@ -114,6 +175,8 @@ async function withTrailLock(root, name, timeoutMs, work) {
     }
     try { return await work(); }
     finally {
+      // Read-then-unlink is safe here: this lock is ours and its pid (ours) is alive,
+      // so takeOverIfStale never judges it stale and nobody else removes it.
       try { if ((await fs.readFile(lockPath, 'utf8')) === mine) await fs.unlink(lockPath); } catch { /* already gone */ }
     }
   });

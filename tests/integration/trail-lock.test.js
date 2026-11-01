@@ -239,3 +239,107 @@ test('crash during first trail creation: the next call finishes it', async () =>
     assert.equal(gitOut(root, 'status', '--porcelain'), '', label);
   }
 });
+
+// --- stale takeover goes through a break lock: exactly one taker, never a live lock ---
+
+const deadPid = async () => {
+  const dead = spawn(process.execPath, ['-e', '0']);
+  const pid = dead.pid;
+  await new Promise((r) => dead.on('close', r));
+  return pid;
+};
+const lockInfo = (pid) => JSON.stringify({ pid, host: os.hostname(), started: new Date().toISOString() });
+const subjectsOf = (root) => gitOut(root, 'log', '--format=%s').split('\n');
+
+test('12 processes race for a planted stale lock, 5 rounds: one commit per distinct mail, clean tree, no index.lock', async () => {
+  const { files, mapFile } = await fixtures(6);
+  const pid = await deadPid();
+  for (let round = 0; round < 5; round++) {
+    const trailDir = tmp();
+    fs.writeFileSync(path.join(trailDir, '.default.lock'), lockInfo(pid));
+    // 12 writers, each of 6 mails twice
+    const results = await Promise.all(Array.from({ length: 12 }, (_, i) => run(trailDir, files[i % 6], mapFile, 20000)));
+    for (const r of results) assert.equal(r.out.ok, true, `round ${round}: ${JSON.stringify(r)}`);
+    assert.equal(results.filter((r) => r.out.duplicate === false).length, 6, `round ${round}`);
+    const root = path.join(trailDir, 'default');
+    const subjects = subjectsOf(root);
+    assert.equal(subjects.filter((s) => s.startsWith('record ')).length, 6, `round ${round}`);
+    assert.equal(subjects.filter((s) => s === 'trail created').length, 1, `round ${round}`);
+    assert.equal(gitOut(root, 'status', '--porcelain'), '', `round ${round}`);
+    assert.equal(fs.existsSync(path.join(trailDir, '.default.lock')), false, `round ${round}: lock released`);
+    assert.equal(fs.existsSync(path.join(trailDir, '.default.lock.break')), false, `round ${round}: break lock released`);
+  }
+});
+
+test('a stale break lock (dead pid) is recovered', async () => {
+  const trailDir = tmp();
+  const { files, mapFile } = await fixtures(1);
+  const pid = await deadPid();
+  fs.writeFileSync(path.join(trailDir, '.default.lock'), lockInfo(pid));
+  fs.writeFileSync(path.join(trailDir, '.default.lock.break'), lockInfo(pid));
+  const r = await run(trailDir, files[0], mapFile, 10000);
+  assert.equal(r.out.ok, true, JSON.stringify(r));
+  assert.equal(fs.existsSync(path.join(trailDir, '.default.lock')), false);
+  assert.equal(fs.existsSync(path.join(trailDir, '.default.lock.break')), false);
+});
+
+test('a live break lock: waiters leave the main lock alone and time out', async () => {
+  const trailDir = tmp();
+  const { files, mapFile } = await fixtures(1);
+  const pid = await deadPid();
+  const main = path.join(trailDir, '.default.lock');
+  const brk = path.join(trailDir, '.default.lock.break');
+  // main lock stale, break lock held by a live process (this one): nobody may break in
+  fs.writeFileSync(main, lockInfo(pid));
+  fs.writeFileSync(brk, lockInfo(process.pid));
+  const stale = fs.readFileSync(main, 'utf8');
+  const r1 = await run(trailDir, files[0], mapFile, 500);
+  assert.equal(r1.out.code, 'ERR_TRAIL_LOCKED');
+  assert.equal(fs.readFileSync(main, 'utf8'), stale, 'main lock untouched');
+  assert.equal(JSON.parse(fs.readFileSync(brk, 'utf8')).pid, process.pid, 'live break lock untouched');
+  // main lock live too
+  fs.writeFileSync(main, lockInfo(process.pid));
+  const live = fs.readFileSync(main, 'utf8');
+  const r2 = await run(trailDir, files[0], mapFile, 500);
+  assert.equal(r2.out.code, 'ERR_TRAIL_LOCKED');
+  assert.equal(fs.readFileSync(main, 'utf8'), live);
+  assert.equal(fs.existsSync(path.join(trailDir, 'default')), false, 'nothing written');
+  // once the break lock is released the stale main lock is taken over
+  fs.rmSync(brk);
+  fs.writeFileSync(main, lockInfo(pid));
+  const r3 = await run(trailDir, files[0], mapFile, 10000);
+  assert.equal(r3.out.ok, true, JSON.stringify(r3));
+});
+
+test('an unparseable break lock is stale only once old', async () => {
+  const trailDir = tmp();
+  const { files, mapFile } = await fixtures(1);
+  const pid = await deadPid();
+  const main = path.join(trailDir, '.default.lock');
+  const brk = path.join(trailDir, '.default.lock.break');
+  fs.writeFileSync(main, lockInfo(pid));
+  fs.writeFileSync(brk, 'garbage');
+  const soon = new Date(Date.now() + 60000);
+  fs.utimesSync(brk, soon, soon);
+  const young = await run(trailDir, files[0], mapFile, 500);
+  assert.equal(young.out.code, 'ERR_TRAIL_LOCKED', 'young garbage break lock is respected');
+  assert.equal(fs.readFileSync(brk, 'utf8'), 'garbage');
+  assert.equal(JSON.parse(fs.readFileSync(main, 'utf8')).pid, pid, 'main untouched');
+  const old = new Date(Date.now() - 60000);
+  fs.utimesSync(brk, old, old);
+  const r = await run(trailDir, files[0], mapFile, 10000);
+  assert.equal(r.out.ok, true, JSON.stringify(r));
+});
+
+test('a break lock older than max(lockTimeoutMs, 10 s) is stale even if its pid is alive', async () => {
+  const trailDir = tmp();
+  const { files, mapFile } = await fixtures(1);
+  const pid = await deadPid();
+  fs.writeFileSync(path.join(trailDir, '.default.lock'), lockInfo(pid));
+  const brk = path.join(trailDir, '.default.lock.break');
+  fs.writeFileSync(brk, lockInfo(process.pid));
+  const old = new Date(Date.now() - 60000);
+  fs.utimesSync(brk, old, old);
+  const r = await run(trailDir, files[0], mapFile, 10000);
+  assert.equal(r.out.ok, true, JSON.stringify(r));
+});
