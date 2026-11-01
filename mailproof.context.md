@@ -39,7 +39,7 @@ All methods are bound: `const { verify } = mp` works.
 
 ## Public API
 
-- `check(raw, { envelope? })` -> `{ live, portable, signatures, unsigned, partial_body, key_errors }`. Writes nothing. Judged as of now.
+- `check(raw, { envelope? })` -> `{ live, portable, signatures, unsigned, partial_body, key_errors, body_status, body[] }`. Writes nothing. Judged as of now.
 - `record(raw, { direction: 'in'|'out', source?, envelope? })` -> `{ id, duplicate, commit, record?, ots? }`. One commit per record. Never throws on unverifiable mail (it is recorded `unverified`); throws on empty input, a bad `direction`, or a git failure. A repeat capture returns `duplicate: true` and writes nothing. `ots` is `'off'`, `'pending'` or `{ error }` (an OTS failure never blocks the commit).
 - `verify(recordOrId, { at? })` -> `{ ok, trust, basis, at, engine, signatures[] }`. Offline, from the record alone. `at` defaults to the record's `captured`; a missing or garbled `captured` fails closed. `trust` is recomputed now.
 - `matchBody(recordOrId, raw)` -> `{ match, full, signatures[] }`. `full` = body matches `bh=` AND the signature verifies at capture time.
@@ -47,6 +47,8 @@ All methods are bound: `const { verify } = mp` works.
 - `list({ limit?, direction? })`, `get(id)`.
 
 `verifyRecord(record, { at? })` is the same offline check as a pure function, so a third party can verify an exported record with no trail.
+
+Portable `verified` covers the signed headers; read `body_status` for the body. Each record carries `body_status` and, per signature, `body: { status, explain[] }` (`matched` / `partial` / `mismatch` / `not-checked`; `explain` entries `{ kind, detail }` are counts and domains only: `l_tag`, `appended`, `prepended`, `canonicalisation`, `line_endings`, `forwarded`, `mailing_list`, `search_capped`, `unknown`). It never changes a trust verdict.
 
 ## What's NOT in mailproof, and why
 
@@ -63,7 +65,7 @@ All methods are bound: `const { verify } = mp` works.
 
 ## Gotchas
 
-- Mail altered in transit or by an export tool fails `matchBody` while `verify` still passes (headers intact).
+- Mail altered in transit or by an export tool fails `matchBody` while `verify` still passes (headers intact); `body_status` says so at capture, with hints when the change can be explained.
 - A signature whose key is gone from DNS at capture is stored with `key_error`; it cannot verify.
 - Concurrent writers in one process are serialised; across processes only git's `index.lock` protects the trail.
 

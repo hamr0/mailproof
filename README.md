@@ -24,6 +24,8 @@ await mp.check(emlBytes);             // one-off: verdicts only, writes nothing
 
 Honest limits: an unsigned email is recorded as `unverified`; a signature with `l=` leaves part of the body unsigned (flagged `partial_body`); SPF can never be re-checked from stored data, so the **portable** verdict uses DKIM only. `captured` is mailproof's own clock; use OpenTimestamps (`otsBin`) to make "captured no later than T" provable.
 
+Portable `verified` covers the signed headers; read `body_status` for the body (`matched`, `partial`, `mismatch`, with `explain` hints on what changed).
+
 ## Two verdicts
 
 | Verdict | Decided | Inputs | Re-checkable later |

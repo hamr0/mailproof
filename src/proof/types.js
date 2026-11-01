@@ -73,6 +73,28 @@
  * @property {string | null} key_error
  * @property {string | null} key_file
  * @property {boolean} partial_body  l= present and shorter than the canonical body.
+ * @property {BodyResult} body  Body status of this signature (never affects a trust verdict).
+ */
+
+/**
+ * `matched`: the body hashes to the signed `bh=`. `partial`: `l=` signs only a prefix and that prefix matches.
+ * `mismatch`: it does not. `not-checked`: nothing to check against (unsigned, or no raw email).
+ * @typedef {'matched' | 'partial' | 'mismatch' | 'not-checked'} BodyStatus
+ */
+
+/**
+ * One machine-readable hint about a body mismatch. `detail` carries counts, byte sizes and
+ * domains only, never body text. Kinds: l_tag, appended, prepended, canonicalisation,
+ * line_endings, forwarded, mailing_list, search_capped, unknown.
+ * @typedef {Object} BodyExplain
+ * @property {string} kind
+ * @property {Record<string, any>} [detail]
+ */
+
+/**
+ * @typedef {Object} BodyResult
+ * @property {BodyStatus} status
+ * @property {BodyExplain[]} explain
  */
 
 /**
@@ -87,6 +109,7 @@
  * @property {Record<string, any>} message
  * @property {Array<{ filename: string | null, size: number, sha256: string }>} attachments
  * @property {RecordSignature[]} signatures
+ * @property {BodyStatus} body_status  Best body status over the signatures that verify (see BodyStatus).
  * @property {Record<string, any>} verdicts
  */
 

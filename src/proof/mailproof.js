@@ -7,6 +7,7 @@ import { authenticateMessage, parseMessage } from './parse.js';
 import { fetchDkimKey } from './keys.js';
 import { splitMessage, parseTags } from './signed-headers.js';
 import { buildSignatureEntry } from './record.js';
+import { summariseBody } from './body-status.js';
 import { buildLive, buildPortable, engine } from './verdict.js';
 import { createOts } from './ots.js';
 import { verifyRecord, matchBodyRecord, matchFileRecord } from './recheck.js';
@@ -14,6 +15,7 @@ import { TRAIL_NAME_RE, RECORD_ID_RE, commitRecord, readRecord, listIds } from '
 
 /** @typedef {import('./types.js').MpRecord} MpRecord */
 /** @typedef {import('./types.js').Envelope} Envelope */
+/** @typedef {import('./types.js').MailauthResult} MailauthResult */
 
 /**
  * @typedef {Object} MailproofOptions
@@ -74,7 +76,7 @@ class Mailproof {
     const { rows, body } = splitMessage(buf);
     const hasEnvelope = Boolean(ctx.envelope && (ctx.envelope.clientIp || ctx.envelope.sender));
     const [auth, parsed] = await Promise.all([
-      authenticateMessage(buf, ctx.envelope || {}, { resolver: this.resolver }).catch(() => ({})),
+      authenticateMessage(buf, ctx.envelope || {}, { resolver: this.resolver }).catch(() => /** @type {MailauthResult} */ ({})),
       parseMessage(buf),
     ]);
 
@@ -97,7 +99,7 @@ class Mailproof {
           json: { v: 2, domain: t.d.toLowerCase(), selector: t.s.toLowerCase(), k: key.k, p: key.p, txt: k.txt, lookup: k.lookup, first_fetched: k.fetched_at },
         });
       }
-      signatures.push(buildSignatureEntry(rows, sr, body, { key, key_error: k.base64 ? null : (k.error || 'no key'), key_file }));
+      signatures.push(buildSignatureEntry(rows, sr, body, { key, key_error: k.base64 ? null : (k.error || 'no key'), key_file }, { arc: auth?.arc?.status?.result }));
     }
 
     const identity = sigRows.length
@@ -122,8 +124,11 @@ class Mailproof {
       },
       attachments: parsed.attachments.map((a) => ({ filename: a.filename, size: a.size, sha256: /** @type {string} */ (a.sha256) })),
       signatures,
+      body_status: 'not-checked',
       verdicts: {},
     };
+    const sigOk = verifyRecord(record).signatures.map((x) => x.ok);
+    record.body_status = summariseBody(signatures, sigOk);
     record.verdicts = {
       live: buildLive(auth, { trustedSealers: this.trustedSealers, hasEnvelope }),
       portable: buildPortable(record),
@@ -150,12 +155,12 @@ class Mailproof {
    * `key_errors` and an `unverified` portable verdict.
    * @param {Buffer | string} raw
    * @param {{ envelope?: Envelope }} [opts]
-   * @returns {Promise<{ live: Record<string, any>, portable: Record<string, any>, signatures: number, unsigned: boolean, partial_body: boolean, key_errors: string[] }>}
+   * @returns {Promise<{ live: Record<string, any>, portable: Record<string, any>, signatures: number, unsigned: boolean, partial_body: boolean, key_errors: string[], body_status: import('./types.js').BodyStatus, body: import('./types.js').BodyResult[] }>}
    * @name Mailproof#check
    * @when Use for a one-off look at an email you were handed (a saved .eml), when you do NOT want it recorded. It returns both verdicts and writes nothing. Use `record()` instead to keep a proof.
    * @category proof
-   * @signature mp.check(raw: Buffer|string, opts?: { envelope?: Envelope }) => Promise<{ live, portable, signatures: number, unsigned: boolean, partial_body: boolean, key_errors: string[] }>
-   * @fails Rejects on an empty message. Unsigned or unverifiable mail does not throw: it comes back `unverified`. Judged as of now, so a key that has left DNS appears in `key_errors` and the portable verdict is `unverified`.
+   * @signature mp.check(raw: Buffer|string, opts?: { envelope?: Envelope }) => Promise<{ live, portable, signatures: number, unsigned: boolean, partial_body: boolean, key_errors: string[], body_status, body[] }>
+   * @fails Rejects on an empty message. Unsigned or unverifiable mail does not throw: it comes back `unverified`. Judged as of now, so a key that has left DNS appears in `key_errors` and the portable verdict is `unverified`. The portable verdict covers the signed headers only: read `body_status` (and `body[i].explain`) for the body.
    * @example
    * const mp = new Mailproof({ trailDir: './trails' });
    * const c = await mp.check(fs.readFileSync('mail.eml'));   // c.live.trust, c.portable.trust
@@ -169,6 +174,8 @@ class Mailproof {
       unsigned: record.signatures.length === 0,
       partial_body: record.signatures.some((x) => x.partial_body),
       key_errors: record.signatures.filter((x) => x.key_error).map((x) => /** @type {string} */ (x.key_error)),
+      body_status: record.body_status,
+      body: record.signatures.map((x) => x.body),
     };
   }
 
@@ -180,7 +187,7 @@ class Mailproof {
    *   `ots`: 'off' unless `otsBin` is set; 'pending' once the stamp is committed beside the record; `{ error }`
    *   when stamping failed (the record is committed regardless: accept-with-flag).
    * @name Mailproof#record
-   * @when Use to keep a proof of an email: it stores the signed headers, the signature, the archived key and both verdicts as one git commit, and never the body. Call it for every email you may need to prove later, including ones that fail verification (they are recorded as `unverified`).
+   * @when Use to keep a proof of an email: it stores the signed headers, the signature, the archived key, both verdicts and the body status (`body_status`: did the body match the signed `bh=`, with hints on what changed) as one git commit, and never the body. Call it for every email you may need to prove later, including ones that fail verification (they are recorded as `unverified`).
    * @category proof
    * @signature mp.record(raw: Buffer|string, ctx: { direction: 'in'|'out', source?: string, envelope?: Envelope }) => Promise<{ id, duplicate, commit, record?, ots? }>
    * @fails Throws on an empty message, a `direction` other than 'in'/'out', or a git failure (the tree is rolled back). Never throws because the mail is unsigned or fails verification. Recording the same email twice returns `duplicate: true` and writes nothing. An OTS failure is reported in `ots`, not thrown.

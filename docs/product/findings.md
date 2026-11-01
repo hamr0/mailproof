@@ -117,3 +117,14 @@ POC script: [`poc/m0-header-recheck.js`](../../poc/m0-header-recheck.js) (throwa
 - **Observation:** on the Outlook-sourced set the portable verdict is `verified` for 6 of 8 emails while the live verdict is `unverified` (body altered). That is by design: the portable verdict covers the signed headers only, and the body claim is separate (`matchBody` / `full`). A consumer that wants a body guarantee must call `matchBody`.
 - **Decision:** none; the library reproduces F1/F4/F6. M0 go/no-go stays GO.
 - **Affects:** PRD §6, M0.
+
+## F9 — Body status on the real sample sets
+
+- **Date:** 2026-11-01
+- **Question:** with the body result as its own field (`body_status`, `signatures[].body`), what do the detectors say about the Outlook-sourced body alteration (F4), and do they stay quiet on clean mail?
+- **Run:** `tests/manual/real-mail.mjs` (extended to print body status and explain kinds, domains and counts only) on the Outlook-sourced set (8 emails, 11 signatures) and on `mailproof-m0-samples-gmail2` (9 emails, 14 signatures).
+- **Gmail set (second):** `matched` on 14/14 signatures, `explain` empty, record `body_status` `matched` 9/9. No detector fired on clean mail (ietf.org lists, corp.mail.ru, google.com, lists.camaraproject.org). Synthetic tests cover the cases that MUST fire (appended, prepended, `l=` partial, canonicalisation, line endings, ARC + List-Id hints) and must NOT fire (clean, sealed-but-clean, edit in the middle).
+- **Outlook-sourced set:** `mismatch` on 11/11, record `body_status` `mismatch` 8/8, trust verdicts unchanged (6 `unverified/verified`, 2 `unverified/unverified`). Explanation: `unknown` on all 11. No appended or prepended content at a line boundary (the 2 emails that hit the work cap, infotip.eu and amazonses.com, are the large ones). One email (uzsc.onmicrosoft.com) carries ARC seals from microsoft.com with chain result `fail`, reported as a `forwarded` hint only.
+- **What the alteration is: unknown.** Extra probes (a throwaway script, not kept) on the same files, each tested against `bh=`: mbox `>From` unquoting, LF/CRLF both ways, trailing whitespace, tabs to spaces, the other canonicalisation, trailing/leading blank lines, base64 re-wrap at 60/64/72/76, quoted-printable re-encode, dropping up to 40 lines at either end, Microsoft SafeLinks rewriting (0 occurrences). None matches. The mail is multipart with encoded parts (so a banner or footer would sit inside a part, not at the body edge) and the one single-part email (tello.com, `7bit` HTML, signed `Content-Transfer-Encoding`) fails too, so the change is inside the content. Hypothesis not yet testable without the original bytes: a content rewrite between Exchange and the export.
+- **Decision:** ship the field and the detectors; the Outlook cause stays an open item. M1 stays Gmail-first (F4).
+- **Affects:** PRD §4, SPEC Part B1.

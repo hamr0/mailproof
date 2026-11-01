@@ -4,6 +4,7 @@
 
 import { dkimBody } from 'mailauth/lib/dkim/body';
 import { parseTags, canonPair, selectSigned } from './signed-headers.js';
+import { analyseBody } from './body-status.js';
 
 /** @typedef {import('./types.js').RecordSignature} RecordSignature */
 /** @typedef {import('./signed-headers.js').HeaderRow} HeaderRow */
@@ -33,9 +34,10 @@ function canonicalBodyLength(body, canon) {
  * @param {HeaderRow} sigRow
  * @param {Buffer} body
  * @param {{ key: { k: string, p: string } | null, key_error?: string | null, key_file?: string | null }} keyInfo
+ * @param {{ arc?: string | null }} [ctx]  `arc`: the ARC chain result at capture (a body-status context hint).
  * @returns {RecordSignature}
  */
-function buildSignatureEntry(rows, sigRow, body, keyInfo) {
+function buildSignatureEntry(rows, sigRow, body, keyInfo, ctx = {}) {
   const t = parseTags(sigRow.raw);
   const l = t.l !== undefined && t.l !== '' ? Number(t.l) : null;
   const partial = l !== null && Number.isFinite(l) && l < canonicalBodyLength(body, canonPair(t.c).b);
@@ -50,6 +52,7 @@ function buildSignatureEntry(rows, sigRow, body, keyInfo) {
     key_error: keyInfo.key_error ?? null,
     key_file: keyInfo.key_file ?? null,
     partial_body: partial,
+    body: analyseBody(t, body, { rows, arc: ctx.arc }),
   };
 }
 

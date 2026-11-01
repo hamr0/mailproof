@@ -27,9 +27,11 @@
       "key": { "k": "rsa|ed25519", "p": "base64" } | null,
       "key_error": "str|null",
       "key_file": "keys/<domain>/<selector>/<h16>.json|null",
-      "partial_body": false        // l= present and shorter than the canonical body
+      "partial_body": false,       // l= present and shorter than the canonical body
+      "body": { "status": "matched|partial|mismatch|not-checked", "explain": [ { "kind": "", "detail": {} } ] }
     }
   ],
+  "body_status": "matched|partial|mismatch|not-checked",   // best over the signatures that verify
   "verdicts": {
     "live":     { "trust": "...", "engine": { "rules": "mp-rules/1", "mailauth": "x.y.z" },
                   "dkim": [ { "d": "", "s": "", "result": "", "aligned": false } ],
@@ -40,6 +42,7 @@
 }
 ```
 
+- **Body status (`signatures[].body`, `body_status`).** Computed from the raw email at capture (`record()` and `check()`); it never changes a trust verdict. The portable verdict covers the signed headers only: read `body_status` for the body. Per signature: `matched` = the body hashes to the signed `bh=` (mailauth's canonicalization, honouring `l=`); `partial` = `l=` is shorter than the canonical body and the signed prefix matches (`explain` = `l_tag` with `signed`/`canonical`/`unsigned` byte counts); `mismatch` = it does not; `not-checked` = nothing to check against (unsigned, or no raw email; unreachable in M0 for signed mail). `body_status` = the best (`matched` > `partial` > `mismatch`) over the signatures whose headers verify at capture, over all signatures when none does, `not-checked` when there is none. `explain` is machine-readable and **never contains body text**, only counts, byte sizes and domains. On a mismatch the detectors run cheapest first and stop at the first that explains it: `appended` (a canonical prefix cut at a line boundary hashes to `bh=`; `detail.bytes`/`lines` appended, e.g. a mailing-list footer), `prepended` (a canonical suffix does; e.g. an external-sender banner), `canonicalisation` (the body hashes under the other `c=` body rule), `line_endings` (it hashes after lone CRs become CRLF), else `unknown`. `appended`/`prepended` are skipped when `l=` is present. Search caps: 5,000 lines, 2 MB of changed bytes, 64 MB hashed; hitting a cap adds a `search_capped` entry before `unknown`. Context hints sit alongside whenever the status is not `matched`: `forwarded` (`{sealers:[d...], arc}` from ARC-Seal `d=` tags and the ARC result at capture) and `mailing_list` (`{list_id_domain}`, the List-Id minus its first label). Hints are not explanations. `matchBody` stays the later check against a produced body, and `full` is unchanged.
 - OpenTimestamps state is not a record field (the stamp hashes the record file's own bytes): the proof is the sibling file `records/<id>.json.ots`, present only when OTS was on.
 - Never the body, never the raw email. No `Subject` outside `signed_headers`.
 - Serialisation: fixed key order, 2-space indent, trailing newline (stable bytes, stable OTS stamps).
