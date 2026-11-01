@@ -19,7 +19,7 @@ import {
   MAX_SIG_BYTES, MAX_MIME_PARTS, MAX_BODY_LINE,
 } from '../../src/proof/limits.js';
 import { splitMessage } from '../../src/proof/signed-headers.js';
-import { signedMail, makeKey } from '../helpers/proof.js';
+import { signedMail, makeKey, recordOf } from '../helpers/proof.js';
 
 const trailDir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'mp-lim-'));
 const BASE = ['from', 'to', 'subject', 'date', 'message-id'];
@@ -184,17 +184,22 @@ test('10 signatures are evaluated, 11 are refused whole (not trimmed to the firs
   assert.equal(c.signatures, 0);
 });
 
-test('matchBody on a message over a limit matches nothing, even a record whose signed body was empty', async () => {
-  const m = await signedMail({ body: '' });
-  const mp = new Mailproof({ trailDir: trailDir(), resolver: m.resolver });
-  const r = await mp.record(m.raw, { direction: 'in', source: 't' });
-  assert.equal((await mp.matchBody(r.id, m.raw)).match, true, 'sanity: the real message matches');
-  // a body line over the limit: a gate that dropped the body instead of refusing the message would be
-  // hashing an empty body here, and an empty body is exactly what this record signed
-  const hugeLine = Buffer.concat([m.raw, Buffer.from('\r\n'), Buffer.alloc(MAX_BODY_LINE + 1, 0x61)]);
-  assert.equal(admit(hugeLine).limit, 'body_line');
-  const res = await mp.matchBody(r.id, hugeLine);
-  assert.deepEqual([res.match, res.full], [false, false]);
+test('matchBody on a message over a limit matches nothing, although its body hashes to the record\'s bh=', async () => {
+  // recordOf() builds the record from the raw bytes WITHOUT the gate (record() would refuse this message),
+  // so the stored bh= is the hash of the very body matchBody is about to be handed
+  const at = await signedMail({ body: 'a'.repeat(MAX_BODY_LINE) + '\r\n' });
+  const over = await signedMail({ body: 'a'.repeat(MAX_BODY_LINE + 1) + '\r\n' });
+  const mp = new Mailproof({ trailDir: trailDir(), resolver: at.resolver });
+  const recAt = recordOf(at.raw, at.signers);
+  const recOver = recordOf(over.raw, over.signers);
+  assert.equal(admit(at.raw).limit, null);
+  assert.equal(admit(over.raw).limit, 'body_line');
+  assert.deepEqual([verifyRecord(recOver).ok, verifyRecord(recOver).signatures.length], [true, 1], 'the record itself is sound');
+  const yes = await mp.matchBody(recAt, at.raw);
+  assert.deepEqual([yes.match, yes.full], [true, true], 'at the limit the body matches');
+  const no = await mp.matchBody(recOver, over.raw);
+  assert.deepEqual([no.match, no.full], [false, false], 'one byte over the line limit it is not even hashed');
+  assert.deepEqual(no.signatures.map((x) => x.match), [false]);
 });
 
 test('an attached original (message/rfc822) goes through the same gate: over a limit it is not examined', async () => {

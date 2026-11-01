@@ -105,7 +105,7 @@
  * @typedef {Object} MpRecord
  * @property {number} v
  * @property {string} id  First 32 hex of the raw bytes' sha256 (`message.raw_sha256`): one record per distinct copy.
- * @property {string | null} message_key  Shared by every copy of one signed message (see SPEC B1); null for unsigned mail with no Message-ID.
+ * @property {string | null} message_key  Shared by every copy of one signed message (see SPEC B1); null for unsigned mail with no Message-ID, and for a message over an input limit.
  * @property {MessageCopy} copy  Which kind of copy this is.
  * @property {string} captured
  * @property {'in' | 'out'} direction
