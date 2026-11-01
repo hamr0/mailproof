@@ -131,21 +131,61 @@ async function isTracked(root, rel) {
 }
 
 /**
- * Create the trail's repo on first use. Idempotent.
+ * Does HEAD exist (at least one commit)?
+ * @param {string} root
+ * @returns {Promise<boolean>}
+ */
+async function hasHead(root) {
+  try { await git(root, ['rev-parse', '--verify', '-q', 'HEAD']); return true; }
+  catch { return false; }
+}
+
+/**
+ * Is `rel` committed in HEAD? (Not "exists on disk": a crashed writer can leave
+ * files that were never committed.)
+ * @param {string} root
+ * @param {string} rel
+ * @returns {Promise<boolean>}
+ */
+async function inHead(root, rel) {
+  try { await git(root, ['cat-file', '-e', `HEAD:${rel}`]); return true; }
+  catch { return false; }
+}
+
+/**
+ * Create the trail's repo on first use. Idempotent and crash-safe: it is done
+ * only once the first commit exists, so a repo that was initialised but never
+ * committed (or a `trail.json` written but not committed) is finished on the
+ * next call. Caller holds the trail lock.
  * @param {string} root
  * @param {string} name
  * @param {string} createdIso
  * @returns {Promise<void>}
  */
 async function ensureTrail(root, name, createdIso) {
-  if (await exists(path.join(root, '.git'))) return;
+  if (await exists(path.join(root, '.git')) && await hasHead(root)) return;
   await fs.mkdir(path.join(root, 'records'), { recursive: true });
-  await fs.writeFile(path.join(root, 'trail.json'), serialise({ v: 2, name, created: createdIso }));
+  if (!(await exists(path.join(root, 'trail.json')))) {
+    await fs.writeFile(path.join(root, 'trail.json'), serialise({ v: 2, name, created: createdIso }));
+  }
   await git(root, ['init', '--initial-branch=main']);
   await git(root, ['config', 'user.name', GIT_IDENTITY.name]);
   await git(root, ['config', 'user.email', GIT_IDENTITY.email]);
   await git(root, ['add', 'trail.json']);
   await git(root, ['commit', '-m', 'trail created']);
+}
+
+/**
+ * Clear what a crashed writer left half-done: staged changes, and untracked
+ * files under `records/` and `keys/`. Safe because only the lock holder writes,
+ * and tracked files and everything else are never touched. Needs a HEAD.
+ * @param {string} root
+ * @returns {Promise<void>}
+ */
+async function clearLeftovers(root) {
+  await git(root, ['reset', '-q']);
+  await git(root, ['clean', '-fdq', '--', 'records', 'keys']);
+  await fs.mkdir(path.join(root, 'records'), { recursive: true }); // clean removes the dir while nothing in it is tracked
 }
 
 /**
@@ -175,7 +215,8 @@ async function listIds(root) {
 
 /**
  * Write one record (+ any new key files) and commit them as one commit, under
- * the trail lock. A record whose id exists is a no-op (`duplicate`). On any
+ * the trail lock. A record whose id is committed is a no-op (`duplicate`); the
+ * start of every call first clears a crashed writer's leftovers. On any
  * failure only the files this call newly created (and git does not track) are
  * removed, so the tree is never left dirty and no committed file is touched.
  * @param {string} root
@@ -188,8 +229,9 @@ async function listIds(root) {
 async function commitRecord(root, name, { record, keyFiles, message, now, afterWrite, lockTimeoutMs = DEFAULT_LOCK_TIMEOUT_MS }) {
   return withTrailLock(root, name, lockTimeoutMs, async () => {
     await ensureTrail(root, name, now().toISOString());
+    await clearLeftovers(root);
     const rel = `records/${record.id}.json`;
-    if (await exists(path.join(root, rel))) {
+    if (await inHead(root, rel)) {
       return { duplicate: true, commit: await git(root, ['rev-parse', 'HEAD']), extra: [] };
     }
     /** @type {string[]} */
@@ -197,7 +239,7 @@ async function commitRecord(root, name, { record, keyFiles, message, now, afterW
     try {
       for (const k of keyFiles) {
         const abs = path.join(root, k.rel);
-        if (await exists(abs)) continue; // archived once per domain+selector+key, never rewritten
+        if (await inHead(root, k.rel)) continue; // archived once per domain+selector+key, never rewritten
         await fs.mkdir(path.dirname(abs), { recursive: true });
         written.push(k.rel);
         await fs.writeFile(abs, serialise(k.json));

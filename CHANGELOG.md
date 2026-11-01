@@ -36,6 +36,7 @@ mailproof v2 (planned 2.0.0): a new, smaller product. 1.x is frozen at tag `v1.4
 - `npm run check:types`: fails when an exported function or method in the generated `.d.ts` returns a bare `object`.
 
 ### Fixed
+- Crash-safe `record()`: a writer killed mid-commit (SIGKILL, OOM) left a staged record and key, and the retry of the same mail returned `duplicate: true` with nothing committed. Under the trail lock, `record()` now clears staged changes and untracked files under `records/` and `keys/`, counts a record as a duplicate only if it is committed in HEAD, and re-writes an uncommitted key file. First-trail creation is also finished on the next call if it was interrupted before its first commit.
 - Single writer per trail across processes: `record()` now holds a lock file (`<trailDir>/.<trail>.lock`, `O_EXCL`, `{pid, host, started}`) across the whole write, so concurrent processes (one per mail under Postfix) no longer hit git's `index.lock` or race the first `git init`. New `lockTimeoutMs` option (default 30000); on timeout `record()` throws `ERR_TRAIL_LOCKED` (map to exit 75 in a pipe consumer). Dead-pid locks on the same host are taken over. A failed write now removes only the files it newly created and git does not track, so it can no longer delete records another process committed.
 
 - `verifyRecord` (and `mp.verify`) no longer throw on malformed input: a non-object signature entry (for example `null`) is reported as `ok: false, why: 'malformed signature entry'` in its own slot, and junk options are ignored.

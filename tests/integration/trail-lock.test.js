@@ -148,3 +148,94 @@ test('a failed commit removes only this call\'s new files; tracked files are unt
   assert.equal(gitOut(root, 'status', '--porcelain'), '');
   assert.equal(fs.existsSync(path.join(trailDir, '.default.lock')), false, 'lock released after failure');
 });
+
+// --- crash recovery: a writer killed mid-commit must not lose the mail ---
+
+const waitFor = async (pred, ms = 10000) => {
+  const end = Date.now() + ms;
+  while (!pred()) {
+    if (Date.now() > end) throw new Error('timed out waiting');
+    await new Promise((r) => setTimeout(r, 20));
+  }
+};
+
+test('SIGKILL mid-commit: retrying the same mail commits it, tree clean, dead lock taken over', async () => {
+  const trailDir = tmp();
+  const { files, mapFile } = await fixtures(2);
+  assert.equal((await run(trailDir, files[0], mapFile)).out.ok, true);
+  const root = path.join(trailDir, 'default');
+  const marker = path.join(tmp(), 'in-commit');
+  const hook = path.join(root, '.git', 'hooks', 'pre-commit');
+  fs.writeFileSync(hook, `#!/bin/sh\ntouch '${marker}'\nsleep 60\n`, { mode: 0o755 });
+  // detached = own process group, so the sleeping hook dies with the writer
+  const child = spawn(process.execPath, [HELPER, trailDir, files[1], mapFile], { stdio: 'ignore', detached: true });
+  await waitFor(() => fs.existsSync(marker));
+  process.kill(-child.pid, 'SIGKILL');
+  await new Promise((r) => child.on('close', r));
+  // the crash left what the reviewer saw: staged record + key, a dead lock, no new commit
+  assert.notEqual(gitOut(root, 'status', '--porcelain'), '', 'crash left a dirty tree');
+  assert.equal(fs.existsSync(path.join(trailDir, '.default.lock')), true, 'dead lock left behind');
+  assert.equal(gitOut(root, 'log', '--format=%s').split('\n').length, 2);
+  fs.rmSync(hook);
+  const r = await run(trailDir, files[1], mapFile, 10000);
+  assert.equal(r.out.ok, true, JSON.stringify(r));
+  assert.equal(r.out.duplicate, false, 'the half-written record does not count as recorded');
+  const subjects = gitOut(root, 'log', '--format=%s').split('\n');
+  assert.equal(subjects.length, 3);
+  assert.ok(subjects[0].startsWith(`record ${r.out.id.slice(0, 12)}`));
+  assert.ok(gitOut(root, 'show', '--name-only', '--format=', 'HEAD').split('\n').includes(`records/${r.out.id}.json`));
+  assert.equal(gitOut(root, 'status', '--porcelain'), '');
+  assert.equal(fs.existsSync(path.join(trailDir, '.default.lock')), false);
+  assert.equal((await run(trailDir, files[1], mapFile)).out.duplicate, true, 'now it really is a duplicate');
+});
+
+test('leftover record + key from a crashed writer (staged / untracked) are replaced and committed', async () => {
+  const trailDir = tmp();
+  const m1 = await signedMail({ body: 'one\r\n' });
+  await new Mailproof({ trailDir, resolver: m1.resolver }).record(m1.raw, { direction: 'in' });
+  const root = path.join(trailDir, 'default');
+  const id = 'cd'.repeat(16);
+  const keyRel = 'keys/leftover.example/s/0000.json';
+  fs.mkdirSync(path.join(root, 'keys/leftover.example/s'), { recursive: true });
+  fs.writeFileSync(path.join(root, `records/${id}.json`), 'stale\n');
+  fs.writeFileSync(path.join(root, `records/${id}.json.ots`), 'stale\n');
+  fs.writeFileSync(path.join(root, keyRel), 'stale\n');
+  execFileSync('git', ['add', `records/${id}.json`], { cwd: root }); // staged, as after a kill between add and commit
+  const res = await commitRecord(root, 'default', {
+    record: { v: 2, id }, keyFiles: [{ rel: keyRel, json: { v: 2, k: 'new' } }], message: 'redo', now: () => new Date(),
+  });
+  assert.equal(res.duplicate, false);
+  const committed = gitOut(root, 'show', '--name-only', '--format=', 'HEAD').split('\n');
+  assert.ok(committed.includes(`records/${id}.json`) && committed.includes(keyRel), committed.join(','));
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(root, keyRel), 'utf8')), { v: 2, k: 'new' });
+  assert.equal(fs.existsSync(path.join(root, `records/${id}.json.ots`)), false, 'untracked leftover removed');
+  assert.equal(gitOut(root, 'status', '--porcelain'), '');
+  // a second call is a true duplicate and leaves the committed key untouched
+  const again = await commitRecord(root, 'default', { record: { v: 2, id }, keyFiles: [], message: 'x', now: () => new Date() });
+  assert.equal(again.duplicate, true);
+});
+
+test('crash during first trail creation: the next call finishes it', async () => {
+  const states = {
+    'init only, no commit': (root) => { fs.mkdirSync(root, { recursive: true }); execFileSync('git', ['init', '-q', '--initial-branch=main'], { cwd: root }); },
+    'trail.json written, repo initialised, not committed': (root) => {
+      fs.mkdirSync(path.join(root, 'records'), { recursive: true });
+      fs.writeFileSync(path.join(root, 'trail.json'), '{"v":2,"name":"default","created":"x"}\n');
+      execFileSync('git', ['init', '-q', '--initial-branch=main'], { cwd: root });
+    },
+    'trail.json written, no repo': (root) => {
+      fs.mkdirSync(path.join(root, 'records'), { recursive: true });
+      fs.writeFileSync(path.join(root, 'trail.json'), '{"v":2,"name":"default","created":"x"}\n');
+    },
+  };
+  for (const [label, setup] of Object.entries(states)) {
+    const root = path.join(tmp(), 'default');
+    setup(root);
+    const id = 'ef'.repeat(16);
+    const res = await commitRecord(root, 'default', { record: { v: 2, id }, keyFiles: [], message: 'rec', now: () => new Date() });
+    assert.equal(res.duplicate, false, label);
+    assert.deepEqual(gitOut(root, 'log', '--format=%s').split('\n'), ['rec', 'trail created'], label);
+    assert.ok(gitOut(root, 'ls-tree', '-r', '--name-only', 'HEAD').split('\n').includes('trail.json'), label);
+    assert.equal(gitOut(root, 'status', '--porcelain'), '', label);
+  }
+});
