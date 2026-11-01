@@ -35,6 +35,10 @@ Portable `verified` covers the signed headers; read `body_status` for the body (
 
 Trust levels: `verified` (aligned DKIM pass, and DMARC pass if the domain publishes DMARC), `forwarded`, `authorized` (live only), `unverified`. Each verdict carries its engine/rules version.
 
+## Concurrency
+
+A trail has a single writer at a time, enforced by a lock file (`<trailDir>/.<trail>.lock`) that also covers separate processes; local filesystems only. A writer that cannot get the lock within `lockTimeoutMs` (default 30000) throws an error with `code: 'ERR_TRAIL_LOCKED'`. Postfix pipe consumers should map `ERR_TRAIL_LOCKED` to exit code 75 (`EX_TEMPFAIL`) so Postfix retries the mail.
+
 ## Docs
 
 `docs/README.md` is the map. The record and trail formats are in `docs/product/SPEC.md` (Part B); the adopter contract is `mailproof.context.md`. Two runtime dependencies: `mailauth`, `mailparser`. Node >= 22.5. Pure ESM.

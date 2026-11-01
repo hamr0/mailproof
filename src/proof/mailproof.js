@@ -12,7 +12,7 @@ import { messageKeyOf, classifyCopy, MAX_INNER } from './copy.js';
 import { buildLive, buildPortable, engine } from './verdict.js';
 import { createOts } from './ots.js';
 import { verifyRecord, matchBodyRecord, matchFileRecord } from './recheck.js';
-import { TRAIL_NAME_RE, RECORD_ID_RE, commitRecord, readRecord, listIds } from './trail.js';
+import { TRAIL_NAME_RE, RECORD_ID_RE, DEFAULT_LOCK_TIMEOUT_MS, commitRecord, readRecord, listIds } from './trail.js';
 
 /** @typedef {import('./types.js').MpRecord} MpRecord */
 /** @typedef {import('./types.js').Envelope} Envelope */
@@ -27,6 +27,7 @@ import { TRAIL_NAME_RE, RECORD_ID_RE, commitRecord, readRecord, listIds } from '
  * @property {string | null} [otsBin]  Path to the `ots` binary; null/absent keeps OpenTimestamps off.
  * @property {() => Date} [now]  Clock (tests inject one).
  * @property {string[]} [trustedSealers]  ARC sealer domains whose chains may yield `forwarded` (live only).
+ * @property {number} [lockTimeoutMs]  How long `record()` waits for another writer of the same trail (default 30000). On timeout it throws `ERR_TRAIL_LOCKED` and writes nothing.
  */
 
 /** @param {Buffer | string} raw @returns {string} */
@@ -35,7 +36,7 @@ const sha256hex = (raw) => crypto.createHash('sha256').update(raw).digest('hex')
 class Mailproof {
   /**
    * @param {MailproofOptions} opts
-   * @signature new Mailproof({ trailDir: string, trail?: string, resolver?: Function, otsBin?: string|null, now?: () => Date, trustedSealers?: string[] })
+   * @signature new Mailproof({ trailDir: string, trail?: string, resolver?: Function, otsBin?: string|null, now?: () => Date, trustedSealers?: string[], lockTimeoutMs?: number })
    * @when Start here. Construct one per trail (a git repo of records under `trailDir`), then `record()` each email you want a re-checkable proof of and `verify()` it later, offline. All methods are bound, so `const { verify } = mp` works.
    * @category proof
    * @fails Throws at construction when `trailDir` is missing or `trail` is not `[a-z0-9][a-z0-9_-]{0,63}`. Nothing touches the disk until the first `record()`.
@@ -56,6 +57,7 @@ class Mailproof {
     this.ots = this.otsBin ? createOts({ otsBin: this.otsBin }) : null;
     this.now = opts.now || (() => new Date());
     this.trustedSealers = opts.trustedSealers || [];
+    this.lockTimeoutMs = Number.isFinite(opts.lockTimeoutMs) && /** @type {number} */ (opts.lockTimeoutMs) >= 0 ? /** @type {number} */ (opts.lockTimeoutMs) : DEFAULT_LOCK_TIMEOUT_MS;
     this.check = this.check.bind(this);
     this.record = this.record.bind(this);
     this.verify = this.verify.bind(this);
@@ -239,7 +241,7 @@ class Mailproof {
    * @when Use to keep a proof of an email (one record per distinct copy, marked `direct` / `relayed` / `forward` / `digest`): it stores the signed headers, the signature, the archived key, both verdicts and the body status (`body_status`: did the body match the signed `bh=`, with hints on what changed) as one git commit, and never the body. Call it for every email you may need to prove later, including ones that fail verification (they are recorded as `unverified`).
    * @category proof
    * @signature mp.record(raw: Buffer|string, ctx: { direction: 'in'|'out', source?: string, envelope?: Envelope }) => Promise<{ id, duplicate, commit, record?, ots? }>
-   * @fails Throws on an empty message, a `direction` other than 'in'/'out', or a git failure (the tree is rolled back). Never throws because the mail is unsigned or fails verification. The id is the hash of the raw bytes: the identical bytes recorded twice return `duplicate: true` and write nothing, while a copy with any byte difference (a list footer, an added header) is its own record, linked by `message_key` (see `copies()`). An OTS failure is reported in `ots`, not thrown.
+   * @fails Throws on an empty message, a `direction` other than 'in'/'out', a git failure (the tree is rolled back: only files this call created are removed), or `err.code === 'ERR_TRAIL_LOCKED'` when another process holds the trail's writer lock for longer than `lockTimeoutMs` (nothing is written; retry later). Never throws because the mail is unsigned or fails verification. The id is the hash of the raw bytes: the identical bytes recorded twice return `duplicate: true` and write nothing, while a copy with any byte difference (a list footer, an added header) is its own record, linked by `message_key` (see `copies()`). An OTS failure is reported in `ots`, not thrown.
    * @example
    * const { id, duplicate } = await mp.record(fs.readFileSync('mail.eml'), { direction: 'in', source: 'file' });
    */
@@ -257,7 +259,7 @@ class Mailproof {
       otsState = 'pending';
       return [`records/${record.id}.json.ots`];
     } : undefined;
-    const res = await commitRecord(this.root, this.trail, { record, keyFiles, message, now: this.now, afterWrite });
+    const res = await commitRecord(this.root, this.trail, { record, keyFiles, message, now: this.now, afterWrite, lockTimeoutMs: this.lockTimeoutMs });
     return res.duplicate
       ? { id: record.id, duplicate: true, commit: res.commit }
       : { id: record.id, duplicate: false, commit: res.commit, record, ots: otsState };

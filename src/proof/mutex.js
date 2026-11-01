@@ -6,13 +6,8 @@
 // process can't interleave (and can't hit git's `index.lock` against the same
 // .git dir).
 //
-// This serialises writers WITHIN a single Node process. It does NOT guard
-// across processes: concurrent processes writing the same key (e.g. a
-// per-message pipe transport, one process per inbound mail) are unsupported
-// and can fail on git's `index.lock` (git does not retry it). A consumer that
-// needs cross-process safety must add its own filesystem-level lock (O_EXCL
-// on a sentinel) or run a single writer.
-
+// This serialises writers WITHIN a single Node process only. Cross-process
+// safety for a trail is the lock file in proof/trail.js, layered on top of this.
 
 /** @type {Map<string, Promise<any>>} */
 const _writeMutex = new Map();

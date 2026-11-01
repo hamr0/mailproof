@@ -75,6 +75,13 @@ Trust levels `verified`, `forwarded`, `authorized`, `unverified` (PRD §3).
 - A key file is written once per domain+selector+key-hash and never rewritten.
 - Capturing the same bytes again (the id exists) is a no-op (`duplicate:true`).
 
+### Concurrency (single writer per trail)
+- Writers take a lock file `<trailDir>/.<trail>.lock`: beside the repo, not inside it, so it also guards the first `git init`, never shows in `git status` and never travels in a clone. Created with `O_CREAT|O_EXCL`; contents JSON `{pid, host, started}` (ISO time). It is held across the whole write (duplicate check, files, `git add`, `git commit`, OTS) and released in `finally`, only if the file still holds the writer's own content.
+- A waiting writer retries with jittered backoff (about 20 ms growing to 500 ms) for `lockTimeoutMs` (constructor option, default 30000). On timeout it throws an error with `code: 'ERR_TRAIL_LOCKED'` and writes nothing.
+- A lock is taken over only when `host` equals this machine's hostname AND the pid is dead (`kill(pid, 0)` gives `ESRCH`; `EPERM` means alive). An unparseable lock counts as stale only once its mtime is older than `lockTimeoutMs`. A live or other-host lock is never taken over. Takeover unlinks, then retries the `O_EXCL` open, so the filesystem arbitrates again.
+- On failure a writer removes only the files it newly created and that git does not track; it never deletes a committed file.
+- Local filesystems only: `O_EXCL` is not reliable on NFS.
+
 ---
 
 # Part A — v1 (archived at M3)

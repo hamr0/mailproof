@@ -15,7 +15,7 @@
       "category": "proof",
       "when": "Start here. Construct one per trail (a git repo of records under `trailDir`), then `record()` each email you want a re-checkable proof of and `verify()` it later, offline. All methods are bound, so `const { verify } = mp` works.",
       "import": "import { Mailproof } from 'mailproof'",
-      "signature": "new Mailproof({ trailDir: string, trail?: string, resolver?: Function, otsBin?: string|null, now?: () => Date, trustedSealers?: string[] })",
+      "signature": "new Mailproof({ trailDir: string, trail?: string, resolver?: Function, otsBin?: string|null, now?: () => Date, trustedSealers?: string[], lockTimeoutMs?: number })",
       "fails": "Throws at construction when `trailDir` is missing or `trail` is not `[a-z0-9][a-z0-9_-]{0,63}`. Nothing touches the disk until the first `record()`.",
       "example": "import { Mailproof } from 'mailproof';\nconst mp = new Mailproof({ trailDir: './trails' });\nconst { id } = await mp.record(rawEmailBytes, { direction: 'in', source: 'imap' });\nconst v = await mp.verify(id);   // v.ok, v.trust"
     },
@@ -79,7 +79,7 @@
       "when": "Use to keep a proof of an email (one record per distinct copy, marked `direct` / `relayed` / `forward` / `digest`): it stores the signed headers, the signature, the archived key, both verdicts and the body status (`body_status`: did the body match the signed `bh=`, with hints on what changed) as one git commit, and never the body. Call it for every email you may need to prove later, including ones that fail verification (they are recorded as `unverified`).",
       "import": "import { Mailproof } from 'mailproof'",
       "signature": "mp.record(raw: Buffer|string, ctx: { direction: 'in'|'out', source?: string, envelope?: Envelope }) => Promise<{ id, duplicate, commit, record?, ots? }>",
-      "fails": "Throws on an empty message, a `direction` other than 'in'/'out', or a git failure (the tree is rolled back). Never throws because the mail is unsigned or fails verification. The id is the hash of the raw bytes: the identical bytes recorded twice return `duplicate: true` and write nothing, while a copy with any byte difference (a list footer, an added header) is its own record, linked by `message_key` (see `copies()`). An OTS failure is reported in `ots`, not thrown.",
+      "fails": "Throws on an empty message, a `direction` other than 'in'/'out', a git failure (the tree is rolled back: only files this call created are removed), or `err.code === 'ERR_TRAIL_LOCKED'` when another process holds the trail's writer lock for longer than `lockTimeoutMs` (nothing is written; retry later). Never throws because the mail is unsigned or fails verification. The id is the hash of the raw bytes: the identical bytes recorded twice return `duplicate: true` and write nothing, while a copy with any byte difference (a list footer, an added header) is its own record, linked by `message_key` (see `copies()`). An OTS failure is reported in `ots`, not thrown.",
       "example": "const { id, duplicate } = await mp.record(fs.readFileSync('mail.eml'), { direction: 'in', source: 'file' });"
     },
     {
