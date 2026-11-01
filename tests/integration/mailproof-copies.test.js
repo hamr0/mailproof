@@ -16,9 +16,9 @@ const withBody = (raw, fn) => { const i = raw.indexOf(SPLIT) + 4; return Buffer.
 const addHeaders = (raw, ...h) => Buffer.concat([Buffer.from(h.join('\r\n') + '\r\n'), raw]);
 
 /** An unsigned forward carrying `inners` (raw RFC-822 buffers) as message/rfc822 parts. */
-function forwardOf(inners, subject = 'Look at this', B = 'B') {
+function forwardOf(inners, subject = 'Look at this', B = 'B', extra = []) {
   const parts = inners.flatMap((b) => [`--${B}`, 'Content-Type: message/rfc822', 'Content-Disposition: attachment', '', b.toString('binary').replace(/\r\n$/, '')]);
-  return Buffer.from(['From: fwd@fwd.example', 'To: me@me.example', `Subject: ${subject}`, 'Message-ID: <fwd-1@fwd.example>', 'MIME-Version: 1.0',
+  return Buffer.from(['From: fwd@fwd.example', 'To: me@me.example', `Subject: ${subject}`, 'Message-ID: <fwd-1@fwd.example>', 'MIME-Version: 1.0', ...extra,
     `Content-Type: multipart/mixed; boundary="${B}"`, '', `--${B}`, 'Content-Type: text/plain', '', 'see attached', ...parts, `--${B}--`, ''].join('\r\n'), 'binary');
 }
 
@@ -47,9 +47,9 @@ test('direct and list-relayed copies: 2 records, one message_key, copy kinds, bo
     const c = await mp.copies(arg);
     assert.deepEqual(c.copies.map((x) => [x.id, x.copy]).sort(), [[direct.id, 'direct'], [relayed.id, 'relayed']].sort());
     assert.equal(c.original, direct.id, 'original = the direct copy whose body matched');
-    assert.deepEqual(c.forwards, []);
+    assert.deepEqual(c.contained_in, []);
   }
-  assert.deepEqual(await mp.copies('0'.repeat(32)), { message_key: '0'.repeat(32), original: null, copies: [], forwards: [] });
+  assert.deepEqual(await mp.copies('0'.repeat(32)), { message_key: '0'.repeat(32), original: null, copies: [], contained_in: [] });
   assert.deepEqual((await mp.copies('nope')).copies, []);
 });
 
@@ -73,7 +73,7 @@ test('a Fwd: subject marks a forward; Re: and ordinary subjects do not', async (
   assert.equal((await mk('Forward looking statement')).kind, 'direct');
 });
 
-test('forward as attachment: signed original linked by key + verdict, key archived, found under forwards', async () => {
+test('forward as attachment: signed original linked by key + verdict, key archived, found under contained_in', async () => {
   const orig = await signedMail({ body: BODY, subject: 'The original' });
   const dir = tmp();
   const mp = new Mailproof({ trailDir: dir, resolver: orig.resolver, now: clock('2026-11-01T10:00:00Z') });
@@ -91,7 +91,7 @@ test('forward as attachment: signed original linked by key + verdict, key archiv
   assert.ok(fs.readdirSync(path.join(dir, 'default', 'keys', orig.domain, 'sel1')).length === 1, 'inner signer key archived');
   const c = await mp.copies(direct.id);
   assert.deepEqual(c.copies.map((x) => x.id), [direct.id]);
-  assert.deepEqual(c.forwards.map((x) => x.id), [fwd.id]);
+  assert.deepEqual(c.contained_in.map((x) => x.id), [fwd.id]);
   // nothing of the inner message is stored
   const onDisk = fs.readFileSync(path.join(dir, 'default', 'records', `${fwd.id}.json`), 'utf8');
   assert.ok(!onDisk.includes('The original') && !onDisk.includes('Second line'));
@@ -138,4 +138,23 @@ test('one level deep: an original that itself carries an rfc822 part is not recu
   const mp = new Mailproof({ trailDir: tmp() });
   const f = await mp.record(forwardOf([mid]), { direction: 'in' });
   assert.equal(f.record.copy.evidence.attached_original.length, 1);
+});
+
+test('a list digest (List-Id or multipart/digest, with rfc822 parts) is a digest, not a forward; still linked under contained_in', async () => {
+  const orig = await signedMail({ body: BODY });
+  const mp = new Mailproof({ trailDir: tmp(), resolver: orig.resolver, now: clock('2026-11-01T10:00:00Z') });
+  const direct = await mp.record(orig.raw, { direction: 'in' });
+  const digest = await mp.record(forwardOf([orig.raw], 'Digest, Vol 1', 'B', ['List-Id: <digest.lists.example.org>']), { direction: 'in' });
+  assert.equal(digest.record.copy.kind, 'digest');
+  assert.equal(digest.record.copy.evidence.list_id_domain, 'lists.example.org');
+  assert.equal(digest.record.copy.evidence.attached_original[0].message_key, direct.record.message_key);
+  assert.deepEqual((await mp.copies(direct.id)).contained_in.map((x) => [x.id, x.copy]), [[digest.id, 'digest']]);
+  const asDigestType = Buffer.from(forwardOf([orig.raw], 'Vol 2').toString('binary').replace('multipart/mixed', 'multipart/digest'), 'binary');
+  const byType = await mp.record(asDigestType, { direction: 'in' });
+  assert.equal(byType.record.copy.kind, 'digest', 'multipart/digest without List-Id');
+  // precedence: a Fwd: subject wins over digest; a user forward with no List-Id stays forward; a list message with no rfc822 parts is relayed
+  assert.equal((await mp.record(forwardOf([orig.raw], 'Fwd: Digest', 'B', ['List-Id: <d.lists.example.org>']), { direction: 'in' })).record.copy.kind, 'forward');
+  assert.equal((await mp.record(forwardOf([orig.raw], 'Look at this too'), { direction: 'in' })).record.copy.kind, 'forward');
+  const noParts = await mp.record(Buffer.from('From: a@a.example\r\nList-Id: <l.lists.example.org>\r\nMessage-ID: <q@a.example>\r\n\r\nhi\r\n'), { direction: 'in' });
+  assert.equal(noParts.record.copy.kind, 'relayed');
 });

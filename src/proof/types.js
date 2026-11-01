@@ -119,9 +119,10 @@
 
 /**
  * `direct`: signed, no ARC-Seal and no List-Id. `relayed`: ARC-Seal and/or List-Id present.
- * `forward`: the message is itself a forward (Subject prefix and/or an attached original).
+ * `forward`: the message is itself a forward (Subject prefix, or a message/rfc822 part with no List-Id).
+ * `digest`: a list digest (List-Id or a multipart/digest part) that contains message/rfc822 parts.
  * `unknown`: no evidence (e.g. unsigned mail with no relay headers).
- * @typedef {'direct' | 'relayed' | 'forward' | 'unknown'} CopyKind
+ * @typedef {'direct' | 'relayed' | 'forward' | 'digest' | 'unknown'} CopyKind
  */
 
 /**

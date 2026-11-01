@@ -118,7 +118,7 @@ class Mailproof {
       attachments: parsed.attachments.map((a) => ({ filename: a.filename, size: a.size, sha256: /** @type {string} */ (a.sha256) })),
       signatures,
       body_status: 'not-checked',
-      copy: classifyCopy({ rows, subject: parsed.subject || null, signed: sigRows.length > 0, attached, capped: inner.length > MAX_INNER }),
+      copy: classifyCopy({ rows, subject: parsed.subject || null, signed: sigRows.length > 0, attached, capped: inner.length > MAX_INNER, multipartDigest: /^content-type:[ \t]*multipart\/digest/im.test(body.toString('binary')) || rows.some((r) => r.name === 'content-type' && /multipart\/digest/i.test(r.raw)) }),
       verdicts: {},
     };
     const sigOk = verifyRecord(record).signatures.map((x) => x.ok);
@@ -236,7 +236,7 @@ class Mailproof {
    *   `ots`: 'off' unless `otsBin` is set; 'pending' once the stamp is committed beside the record; `{ error }`
    *   when stamping failed (the record is committed regardless: accept-with-flag).
    * @name Mailproof#record
-   * @when Use to keep a proof of an email (one record per distinct copy, marked `direct` / `relayed` / `forward`): it stores the signed headers, the signature, the archived key, both verdicts and the body status (`body_status`: did the body match the signed `bh=`, with hints on what changed) as one git commit, and never the body. Call it for every email you may need to prove later, including ones that fail verification (they are recorded as `unverified`).
+   * @when Use to keep a proof of an email (one record per distinct copy, marked `direct` / `relayed` / `forward` / `digest`): it stores the signed headers, the signature, the archived key, both verdicts and the body status (`body_status`: did the body match the signed `bh=`, with hints on what changed) as one git commit, and never the body. Call it for every email you may need to prove later, including ones that fail verification (they are recorded as `unverified`).
    * @category proof
    * @signature mp.record(raw: Buffer|string, ctx: { direction: 'in'|'out', source?: string, envelope?: Envelope }) => Promise<{ id, duplicate, commit, record?, ots? }>
    * @fails Throws on an empty message, a `direction` other than 'in'/'out', or a git failure (the tree is rolled back). Never throws because the mail is unsigned or fails verification. The id is the hash of the raw bytes: the identical bytes recorded twice return `duplicate: true` and write nothing, while a copy with any byte difference (a list footer, an added header) is its own record, linked by `message_key` (see `copies()`). An OTS failure is reported in `ots`, not thrown.
@@ -342,16 +342,16 @@ class Mailproof {
   }
 
   /**
-   * Every recorded copy of one message, plus the forwards that carry it as an attachment.
+   * Every recorded copy of one message, plus the records (forwards, list digests) that carry it as an attachment.
    * @param {string} idOrKey  A record id or a `message_key` (32 hex each).
-   * @returns {Promise<{ message_key: string | null, original: string | null, copies: Array<CopySummary>, forwards: Array<CopySummary> }>}
+   * @returns {Promise<{ message_key: string | null, original: string | null, copies: Array<CopySummary>, contained_in: Array<CopySummary> }>}
    * @name Mailproof#copies
-   * @when Use to see every route one signed message reached you by (direct, via a mailing list, forwarded), given the id of any copy or the shared `message_key`. `copies` share the key; `forwards` are other records whose attached original has that key. `original` is the earliest `direct` copy whose body matched, or null. Use `get(id)` for a full record.
+   * @when Use to see every route one signed message reached you by (direct, via a mailing list, forwarded), given the id of any copy or the shared `message_key`. `copies` share the key; `contained_in` lists other records that carry it as an attached original (forwards and list digests). `original` is the earliest `direct` copy whose body matched, or null. Use `get(id)` for a full record.
    * @category read
-   * @signature mp.copies(idOrKey: string) => Promise<{ message_key, original, copies[], forwards[] }>
-   * @fails Never throws. An unknown id or key, or a record with no `message_key` (unsigned mail with no Message-ID), returns just that record (or nothing) with empty `forwards`.
+   * @signature mp.copies(idOrKey: string) => Promise<{ message_key, original, copies[], contained_in[] }>
+   * @fails Never throws. An unknown id or key, or a record with no `message_key` (unsigned mail with no Message-ID), returns just that record (or nothing) with empty `contained_in`.
    * @example
-   * const { copies, forwards, original } = await mp.copies(id);
+   * const { copies, contained_in, original } = await mp.copies(id);
    */
   async copies(idOrKey) {
     const all = (await Promise.all((await listIds(this.root)).map((id) => readRecord(this.root, id)))).filter((r) => r !== null);
@@ -364,11 +364,11 @@ class Mailproof {
     });
     const byTime = (/** @type {MpRecord} */ a, /** @type {MpRecord} */ b) => (a.captured < b.captured ? -1 : a.captured > b.captured ? 1 : 0);
     const copies = (key ? all.filter((r) => r.message_key === key) : self ? [self] : []).sort(byTime);
-    const forwards = key
+    const containedIn = key
       ? all.filter((r) => r.message_key !== key && (r.copy?.evidence?.attached_original || []).some((o) => o.message_key === key)).sort(byTime)
       : [];
     const original = copies.find((r) => r.copy?.kind === 'direct' && r.body_status === 'matched');
-    return { message_key: key, original: original ? original.id : null, copies: copies.map(sum), forwards: forwards.map(sum) };
+    return { message_key: key, original: original ? original.id : null, copies: copies.map(sum), contained_in: containedIn.map(sum) };
   }
 
   /**

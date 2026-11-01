@@ -38,23 +38,25 @@ function messageKeyOf(rows) {
 }
 
 /**
- * Classify this copy. Order: forward, relayed, direct (signed, no relay evidence),
- * else unknown.
- * @param {{ rows: HeaderRow[], subject: string | null, signed: boolean, attached: AttachedOriginal[], capped: boolean }} x
+ * Classify this copy. Precedence: forward by Subject prefix, digest (List-Id or a
+ * multipart/digest part, AND message/rfc822 parts), forward by message/rfc822 part,
+ * relayed, direct (signed, no relay evidence), else unknown.
+ * @param {{ rows: HeaderRow[], subject: string | null, signed: boolean, attached: AttachedOriginal[], capped: boolean, multipartDigest?: boolean }} x
  * @returns {MessageCopy}
  */
-function classifyCopy({ rows, subject, signed, attached, capped }) {
+function classifyCopy({ rows, subject, signed, attached, capped, multipartDigest = false }) {
   const relay = relayEvidence(rows);
   const relayed = relay.arc_sealers.length > 0 || relay.list_id_domain !== null;
   /** @type {Record<string, any>} */
   const evidence = {};
   if (relayed) { evidence.arc_sealers = relay.arc_sealers; evidence.list_id_domain = relay.list_id_domain; }
   const prefix = !!subject && FORWARD_SUBJECT.test(subject);
+  const digest = !prefix && attached.length > 0 && (relay.list_id_domain !== null || multipartDigest);
   if (prefix || attached.length) {
     if (prefix) evidence.subject_prefix = true;
     if (attached.length) evidence.attached_original = attached;
     if (capped) evidence.capped = true;
-    return { kind: 'forward', evidence };
+    return { kind: digest ? 'digest' : 'forward', evidence };
   }
   if (relayed) return { kind: 'relayed', evidence };
   return { kind: signed ? 'direct' : 'unknown', evidence: {} };

@@ -45,7 +45,7 @@ All methods are bound: `const { verify } = mp` works.
 - `matchBody(recordOrId, raw)` -> `{ match, full, signatures[] }`. `full` = body matches `bh=` AND the signature verifies at capture time.
 - `matchFile(recordOrId, bytes)` -> `{ match, attachment }`.
 - `list({ limit?, direction? })`, `get(id)`.
-- `copies(idOrKey)` -> `{ message_key, original, copies[], forwards[] }`: every recorded copy of one signed message (the id is the raw-bytes hash, so a list-relayed or forwarded copy is its own record; `message_key` groups them), the derived `original` (earliest `direct` copy with a matched body), and the records that carry it as an attached original. Each record has `copy: { kind: direct|relayed|forward|unknown, evidence }`.
+- `copies(idOrKey)` -> `{ message_key, original, copies[], contained_in[] }`: every recorded copy of one signed message (the id is the raw-bytes hash, so a list-relayed or forwarded copy is its own record; `message_key` groups them), the derived `original` (earliest `direct` copy with a matched body), and the records (forwards, list digests) that carry it as an attached original. Each record has `copy: { kind: direct|relayed|forward|digest|unknown, evidence }`.
 
 `verifyRecord(record, { at? })` is the same offline check as a pure function, so a third party can verify an exported record with no trail.
 
