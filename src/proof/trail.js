@@ -78,7 +78,7 @@ async function clearStaleBreakLock(breakPath, timeoutMs) {
   let text;
   let mtimeMs;
   try { text = await fs.readFile(breakPath, 'utf8'); mtimeMs = (await fs.stat(breakPath)).mtimeMs; }
-  catch { return true; } // vanished: just retry
+  catch (e) { return /** @type {NodeJS.ErrnoException} */ (e).code === 'ENOENT'; } // vanished: retry; unreadable (EISDIR, EACCES...): not ours to clear
   const info = parseLock(text);
   const old = Date.now() - mtimeMs > Math.max(timeoutMs, BREAK_MIN_STALE_MS);
   const stale = old || (info !== null && info.host === os.hostname() && !pidAlive(info.pid));
@@ -117,7 +117,7 @@ async function takeOverIfStale(lockPath, timeoutMs) {
   let text;
   let mtimeMs;
   try { text = await fs.readFile(lockPath, 'utf8'); mtimeMs = (await fs.stat(lockPath)).mtimeMs; }
-  catch { return true; } // vanished: just retry the open
+  catch (e) { return /** @type {NodeJS.ErrnoException} */ (e).code === 'ENOENT'; } // vanished: retry the open; unreadable (EISDIR, EACCES...): back off
   const info = parseLock(text);
   const stale = info ? info.host === os.hostname() && !pidAlive(info.pid) : Date.now() - mtimeMs > timeoutMs;
   if (!stale) return false;
@@ -166,7 +166,7 @@ async function withTrailLock(root, name, timeoutMs, work) {
       } catch (e) {
         if (/** @type {NodeJS.ErrnoException} */ (e).code !== 'EEXIST') throw e;
       }
-      if (await takeOverIfStale(lockPath, timeoutMs)) continue;
+      if (await takeOverIfStale(lockPath, timeoutMs) && Date.now() < deadline) continue; // never loops past the deadline
       if (Date.now() >= deadline) {
         throw Object.assign(new Error(`trail "${name}" is locked by another writer (${lockPath})`), { code: 'ERR_TRAIL_LOCKED' });
       }

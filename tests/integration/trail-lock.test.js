@@ -355,3 +355,35 @@ test('a record() child ends on its own right after it answers (no lingering DNS-
   const lag = Date.now() - answeredAt;
   assert.ok(lag < 3000, `child lingered ${lag} ms after answering (was ~5000 with the uncleared timer)`);
 });
+
+// --- the wait loop always honours its deadline, even when a lock file is unreadable ---
+
+/** record() with a short lockTimeoutMs; fails the test instead of hanging if the wait never settles. */
+async function recordWithDeadline(trailDir, lockTimeoutMs) {
+  const m = await signedMail({ body: 'deadline\r\n' });
+  const mp = new Mailproof({ trailDir, resolver: m.resolver, lockTimeoutMs });
+  const t0 = Date.now();
+  let timer;
+  const hang = new Promise((r) => { timer = setTimeout(() => r('HUNG'), 4000); });
+  const outcome = await Promise.race([mp.record(m.raw, { direction: 'in' }).then(() => 'OK', (e) => e.code), hang]);
+  clearTimeout(timer);
+  return { outcome, ms: Date.now() - t0 };
+}
+
+test('dead-pid main lock + <lock>.break as a directory: ERR_TRAIL_LOCKED at the deadline, no spin', async () => {
+  const trailDir = tmp();
+  const pid = await deadPid();
+  fs.writeFileSync(path.join(trailDir, '.default.lock'), lockInfo(pid));
+  fs.mkdirSync(path.join(trailDir, '.default.lock.break'));
+  const { outcome, ms } = await recordWithDeadline(trailDir, 500);
+  assert.equal(outcome, 'ERR_TRAIL_LOCKED');
+  assert.ok(ms < 2000, `took ${ms} ms`);
+});
+
+test('an unreadable main lock (a directory at the lock path): ERR_TRAIL_LOCKED at the deadline, no spin', async () => {
+  const trailDir = tmp();
+  fs.mkdirSync(path.join(trailDir, '.default.lock'));
+  const { outcome, ms } = await recordWithDeadline(trailDir, 500);
+  assert.equal(outcome, 'ERR_TRAIL_LOCKED');
+  assert.ok(ms < 2000, `took ${ms} ms`);
+});
