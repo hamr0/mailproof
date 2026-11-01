@@ -120,7 +120,7 @@ Honest limits for "I sent you this":
 
 - My own sent record is self-recorded and timestamped. A provider's Sent-folder copy is saved
   without a DKIM signature (msn.com Sent copies: 0 of 4 signed, [F3](findings.md)), so it is `unverified`
-  (a Gmail-address Sent copy is checked in M1).
+  (a Gmail-address Sent copy: moot, [F3](findings.md)).
 - The strong proof is the counterparty's **signed reply** that references my Message-ID.
 - If they never reply, only my own timestamped record exists.
 - Only self-hosting (M5) gives signed copies of what I send.
@@ -181,8 +181,8 @@ no duplicates. The existing Postfix pipe stays as a capture source.
 IMAP needs a **third runtime dependency** (candidate: `imapflow`, same author as mailauth/mailparser).
 It must pass the AGENT_RULES External Dependency Checklist, and it reaches the ≤3 runtime-dep ceiling.
 
-**POC:** fetched mail still verifies; whether Gmail's Sent copies carry a DKIM signature; which Gmail
-login method works. Already known: msn.com Sent copies are unsigned ([F3](findings.md)); Outlook/Exchange mail
+**POC:** fetched mail still verifies; which Gmail
+login method works (Gmail Sent-copy signing is moot, [F3](findings.md)). Already known: msn.com Sent copies are unsigned ([F3](findings.md)); Outlook/Exchange mail
 exported via Thunderbird has altered bodies, so M1 is Gmail-first (F4).
 
 ### M2 — Reading replies (specified: goals and design)
@@ -282,7 +282,7 @@ Node ≥ 22.5.
 1. Is there a public DKIM-key archive for looking up old mail? (Believed: ZK Email runs one; unconfirmed.)
 2. Does Gmail sign `In-Reply-To`/`References`? **Answered: yes for Gmail, no for Microsoft, see [F11](findings.md).**
 3. Gmail login method: OAuth or app password? (M1 POC)
-4. Are Gmail's Sent copies DKIM-signed? (M1 POC)
+4. Are Gmail's Sent copies DKIM-signed? **Closed (owner, 2026-11-01): moot.** Own sent records are `unverified` regardless ([F3](findings.md)); the proof of sending is the counterparty's signed copy, and Gmail does sign outbound from the owner's gmail.com address (the batch-3 gmail.com-signed message, [F11](findings.md)).
 5. Does Gmail add its own ARC seal / `Authentication-Results` on inbound that could make its SPF verdict portable? (M1 POC)
 6. Sending from a normal mailbox in M3 vs the no-third-party-provider rule.
 7. Privacy wording for storing other people's addresses and subjects (not legal advice).

@@ -46,7 +46,7 @@ POC script: [`poc/m0-header-recheck.js`](../../poc/m0-header-recheck.js) (throwa
 - **Question:** does a mailbox's Sent copy carry the provider's DKIM signature?
 - **Run:** 4 msn.com Sent copies, header inspection.
 - **Result:** 0 `DKIM-Signature` headers and a single client-submission `Received:` on all 4.
-- **Decision:** confirms PRD §5. Own sent records are `unverified`; the strong proof is the counterparty's signed reply. A Gmail-address Sent copy is not tested yet (M1).
+- **Decision:** confirms PRD §5. Own sent records are `unverified`; the strong proof is the counterparty's signed reply. A Gmail-address Sent copy is not tested yet (M1). **Closed (owner, 2026-11-01): moot.** Own sent records are `unverified` regardless (F3); the proof of sending is the counterparty's signed copy, and Gmail does sign outbound from the owner's gmail.com address (the batch-3 gmail.com-signed message, F11).
 - **Affects:** PRD §5, M1 POC, §12 Q4.
 
 ## F4 — Outlook/Exchange mail exported via Thunderbird has altered bodies
@@ -97,7 +97,7 @@ POC script: [`poc/m0-header-recheck.js`](../../poc/m0-header-recheck.js) (throwa
 - **Date:** 2026-11-01
 - **Question:** what shape does the M0 implementation take where the PRD left forks open?
 - **Decisions:**
-  - **D1 Portable verdict is DKIM only.** `trustedSealers` (constructor option, default `[]`) gates only the live `forwarded` level. Offline re-check of ARC seals needs archived ARC headers and sealer keys, an unproven mechanism, so it is a separate follow-up POC. **Open follow-up (owner, 2026-11-01): portable ARC (the trusted-sealer offline re-check) is missing and needs its own spec and POC before it is built; tracked in PRD §12 Q10.** *Batch 3 (2026-11-01) had ARC seals (Gmail's and Microsoft's) but no sample where DKIM breaks and ARC still passes, so the ARC POC still needs such samples (a Google Groups post, a non-digest IETF list post, a Gmail auto-forward).*
+  - **D1 Portable verdict is DKIM only.** `trustedSealers` (constructor option, default `[]`) gates only the live `forwarded` level. Offline re-check of ARC seals needs archived ARC headers and sealer keys, an unproven mechanism, so it is a separate follow-up POC. **Open follow-up (owner, 2026-11-01): portable ARC (the trusted-sealer offline re-check) is missing and needs its own spec and POC before it is built; tracked in PRD §12 Q10 (design notes for it in [F13](#f13--gitdone-phase-0-samples-corroborate-f10)).** **Sample gathering closed (owner, 2026-11-01).** The samples so far carry Gmail/Microsoft ARC seals, but none has DKIM broken while ARC passes. Portable ARC stays deferred to its own spec + POC (PRD §12 Q10, still open), which will create its own test cases (e.g. a synthetic ARC-sealed relay via mailauth's `arc` sealing).
   - **D2 Stored fields.** `raw_sha256` and attachment `filename` are kept in the record (dedupe/match value; the trail owner's own data, like `Subject`).
   - **D3 Key stored twice.** Embedded in the record (`{k,p}`, so it verifies standalone) and in the trail key archive (provenance: TXT as fetched, lookup name, time).
   - **D4 Second capture of the same email** returns `duplicate:true` and writes nothing; its ctx is not kept. *Reversed by owner 2026-11-01: one record per distinct copy (raw-bytes id) + `message_key` grouping + `copy.kind`. A captures-log idea was rejected because relayed copies collided with direct ones (same `b=`, so the first to arrive hid the other's body status and verdicts). The same bytes captured again are still a no-op.*
@@ -142,6 +142,7 @@ POC script: [`poc/m0-header-recheck.js`](../../poc/m0-header-recheck.js) (throwa
 - **Decision:** this narrows F9: the alteration is not Thunderbird. Updated cause: Exchange at or after receipt, or Outlook web's export. We still cannot tell receipt-time rewriting from export-time re-serialisation without raw bytes over IMAP; an Outlook IMAP POC in M1 would settle it.
 - **Implication:** Outlook-hosted mailboxes give header proof only. Body proof needs mail received at Gmail or at our own MTA (M5).
 - **Affects:** PRD M1, §4 (body-match / "full proof").
+- **See also:** [F13](#f13--gitdone-phase-0-samples-corroborate-f10) (two more Outlook-received downloads fail the same way).
 
 ## F11 — Threading and recipient signing differ by provider
 
@@ -161,3 +162,18 @@ POC script: [`poc/m0-header-recheck.js`](../../poc/m0-header-recheck.js) (throwa
 - **Observation:** weekly stats from addypin.com (selector addypin2026) and ownsub.com (selector default) verify: `matched`, live pass. The F5 failing mail claimed `From:` a gmail.com address; mail sent `From:` the app's own domain is fine.
 - **Decision:** none for mailproof; updates F5.
 - **Affects:** nothing in the PRD.
+
+## F13 — gitdone Phase-0 samples corroborate F10
+
+- **Date:** 2026-11-01
+- **Question:** do the gitdone Phase-0 samples (gitdone-owned) agree with F10?
+- **Run:** `node tests/manual/real-mail.mjs ~/PycharmProjects/gitdone/poc/phase0` on 4 files, read in place and never copied. `RESULT: OK`, 0 negatives passed, 0 disagreements.
+- **Result:**
+  - **from-msn:** msn.com-signed, received at Gmail. Live pass, body `matched`, kind `relayed` (ARC i=2, sealers google.com + microsoft.com; DKIM also passes).
+  - **sample** (algorithmwatch.org, mailing_list) and **sample1** (ab.mtasv.net + boardy.ai): both received at Outlook (`*.eurprd02.prod.outlook.com`), no Thunderbird markers. Body `mismatch`/`unknown` on 3/3 signatures. Their `x=` has since passed, so offline at today's capture time gives `fail(expired)`, consistent with F2.
+  - **from-gm:** 0 DKIM signatures and no provider `Received` header. Origin unknown, so a hint only, consistent with F3.
+- **Decision:** Outlook-received mail now fails `bh=` in 5/5 independent downloads (F10's 3 plus these 2); Gmail-received mail matches every time. F10 stands.
+- **Notes for the future ARC spec (PRD §12 Q10), from gitdone:**
+  - mailauth's `auth.arc.authResults` is a rendered header string, not an array. gitdone shipped a "chain length 476" bug by calling `.length` on it; use `auth.arc.i` for chain depth.
+  - Offline ARC re-check needs the sealers' keys archived at receipt, the same as DKIM.
+- **Affects:** PRD M1, §4; PRD §12 Q10.
