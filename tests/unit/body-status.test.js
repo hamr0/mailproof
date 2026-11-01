@@ -11,6 +11,8 @@ import { signedMail } from '../helpers/proof.js';
 import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
+// Sign at the instant the instance clock is pinned to, so t= equals captured whatever the real date.
+const T0 = new Date('2026-11-01T10:00:00Z');
 
 const SPLIT = Buffer.from('\r\n\r\n');
 /** Replace the body of a signed raw message (headers, incl. the signature, untouched). */
@@ -29,12 +31,12 @@ const BODY = 'Hello there.\r\nSecond line.\r\n';
 
 for (const canon of ['relaxed/relaxed', 'simple/simple']) {
   test(`clean mail (${canon}): matched, empty explain`, async () => {
-    const m = await signedMail({ body: BODY, canon });
+    const m = await signedMail({ signTime: T0, body: BODY, canon });
     assert.deepEqual(analyse(m.raw), { status: 'matched', explain: [] });
   });
 
   test(`appended footer (${canon}): mismatch + appended with the canonical byte count`, async () => {
-    const m = await signedMail({ body: BODY, canon });
+    const m = await signedMail({ signTime: T0, body: BODY, canon });
     const footer = '\r\n-- \r\nSent via the list\r\nUnsubscribe here\r\n';
     const r = analyse(withBody(m.raw, (b) => b + footer));
     assert.equal(r.status, 'mismatch');
@@ -45,7 +47,7 @@ for (const canon of ['relaxed/relaxed', 'simple/simple']) {
   });
 
   test(`prepended banner (${canon}): mismatch + prepended`, async () => {
-    const m = await signedMail({ body: BODY, canon });
+    const m = await signedMail({ signTime: T0, body: BODY, canon });
     const r = analyse(withBody(m.raw, (b) => 'CAUTION: external sender\r\n\r\n' + b));
     assert.equal(r.status, 'mismatch');
     assert.deepEqual(kinds(r), ['prepended']);
@@ -54,7 +56,7 @@ for (const canon of ['relaxed/relaxed', 'simple/simple']) {
 }
 
 test('l= with extra bytes after the signed prefix: partial + l_tag', async () => {
-  const m = await signedMail({ body: BODY, bodyLength: 13 });
+  const m = await signedMail({ signTime: T0, body: BODY, bodyLength: 13 });
   const r = analyse(withBody(m.raw, (b) => b + 'injected tail\r\n'));
   assert.equal(r.status, 'partial');
   assert.deepEqual(kinds(r), ['l_tag']);
@@ -63,16 +65,16 @@ test('l= with extra bytes after the signed prefix: partial + l_tag', async () =>
 });
 
 test('l= covering the whole body: matched, not partial; l= with the signed prefix altered: mismatch, no appended/prepended search', async () => {
-  const full = await signedMail({ body: BODY, bodyLength: BODY.length });
+  const full = await signedMail({ signTime: T0, body: BODY, bodyLength: BODY.length });
   assert.equal(analyse(full.raw).status, 'matched');
-  const m = await signedMail({ body: BODY, bodyLength: 13 });
+  const m = await signedMail({ signTime: T0, body: BODY, bodyLength: 13 });
   const r = analyse(withBody(m.raw, (b) => 'X' + b));
   assert.equal(r.status, 'mismatch');
   assert.deepEqual(kinds(r), ['unknown']);
 });
 
 test('ARC-sealed list message: appended + forwarded + mailing_list, no body text in explain', async () => {
-  const m = await signedMail({ body: BODY });
+  const m = await signedMail({ signTime: T0, body: BODY });
   const listed = addHeaders(
     withBody(m.raw, (b) => b + '\r\n_______________________________________________\r\nSECRET-FOOTER-TEXT mailing list\r\n'),
     'ARC-Seal: i=1; a=rsa-sha256; t=1; cv=none; d=Relay.Example; s=arc; b=AAAA',
@@ -88,7 +90,7 @@ test('ARC-sealed list message: appended + forwarded + mailing_list, no body text
 });
 
 test('hints do not fire without the headers, and clean mail never gets any', async () => {
-  const m = await signedMail({ body: BODY });
+  const m = await signedMail({ signTime: T0, body: BODY });
   const altered = analyse(withBody(m.raw, (b) => b + 'x\r\n'));
   assert.deepEqual(kinds(altered), ['appended'], 'no ARC-Seal / List-Id, no hints');
   const sealedClean = addHeaders(m.raw, 'ARC-Seal: i=1; a=rsa-sha256; cv=none; d=relay.example; s=arc; b=A', 'List-Id: <l.example.org>');
@@ -96,7 +98,7 @@ test('hints do not fire without the headers, and clean mail never gets any', asy
 });
 
 test('an edit in the middle is not mistaken for appended/prepended: unknown', async () => {
-  const m = await signedMail({ body: 'one\r\ntwo\r\nthree\r\n' });
+  const m = await signedMail({ signTime: T0, body: 'one\r\ntwo\r\nthree\r\n' });
   const r = analyse(withBody(m.raw, () => 'one\r\nTWO\r\nthree\r\n'));
   assert.equal(r.status, 'mismatch');
   assert.deepEqual(kinds(r), ['unknown']);
@@ -117,12 +119,12 @@ test('other canonicalisation and line-ending detectors (bh computed under a diff
 
 test('search cap: a footer longer than the cap is not found, search_capped is recorded; a short footer on a huge body still is', async () => {
   const head = Array.from({ length: 200 }, (_, i) => `line ${i}`).join('\r\n') + '\r\n';
-  const m = await signedMail({ body: head });
+  const m = await signedMail({ signTime: T0, body: head });
   const longFooter = Array.from({ length: MAX_LINES + 50 }, (_, i) => `f${i}`).join('\r\n') + '\r\n';
   const capped = analyse(withBody(m.raw, (b) => b + longFooter));
   assert.equal(capped.status, 'mismatch');
   assert.deepEqual(kinds(capped), ['search_capped', 'unknown']);
-  const big = await signedMail({ body: Array.from({ length: MAX_LINES * 2 }, (_, i) => `row ${i}`).join('\r\n') + '\r\n' });
+  const big = await signedMail({ signTime: T0, body: Array.from({ length: MAX_LINES * 2 }, (_, i) => `row ${i}`).join('\r\n') + '\r\n' });
   const found = analyse(withBody(big.raw, (b) => b + 'footer\r\n'));
   assert.deepEqual(kinds(found), ['appended']);
 });
@@ -150,7 +152,7 @@ test('canonLines reproduces mailauth canonicalisation (hash over many shapes)', 
 
 test('record()/check(): body_status stored per record, trust verdicts untouched, no body text on disk', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-body-'));
-  const m = await signedMail({ body: BODY });
+  const m = await signedMail({ signTime: T0, body: BODY });
   const altered = withBody(m.raw, (b) => b + 'LEAKY-FOOTER-TEXT\r\n');
   const mp = new Mailproof({ trailDir: dir, resolver: m.resolver, now: () => new Date('2026-11-01T10:00:00Z') });
   const chk = await mp.check(altered);

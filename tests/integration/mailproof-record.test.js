@@ -7,6 +7,8 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { Mailproof } from '../../src/proof/mailproof.js';
 import { signedMail } from '../helpers/proof.js';
+// Sign at the instant the instance clock is pinned to, so t= equals captured whatever the real date.
+const T0 = new Date('2026-11-01T10:00:00Z');
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'mp-trail-'));
 const gitOut = (cwd, ...a) => execFileSync('git', a, { cwd, encoding: 'utf8' }).trim();
@@ -16,7 +18,7 @@ const BODY = 'TOPSECRET-BODY-TEXT\r\n';
 
 test('record: round trip, one commit per record, nothing but signed headers stored', async () => {
   const dir = tmp();
-  const m = await signedMail({ subject: 'Quarterly numbers', body: BODY, inReplyTo: '<orig@a.example>', references: '<root@a.example> <orig@a.example>' });
+  const m = await signedMail({ signTime: T0, subject: 'Quarterly numbers', body: BODY, inReplyTo: '<orig@a.example>', references: '<root@a.example> <orig@a.example>' });
   const mp = mk(dir, m);
   const r = await mp.record(m.raw, { direction: 'in', source: 'test' });
   assert.equal(r.duplicate, false);
@@ -51,8 +53,8 @@ test('record: round trip, one commit per record, nothing but signed headers stor
 
 test('list: newest first, filter by direction, limit; get rejects bad ids', async () => {
   const dir = tmp();
-  const m1 = await signedMail({ body: 'one\r\n' });
-  const m2 = await signedMail({ body: 'two\r\n', signers: [{ domain: m1.domain, selector: 'sel1', key: m1.signers[0].key }] });
+  const m1 = await signedMail({ signTime: T0, body: 'one\r\n' });
+  const m2 = await signedMail({ signTime: T0, body: 'two\r\n', signers: [{ domain: m1.domain, selector: 'sel1', key: m1.signers[0].key }] });
   let t = '2026-11-01T10:00:00Z';
   const mp = new Mailproof({ trailDir: dir, resolver: m1.resolver, now: () => new Date(t) });
   const a = await mp.record(m1.raw, { direction: 'in' });
@@ -68,7 +70,7 @@ test('list: newest first, filter by direction, limit; get rejects bad ids', asyn
 
 test('dedupe: the same email twice makes no second commit', async () => {
   const dir = tmp();
-  const m = await signedMail({});
+  const m = await signedMail({ signTime: T0, signTime: T0 });
   const mp = mk(dir, m);
   const a = await mp.record(m.raw, { direction: 'in', source: 'imap' });
   const b = await mp.record(m.raw, { direction: 'out', source: 'pipe' });
@@ -81,7 +83,7 @@ test('dedupe: the same email twice makes no second commit', async () => {
 
 test('the id is the raw-bytes hash: an extra transit header is its own record, with the same message_key', async () => {
   const dir = tmp();
-  const m = await signedMail({});
+  const m = await signedMail({ signTime: T0, signTime: T0 });
   const mp = mk(dir, m);
   const a = await mp.record(m.raw, { direction: 'in' });
   const viaPipe = Buffer.concat([Buffer.from('Received: from mta.local by me; Sun, 1 Nov 2026 10:00:00 +0000\r\n'), m.raw]);
@@ -94,7 +96,7 @@ test('the id is the raw-bytes hash: an extra transit header is its own record, w
 
 test('attachments: sha256 + size + filename recorded, content never', async () => {
   const bytes = Buffer.from('PDF-ISH-ATTACHMENT-CONTENT');
-  const m = await signedMail({ attachment: { filename: 'contract.pdf', bytes } });
+  const m = await signedMail({ signTime: T0, attachment: { filename: 'contract.pdf', bytes } });
   const dir = tmp();
   const mp = mk(dir, m);
   const r = await mp.record(m.raw, { direction: 'in' });
@@ -108,8 +110,8 @@ test('attachments: sha256 + size + filename recorded, content never', async () =
 
 test('a failing commit leaves no files behind and the tree clean', async () => {
   const dir = tmp();
-  const m1 = await signedMail({ body: 'one\r\n' });
-  const m2 = await signedMail({ body: 'two\r\n', signers: [{ domain: m1.domain, selector: 'sel1', key: m1.signers[0].key }] });
+  const m1 = await signedMail({ signTime: T0, body: 'one\r\n' });
+  const m2 = await signedMail({ signTime: T0, body: 'two\r\n', signers: [{ domain: m1.domain, selector: 'sel1', key: m1.signers[0].key }] });
   const mp = mk(dir, m1);
   await mp.record(m1.raw, { direction: 'in' });
   const root = path.join(dir, 'default');
@@ -123,7 +125,7 @@ test('a failing commit leaves no files behind and the tree clean', async () => {
 });
 
 test('input validation: direction required, empty message, trail names', async () => {
-  const m = await signedMail({});
+  const m = await signedMail({ signTime: T0, signTime: T0 });
   const mp = mk(tmp(), m);
   await assert.rejects(() => mp.record(m.raw, {}), /direction/);
   await assert.rejects(() => mp.record(m.raw, { direction: 'sideways' }), /direction/);
@@ -134,7 +136,7 @@ test('input validation: direction required, empty message, trail names', async (
 
 test('two named trails are independent repos', async () => {
   const dir = tmp();
-  const m = await signedMail({});
+  const m = await signedMail({ signTime: T0, signTime: T0 });
   const a = new Mailproof({ trailDir: dir, trail: 'alpha', resolver: m.resolver, now: clock() });
   const b = new Mailproof({ trailDir: dir, trail: 'beta', resolver: m.resolver, now: clock() });
   const r = await a.record(m.raw, { direction: 'in' });
@@ -144,7 +146,7 @@ test('two named trails are independent repos', async () => {
 });
 
 test('bound methods destructure', async () => {
-  const m = await signedMail({});
+  const m = await signedMail({ signTime: T0, signTime: T0 });
   const { record, get, list } = mk(tmp(), m);
   const r = await record(m.raw, { direction: 'in' });
   assert.ok(await get(r.id));

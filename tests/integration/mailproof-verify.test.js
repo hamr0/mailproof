@@ -6,13 +6,15 @@ import os from 'node:os';
 import path from 'node:path';
 import { Mailproof } from '../../src/proof/mailproof.js';
 import { signedMail, stubResolver } from '../helpers/proof.js';
+// Sign at the instant the instance clock is pinned to, so t= equals captured whatever the real date.
+const T0 = new Date('2026-11-01T10:00:00Z');
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'mp-ver-'));
 const clock = (iso = '2026-11-01T10:00:00Z') => () => new Date(iso);
 
 test('verify is offline: no DNS call, and still passes after the key leaves DNS', async () => {
   const dir = tmp();
-  const m = await signedMail({});
+  const m = await signedMail({ signTime: T0, signTime: T0 });
   const rec = await new Mailproof({ trailDir: dir, resolver: m.resolver, now: clock() }).record(m.raw, { direction: 'in' });
   let calls = 0;
   const dead = async () => { calls++; throw Object.assign(new Error('dns is gone'), { code: 'ESERVFAIL' }); };
@@ -31,7 +33,7 @@ test('verify is offline: no DNS call, and still passes after the key leaves DNS'
 
 test('verify fails when the record file on disk is tampered', async () => {
   const dir = tmp();
-  const m = await signedMail({});
+  const m = await signedMail({ signTime: T0, signTime: T0 });
   const mp = new Mailproof({ trailDir: dir, resolver: m.resolver, now: clock() });
   const { id } = await mp.record(m.raw, { direction: 'in' });
   const f = path.join(dir, 'default', 'records', `${id}.json`);
@@ -62,7 +64,7 @@ test('verify judges x= at capture time: valid when captured, expired when re-jud
 
 test('check writes nothing and returns both verdicts', async () => {
   const dir = tmp();
-  const m = await signedMail({});
+  const m = await signedMail({ signTime: T0, signTime: T0 });
   const mp = new Mailproof({ trailDir: dir, resolver: m.resolver, now: clock() });
   const c = await mp.check(m.raw);
   assert.equal(c.live.trust, 'verified');
@@ -74,7 +76,7 @@ test('check writes nothing and returns both verdicts', async () => {
 });
 
 test('check of an old .eml whose key has left DNS: key_errors, nothing verifies', async () => {
-  const m = await signedMail({});
+  const m = await signedMail({ signTime: T0, signTime: T0 });
   const mp = new Mailproof({ trailDir: tmp(), resolver: stubResolver({}), now: clock() });
   const c = await mp.check(m.raw);
   assert.equal(c.key_errors.length, 1);
@@ -90,8 +92,8 @@ test('check of unsigned mail', async () => {
 });
 
 test('F6 g through the API: matchBody own passes, another email fails; F4 altered body fails but verify holds', async () => {
-  const a = await signedMail({ body: 'first body\r\n' });
-  const b = await signedMail({ body: 'second body\r\n' });
+  const a = await signedMail({ signTime: T0, body: 'first body\r\n' });
+  const b = await signedMail({ signTime: T0, body: 'second body\r\n' });
   const mp = new Mailproof({ trailDir: tmp(), resolver: a.resolver, now: clock() });
   const { id } = await mp.record(a.raw, { direction: 'in' });
   const own = await mp.matchBody(id, a.raw);
@@ -106,7 +108,7 @@ test('F6 g through the API: matchBody own passes, another email fails; F4 altere
 
 test('matchFile: the attachment matches by sha256; other bytes do not', async () => {
   const bytes = Buffer.from('the contract bytes');
-  const m = await signedMail({ attachment: { filename: 'c.pdf', bytes } });
+  const m = await signedMail({ signTime: T0, attachment: { filename: 'c.pdf', bytes } });
   const mp = new Mailproof({ trailDir: tmp(), resolver: m.resolver, now: clock() });
   const { id } = await mp.record(m.raw, { direction: 'in' });
   const hit = await mp.matchFile(id, bytes);
@@ -118,7 +120,7 @@ test('matchFile: the attachment matches by sha256; other bytes do not', async ()
 });
 
 test('bound methods: const { verify } = mp', async () => {
-  const m = await signedMail({});
+  const m = await signedMail({ signTime: T0, signTime: T0 });
   const mp = new Mailproof({ trailDir: tmp(), resolver: m.resolver, now: clock() });
   const { record, verify, check, matchBody, matchFile } = mp;
   const { id } = await record(m.raw, { direction: 'in' });

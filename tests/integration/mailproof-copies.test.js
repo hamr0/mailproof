@@ -7,6 +7,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { Mailproof } from '../../src/proof/mailproof.js';
 import { signedMail } from '../helpers/proof.js';
+// Sign at the instant the instance clock is pinned to, so t= equals captured whatever the real date.
+const T0 = new Date('2026-11-01T10:00:00Z');
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'mp-copies-'));
 const clock = (iso) => () => new Date(iso);
@@ -23,8 +25,8 @@ function forwardOf(inners, subject = 'Look at this', B = 'B', extra = []) {
 }
 
 test('direct and list-relayed copies: 2 records, one message_key, copy kinds, body status, copies()', async () => {
-  const m = await signedMail({ body: BODY });
-  const mp = new Mailproof({ trailDir: tmp(), resolver: m.resolver, now: clock('2026-11-01T10:00:00Z') });
+  const m = await signedMail({ signTime: T0, body: BODY });
+  const mp = new Mailproof({ trailDir: tmp(), resolver: m.resolver, now: clock(T0) });
   const relayedRaw = addHeaders(withBody(m.raw, (b) => b + '\r\n-- \r\nlist footer\r\n'),
     'ARC-Seal: i=1; a=rsa-sha256; cv=none; d=Relay.Example; s=arc; b=AAAA', 'List-Id: <news.lists.example.org>');
   const direct = await mp.record(m.raw, { direction: 'in', source: 'imap' });
@@ -54,8 +56,8 @@ test('direct and list-relayed copies: 2 records, one message_key, copy kinds, bo
 });
 
 test('the identical copy twice is one record', async () => {
-  const m = await signedMail({ body: BODY });
-  const mp = new Mailproof({ trailDir: tmp(), resolver: m.resolver, now: clock('2026-11-01T10:00:00Z') });
+  const m = await signedMail({ signTime: T0, body: BODY });
+  const mp = new Mailproof({ trailDir: tmp(), resolver: m.resolver, now: clock(T0) });
   const a = await mp.record(m.raw, { direction: 'in', source: 'imap' });
   const b = await mp.record(m.raw, { direction: 'in', source: 'postfix' });
   assert.equal(b.duplicate, true);
@@ -65,7 +67,7 @@ test('the identical copy twice is one record', async () => {
 });
 
 test('a Fwd: subject marks a forward; Re: and ordinary subjects do not', async () => {
-  const mk = async (subject) => { const m = await signedMail({ subject }); return (await new Mailproof({ trailDir: tmp(), resolver: m.resolver }).record(m.raw, { direction: 'in' })).record.copy; };
+  const mk = async (subject) => { const m = await signedMail({ signTime: T0, subject }); return (await new Mailproof({ trailDir: tmp(), resolver: m.resolver }).record(m.raw, { direction: 'in' })).record.copy; };
   assert.deepEqual(await mk('Fwd: quarterly'), { kind: 'forward', evidence: { subject_prefix: true } });
   assert.equal((await mk('FW: quarterly')).kind, 'forward');
   assert.equal((await mk('WG: Quartal')).kind, 'forward');
@@ -74,9 +76,9 @@ test('a Fwd: subject marks a forward; Re: and ordinary subjects do not', async (
 });
 
 test('forward as attachment: signed original linked by key + verdict, key archived, found under contained_in', async () => {
-  const orig = await signedMail({ body: BODY, subject: 'The original' });
+  const orig = await signedMail({ signTime: T0, body: BODY, subject: 'The original' });
   const dir = tmp();
-  const mp = new Mailproof({ trailDir: dir, resolver: orig.resolver, now: clock('2026-11-01T10:00:00Z') });
+  const mp = new Mailproof({ trailDir: dir, resolver: orig.resolver, now: clock(T0) });
   const fwd = await mp.record(forwardOf([orig.raw]), { direction: 'in', source: 'imap' });
   const ev = fwd.record.copy.evidence;
   assert.equal(fwd.record.copy.kind, 'forward');
@@ -99,7 +101,7 @@ test('forward as attachment: signed original linked by key + verdict, key archiv
 });
 
 test('tampered inner original: dkim fail; unsigned inner: dkim none', async () => {
-  const orig = await signedMail({ body: BODY, subject: 'Pay 100' });
+  const orig = await signedMail({ signTime: T0, body: BODY, subject: 'Pay 100' });
   const mp = new Mailproof({ trailDir: tmp(), resolver: orig.resolver });
   const tampered = Buffer.from(orig.raw.toString('binary').replace('Subject: Pay 100', 'Subject: Pay 900'), 'binary');
   const unsigned = Buffer.from('From: u@u.example\r\nMessage-ID: <u1@u.example>\r\n\r\nhi\r\n');
@@ -141,8 +143,8 @@ test('one level deep: an original that itself carries an rfc822 part is not recu
 });
 
 test('a list digest (List-Id or multipart/digest, with rfc822 parts) is a digest, not a forward; still linked under contained_in', async () => {
-  const orig = await signedMail({ body: BODY });
-  const mp = new Mailproof({ trailDir: tmp(), resolver: orig.resolver, now: clock('2026-11-01T10:00:00Z') });
+  const orig = await signedMail({ signTime: T0, body: BODY });
+  const mp = new Mailproof({ trailDir: tmp(), resolver: orig.resolver, now: clock(T0) });
   const direct = await mp.record(orig.raw, { direction: 'in' });
   const digest = await mp.record(forwardOf([orig.raw], 'Digest, Vol 1', 'B', ['List-Id: <digest.lists.example.org>']), { direction: 'in' });
   assert.equal(digest.record.copy.kind, 'digest');

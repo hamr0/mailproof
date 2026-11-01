@@ -20,13 +20,13 @@ function makeDkimKeypair() {
 }
 
 // Prepend a relaxed/relaxed rsa-sha256 DKIM-Signature to rawEml.
-async function signDkim(rawEml, { domain, selector, privateKeyPem, headers } = {}) {
+async function signDkim(rawEml, { domain, selector, privateKeyPem, headers, signTime = new Date() } = {}) {
   const input = Buffer.isBuffer(rawEml) ? rawEml : Buffer.from(String(rawEml));
   const headerList = (headers && headers.length ? headers : DEFAULT_HEADERS).join(':');
   const result = await dkimSign(input, {
     canonicalization: 'relaxed/relaxed',
     algorithm: 'rsa-sha256',
-    signTime: new Date(),
+    signTime,
     signatureData: [{ signingDomain: domain, selector, privateKey: privateKeyPem, headerList }],
   });
   if (result.errors && result.errors.length) {
