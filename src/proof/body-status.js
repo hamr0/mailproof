@@ -11,18 +11,13 @@
 import crypto from 'node:crypto';
 import { dkimBody } from 'mailauth/lib/dkim/body';
 import { canonPair } from './signed-headers.js';
+import { MAX_LINES, MAX_BYTES, MAX_WORK } from './limits.js';
 import { relayEvidence } from './relay.js';
 
 /** @typedef {import('./types.js').BodyResult} BodyResult */
 /** @typedef {import('./types.js').BodyExplain} BodyExplain */
 /** @typedef {import('./types.js').BodyStatus} BodyStatus */
 /** @typedef {import('./signed-headers.js').HeaderRow} HeaderRow */
-
-/** Search caps: cut points further than this from the matching end are not tried. */
-const MAX_LINES = 5000;
-const MAX_BYTES = 2 * 1024 * 1024;
-/** Total bytes the prepended search may hash (it is O(candidates x size)). */
-const MAX_WORK = 64 * 1024 * 1024;
 
 const RANK = { matched: 3, partial: 2, mismatch: 1 };
 
@@ -203,4 +198,4 @@ function summariseBody(signatures, verifies) {
   return /** @type {BodyStatus} */ (pool.map((x) => /** @type {'matched' | 'partial' | 'mismatch'} */ (x.s)).sort((a, b) => RANK[b] - RANK[a])[0]);
 }
 
-export { analyseBody, summariseBody, canonLines, trimTrailingWs, MAX_LINES, MAX_BYTES };
+export { analyseBody, summariseBody, canonLines, trimTrailingWs };

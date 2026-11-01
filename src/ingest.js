@@ -31,7 +31,8 @@ import { renderDefault } from './templates.js';
 
 // Scan at most this many leading bytes for the humans-only prefilter. Headers
 // live at the top of the message; this caps work on a hostile multi-megabyte
-// body without parsing it.
+// body without parsing it. This is a truncation window of the v1 receive path (reachable only
+// through src/legacy-index.js), not an admission limit: the v2 limits live in src/proof/limits.js.
 const MAX_HEADER_BYTES = 64 * 1024;
 
 /** @typedef {import('./types.js').Envelope} Envelope */

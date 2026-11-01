@@ -11,9 +11,6 @@ import { relayEvidence } from './relay.js';
 /** @typedef {import('./types.js').AttachedOriginal} AttachedOriginal */
 /** @typedef {import('./signed-headers.js').HeaderRow} HeaderRow */
 
-/** At most this many inner (message/rfc822) messages are examined, one level deep. */
-const MAX_INNER = 10;
-
 /**
  * Forward subject prefixes: Fwd / Fw (English), WG (German), TR (French), RV (Spanish).
  * Deliberately small; `Re:` is a reply, not a forward.
@@ -62,4 +59,4 @@ function classifyCopy({ rows, subject, signed, attached, capped, multipartDigest
   return { kind: signed ? 'direct' : 'unknown', evidence: {} };
 }
 
-export { messageKeyOf, classifyCopy, MAX_INNER };
+export { messageKeyOf, classifyCopy };

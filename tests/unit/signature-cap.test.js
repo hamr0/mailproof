@@ -6,7 +6,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { Mailproof } from '../../src/index.js';
-import { splitMessage, MAX_SIGNATURES, dropExtraSignatures } from '../../src/proof/signed-headers.js';
+import { splitMessage, dropExtraSignatures } from '../../src/proof/signed-headers.js';
+import { MAX_SIGNATURES } from '../../src/proof/limits.js';
 import { signedMail } from '../helpers/proof.js';
 
 const trailDir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'mp-cap-'));
