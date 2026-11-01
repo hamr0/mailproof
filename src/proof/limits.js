@@ -1,15 +1,43 @@
 // Every bound on sender-controlled input, defined once (SPEC Part B, "Limits"). A sender controls
 // each of these numbers and each costs real work (DNS, hashing, header matching), so each has a
 // hard cap. Every other module imports its bound from here; nothing defines a number of its own.
+//
+// The first block is ADMISSION: checked once, over the raw bytes, by `admit()` (admit.js) before any
+// parser runs. A message over any of them is still recorded, but unverified and never parsed. The
+// second block bounds our own work on a message that was admitted.
+//
+// Sizing: each value is far above anything seen in real mail (the largest of 37 real messages is
+// 1.1 MB, its header block 17 KB, 212 header lines, 84 fields, 2 signatures, 17 MIME delimiter
+// lines, a longest body line of 1,004 bytes) and below the point where a measured cost stops being
+// linear: the sub-limits exist because header-only, signature-field, MIME-part and long-line costs
+// grow faster than their size (findings F14).
 
-/** Most DKIM-Signature headers evaluated per message (a signature costs a DNS key fetch and a body hash). */
+/** Whole message. Over it nothing is scanned. */
+export const MAX_TOTAL_BYTES = 25 * 1024 * 1024;
+
+/** Header block, including its empty line. */
+export const MAX_HEADER_BYTES = 256 * 1024;
+
+/** Physical lines in the header block, folds included. */
+export const MAX_HEADER_LINES = 4000;
+
+/** Header fields (lines that do not start with a space or tab). */
+export const MAX_HEADER_FIELDS = 1000;
+
+/** DKIM-Signature fields in one message. A message with more is refused whole, not trimmed to the first ones. */
 export const MAX_SIGNATURES = 10;
 
-/** Most names in one DKIM-Signature `h=`. */
+/** Names in one DKIM-Signature `h=`. */
 export const MAX_H_NAMES = 200;
 
-/** Most header fields in one message. */
-export const MAX_HEADER_FIELDS = 1000;
+/** One DKIM-Signature field, folds included (a padded `b=`/`bh=` costs more than its size). */
+export const MAX_SIG_BYTES = 16 * 1024;
+
+/** Body lines that can be a MIME delimiter (they start with `--`); part handling costs more than their count. */
+export const MAX_MIME_PARTS = 200;
+
+/** Longest body line, its line ending not counted (mailauth's relaxed body canonicaliser is super-linear in it). */
+export const MAX_BODY_LINE = 256 * 1024;
 
 /** Most inner (`message/rfc822`) messages examined per message, one level deep. */
 export const MAX_INNER = 10;

@@ -10,6 +10,7 @@ import { dkimBody } from 'mailauth/lib/dkim/body';
 import { parseTags, canonPair, splitMessage, hTooLong, H_TOO_LONG } from './signed-headers.js';
 import { getAlignment } from 'mailauth/lib/tools';
 import { hashDocument } from './hash.js';
+import { admit } from './admit.js';
 
 /** @typedef {import('./types.js').MpRecord} MpRecord */
 /** @typedef {import('./types.js').RecordSignature} RecordSignature */
@@ -203,7 +204,8 @@ function bodyMatchesSignature(sig, body) {
  * Body-match: hash a raw email's body against each stored signature's `bh=`.
  * `full` is true when some signature both verifies at capture time and matches.
  * Fails closed: a record whose `signatures` is not an array counts as having none,
- * and a non-object entry is skipped (`match: false`), like verifyRecord does.
+ * and a non-object entry is skipped (`match: false`), like verifyRecord does. A message
+ * over an input limit (admit.js) is not examined: it matches nothing.
  * @param {MpRecord} rec
  * @param {Buffer | string} raw
  * @param {{ at?: Date | number | string }} [opts]
@@ -216,15 +218,23 @@ function matchBodyRecord(rec, raw, opts = {}) {
   try {
     const sigs = rec && typeof rec === 'object' && Array.isArray(rec.signatures) ? rec.signatures : [];
     const verified = verifyRecord(rec, opts);
+    // A message over an input limit is not examined (mailauth's body canonicaliser is super-linear in
+    // a long line) and matches nothing: `admitted` is checked per signature, never by hashing an
+    // empty body, which would match a record whose signed body was empty.
     /** @type {Buffer} */
-    let body;
-    try { body = splitMessage(raw).body; } catch { body = Buffer.alloc(0); }
+    let body = Buffer.alloc(0);
+    let admitted = false;
+    try {
+      const buf = Buffer.isBuffer(raw) ? raw : Buffer.from(String(raw));
+      admitted = admit(buf).ok;
+      if (admitted) body = splitMessage(buf).body;
+    } catch { admitted = false; }
     // Array.from visits holes too, so a sparse array cannot skip an entry.
     const signatures = Array.from(/** @type {any[]} */ (sigs), (/** @type {any} */ sig, index) => {
       const isObj = sig !== null && typeof sig === 'object' && !Array.isArray(sig);
       return {
         index, d: verified.signatures[index]?.d ?? null, s: verified.signatures[index]?.s ?? null,
-        match: isObj && bodyMatchesSignature(sig, body),
+        match: isObj && admitted && bodyMatchesSignature(sig, body),
       };
     });
     return {

@@ -1,9 +1,10 @@
-// The linear selectSigned / dropExtraSignatures must give EXACTLY the output of the
-// earlier quadratic versions. The old implementations live here, in the test only, as
-// the oracle; several hundred seeded inputs are compared for identical output.
+// The linear selectSigned must give EXACTLY the output of the earlier quadratic version. The
+// old implementation lives here, in the test only, as the oracle; several hundred seeded
+// inputs are compared for identical output. (dropExtraSignatures, which had the same test,
+// is gone: the admission gate refuses a message with more than 10 signatures instead.)
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { splitMessage, selectSigned, dropExtraSignatures } from '../../src/proof/signed-headers.js';
+import { splitMessage, selectSigned } from '../../src/proof/signed-headers.js';
 
 // ---- the oracle: the implementations as they were before the linear rewrite ----
 function oldSelectSigned(rows, h) {
@@ -20,39 +21,6 @@ function oldSelectSigned(rows, h) {
   return out;
 }
 
-function oldDropExtraSignatures(buf, max) {
-  const s = buf.toString('binary');
-  const sep = /\r?\n\r?\n/.exec(s);
-  const headEnd = sep ? sep.index : s.length;
-  const lastEnd = sep ? headEnd + (sep[0][0] === '\r' ? 2 : 1) : s.length;
-  const cut = [];
-  let seen = 0;
-  let start = -1;
-  let isSig = false;
-  const flush = (end) => { if (start >= 0 && isSig && seen > max) cut.push([start, end]); };
-  for (let pos = 0; pos < headEnd; ) {
-    const c = s.charCodeAt(pos);
-    if (start < 0 || !(c === 32 || c === 9)) {
-      flush(pos);
-      start = pos;
-      const colon = s.indexOf(':', pos);
-      const eol = s.indexOf('\n', pos);
-      isSig = colon > pos && (eol === -1 || colon < eol) && s.slice(pos, colon).trim().toLowerCase() === 'dkim-signature';
-      if (isSig) seen++;
-    }
-    const nl = s.indexOf('\n', pos);
-    if (nl === -1 || nl >= headEnd) break;
-    pos = nl + 1;
-  }
-  flush(lastEnd);
-  if (!cut.length) return buf;
-  let out = '';
-  let from = 0;
-  for (const [a, b] of cut) { out += s.slice(from, a); from = b; }
-  return Buffer.from(out + s.slice(from), 'binary');
-}
-
-// ---- seeded generator (mulberry32) ----
 function rng(seed) {
   let a = seed >>> 0;
   return () => {
@@ -88,31 +56,4 @@ test('selectSigned: identical to the quadratic version over 400 generated inputs
   }
   assert.deepEqual(selectSigned([], 'a:b'), []);
   assert.deepEqual(selectSigned([{ name: 'a', raw: 'A: 1' }], ''), []);
-});
-
-test('dropExtraSignatures: identical to the quadratic version over 600 generated inputs', () => {
-  const r = rng(2);
-  let cutCases = 0;
-  for (let k = 0; k < 600; k++) {
-    const lines = [];
-    for (let i = 0, n = Math.floor(r() * 30); i < n; i++) {
-      const kind = r();
-      if (kind < 0.3) lines.push(`${CASES(r, 'dkim-signature')}: v=1; d=d${i}.example; b=AA`);
-      else if (kind < 0.4) lines.push(pick(r, ['nocolonline', 'DKIM-Signature', 'dkim-signature  ', '']));   // colon-less, even a bare name
-      else if (kind < 0.55 && lines.length) lines.push(pick(r, [' ', '\t', '  \t']) + `fold ${i}; b=x`);       // deep folding
-      else if (kind < 0.62) lines.push(': empty name');
-      else lines.push(`${CASES(r, pick(r, NAMES))}: v${i}`);
-    }
-    const eol = pick(r, ['\r\n', '\n']);
-    const tail = pick(r, [eol + eol + 'body' + eol, eol + eol, '', eol, eol + eol + 'x']);   // no separator, no body, ...
-    const text = lines.join(eol) + tail;
-    const buf = Buffer.from(text, 'binary');
-    const max = Math.floor(r() * 5);
-    const a = dropExtraSignatures(buf, max);
-    const b = oldDropExtraSignatures(buf, max);
-    assert.ok(a.equals(b), `case ${k} max=${max}: ${JSON.stringify(text)}`);
-    assert.equal(a === buf, b === buf, `case ${k}: same-buffer behaviour`);
-    if (b !== buf) cutCases++;
-  }
-  assert.ok(cutCases > 50, `only ${cutCases} cases exercised a cut`);
 });

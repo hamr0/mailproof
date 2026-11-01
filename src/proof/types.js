@@ -72,7 +72,7 @@
  * @property {Record<string, string | null>} tags  Informational copy of d,s,a,c,h,bh,l,t,x.
  * @property {string[]} signed_headers  Base64 raw lines, in hashing order.
  * @property {{ k: string, p: string } | null} key
- * @property {string | null} key_error  Why there is no key; `'h= too long'` when the signature was skipped for listing more than 200 names in `h=`.
+ * @property {string | null} key_error  Why there is no key.
  * @property {string | null} key_file
  * @property {boolean} partial_body  l= present and shorter than the canonical body.
  * @property {BodyResult} body  Body status of this signature (never affects a trust verdict).
@@ -112,8 +112,7 @@
  * @property {string} source
  * @property {Record<string, any>} message
  * @property {Array<{ filename: string | null, size: number, sha256: string }>} attachments
- * @property {RecordSignature[]} signatures  The first 10 DKIM-Signature headers, in header order (`MAX_SIGNATURES`).
- * @property {number} [signatures_skipped]  How many further DKIM-Signature headers were not evaluated; absent when none.
+ * @property {RecordSignature[]} signatures  Every DKIM-Signature header, in header order (at most `MAX_SIGNATURES`: a message with more is over limit and has none); `[]` when unsigned or over a limit.
  * @property {BodyStatus} body_status  Best body status over the signatures that verify (see BodyStatus).
  * @property {Record<string, any>} verdicts
  */
@@ -134,7 +133,7 @@
  * @property {'pass' | 'fail' | 'none'} dkim
  * @property {string | null} d
  * @property {BodyStatus} body_status
- * @property {number} [signatures_skipped]  DKIM-Signature headers past the first 10, not evaluated; absent when none.
+ * @property {string} [over_limit]  The input limit (e.g. `body_line`) the attached message exceeded; it was not examined (`dkim` `none`, `message_key` null).
  */
 
 /**

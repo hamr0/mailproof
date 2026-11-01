@@ -5,7 +5,7 @@
 // Header rows are kept as BINARY strings (one char per byte) so the exact bytes
 // the sender signed survive a round trip; folds are preserved.
 
-import { MAX_SIGNATURES, MAX_H_NAMES } from './limits.js';
+import { MAX_H_NAMES } from './limits.js';
 
 /**
  * @typedef {Object} HeaderRow
@@ -20,7 +20,10 @@ import { MAX_SIGNATURES, MAX_H_NAMES } from './limits.js';
  */
 function splitMessage(input) {
   const s = (Buffer.isBuffer(input) ? input : Buffer.from(String(input))).toString('binary');
-  const m = /\r?\n\r?\n/.exec(s);
+  // The header block ends at the first empty line. An empty FIRST line is that line: the message has no
+  // headers and everything after it is body (mailsplit and mailauth read it so; the pattern for two
+  // line breaks in a row would read on into the body and take its lines for headers).
+  const m = /^\r?\n/.exec(s) || /\r?\n\r?\n/.exec(s);
   const head = m ? s.slice(0, m.index) : s;
   const body = m ? s.slice(m.index + m[0].length) : '';
   /** @type {string[]} */
@@ -31,7 +34,14 @@ function splitMessage(input) {
   }
   const rows = lines
     .filter((r) => r.indexOf(':') > 0)
-    .map((r) => ({ name: r.slice(0, r.indexOf(':')).trim().toLowerCase(), raw: r }));
+    .map((r) => {
+      // The name ends at the colon, minus blanks before it: space and tab only, like mailauth's header
+      // parser. (String.trim() also strips NBSP and friends, which would make "DKIM-Signature\xA0:" a
+      // signature here that neither mailauth nor the admission gate counts.)
+      let end = r.indexOf(':');
+      while (end > 0 && (r[end - 1] === ' ' || r[end - 1] === '\t')) end--;
+      return { name: r.slice(0, end).toLowerCase(), raw: r };
+    });
   return { rows, body: Buffer.from(body, 'binary') };
 }
 
@@ -105,7 +115,11 @@ function selectSigned(rows, h) {
   return out;
 }
 
-/** `key_error` (record) and `why` (offline re-check) of a signature skipped for exceeding `MAX_H_NAMES`. */
+/**
+ * `why` of the offline re-check for a signature whose `h=` lists more than `MAX_H_NAMES` names. `record()` never
+ * produces one (the gate refuses the message), but a stored or hand-made record can carry one, and the re-check
+ * must not canonicalise it.
+ */
 const H_TOO_LONG = 'h= too long';
 
 /**
@@ -117,51 +131,4 @@ function hTooLong(raw) {
   return signedNames(parseTags(raw).h || '').length > MAX_H_NAMES;
 }
 
-/**
- * The message bytes with every DKIM-Signature header past the first `max` removed, and every
- * one whose `h=` is over `MAX_H_NAMES` (whole header, folded lines included), so a verifier
- * handed these bytes never evaluates them.
- * Returns the SAME buffer when there is nothing to remove. Everything else is untouched.
- * @param {Buffer} buf
- * @param {number} [max]
- * @returns {Buffer}
- */
-function dropExtraSignatures(buf, max = MAX_SIGNATURES) {
-  const s = buf.toString('binary');
-  const sep = /\r?\n\r?\n/.exec(s);
-  const headEnd = sep ? sep.index : s.length;                 // where the last header's text ends
-  const lastEnd = sep ? headEnd + (sep[0][0] === '\r' ? 2 : 1) : s.length;   // ...plus its own line break
-  /** @type {Array<[number, number]>} */
-  const cut = [];
-  let seen = 0;
-  /** @type {number} */ let start = -1;
-  let isSig = false;
-  // A signature past the cap, or one whose h= is over MAX_H_NAMES, is not evaluated: removed.
-  const flush = (/** @type {number} */ end) => {
-    if (start >= 0 && isSig && (seen > max || hTooLong(s.slice(start, end)))) cut.push([start, end]);
-  };
-  for (let pos = 0; pos < headEnd; ) {
-    const c = s.charCodeAt(pos);
-    const eol = s.indexOf('\n', pos);
-    if (start < 0 || !(c === 32 || c === 9)) {                // a new header (a folded line belongs to the previous one)
-      flush(pos);
-      start = pos;
-      // The colon is searched for on this line only: an unbounded search runs to the end of the
-      // block for every colon-less line, which is quadratic in the number of lines.
-      const colon = (eol === -1 ? s.slice(pos) : s.slice(pos, eol)).indexOf(':');
-      isSig = colon > 0 && s.slice(pos, pos + colon).trim().toLowerCase() === 'dkim-signature';
-      if (isSig) seen++;
-    }
-    const nl = eol;
-    if (nl === -1 || nl >= headEnd) break;
-    pos = nl + 1;
-  }
-  flush(lastEnd);
-  if (!cut.length) return buf;
-  let out = '';
-  let from = 0;
-  for (const [a, b] of cut) { out += s.slice(from, a); from = b; }
-  return Buffer.from(out + s.slice(from), 'binary');
-}
-
-export { splitMessage, parseTags, canonPair, selectSigned, signedNames, hTooLong, H_TOO_LONG, dropExtraSignatures };
+export { splitMessage, parseTags, canonPair, selectSigned, signedNames, hTooLong, H_TOO_LONG };

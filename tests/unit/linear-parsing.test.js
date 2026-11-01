@@ -1,6 +1,7 @@
 // Linear-time parsing of sender-controlled text in src/proof. Each helper is checked
 // against the regex it replaced (kept here ONLY as the oracle) over generated
-// inputs, and each is timed through the public path with a 1 MB adversarial input.
+// inputs, and each is timed through the public path with an adversarial input as large as the
+// admission gate lets through (1 MB for the entry points that have no gate).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -101,7 +102,8 @@ test('parseOtsBlockHeight matches the three-regex original (generated + edge inp
 });
 
 // --- timing: 1 MB adversarial inputs through the public path -----------------
-const MB = 1_000_000;   // just under mailsplit's 1 MiB header cap, so a header can be this big
+const MB = 1_000_000;   // the offline entry points (verifyRecord, readBlockHeight) have no admission gate: 1 MB is fair game there
+const FIT = 250_000;    // just under the gate's 256 KiB header block and body line: the biggest a record() input can be
 const LIMIT_MS = 500;
 const SPLIT = Buffer.from('\r\n\r\n');
 const trailDir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'mp-linear-'));
@@ -120,18 +122,18 @@ async function recordMs(m, raw) {
   return { ms, r };
 }
 
-test('record(): a 1 MB body line with a long space run and a bogus bh costs about what a benign 1 MB line does', async () => {
+test('record(): a body line at the 256 KiB limit with a long space run and a bogus bh costs about what a benign one does', async () => {
   const m = await signedMail({ body: 'x\r\n' });
   const i = m.raw.indexOf(SPLIT) + 4;
   const withBody = (b) => Buffer.concat([m.raw.subarray(0, i), Buffer.from(b)]);
-  const control = await recordMs(m, withBody('a'.repeat(MB) + '\r\n'));
+  const control = await recordMs(m, withBody('a'.repeat(FIT) + '\r\n'));
   // Spaces that do not end the line: the old `[ \t]+$` rescanned the run from every start.
-  const adv = await recordMs(m, withBody('a' + ' '.repeat(MB) + 'b\r\n'));
-  assert.equal(adv.r.record.body_status, 'mismatch', 'the mismatch path really ran');
+  const adv = await recordMs(m, withBody('a' + ' '.repeat(FIT) + 'b\r\n'));
+  assert.equal(adv.r.record.body_status, 'mismatch', 'the mismatch path really ran (the gate admitted the line)');
   assert.ok(adv.ms < slack(control.ms), `adversarial ${Math.round(adv.ms)} ms vs control ${Math.round(control.ms)} ms`);
 });
 
-test('verifyRecord(): a 1 MB signed From with no @ resolves in < 500 ms; record() costs about what a benign 1 MB From does', async () => {
+test('verifyRecord(): a 1 MB signed From with no @ resolves in < 500 ms; record() at the header limit costs about what a benign From does', async () => {
   const m = await signedMail({ body: 'x\r\n', from: 'a'.repeat(MB) });
   const rec = recordOf(m.raw, m.signers);
   let v;
@@ -139,17 +141,20 @@ test('verifyRecord(): a 1 MB signed From with no @ resolves in < 500 ms; record(
   assert.equal(v.signatures[0].ok, true, 'the signature verified, so From alignment ran');
   assert.equal(v.signatures[0].aligned, false);
   assert.ok(ms < LIMIT_MS, `verifyRecord took ${Math.round(ms)} ms`);
-  const benign = await signedMail({ body: 'x\r\n', from: 'a'.repeat(MB - 10) + '@x.example' });
+  const benign = await signedMail({ body: 'x\r\n', from: 'a'.repeat(FIT - 10) + '@x.example' });
   const control = await recordMs(benign, benign.raw);
-  const adv = await recordMs(m, m.raw);
+  const fit = await signedMail({ body: 'x\r\n', from: 'a'.repeat(FIT) });
+  const adv = await recordMs(fit, fit.raw);
+  assert.equal('reason' in adv.r.record.verdicts.portable, false, 'admitted, so the From was really read');
   assert.ok(adv.ms < slack(control.ms), `adversarial ${Math.round(adv.ms)} ms vs control ${Math.round(control.ms)} ms`);
 });
 
-test('record(): a 1 MB List-Id of "<" characters costs about what a benign 1 MB List-Id does', async () => {
-  const benign = await signedMail({ body: 'x\r\n', extraHeaders: ['List-Id: ' + 'a'.repeat(MB)] });
+test('record(): a List-Id of "<" characters at the 256 KiB header limit costs about what a benign one does', async () => {
+  const benign = await signedMail({ body: 'x\r\n', extraHeaders: ['List-Id: ' + 'a'.repeat(FIT)] });
   const control = await recordMs(benign, benign.raw);
-  const m = await signedMail({ body: 'x\r\n', extraHeaders: ['List-Id: ' + '<'.repeat(MB)] });
+  const m = await signedMail({ body: 'x\r\n', extraHeaders: ['List-Id: ' + '<'.repeat(FIT)] });
   const adv = await recordMs(m, m.raw);
+  assert.equal('reason' in adv.r.record.verdicts.portable, false, 'admitted, so the List-Id was really read');
   assert.ok(adv.ms < slack(control.ms), `adversarial ${Math.round(adv.ms)} ms vs control ${Math.round(control.ms)} ms`);
 });
 
