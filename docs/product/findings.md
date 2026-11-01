@@ -66,7 +66,7 @@ POC script: [`poc/m0-header-recheck.js`](../../poc/m0-header-recheck.js) (throwa
 
 - **Date:** 2026-10-31
 - **Observation:** mail from the owner's addypin server claims `From:` a gmail.com address but has no DKIM, and SPF softfails.
-- **Decision:** none for mailproof. addypin should fix its sending domain/signing.
+- **Decision:** none for mailproof. addypin should fix its sending domain/signing. *Update: mail sent `From:` the app's own domain is signed and verifies, see [F12](#f12--addypin-and-ownsub-mail-is-now-signed-by-its-own-domain).*
 - **Affects:** nothing in the PRD.
 
 ## F6 — Negative scenarios
@@ -97,7 +97,7 @@ POC script: [`poc/m0-header-recheck.js`](../../poc/m0-header-recheck.js) (throwa
 - **Date:** 2026-11-01
 - **Question:** what shape does the M0 implementation take where the PRD left forks open?
 - **Decisions:**
-  - **D1 Portable verdict is DKIM only.** `trustedSealers` (constructor option, default `[]`) gates only the live `forwarded` level. Offline re-check of ARC seals needs archived ARC headers and sealer keys, an unproven mechanism, so it is a separate follow-up POC. **Open follow-up (owner, 2026-11-01): portable ARC (the trusted-sealer offline re-check) is missing and needs its own spec and POC before it is built; tracked in PRD §12 Q10.**
+  - **D1 Portable verdict is DKIM only.** `trustedSealers` (constructor option, default `[]`) gates only the live `forwarded` level. Offline re-check of ARC seals needs archived ARC headers and sealer keys, an unproven mechanism, so it is a separate follow-up POC. **Open follow-up (owner, 2026-11-01): portable ARC (the trusted-sealer offline re-check) is missing and needs its own spec and POC before it is built; tracked in PRD §12 Q10.** *Batch 3 (2026-11-01) had ARC seals (Gmail's and Microsoft's) but no sample where DKIM breaks and ARC still passes, so the ARC POC still needs such samples (a Google Groups post, a non-digest IETF list post, a Gmail auto-forward).*
   - **D2 Stored fields.** `raw_sha256` and attachment `filename` are kept in the record (dedupe/match value; the trail owner's own data, like `Subject`).
   - **D3 Key stored twice.** Embedded in the record (`{k,p}`, so it verifies standalone) and in the trail key archive (provenance: TXT as fetched, lookup name, time).
   - **D4 Second capture of the same email** returns `duplicate:true` and writes nothing; its ctx is not kept. *Reversed by owner 2026-11-01: one record per distinct copy (raw-bytes id) + `message_key` grouping + `copy.kind`. A captures-log idea was rejected because relayed copies collided with direct ones (same `b=`, so the first to arrive hid the other's body status and verdicts). The same bytes captured again are still a no-op.*
@@ -125,7 +125,39 @@ POC script: [`poc/m0-header-recheck.js`](../../poc/m0-header-recheck.js) (throwa
 - **Run:** `tests/manual/real-mail.mjs` (extended to print body status and explain kinds, domains and counts only) on the Outlook-sourced set (8 emails, 11 signatures) and on `mailproof-m0-samples-gmail2` (9 emails, 14 signatures).
 - **Gmail set (second):** `matched` on 14/14 signatures, `explain` empty, record `body_status` `matched` 9/9. No detector fired on clean mail (ietf.org lists, corp.mail.ru, google.com, lists.camaraproject.org). Synthetic tests cover the cases that MUST fire (appended, prepended, `l=` partial, canonicalisation, line endings, ARC + List-Id hints) and must NOT fire (clean, sealed-but-clean, edit in the middle).
 - **Outlook-sourced set:** `mismatch` on 11/11, record `body_status` `mismatch` 8/8, trust verdicts unchanged (6 `unverified/verified`, 2 `unverified/unverified`). Explanation: `unknown` on all 11. No appended or prepended content at a line boundary (the 2 emails that hit the work cap, infotip.eu and amazonses.com, are the large ones). One email (uzsc.onmicrosoft.com) carries ARC seals from microsoft.com with chain result `fail`, reported as a `forwarded` hint only.
-- **What the alteration is: unknown.** Extra probes (a throwaway script, not kept) on the same files, each tested against `bh=`: mbox `>From` unquoting, LF/CRLF both ways, trailing whitespace, tabs to spaces, the other canonicalisation, trailing/leading blank lines, base64 re-wrap at 60/64/72/76, quoted-printable re-encode, dropping up to 40 lines at either end, Microsoft SafeLinks rewriting (0 occurrences). None matches. The mail is multipart with encoded parts (so a banner or footer would sit inside a part, not at the body edge) and the one single-part email (tello.com, `7bit` HTML, signed `Content-Transfer-Encoding`) fails too, so the change is inside the content. Hypothesis not yet testable without the original bytes: a content rewrite between Exchange and the export.
+- **What the alteration is: unknown.** Extra probes (a throwaway script, not kept) on the same files, each tested against `bh=`: mbox `>From` unquoting, LF/CRLF both ways, trailing whitespace, tabs to spaces, the other canonicalisation, trailing/leading blank lines, base64 re-wrap at 60/64/72/76, quoted-printable re-encode, dropping up to 40 lines at either end, Microsoft SafeLinks rewriting (0 occurrences). None matches. The mail is multipart with encoded parts (so a banner or footer would sit inside a part, not at the body edge) and the one single-part email (tello.com, `7bit` HTML, signed `Content-Transfer-Encoding`) fails too, so the change is inside the content. Hypothesis not yet testable without the original bytes: a content rewrite between Exchange and the export. *Update: narrowed to the Microsoft side, see [F10](#f10--the-outlook-body-alteration-happens-on-the-microsoft-side-not-in-thunderbird).*
 - **Decision:** ship the field and the detectors; the Outlook cause stays an open item. M1 stays Gmail-first (F4).
 - **Affects:** PRD §4, SPEC Part B1.
 - **Copy kinds on the real sets (added with the per-copy ids; revised for `digest`):** Outlook-sourced set: 8 emails, 8 distinct `message_key`s, `direct` 7 / `relayed` 1 (the microsoft.com ARC-sealed one). Gmail set (second): 9 emails, 9 distinct keys, `relayed` 4 (corp.mail.ru x2, google.com, lists.camaraproject.org: List-Id or ARC) and `digest` 5 (all the ietf.org list messages). The first version labelled those five `forward` because they carry 2-3 `message/rfc822` parts each; they are Mailman digests (top-level multipart/mixed, List-Id, inner messages, no `Fwd:` prefix), so the owner added `copy.kind: digest` (precedence: Subject-prefix forward, digest, attachment forward, relayed, direct, unknown). The `attached_original` links stay on digests, and `copies()` lists them under `contained_in` (renamed from `forwards`, since a digest is not a forward). The inner originals (gmail.com, ietf.org, pingidentity.com, chinamobile.com and others) came back `dkim: fail` at capture with body `matched` (`partial` for chinamobile.com): the headers as embedded in a digest do not verify.
+
+## F10 — The Outlook body alteration happens on the Microsoft side, not in Thunderbird
+
+- **Date:** 2026-11-01
+- **Question:** F4/F9 found Outlook-sourced mail with altered bodies after a Thunderbird export. Is Thunderbird the cause?
+- **Run:** `tests/manual/real-mail.mjs` on batch 3 (7 emails, 8 signatures, domains only). None are Thunderbird exports (0 `X-Mozilla` headers): they were downloaded directly from Gmail web and Outlook web. `RESULT: OK`, 0 negatives passed, 0 live/offline disagreements.
+- **Result:**
+  - Received at Outlook/Exchange (`*.PROD.OUTLOOK.COM`), downloaded from Outlook web: 3 forwards (comcast.net x2, one gmail.com-signed). All 3 body `mismatch`, explain `unknown` (one hit the search cap). Live is neutral (body hash); the offline header recheck passes.
+  - The gmail.com-signed one is the telling case: that signature matches 14/14 when received at Gmail, but fails the body when received at Outlook.
+  - Received at Gmail (`mx.google.com`): 4 emails (msn.com-signed forward sent from the owner's Outlook, ietf.org digest x2 signatures, addypin.com, ownsub.com). 4/4 `matched`, live pass. Mail sent *from* Outlook and received at Gmail matches.
+- **Decision:** this narrows F9: the alteration is not Thunderbird. Updated cause: Exchange at or after receipt, or Outlook web's export. We still cannot tell receipt-time rewriting from export-time re-serialisation without raw bytes over IMAP; an Outlook IMAP POC in M1 would settle it.
+- **Implication:** Outlook-hosted mailboxes give header proof only. Body proof needs mail received at Gmail or at our own MTA (M5).
+- **Affects:** PRD M1, §4 (body-match / "full proof").
+
+## F11 — Threading and recipient signing differ by provider
+
+- **Date:** 2026-11-01
+- **Question:** are `In-Reply-To`/`References` (and `To`) in the signed `h=` list? (PRD §12 Q2)
+- **Run:** header inspection of the batch 3 signatures.
+- **Result:**
+  - **gmail.com** (selector 20260707) signs `in-reply-to` and `references`, along with from, to, cc, subject, date, message-id, reply-to and content-type.
+  - **msn.com** (selector1, Outlook) signs only `From:Date:Subject:Message-ID:Content-Type:MIME-Version:X-MS-Exchange-SenderADCheck`: not `To`, not `In-Reply-To`, not `References`.
+- **Decision:** Q2 is answered: yes for Gmail, no for Microsoft.
+- **Implication (design note for M3, not implemented):** replies are matched to requests by threading (PRD §5). A reply from a Microsoft-hosted sender has an unsigned threading link and an unsigned recipient. The match is then evidence by Message-ID quoting, not by signature, and the record/verdict should be able to say whether the threading link is signed.
+- **Affects:** PRD §5, §12 Q2, M3.
+
+## F12 — addypin and ownsub mail is now signed by its own domain
+
+- **Date:** 2026-11-01
+- **Observation:** weekly stats from addypin.com (selector addypin2026) and ownsub.com (selector default) verify: `matched`, live pass. The F5 failing mail claimed `From:` a gmail.com address; mail sent `From:` the app's own domain is fine.
+- **Decision:** none for mailproof; updates F5.
+- **Affects:** nothing in the PRD.

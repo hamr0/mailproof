@@ -113,7 +113,7 @@ crypto. M0's POC shows it works end to end on real Gmail mail (GO, [findings](fi
 ## 5. Two-party transactions
 
 A transaction is **my email + your reply**, matched by standard email threading: the reply's
-`In-Reply-To`/`References` point at my `Message-ID` (usually in the signed `h=` list). No plus-address
+`In-Reply-To`/`References` point at my `Message-ID` (usually in the signed `h=` list: signed by Gmail, not by Microsoft, see [F11](findings.md)). No plus-address
 tags.
 
 Honest limits for "I sent you this":
@@ -280,7 +280,7 @@ Node ≥ 22.5.
 ## 12. Open questions (recorded, not assumed)
 
 1. Is there a public DKIM-key archive for looking up old mail? (Believed: ZK Email runs one; unconfirmed.)
-2. Does Gmail sign `In-Reply-To`/`References`? (M0 POC)
+2. Does Gmail sign `In-Reply-To`/`References`? **Answered: yes for Gmail, no for Microsoft, see [F11](findings.md).**
 3. Gmail login method: OAuth or app password? (M1 POC)
 4. Are Gmail's Sent copies DKIM-signed? (M1 POC)
 5. Does Gmail add its own ARC seal / `Authentication-Results` on inbound that could make its SPF verdict portable? (M1 POC)
