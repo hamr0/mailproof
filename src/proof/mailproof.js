@@ -10,11 +10,11 @@ import { buildSignatureEntry } from './record.js';
 import { summariseBody } from './body-status.js';
 import { messageKeyOf, classifyCopy, MAX_INNER } from './copy.js';
 import { buildLive, buildPortable, engine } from './verdict.js';
-import { createOts } from './ots.js';
+import { createOts, DEFAULT_OTS_TIMEOUT_MS } from './ots.js';
 import { verifyRecord, matchBodyRecord, matchFileRecord } from './recheck.js';
 import { TRAIL_NAME_RE, RECORD_ID_RE, DEFAULT_LOCK_TIMEOUT_MS, commitRecord, readRecord, listIds } from './trail.js';
 
-const OTS_TIMEOUT_MS = 30000; // the configured `ots` timeout (ots.js default)
+const OTS_MIN_TIMEOUT_MS = 5000; // floor for the `ots` timeout, however short lockTimeoutMs is
 
 /** @typedef {import('./types.js').MpRecord} MpRecord */
 /** @typedef {import('./types.js').Envelope} Envelope */
@@ -29,11 +29,20 @@ const OTS_TIMEOUT_MS = 30000; // the configured `ots` timeout (ots.js default)
  * @property {string | null} [otsBin]  Path to the `ots` binary; null/absent keeps OpenTimestamps off.
  * @property {() => Date} [now]  Clock (tests inject one).
  * @property {string[]} [trustedSealers]  ARC sealer domains whose chains may yield `forwarded` (live only).
- * @property {number} [lockTimeoutMs]  How long `record()` waits for another writer of the same trail (default 30000). On timeout it throws `ERR_TRAIL_LOCKED` and writes nothing.
+ * @property {number} [lockTimeoutMs]  How long `record()` waits for another writer of the same trail (default 30000). On timeout it throws `ERR_TRAIL_LOCKED` and writes nothing. With `otsBin`, the OTS stamp runs inside that lock and is cut off after `clamp(floor(lockTimeoutMs / 3), 5000, 30000)` ms, so a short `lockTimeoutMs` shortens the stamp (5 s floor), and concurrent writers can wait up to that long behind a slow stamp.
  */
 
 /** @param {Buffer | string} raw @returns {string} */
 const sha256hex = (raw) => crypto.createHash('sha256').update(raw).digest('hex');
+
+/**
+ * The `ots` command timeout: clamp(floor(lockTimeoutMs / 3), 5000, DEFAULT_OTS_TIMEOUT_MS).
+ * @param {number} lockTimeoutMs
+ * @returns {number}
+ */
+function otsTimeoutMs(lockTimeoutMs) {
+  return Math.min(DEFAULT_OTS_TIMEOUT_MS, Math.max(OTS_MIN_TIMEOUT_MS, Math.floor(lockTimeoutMs / 3)));
+}
 
 class Mailproof {
   /**
@@ -41,7 +50,7 @@ class Mailproof {
    * @signature new Mailproof({ trailDir: string, trail?: string, resolver?: Function, otsBin?: string|null, now?: () => Date, trustedSealers?: string[], lockTimeoutMs?: number })
    * @when Start here. Construct one per trail (a git repo of records under `trailDir`), then `record()` each email you want a re-checkable proof of and `verify()` it later, offline. All methods are bound, so `const { verify } = mp` works.
    * @category proof
-   * @fails Throws at construction when `trailDir` is missing or `trail` is not `[a-z0-9][a-z0-9_-]{0,63}`. Nothing touches the disk until the first `record()`.
+   * @fails Throws at construction when `trailDir` is missing or `trail` is not `[a-z0-9][a-z0-9_-]{0,63}`. Nothing touches the disk until the first `record()`. With `otsBin`, the OTS stamp runs inside the writer lock and is cut off after `clamp(floor(lockTimeoutMs / 3), 5000, 30000)` ms: a short `lockTimeoutMs` shortens the stamp (5 s floor), and concurrent writers can wait up to that long behind a slow stamp.
    * @example
    * import { Mailproof } from 'mailproof';
    * const mp = new Mailproof({ trailDir: './trails' });
@@ -59,8 +68,8 @@ class Mailproof {
     this.now = opts.now || (() => new Date());
     this.trustedSealers = opts.trustedSealers || [];
     this.lockTimeoutMs = Number.isFinite(opts.lockTimeoutMs) && /** @type {number} */ (opts.lockTimeoutMs) >= 0 ? /** @type {number} */ (opts.lockTimeoutMs) : DEFAULT_LOCK_TIMEOUT_MS;
-    // The stamp runs inside the trail lock, so it must give up well before other writers' lock deadline.
-    this.ots = this.otsBin ? createOts({ otsBin: this.otsBin, timeoutMs: Math.min(OTS_TIMEOUT_MS, Math.floor(this.lockTimeoutMs / 3)) }) : null;
+    // The stamp runs inside the trail lock, so it is capped at a third of the lock wait (see otsTimeoutMs).
+    this.ots = this.otsBin ? createOts({ otsBin: this.otsBin, timeoutMs: otsTimeoutMs(this.lockTimeoutMs) }) : null;
     this.check = this.check.bind(this);
     this.record = this.record.bind(this);
     this.verify = this.verify.bind(this);
@@ -244,7 +253,7 @@ class Mailproof {
    * @when Use to keep a proof of an email (one record per distinct copy, marked `direct` / `relayed` / `forward` / `digest`): it stores the signed headers, the signature, the archived key, both verdicts and the body status (`body_status`: did the body match the signed `bh=`, with hints on what changed) as one git commit, and never the body. Call it for every email you may need to prove later, including ones that fail verification (they are recorded as `unverified`).
    * @category proof
    * @signature mp.record(raw: Buffer|string, ctx: { direction: 'in'|'out', source?: string, envelope?: Envelope }) => Promise<{ id, duplicate, commit, record?, ots? }>
-   * @fails Throws on an empty message, a `direction` other than 'in'/'out', a git failure (the tree is rolled back: only files this call created are removed), or `err.code === 'ERR_TRAIL_LOCKED'` when another process holds the trail's writer lock for longer than `lockTimeoutMs` (nothing is written; retry later). Never throws because the mail is unsigned or fails verification. The id is the hash of the raw bytes: the identical bytes recorded twice return `duplicate: true` and write nothing, while a copy with any byte difference (a list footer, an added header) is its own record, linked by `message_key` (see `copies()`). An OTS failure or timeout is reported in `ots`, not thrown; the stamp runs inside the writer lock, so it is cut off after `min(30000, lockTimeoutMs / 3)` ms.
+   * @fails Throws on an empty message, a `direction` other than 'in'/'out', a git failure (the tree is rolled back: only files this call created are removed), or `err.code === 'ERR_TRAIL_LOCKED'` when another process holds the trail's writer lock for longer than `lockTimeoutMs` (nothing is written; retry later). Never throws because the mail is unsigned or fails verification. The id is the hash of the raw bytes: the identical bytes recorded twice return `duplicate: true` and write nothing, while a copy with any byte difference (a list footer, an added header) is its own record, linked by `message_key` (see `copies()`). An OTS failure or timeout is reported in `ots`, not thrown; the stamp runs inside the writer lock, so it is cut off after `clamp(floor(lockTimeoutMs / 3), 5000, 30000)` ms.
    * @example
    * const { id, duplicate } = await mp.record(fs.readFileSync('mail.eml'), { direction: 'in', source: 'file' });
    */
@@ -401,4 +410,4 @@ class Mailproof {
   }
 }
 
-export { Mailproof };
+export { Mailproof, otsTimeoutMs };

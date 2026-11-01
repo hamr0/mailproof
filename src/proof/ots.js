@@ -102,6 +102,9 @@ function runOts(bin, args, timeoutMs) {
   });
 }
 
+/** Default per-command timeout for the `ots` binary (ms). */
+const DEFAULT_OTS_TIMEOUT_MS = 30000;
+
 /**
  * Bind an OpenTimestamps stamper to the `ots` binary. Each method reports its
  * outcome and never throws.
@@ -112,7 +115,7 @@ function runOts(bin, args, timeoutMs) {
  *   readBlockHeight: (absPath: string) => Promise<number | null>,
  * }}
  */
-function createOts({ otsBin, timeoutMs = 30000 } = {}) {
+function createOts({ otsBin, timeoutMs = DEFAULT_OTS_TIMEOUT_MS } = {}) {
   if (!otsBin) throw new Error('createOts: otsBin required');
   const bin = otsBin;
 
@@ -179,4 +182,4 @@ function createOts({ otsBin, timeoutMs = 30000 } = {}) {
   return { stampFile, upgradeProof, readBlockHeight };
 }
 
-export { createOts, parseOtsBlockHeight };
+export { DEFAULT_OTS_TIMEOUT_MS, createOts, parseOtsBlockHeight };

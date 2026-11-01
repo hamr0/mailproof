@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { Mailproof } from '../../src/proof/mailproof.js';
+import { Mailproof, otsTimeoutMs } from '../../src/proof/mailproof.js';
 import { signedMail } from '../helpers/proof.js';
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'mp-ots-'));
@@ -64,16 +64,16 @@ test('a hanging OTS stamp is cut off inside the lock: the next writer is not loc
   fs.writeFileSync(mailFile, m2.raw);
   const mapFile = path.join(tmp(), 'dns.json');
   fs.writeFileSync(mapFile, JSON.stringify(m2.map));
-  // writer A (this process) hangs in `ots stamp`; lockTimeoutMs 3000 caps the stamp at 1000 ms
+  // writer A (this process) hangs in `ots stamp`; the stamp is capped at the 5000 ms floor
   const a = new Mailproof({ trailDir: dir, resolver: m1.resolver, otsBin: bin, lockTimeoutMs: 3000 });
   const aDone = a.record(m1.raw, { direction: 'in' });
   const end = Date.now() + 10000;
   while (!fs.existsSync(marker) && Date.now() < end) await new Promise((r) => setTimeout(r, 20));
   assert.ok(fs.existsSync(marker), 'A is inside the lock, stamping');
-  // writer B (another process) waits for the lock with the same 3000 ms budget
+  // writer B (another process) waits for the lock with a budget above that cap (it starts waiting only after its own parse/verify work)
   const helper = fileURLToPath(new URL('../helpers/record-proc.js', import.meta.url));
   const bOut = await new Promise((resolve, reject) => {
-    const c = spawn(process.execPath, [helper, dir, mailFile, mapFile, '3000'], { stdio: ['ignore', 'pipe', 'inherit'] });
+    const c = spawn(process.execPath, [helper, dir, mailFile, mapFile, '12000'], { stdio: ['ignore', 'pipe', 'inherit'] });
     let out = '';
     c.stdout.on('data', (d) => { out += d; });
     c.on('error', reject);
@@ -86,4 +86,10 @@ test('a hanging OTS stamp is cut off inside the lock: the next writer is not loc
   assert.equal(execFileSync('git', ['status', '--porcelain'], { cwd: root, encoding: 'utf8' }), '');
   assert.equal(execFileSync('git', ['log', '--format=%s'], { cwd: root, encoding: 'utf8' }).trim().split('\n').filter((x) => x.startsWith('record ')).length, 2);
   assert.equal(fs.existsSync(path.join(dir, '.default.lock')), false);
+});
+
+test('the ots timeout is clamp(floor(lockTimeoutMs / 3), 5000, 30000)', () => {
+  for (const [lock, want] of [[0, 5000], [3000, 5000], [15000, 5000], [30000, 10000], [60000, 20000], [90000, 30000], [300000, 30000]]) {
+    assert.equal(otsTimeoutMs(lock), want, `lockTimeoutMs ${lock}`);
+  }
 });
