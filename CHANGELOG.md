@@ -31,6 +31,11 @@ mailproof v2 (planned 2.0.0): a new, smaller product. 1.x is frozen at tag `v1.4
 - Two verdicts per email, each stamped with the engine/rules version: **live** (DKIM + DMARC + SPF + ARC) and **portable** (recomputable offline from the record alone, DKIM only).
 - Offline re-check from the record alone; `x=`/`t=` judged at capture time; a bad capture time fails closed.
 - One git repo per trail, one commit per record, a key archive deduped per domain+selector+key; optional OpenTimestamps stamp (off by default).
+- Body status as its own field: per signature `body: { status, explain[] }` and a record-level `body_status` (`matched` / `partial` / `mismatch` / `not-checked`), computed at `record()` and `check()`. `explain` carries machine-readable hints (`l_tag`, `appended`, `prepended`, `canonicalisation`, `line_endings`, `forwarded`, `mailing_list`, `search_capped`, `unknown`), counts and domains only, never body text. It never changes a trust verdict.
+- `npm run check:types`: fails when an exported function or method in the generated `.d.ts` returns a bare `object`.
+
+### Changed
+- Types are built on `prepack` (pack and publish) instead of `prepublishOnly`; the publish workflow's adopter gate now compiles a v2 quickstart; `mailproof.context.md` follows the context template sections.
 
 ### Changed (breaking)
 - Root export is now the proof core. `create()`/`ingest()` and the v1 barrel are no longer exported; there is no compatibility layer.

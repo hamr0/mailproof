@@ -97,7 +97,7 @@ POC script: [`poc/m0-header-recheck.js`](../../poc/m0-header-recheck.js) (throwa
 - **Date:** 2026-11-01
 - **Question:** what shape does the M0 implementation take where the PRD left forks open?
 - **Decisions:**
-  - **D1 Portable verdict is DKIM only.** `trustedSealers` (constructor option, default `[]`) gates only the live `forwarded` level. Offline re-check of ARC seals needs archived ARC headers and sealer keys, an unproven mechanism, so it is a separate follow-up POC.
+  - **D1 Portable verdict is DKIM only.** `trustedSealers` (constructor option, default `[]`) gates only the live `forwarded` level. Offline re-check of ARC seals needs archived ARC headers and sealer keys, an unproven mechanism, so it is a separate follow-up POC. **Open follow-up (owner, 2026-11-01): portable ARC (the trusted-sealer offline re-check) is missing and needs its own spec and POC before it is built; tracked in PRD §12 Q10.**
   - **D2 Stored fields.** `raw_sha256` and attachment `filename` are kept in the record (dedupe/match value; the trail owner's own data, like `Subject`).
   - **D3 Key stored twice.** Embedded in the record (`{k,p}`, so it verifies standalone) and in the trail key archive (provenance: TXT as fetched, lookup name, time).
   - **D4 Second capture of the same email** returns `duplicate:true` and writes nothing; its ctx is not kept. A `captures[]` log can come in M1.

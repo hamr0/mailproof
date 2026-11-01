@@ -288,3 +288,4 @@ Node ≥ 22.5.
 7. Privacy wording for storing other people's addresses and subjects (not legal advice).
 8. OTS stamp per sync run vs per email.
 9. IMAP as an in-core dependency vs a separate package, if the dependency checklist fails.
+10. Portable ARC: an offline re-check of a trusted-sealer ARC chain (archived ARC headers and sealer keys), so `forwarded` could be re-verified later; needs its own spec and POC (findings F7 D1).
