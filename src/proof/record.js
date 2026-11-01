@@ -34,7 +34,8 @@ function canonicalBodyLength(body, canon) {
  * @param {HeaderRow} sigRow
  * @param {Buffer} body
  * @param {{ key: { k: string, p: string } | null, key_error?: string | null, key_file?: string | null }} keyInfo
- * @param {{ arc?: string | null }} [ctx]  `arc`: the ARC chain result at capture (a body-status context hint).
+ * @param {{ arc?: string | null, budget?: import('./body-status.js').WorkBudget }} [ctx]  `arc`: the ARC chain result at
+ *   capture (a body-status context hint). `budget`: the message's shared body-search budget.
  * @returns {RecordSignature}
  */
 function buildSignatureEntry(rows, sigRow, body, keyInfo, ctx = {}) {
@@ -52,7 +53,7 @@ function buildSignatureEntry(rows, sigRow, body, keyInfo, ctx = {}) {
     key_error: keyInfo.key_error ?? null,
     key_file: keyInfo.key_file ?? null,
     partial_body: partial,
-    body: analyseBody(t, body, { rows, arc: ctx.arc }),
+    body: analyseBody(t, body, { rows, arc: ctx.arc, budget: ctx.budget }),
   };
 }
 

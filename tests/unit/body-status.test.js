@@ -4,11 +4,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import { dkimBody } from 'mailauth/lib/dkim/body';
-import { analyseBody, summariseBody, canonLines } from '../../src/proof/body-status.js';
-import { MAX_LINES } from '../../src/proof/limits.js';
+import { analyseBody, summariseBody, canonLines, newBudget } from '../../src/proof/body-status.js';
+import { MAX_LINES, MAX_WORK } from '../../src/proof/limits.js';
 import { splitMessage, parseTags } from '../../src/proof/signed-headers.js';
 import { Mailproof } from '../../src/proof/mailproof.js';
-import { signedMail } from '../helpers/proof.js';
+import { signedMail, makeKey } from '../helpers/proof.js';
 import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -170,4 +170,51 @@ test('record()/check(): body_status stored per record, trust verdicts untouched,
   assert.ok(!onDisk.includes('LEAKY-FOOTER'));
   const unsigned = await mp.check(Buffer.from('From: a@x.example\r\n\r\nhi\r\n'));
   assert.equal(unsigned.body_status, 'not-checked');
+});
+
+// ---- one work budget per message --------------------------------------------------------------------
+// The mismatch search used to get MAX_WORK per SIGNATURE, so 10 signatures on one tampered body cost 10x
+// one search. Now the signatures of a message draw on one budget (`ctx.budget`).
+test('work budget: a search the budget cannot cover is skipped and reported as search_capped; the status is the same', async () => {
+  const m = await signedMail({ signTime: T0, body: BODY });
+  const banner = withBody(m.raw, (b) => 'EXTERNAL BANNER\r\nLine two\r\n' + b);
+  const full = analyse(banner);
+  assert.deepEqual(kinds(full), ['prepended']);
+  const starved = analyse(banner, { budget: { left: 10 } });
+  assert.equal(starved.status, full.status, 'the budget never changes the status');
+  assert.deepEqual(kinds(starved), ['search_capped', 'unknown']);
+  assert.deepEqual(starved.explain[0].detail, { max_lines: MAX_LINES, max_bytes: 2 * 1024 * 1024, max_work_bytes: MAX_WORK });
+});
+
+test('work budget: the signatures of one message share it; a budget of exactly one search leaves none for the next', async () => {
+  const m = await signedMail({ signTime: T0, body: BODY });
+  const banner = withBody(m.raw, (b) => 'EXTERNAL BANNER\r\nLine two\r\n' + b);
+  const probe = newBudget();
+  analyse(banner, { budget: probe });
+  const used = MAX_WORK - probe.left;
+  assert.ok(used > 0 && used < MAX_WORK, `one search takes ${used} bytes of work`);
+  const shared = { left: used };
+  assert.deepEqual(kinds(analyse(banner, { budget: shared })), ['prepended'], 'the first signature gets its search');
+  assert.equal(shared.left, 0);
+  assert.deepEqual(kinds(analyse(banner, { budget: shared })), ['search_capped', 'unknown'], 'the second gets none');
+  // with no budget given each analysis gets a fresh one (a signature analysed on its own)
+  assert.deepEqual(kinds(analyse(banner)), ['prepended']);
+  assert.deepEqual(kinds(analyse(banner)), ['prepended']);
+});
+
+test('work budget: 10 valid signatures on one tampered body: the later ones are capped, every verdict is unchanged', async () => {
+  const signers = Array.from({ length: 10 }, (_, i) => ({ domain: 'signer.example', selector: `s${i}`, key: makeKey('rsa') }));
+  const body = Array.from({ length: 4000 }, (_, i) => `line ${String(i).padStart(5, '0')} ${'x'.repeat(150)}`).join('\r\n') + '\r\n';
+  const m = await signedMail({ signTime: T0, body, signers });
+  const raw = Buffer.from(m.raw);
+  raw[raw.length - 5000] ^= 1;                                  // alter the body: every bh= now mismatches
+  const mp = new Mailproof({ trailDir: fs.mkdtempSync(path.join(os.tmpdir(), 'mp-wb-')), resolver: m.resolver, now: () => T0 });
+  const c = await mp.check(raw);
+  assert.equal(c.body_status, 'mismatch');
+  assert.deepEqual(c.body.map((b) => b.status), Array(10).fill('mismatch'));
+  const capped = c.body.map((b) => b.explain.some((e) => e.kind === 'search_capped'));
+  assert.equal(capped.filter(Boolean).length >= 8, true, `the budget runs out early: ${capped.map(Number).join('')}`);
+  assert.equal(capped[9], true);
+  assert.equal(c.portable.trust, 'verified', 'the signed headers are fine: the body search cannot move a verdict');
+  assert.equal(c.live.trust, 'unverified', 'mailauth fails the altered body on its own, whatever the search did');
 });

@@ -48,5 +48,15 @@ export const MAX_LINES = 5000;
 /** Body-status mismatch search: cut points further than this many bytes from the matching end are not tried. */
 export const MAX_BYTES = 2 * 1024 * 1024;
 
-/** Total bytes the prepended search may hash (it is O(candidates x size)). */
+/**
+ * Body-status mismatch search: bytes ALL its searches together may process for one message. Every
+ * signature of the message, and every attached original, draws on this one budget, so adding
+ * signatures cannot multiply the cost: one signature alone used to get this much, which made 10
+ * signatures on a tampered 128 KiB body cost 10x one search (7-16 s before the search was made
+ * cheaper per byte). When it runs out the signatures still to come get a `search_capped` explanation
+ * and no search; their status and every trust verdict are unchanged. Real messages that do not match
+ * their `bh=` need up to ~100 MiB for one signature on a 100 KB body (the cut-point search is
+ * O(lines x size)), so this stays where the per-signature cap was: lowering it changes what real mail
+ * is explained as.
+ */
 export const MAX_WORK = 64 * 1024 * 1024;

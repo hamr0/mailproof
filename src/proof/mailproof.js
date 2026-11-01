@@ -10,7 +10,7 @@ import { MAX_INNER } from './limits.js';
 import { admit, overLimitReason } from './admit.js';
 import { hashDocument } from './hash.js';
 import { buildSignatureEntry } from './record.js';
-import { summariseBody } from './body-status.js';
+import { summariseBody, newBudget } from './body-status.js';
 import { messageKeyOf, classifyCopy } from './copy.js';
 import { buildLive, buildPortable, engine } from './verdict.js';
 import { createOts, DEFAULT_OTS_TIMEOUT_MS } from './ots.js';
@@ -105,14 +105,16 @@ class Mailproof {
     const auth = await authenticateMessage(buf, ctx.envelope || {}, { resolver: this.resolver }).catch(() => /** @type {MailauthResult} */ ({}));
 
     const sigRows = rows.filter((r) => r.name === 'dkim-signature');
-    const { signatures, keyFiles } = await this._signatures(rows, body, auth?.arc?.status?.result);
+    // one body-search budget for the whole message: its signatures and its attached originals draw on the same
+    const budget = newBudget();
+    const { signatures, keyFiles } = await this._signatures(rows, body, auth?.arc?.status?.result, budget);
 
     // Forward as attachment: verify each signed original (key + verdict only; nothing of it is stored).
     const inner = parsed.rfc822 || [];
     /** @type {import('./types.js').AttachedOriginal[]} */
     const attached = [];
     for (const m of inner.slice(0, MAX_INNER)) {
-      const r = await this._inner(m, captured);
+      const r = await this._inner(m, captured, budget);
       attached.push(r.entry);
       keyFiles.push(...r.keyFiles);
     }
@@ -194,9 +196,10 @@ class Mailproof {
    * @param {import('./signed-headers.js').HeaderRow[]} rows
    * @param {Buffer} body
    * @param {string | null | undefined} arc  ARC chain result (a body-status hint).
+   * @param {import('./body-status.js').WorkBudget} budget  The message's shared body-search budget.
    * @returns {Promise<{ signatures: import('./types.js').RecordSignature[], keyFiles: Array<{ rel: string, json: unknown }> }>}
    */
-  async _signatures(rows, body, arc) {
+  async _signatures(rows, body, arc, budget) {
     /** @type {Array<{ rel: string, json: unknown }>} */
     const keyFiles = [];
     /** @type {import('./types.js').RecordSignature[]} */
@@ -216,7 +219,7 @@ class Mailproof {
           json: { v: 2, domain: t.d.toLowerCase(), selector: t.s.toLowerCase(), k: key.k, p: key.p, txt: k.txt, lookup: k.lookup, first_fetched: k.fetched_at },
         });
       }
-      signatures.push(buildSignatureEntry(rows, sr, body, { key, key_error: k.base64 ? null : (k.error || 'no key'), key_file }, { arc }));
+      signatures.push(buildSignatureEntry(rows, sr, body, { key, key_error: k.base64 ? null : (k.error || 'no key'), key_file }, { arc, budget }));
     }
     return { signatures, keyFiles };
   }
@@ -227,13 +230,14 @@ class Mailproof {
    * the same gate: over a limit it is not examined at all (`over_limit` names the limit).
    * @param {Buffer} buf
    * @param {string} captured
+   * @param {import('./body-status.js').WorkBudget} budget  The outer message's shared body-search budget.
    * @returns {Promise<{ entry: import('./types.js').AttachedOriginal, keyFiles: Array<{ rel: string, json: unknown }> }>}
    */
-  async _inner(buf, captured) {
+  async _inner(buf, captured, budget) {
     const gate = admit(buf);
     if (!gate.ok) return { entry: { message_key: null, dkim: 'none', d: null, body_status: 'not-checked', over_limit: /** @type {string} */ (gate.limit) }, keyFiles: [] };
     const { rows, body } = splitMessage(buf);
-    const { signatures, keyFiles } = await this._signatures(rows, body, null);
+    const { signatures, keyFiles } = await this._signatures(rows, body, null, budget);
     const v = verifyRecord({ v: 2, id: '', message_key: null, copy: { kind: 'unknown', evidence: {} }, captured, direction: 'in', source: 'inner', message: {}, attachments: [], signatures, body_status: 'not-checked', verdicts: {} });
     const passing = v.signatures.find((x) => x.ok);
     return {

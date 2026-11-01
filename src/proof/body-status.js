@@ -19,6 +19,29 @@ import { relayEvidence } from './relay.js';
 /** @typedef {import('./types.js').BodyStatus} BodyStatus */
 /** @typedef {import('./signed-headers.js').HeaderRow} HeaderRow */
 
+/**
+ * The work the mismatch searches of ONE message may still spend, in bytes processed. Every signature and
+ * every detector of that message draws on the same budget (`newBudget()`), so a sender cannot multiply the
+ * cost of the search by adding signatures.
+ * @typedef {{ left: number }} WorkBudget
+ */
+
+/** @returns {WorkBudget} a full budget for one message */
+const newBudget = () => ({ left: MAX_WORK });
+
+/**
+ * Take `bytes` from the budget. When it cannot cover them nothing is left, so every later search of the
+ * message is refused too.
+ * @param {WorkBudget} budget
+ * @param {number} bytes
+ * @returns {boolean} whether the work may go ahead
+ */
+function spend(budget, bytes) {
+  if (bytes > budget.left) { budget.left = 0; return false; }
+  budget.left -= bytes;
+  return true;
+}
+
 const RANK = { matched: 3, partial: 2, mismatch: 1 };
 
 /**
@@ -67,15 +90,18 @@ const canonBytes = (lines, mode) => Buffer.from(lines.length ? lines.map((l) => 
 const digest = (alg, bytes) => crypto.createHash(alg).update(bytes).digest('base64');
 
 /**
- * Appended content: some canonical prefix, cut at a line boundary, hashes to bh.
+ * Appended content: some canonical prefix, cut at a line boundary, hashes to bh. Hashing the lines costs
+ * their total size, taken from `budget` up front.
+ * @param {string[]} lines @param {'simple' | 'relaxed'} mode @param {string} alg @param {string} bh @param {WorkBudget} budget
  * @returns {{ found: BodyExplain | null, capped: boolean }}
  */
-function findAppended(lines, mode, alg, bh) {
+function findAppended(lines, mode, alg, bh, budget) {
   const m = lines.length;
   const sizes = lines.map((l) => l.length + 2);
   const total = sizes.reduce((a, b) => a + b, 0);
   // j = -1 is the empty prefix: the signed body was empty
   if (digest(alg, canonBytes([], mode)) === bh) return { found: { kind: 'appended', detail: { bytes: total, lines: m } }, capped: false };
+  if (!spend(budget, total)) return { found: null, capped: true };
   const H = crypto.createHash(alg);
   let fed = 0;
   for (let j = 0; j < m - 1; j++) {
@@ -90,20 +116,21 @@ function findAppended(lines, mode, alg, bh) {
 }
 
 /**
- * Prepended content: some canonical suffix, cut at a line boundary, hashes to bh.
+ * Prepended content: some canonical suffix, cut at a line boundary, hashes to bh. The canonical bytes
+ * of the lines from `i` on are the tail of the canonical bytes of all of them, so they are built once and
+ * each candidate hashes a view of the tail. Each candidate costs the size of that tail, taken from `budget`.
+ * @param {string[]} lines @param {'simple' | 'relaxed'} mode @param {string} alg @param {string} bh @param {WorkBudget} budget
  * @returns {{ found: BodyExplain | null, capped: boolean }}
  */
-function findPrepended(lines, mode, alg, bh) {
+function findPrepended(lines, mode, alg, bh, budget) {
   const m = lines.length;
-  let removed = 0;
-  let work = 0;
+  const all = canonBytes(lines, mode);
+  let removed = 0;   // size of the canonical lines before line i
   for (let i = 1; i < m; i++) {
     removed += lines[i - 1].length + 2;
     if (i > MAX_LINES || removed > MAX_BYTES) return { found: null, capped: true };
-    const bytes = canonBytes(lines.slice(i), mode);
-    work += bytes.length;
-    if (work > MAX_WORK) return { found: null, capped: true };
-    if (digest(alg, bytes) === bh) return { found: { kind: 'prepended', detail: { bytes: removed, lines: i } }, capped: false };
+    if (!spend(budget, all.length - removed)) return { found: null, capped: true };
+    if (digest(alg, all.subarray(removed)) === bh) return { found: { kind: 'prepended', detail: { bytes: removed, lines: i } }, capped: false };
   }
   return { found: null, capped: false };
 }
@@ -127,11 +154,13 @@ function contextHints(rows, arcResult) {
  * Body status of ONE signature against the body we were handed.
  * @param {Record<string, string>} tags  Parsed tags of the DKIM-Signature.
  * @param {Buffer} body  Raw body bytes (after the header block).
- * @param {{ rows?: HeaderRow[], arc?: string | null }} [ctx]
+ * @param {{ rows?: HeaderRow[], arc?: string | null, budget?: WorkBudget }} [ctx]  `budget`: the message's
+ *   shared search budget (default: a fresh one, for a signature analysed on its own).
  * @returns {BodyResult}
  */
 function analyseBody(tags, body, ctx = {}) {
   const rows = ctx.rows || [];
+  const budget = ctx.budget || newBudget();
   const bh = (tags.bh || '').replace(/\s+/g, '');
   const alg = (tags.a || '').split('-').pop() || '';
   const mode = /** @type {'simple' | 'relaxed'} */ (canonPair(tags.c).b === 'relaxed' ? 'relaxed' : 'simple');
@@ -150,23 +179,26 @@ function analyseBody(tags, body, ctx = {}) {
     }
     if (!bh) return { status: 'mismatch', explain: [{ kind: 'unknown' }] };
 
-    // mismatch: try to explain it
-    const lines = canonLines(body, mode);
+    // mismatch: try to explain it. Every search pays for the bytes it processes out of the message's
+    // budget; one the budget cannot cover is skipped and reported as `search_capped`.
     let capped = false;
     /** @type {BodyExplain | null} */
     let found = null;
-    if (l === null) {
-      const a = findAppended(lines, mode, alg, bh);
+    /** @param {number} bytes */
+    const afford = (bytes) => { const ok = spend(budget, bytes); if (!ok) capped = true; return ok; };
+    if (l === null && afford(body.length)) {
+      const lines = canonLines(body, mode);
+      const a = findAppended(lines, mode, alg, bh, budget);
       found = a.found; capped = a.capped;
-      if (!found) { const p = findPrepended(lines, mode, alg, bh); found = p.found; capped = capped || p.capped; }
+      if (!found) { const p = findPrepended(lines, mode, alg, bh, budget); found = p.found; capped = capped || p.capped; }
     }
-    if (!found) {
+    if (!found && afford(body.length)) {
       const other = mode === 'simple' ? 'relaxed' : 'simple';
       const o = dkimBody(other, alg, l === null ? false : l);
       o.update(body);
       if (o.digest('base64') === bh) found = { kind: 'canonicalisation', detail: { signed_as: mode, matches_as: other } };
     }
-    if (!found && /\r(?!\n)/.test(body.toString('binary'))) {
+    if (!found && afford(body.length) && /\r(?!\n)/.test(body.toString('binary'))) {
       const fixed = Buffer.from(body.toString('binary').replace(/\r\n|\r|\n/g, '\r\n'), 'binary');
       const n = dkimBody(mode, alg, l === null ? false : l);
       n.update(fixed);
@@ -198,4 +230,4 @@ function summariseBody(signatures, verifies) {
   return /** @type {BodyStatus} */ (pool.map((x) => /** @type {'matched' | 'partial' | 'mismatch'} */ (x.s)).sort((a, b) => RANK[b] - RANK[a])[0]);
 }
 
-export { analyseBody, summariseBody, canonLines, trimTrailingWs };
+export { analyseBody, summariseBody, canonLines, trimTrailingWs, newBudget };
