@@ -52,7 +52,7 @@
     "access": "public"
   },
   "engines": {
-    "node": ">=22.5"
+    "node": ">=22.19"
   },
   "files": [
     "src/index.js",

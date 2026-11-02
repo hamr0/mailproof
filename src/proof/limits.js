@@ -68,3 +68,10 @@ export const MAX_BYTES = 2 * 1024 * 1024;
  * is explained as.
  */
 export const MAX_WORK = 64 * 1024 * 1024;
+
+/**
+ * The deadline backstop (pool.js), for what the gate above does not measure. `cpuMs`: CPU of the worker
+ * thread one message may use; `wallMs`: busy wall time (DNS waits excluded); `maxMemoryMb`: heap plus external
+ * memory of the worker thread. Over any of them the message is recorded `over limit: time` / `over limit: memory`.
+ */
+export const WORKER_DEFAULTS = Object.freeze({ size: 1, cpuMs: 15_000, wallMs: 120_000, maxMemoryMb: 1536 });

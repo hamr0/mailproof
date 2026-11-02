@@ -1,18 +1,10 @@
 // The proof core. One instance owns one trail (a git repo of records). Methods
 // are bound, so `const { verify } = mp` works.
 
-import crypto from 'node:crypto';
 import path from 'node:path';
-import { authenticateMessage, parseMessage } from './parse.js';
-import { fetchDkimKey } from './keys.js';
-import { splitMessage, parseTags } from './signed-headers.js';
-import { MAX_INNER } from './limits.js';
-import { admit, overLimitReason } from './admit.js';
-import { hashDocument } from './hash.js';
-import { buildSignatureEntry } from './record.js';
-import { summariseBody, newBudget } from './body-status.js';
-import { messageKeyOf, classifyCopy } from './copy.js';
-import { buildLive, buildPortable, engine } from './verdict.js';
+import { buildRecord, overLimitRecord } from './build.js';
+import { workerConfig, leasePool } from './pool.js';
+import { engine } from './verdict.js';
 import { createOts, DEFAULT_OTS_TIMEOUT_MS } from './ots.js';
 import { verifyRecord, matchBodyRecord, matchFileRecord } from './recheck.js';
 import { TRAIL_NAME_RE, RECORD_ID_RE, DEFAULT_LOCK_TIMEOUT_MS, commitRecord, readRecord, listIds } from './trail.js';
@@ -32,11 +24,9 @@ const OTS_MIN_TIMEOUT_MS = 5000; // floor for the `ots` timeout, however short l
  * @property {string | null} [otsBin]  Path to the `ots` binary; null/absent keeps OpenTimestamps off.
  * @property {() => Date} [now]  Clock (tests inject one).
  * @property {string[]} [trustedSealers]  ARC sealer domains whose chains may yield `forwarded` (live only).
+ * @property {import('./pool.js').WorkerOptions} [worker]  The deadline backstop (default on): the parsing and verifying half of `check()`/`record()` runs in a warm worker thread that is killed when one message uses more than `cpuMs` (15000) of the thread's CPU, `wallMs` (120000) of busy wall time (DNS waits excluded) or `maxMemoryMb` (1536) of heap plus external memory. The message is then recorded `unverified` as `over limit: time` / `over limit: memory`. `size` is the number of warm workers (default 1); `size: 0` runs everything in-process, with no backstop. Needs Node 22.19 or later.
  * @property {number} [lockTimeoutMs]  How long `record()` waits for another writer of the same trail (default 30000). On timeout it throws `ERR_TRAIL_LOCKED` and writes nothing. With `otsBin`, the OTS stamp runs inside that lock and is cut off after `clamp(floor(lockTimeoutMs / 3), 5000, 30000)` ms, so a short `lockTimeoutMs` shortens the stamp (5 s floor), and concurrent writers can wait up to that long behind a slow stamp.
  */
-
-/** @param {Buffer | string} raw @returns {string} */
-const sha256hex = (raw) => crypto.createHash('sha256').update(raw).digest('hex');
 
 /**
  * The `ots` command timeout: clamp(floor(lockTimeoutMs / 3), 5000, DEFAULT_OTS_TIMEOUT_MS).
@@ -50,10 +40,10 @@ function otsTimeoutMs(lockTimeoutMs) {
 class Mailproof {
   /**
    * @param {MailproofOptions} opts
-   * @signature new Mailproof({ trailDir: string, trail?: string, resolver?: Function, otsBin?: string|null, now?: () => Date, trustedSealers?: string[], lockTimeoutMs?: number })
+   * @signature new Mailproof({ trailDir: string, trail?: string, resolver?: Function, otsBin?: string|null, now?: () => Date, trustedSealers?: string[], lockTimeoutMs?: number, worker?: { size?: number, cpuMs?: number, wallMs?: number, maxMemoryMb?: number } })
    * @when Start here. Construct one per trail (a git repo of records under `trailDir`), then `record()` each email you want a re-checkable proof of and `verify()` it later, offline. All methods are bound, so `const { verify } = mp` works.
    * @category proof
-   * @fails Throws at construction when `trailDir` is missing or `trail` is not `[a-z0-9][a-z0-9_-]{0,63}`. Nothing touches the disk until the first `record()`. With `otsBin`, the OTS stamp runs inside the writer lock and is cut off after `clamp(floor(lockTimeoutMs / 3), 5000, 30000)` ms: a short `lockTimeoutMs` shortens the stamp (5 s floor), and concurrent writers can wait up to that long behind a slow stamp.
+   * @fails Throws at construction when `trailDir` is missing, `trail` is not `[a-z0-9][a-z0-9_-]{0,63}`, or `worker` holds an unknown key or a bad value. Nothing touches the disk until the first `record()`. With `otsBin`, the OTS stamp runs inside the writer lock and is cut off after `clamp(floor(lockTimeoutMs / 3), 5000, 30000)` ms: a short `lockTimeoutMs` shortens the stamp (5 s floor), and concurrent writers can wait up to that long behind a slow stamp.
    * @example
    * import { Mailproof } from 'mailproof';
    * const mp = new Mailproof({ trailDir: './trails' });
@@ -70,6 +60,9 @@ class Mailproof {
     this.otsBin = opts.otsBin || null;
     this.now = opts.now || (() => new Date());
     this.trustedSealers = opts.trustedSealers || [];
+    this.worker = workerConfig(opts.worker);
+    /** @type {{ run: import('./pool.js').WorkerPool['run'], release: () => Promise<void> } | null} */
+    this._lease = null;
     this.lockTimeoutMs = Number.isFinite(opts.lockTimeoutMs) && /** @type {number} */ (opts.lockTimeoutMs) >= 0 ? /** @type {number} */ (opts.lockTimeoutMs) : DEFAULT_LOCK_TIMEOUT_MS;
     // The stamp runs inside the trail lock, so it is capped at a third of the lock wait (see otsTimeoutMs).
     this.ots = this.otsBin ? createOts({ otsBin: this.otsBin, timeoutMs: otsTimeoutMs(this.lockTimeoutMs) }) : null;
@@ -81,14 +74,17 @@ class Mailproof {
     this.get = this.get.bind(this);
     this.list = this.list.bind(this);
     this.copies = this.copies.bind(this);
+    this.close = this.close.bind(this);
   }
 
   /**
-   * Build the record for a message (nothing is written). A message over an input limit (admit.js) gets
-   * the over-limit record: the parsers never see it and no DNS is asked.
+   * Build the record for a message (nothing is written): in a worker thread under the deadline backstop
+   * (pool.js), or in-process when `worker.size` is 0. A message over an input limit (admit.js) gets the
+   * over-limit record: the parsers never see it and no DNS is asked. So does one the backstop stopped
+   * (`over limit: time` / `over limit: memory`).
    * @param {Buffer | string} raw
    * @param {{ direction: 'in' | 'out', source: string, envelope?: Envelope }} ctx
-   * @returns {Promise<{ record: MpRecord, keyFiles: Array<{ rel: string, json: unknown }>, overLimit: string | null }>}
+   * @returns {Promise<import('./build.js').Built>}
    *   `overLimit`: the name of the limit the message exceeded, else null.
    */
   async _build(raw, ctx) {
@@ -96,159 +92,29 @@ class Mailproof {
     if (buf.length === 0) throw new Error('Mailproof: empty message');
     const captured = this.now().toISOString();
     const hasEnvelope = Boolean(ctx.envelope && (ctx.envelope.clientIp || ctx.envelope.sender));
-    const gate = admit(buf);
-    if (!gate.ok) return this._overLimitRecord(buf, captured, ctx, hasEnvelope, /** @type {string} */ (gate.limit));
-    const { rows, body } = splitMessage(buf);
-    // Decode first, then authenticate: a message the decoder rejects must not have started any DNS
-    // work, which running the two side by side would do.
-    const parsed = await parseMessage(buf);
-    const auth = await authenticateMessage(buf, ctx.envelope || {}, { resolver: this.resolver }).catch(() => /** @type {MailauthResult} */ ({}));
-
-    const sigRows = rows.filter((r) => r.name === 'dkim-signature');
-    // one body-search budget for the whole message: its signatures and its attached originals draw on the same
-    const budget = newBudget();
-    const { signatures, keyFiles } = await this._signatures(rows, body, auth?.arc?.status?.result, budget);
-
-    // Forward as attachment: verify each signed original (key + verdict only; nothing of it is stored).
-    const inner = parsed.rfc822 || [];
-    /** @type {import('./types.js').AttachedOriginal[]} */
-    const attached = [];
-    for (const m of inner.slice(0, MAX_INNER)) {
-      const r = await this._inner(m, captured, budget);
-      attached.push(r.entry);
-      keyFiles.push(...r.keyFiles);
-    }
-
-    // One record per distinct copy: the id is the raw bytes' hash; `message_key` groups the copies.
-    const id = parsed.rawSha256.replace(/^sha256:/, '').slice(0, 32);
-
-    /** @type {MpRecord} */
-    const record = {
-      v: 2,
-      id,
-      message_key: messageKeyOf(rows),
-      captured,
-      direction: ctx.direction,
-      source: ctx.source,
-      message: {
-        message_id: parsed.messageId || null,
-        in_reply_to: parsed.inReplyTo || null,
-        references: parsed.references || [],
-        raw_sha256: parsed.rawSha256,
-        size: buf.length,
-        ...(sigRows.length ? {} : { from: parsed.from.address }),
-      },
-      attachments: parsed.attachments.map((a) => ({ filename: a.filename, size: a.size, sha256: /** @type {string} */ (a.sha256) })),
-      signatures,
-      body_status: 'not-checked',
-      copy: classifyCopy({ rows, subject: parsed.subject || null, signed: sigRows.length > 0, attached, capped: inner.length > MAX_INNER, multipartDigest: /^content-type:[ \t]*multipart\/digest/im.test(body.toString('binary')) || rows.some((r) => r.name === 'content-type' && /multipart\/digest/i.test(r.raw)) }),
-      verdicts: {},
-    };
-    const sigOk = verifyRecord(record).signatures.map((x) => x.ok);
-    record.body_status = summariseBody(signatures, sigOk);
-    record.verdicts = {
-      live: buildLive(auth, { trustedSealers: this.trustedSealers, hasEnvelope }),
-      portable: buildPortable(record),
-    };
-    return { record, keyFiles, overLimit: null };
+    const trustedSealers = this.trustedSealers;
+    if (this.worker.size === 0) return buildRecord(buf, ctx, { captured, hasEnvelope, trustedSealers, resolver: this.resolver });
+    this._lease ??= leasePool(this.worker);
+    const r = await this._lease.run(buf, { ctx, captured, hasEnvelope, trustedSealers }, this.resolver);
+    return 'out' in r ? r.out : overLimitRecord(buf, ctx, { captured, hasEnvelope, trustedSealers }, r.limit);
   }
 
   /**
-   * The record of a message the gate refused (accept-with-flag): committed like any other, but nothing
-   * was parsed, so it holds only what the raw bytes give without a parser: `raw_sha256` (and so the
-   * `id`) and `size`. Everything else is empty or null, both verdicts are `unverified`, and their
-   * `reason` names the limit (`over limit: body_line`).
-   * @param {Buffer} buf
-   * @param {string} captured
-   * @param {{ direction: 'in' | 'out', source: string }} ctx
-   * @param {boolean} hasEnvelope
-   * @param {string} limit
-   * @returns {{ record: MpRecord, keyFiles: Array<{ rel: string, json: unknown }>, overLimit: string }}
+   * Stop the worker threads this instance uses. Optional: idle workers do not keep the process alive, so a
+   * program that never calls it still exits on its own. A later `check()` or `record()` starts a fresh worker.
+   * @returns {Promise<void>}
+   * @name Mailproof#close
+   * @when Use to release the worker threads at once (a test, a long-lived process that is done checking mail). Workers are shared by instances with the same `worker` options, so they end when the last of those instances closes. Never needed for the process to exit.
+   * @category proof
+   * @signature mp.close() => Promise<void>
+   * @fails Never throws. A call with nothing to stop, or with `worker.size` 0, resolves at once. A check in flight on a stopped worker rejects.
+   * @example
+   * await mp.close();
    */
-  _overLimitRecord(buf, captured, ctx, hasEnvelope, limit) {
-    const rawSha256 = hashDocument(buf);
-    const reason = overLimitReason(limit);
-    /** @type {MpRecord} */
-    const record = {
-      v: 2,
-      id: rawSha256.replace(/^sha256:/, '').slice(0, 32),
-      message_key: null,
-      captured,
-      direction: ctx.direction,
-      source: ctx.source,
-      message: { message_id: null, in_reply_to: null, references: [], raw_sha256: rawSha256, size: buf.length },
-      attachments: [],
-      signatures: [],
-      body_status: 'not-checked',
-      copy: { kind: 'unknown', evidence: {} },
-      verdicts: {},
-    };
-    record.verdicts = {
-      live: { ...buildLive(/** @type {MailauthResult} */ ({}), { trustedSealers: this.trustedSealers, hasEnvelope }), reason },
-      portable: { ...buildPortable(record), reason },
-    };
-    return { record, keyFiles: [], overLimit: limit };
-  }
-
-  /**
-   * Signature entries (+ the DKIM keys to archive) for a header block and body that passed the gate
-   * (so: at most MAX_SIGNATURES signatures, each listing at most MAX_H_NAMES names).
-   * @param {import('./signed-headers.js').HeaderRow[]} rows
-   * @param {Buffer} body
-   * @param {string | null | undefined} arc  ARC chain result (a body-status hint).
-   * @param {import('./body-status.js').WorkBudget} budget  The message's shared body-search budget.
-   * @returns {Promise<{ signatures: import('./types.js').RecordSignature[], keyFiles: Array<{ rel: string, json: unknown }> }>}
-   */
-  async _signatures(rows, body, arc, budget) {
-    /** @type {Array<{ rel: string, json: unknown }>} */
-    const keyFiles = [];
-    /** @type {import('./types.js').RecordSignature[]} */
-    const signatures = [];
-    const resolver = this.resolver;
-    for (const sr of rows.filter((r) => r.name === 'dkim-signature')) {
-      const t = parseTags(sr.raw);
-      const k = await fetchDkimKey(t.d, t.s, { resolver: resolver ? (name) => resolver(name, 'TXT') : undefined });
-      /** @type {{ k: string, p: string } | null} */
-      let key = null;
-      let key_file = null;
-      if (k.base64) {
-        key = { k: k.k || 'rsa', p: k.base64 };
-        key_file = `keys/${t.d.toLowerCase()}/${t.s.toLowerCase()}/${sha256hex(k.base64).slice(0, 16)}.json`;
-        keyFiles.push({
-          rel: key_file,
-          json: { v: 2, domain: t.d.toLowerCase(), selector: t.s.toLowerCase(), k: key.k, p: key.p, txt: k.txt, lookup: k.lookup, first_fetched: k.fetched_at },
-        });
-      }
-      signatures.push(buildSignatureEntry(rows, sr, body, { key, key_error: k.base64 ? null : (k.error || 'no key'), key_file }, { arc, budget }));
-    }
-    return { signatures, keyFiles };
-  }
-
-  /**
-   * Check one attached original (`message/rfc822`) the way a record is checked, keeping
-   * only its key and verdict. One level deep: its own attachments are not examined. It goes through
-   * the same gate: over a limit it is not examined at all (`over_limit` names the limit).
-   * @param {Buffer} buf
-   * @param {string} captured
-   * @param {import('./body-status.js').WorkBudget} budget  The outer message's shared body-search budget.
-   * @returns {Promise<{ entry: import('./types.js').AttachedOriginal, keyFiles: Array<{ rel: string, json: unknown }> }>}
-   */
-  async _inner(buf, captured, budget) {
-    const gate = admit(buf);
-    if (!gate.ok) return { entry: { message_key: null, dkim: 'none', d: null, body_status: 'not-checked', over_limit: /** @type {string} */ (gate.limit) }, keyFiles: [] };
-    const { rows, body } = splitMessage(buf);
-    const { signatures, keyFiles } = await this._signatures(rows, body, null, budget);
-    const v = verifyRecord({ v: 2, id: '', message_key: null, copy: { kind: 'unknown', evidence: {} }, captured, direction: 'in', source: 'inner', message: {}, attachments: [], signatures, body_status: 'not-checked', verdicts: {} });
-    const passing = v.signatures.find((x) => x.ok);
-    return {
-      entry: {
-        message_key: messageKeyOf(rows),
-        dkim: !signatures.length ? 'none' : passing ? 'pass' : 'fail',
-        d: (passing || v.signatures[0])?.d ?? null,
-        body_status: summariseBody(signatures, v.signatures.map((x) => x.ok)),
-      },
-      keyFiles,
-    };
+  async close() {
+    const lease = this._lease;
+    this._lease = null;
+    await lease?.release();
   }
 
   /**
@@ -275,7 +141,7 @@ class Mailproof {
    * @when Use for a one-off look at an email you were handed (a saved .eml), when you do NOT want it recorded. It returns both verdicts and writes nothing. Use `record()` instead to keep a proof.
    * @category proof
    * @signature mp.check(raw: Buffer|string, opts?: { envelope?: Envelope }) => Promise<{ live, portable, signatures: number, unsigned: boolean, partial_body: boolean, key_errors: string[], body_status, body[] }>
-   * @fails Rejects on an empty message. Unsigned or unverifiable mail does not throw: it comes back `unverified`. A message over an input limit is not parsed or verified at all, and no DNS is asked: `unverified`, `reason: 'over limit: <name>'` on both verdicts (`total_bytes`, `header_bytes`, `header_lines`, `header_fields`, `signatures`, `h_names`, `sig_bytes`, `mime_parts`, `body_line`, `body_lines`), `signatures` 0, `unsigned` false, `body_status` `not-checked`. The limits: total size 25 MiB, header block 256 KiB, 4,000 header lines, 1,000 header fields, 10 DKIM-Signature headers, 200 names in one `h=`, 16 KiB per DKIM-Signature field, 200 MIME delimiter lines, 256 KiB per body line, 500,000 body lines (SPEC Part B, Limits). Judged as of now, so a key that has left DNS appears in `key_errors` and the portable verdict is `unverified`. The portable verdict covers the signed headers only: read `body_status` (and `body[i].explain`) for the body.
+   * @fails Rejects on an empty message. Unsigned or unverifiable mail does not throw: it comes back `unverified`. A message over an input limit is not parsed or verified at all, and no DNS is asked: `unverified`, `reason: 'over limit: <name>'` on both verdicts (`total_bytes`, `header_bytes`, `header_lines`, `header_fields`, `signatures`, `h_names`, `sig_bytes`, `mime_parts`, `body_line`, `body_lines`; or `time` / `memory` when the worker backstop stopped the build, see the `worker` option), `signatures` 0, `unsigned` false, `body_status` `not-checked`. The limits: total size 25 MiB, header block 256 KiB, 4,000 header lines, 1,000 header fields, 10 DKIM-Signature headers, 200 names in one `h=`, 16 KiB per DKIM-Signature field, 200 MIME delimiter lines, 256 KiB per body line, 500,000 body lines (SPEC Part B, Limits). Judged as of now, so a key that has left DNS appears in `key_errors` and the portable verdict is `unverified`. The portable verdict covers the signed headers only: read `body_status` (and `body[i].explain`) for the body.
    * @example
    * const mp = new Mailproof({ trailDir: './trails' });
    * const c = await mp.check(fs.readFileSync('mail.eml'));   // c.live.trust, c.portable.trust
@@ -305,7 +171,7 @@ class Mailproof {
    * @when Use to keep a proof of an email (one record per distinct copy, marked `direct` / `relayed` / `forward` / `digest`): it stores the signed headers, the signature, the archived key, both verdicts and the body status (`body_status`: did the body match the signed `bh=`, with hints on what changed) as one git commit, and never the body. Call it for every email you may need to prove later, including ones that fail verification (they are recorded as `unverified`).
    * @category proof
    * @signature mp.record(raw: Buffer|string, ctx: { direction: 'in'|'out', source?: string, envelope?: Envelope }) => Promise<{ id, duplicate, commit, record?, ots? }>
-   * @fails Throws on an empty message, a `direction` other than 'in'/'out', a git failure (the tree is rolled back: only files this call created are removed), or `err.code === 'ERR_TRAIL_LOCKED'` when another process holds the trail's writer lock for longer than `lockTimeoutMs` (nothing is written; retry later). Never throws because the mail is unsigned or fails verification. A message over an input limit (see `check()`) is still recorded (committed, accept-with-flag) but never parsed or verified, and no DNS is asked: `unverified` with `reason: 'over limit: <name>'` on both verdicts, `signatures: []`, `body_status` `not-checked`, and only the `id`, `raw_sha256` and `size` taken from the bytes (`message_id` null, no attachments, `copy.kind` `unknown`, `message_key` null). This includes a header block over 256 KiB, which used to reject with `EMAXLEN` and record nothing. The id is the hash of the raw bytes: the identical bytes recorded twice return `duplicate: true` and write nothing, while a copy with any byte difference (a list footer, an added header) is its own record, linked by `message_key` (see `copies()`). An OTS failure or timeout is reported in `ots`, not thrown; the stamp runs inside the writer lock, so it is cut off after `clamp(floor(lockTimeoutMs / 3), 5000, 30000)` ms.
+   * @fails Throws on an empty message, a `direction` other than 'in'/'out', a git failure (the tree is rolled back: only files this call created are removed), or `err.code === 'ERR_TRAIL_LOCKED'` when another process holds the trail's writer lock for longer than `lockTimeoutMs` (nothing is written; retry later). Never throws because the mail is unsigned or fails verification. A message over an input limit, or one the worker backstop stopped (see `check()`), is still recorded (committed, accept-with-flag) but never parsed or verified, and no DNS is asked: `unverified` with `reason: 'over limit: <name>'` on both verdicts, `signatures: []`, `body_status` `not-checked`, and only the `id`, `raw_sha256` and `size` taken from the bytes (`message_id` null, no attachments, `copy.kind` `unknown`, `message_key` null). This includes a header block over 256 KiB, which used to reject with `EMAXLEN` and record nothing. The id is the hash of the raw bytes: the identical bytes recorded twice return `duplicate: true` and write nothing, while a copy with any byte difference (a list footer, an added header) is its own record, linked by `message_key` (see `copies()`). An OTS failure or timeout is reported in `ots`, not thrown; the stamp runs inside the writer lock, so it is cut off after `clamp(floor(lockTimeoutMs / 3), 5000, 30000)` ms.
    * @example
    * const { id, duplicate } = await mp.record(fs.readFileSync('mail.eml'), { direction: 'in', source: 'file' });
    */
