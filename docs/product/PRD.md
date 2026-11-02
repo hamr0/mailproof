@@ -1,6 +1,6 @@
 # mailproof v2 — PRD
 
-> **Status:** v2 planning. 1.x is frozen at tag `v1.4.0` (branch `v1` takes security fixes only).
+> **Status:** v2 is released as 2.0.0 (M0 shipped). 1.x is frozen at tag `v1.4.0` (branch `v1` takes security fixes only).
 > **Owner:** hamr0 · **Last updated:** 2026-10-31
 >
 > **For future Claude:** this PRD wins on intent and scope. The *why* behind each choice is in

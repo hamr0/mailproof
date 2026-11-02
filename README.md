@@ -2,7 +2,7 @@
 
 **A re-checkable proof of an email, kept in a git repo you own.** mailproof records the *signed headers* of each email (never the body) plus the sender's archived public key, so anyone can verify the record offline, years later, even after the sender rotates their DKIM key.
 
-> **Status:** v2 in development on branch `v2` (M0 of `docs/product/PRD.md`). 1.x, the multi-party coordination kernel, is frozen at tag `v1.4.0`.
+> **Status:** v2 is released as 2.0.0 (see the CHANGELOG). 1.x, the multi-party coordination kernel, is frozen at tag `v1.4.0`.
 
 ```js
 import { Mailproof } from 'mailproof';
