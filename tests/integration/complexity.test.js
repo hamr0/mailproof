@@ -260,7 +260,7 @@ for (const c of WORST_CASES.filter((x) => x.heavy)) {
   test(`backstop fires: ${c.limit}: ${c.name}`, async () => {
     const { raw, resolver } = await c.build();
     admitted(raw);
-    const mp = new Mailproof({ trailDir: dir(), resolver: resolver || nxdomain, worker: { cpuMs: 100 } });
+    const mp = new Mailproof({ trailDir: dir(), resolver: resolver || nxdomain, worker: { cpuMs: 50 } });
     const r = await mp.check(raw);
     assert.equal(r.portable.reason, 'over limit: time', c.name);
     assert.equal(r.live.reason, 'over limit: time', c.name);

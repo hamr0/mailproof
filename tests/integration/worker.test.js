@@ -19,8 +19,10 @@ const nxdomain = async () => { throw Object.assign(new Error('no record'), { cod
 const git = (mp, ...a) => execFileSync('git', ['-C', mp.root, ...a], { encoding: 'utf8' }).trim();
 const workers = () => process.report.getReport().workers.length;
 const heavy = (name) => WORST_CASES.find((c) => c.name === name);
-/** Several seconds of CPU, but under every gate limit: it only dies to the backstop. */
-const SLOW = '500,000 one-byte CRLF lines, matching bh';
+/** Seconds of CPU (about 4 s here, 10 signatures over 500,000 lines), but under every gate limit: it only dies to the backstop. */
+const SLOW = '10 valid signatures, tampered 500,000 one-byte bare-LF lines';
+/** Above a plain message's first job on a fresh worker (about 180 ms CPU here, cold JIT), far below SLOW: ~4x slack each way, so no machine speed flips these tests. */
+const SLOW_CPU_MS = 800;
 const BIG = 'ordinary 24 MiB message with a base64 attachment';
 
 /** A Mailproof that is closed when the test ends. */
@@ -32,7 +34,7 @@ function make(t, opts = {}) {
 }
 
 test('worker: a message past the CPU budget is recorded once as "over limit: time", unverified, with nothing left behind', async (t) => {
-  const mp = make(t, { worker: { cpuMs: 300 } });
+  const mp = make(t, { worker: { cpuMs: SLOW_CPU_MS } });
   const { raw, resolver } = await heavy(SLOW).build();
   mp.resolver = resolver;
   const r = await mp.record(raw, { direction: 'in', source: 'slow' });
@@ -60,7 +62,7 @@ test('worker: a message past the CPU budget is recorded once as "over limit: tim
 });
 
 test('worker: check() reports a timed-out message like any over-limit one', async (t) => {
-  const mp = make(t, { worker: { cpuMs: 300 } });
+  const mp = make(t, { worker: { cpuMs: SLOW_CPU_MS } });
   const { raw, resolver } = await heavy(SLOW).build();
   mp.resolver = resolver;
   const c = await mp.check(raw);
@@ -209,7 +211,7 @@ test('worker: a program that never calls close() exits on its own, after a timed
     import { signedMail } from ${JSON.stringify(new URL('../helpers/proof.js', import.meta.url).href)};
     import { WORST_CASES } from ${JSON.stringify(new URL('../helpers/worst-cases.js', import.meta.url).href)};
     const good = await signedMail({ body: 'hi\\r\\n' });
-    const mp = new Mailproof({ trailDir: ${JSON.stringify(dir())}, resolver: good.resolver, worker: { cpuMs: 300 } });
+    const mp = new Mailproof({ trailDir: ${JSON.stringify(dir())}, resolver: good.resolver, worker: { cpuMs: ${SLOW_CPU_MS} } });
     const slow = await WORST_CASES.find((c) => c.name === ${JSON.stringify(SLOW)}).build();
     mp.resolver = slow.resolver;
     const b = await mp.check(slow.raw);   // the worker is killed ...

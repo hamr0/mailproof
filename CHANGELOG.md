@@ -29,7 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Docs: `close()` says a call still running at `close()` may reject, and if it does it is not recorded, so await first (JSDoc, SPEC, context). `matchFile` documents that junk bytes give `{ match: false, attachment: null }`.
 - CI runs on Node 22.19, the `engines` floor.
-- Tests pin `message_key` distinctness, the body-status empty-prefix and budget-charge branches, the worker-pool spawn failure paths, and one resolver guard per message. POC scratch paths use `os.tmpdir()`.
+- Tests pin `message_key` distinctness, the body-status empty-prefix and budget-charge branches, the worker-pool spawn failure paths, and one resolver guard per message. POC scratch paths use `os.tmpdir()`. The CPU-budget worker tests no longer depend on the machine's speed.
 
 ## [2.0.0] - 2026-11-02
 
