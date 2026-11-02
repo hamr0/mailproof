@@ -170,7 +170,9 @@ class WorkerPool {
           reply = { type: 'rpc-result', rpc: m.rpc, error: { message: String(err?.message), code: err?.code } };
         }
         if (settled) return;
-        w.postMessage(reply);
+        try { w.postMessage(reply); } catch {   // belt and braces: the guard in mailproof.js already refuses what cannot be cloned
+          w.postMessage({ type: 'rpc-result', rpc: m.rpc, error: { message: 'resolver returned a non-plain value', code: 'EBADRESP' } });
+        }
         if (--rpcOpen === 0) arm();
       } else if (m.type === 'done' && m.job === id) {
         let used = 0;
@@ -189,11 +191,13 @@ class WorkerPool {
     };
     const onError = (/** @type {any} */ e) => this.closed ? finish(new Error(`Mailproof: worker failed: ${e?.message}`), false) : kill(e?.code === 'ERR_WORKER_OUT_OF_MEMORY' ? 'memory' : 'crash');
     const onExit = () => (this.closed ? finish(new Error('Mailproof: worker exited unexpectedly'), false) : kill('crash'));
-    w.on('message', onMessage); w.on('error', onError); w.on('exit', onExit);
     w.ref();   // a busy worker keeps the process alive until its job settles
 
+    // A worker that fails before its hello (cannot load, cannot start) rejects the call. The job's own
+    // failure listeners are attached only once the worker is ready, so they cannot settle it as a crash first.
     try { await w.ready; } catch (e) { return finish(/** @type {Error} */ (e), false); }
     if (settled) return;
+    w.on('message', onMessage); w.on('error', onError); w.on('exit', onExit);
     // The caller's Buffer stays intact (it may be a view into Node's shared 8 KiB pool, which must never be
     // transferred), so the worker gets one private copy, moved rather than cloned.
     const payload = new Uint8Array(job.buf.length);

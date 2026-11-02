@@ -276,3 +276,65 @@ test('worker: the published files include the worker, and engines carries the No
   assert.ok(fs.existsSync(path.join(src, 'src/proof/worker.js')));
   assert.match(pkg.engines.node, /22\.19/);
 });
+
+test('worker: a worker that cannot start rejects check() and record(); nothing is recorded and no lock is left', async (t) => {
+  const mp = make(t, { worker: { size: 1 } });
+  const failing = new WorkerPool({ ...workerConfig({}), workerUrl: new URL('../helpers/start-fail-worker.js', import.meta.url) });
+  t.after(() => failing.close());
+  mp._lease = { run: (...a) => failing.run(...a), release: async () => {} };   // the private seam: Mailproof cannot name a worker file
+  const good = await signedMail({ body: 'hello\r\n' });
+  await assert.rejects(mp.check(good.raw), /boom at startup/);
+  await assert.rejects(mp.record(good.raw, { direction: 'in', source: 'x' }), /boom at startup/);
+  assert.deepEqual(await mp.list(), [], 'no record');
+  assert.deepEqual(fs.existsSync(path.dirname(mp.root)) ? fs.readdirSync(path.dirname(mp.root)).filter((f) => f.includes('lock')) : [], []);
+});
+
+test('worker: a lookup that never answers is a DNS error after DNS_TIMEOUT_MS, in the worker and in-process alike, and the next job is not blocked', { timeout: 120_000 }, async (t) => {
+  const good = await signedMail({ body: 'hello\r\n' });
+  // only the signing key's lookups hang; every other name is absent
+  const hang = (name) => (name.includes('_domainkey') ? new Promise(() => {}) : nxdomain());
+  const deadline = (p) => Promise.race([p, new Promise((r) => setTimeout(() => r('STILL PENDING after 60 s'), 60_000))]);
+  const inproc = new Mailproof({ trailDir: dir(), resolver: hang, worker: { size: 0 } });
+  const wk = make(t, { resolver: hang });
+  const other = make(t, { resolver: good.resolver });   // same config, so the same single worker: its job queues behind wk's
+  const [a, b, c] = await Promise.all([deadline(inproc.check(good.raw)), deadline(wk.check(good.raw)), deadline(other.check(good.raw))]);
+  assert.equal(typeof a, 'object', String(a));
+  assert.equal(typeof b, 'object', String(b));
+  assert.deepEqual(b, a, 'both modes answer the same');
+  assert.equal(a.portable.trust, 'unverified');
+  assert.deepEqual(a.key_errors, ['dns timeout']);
+  assert.equal(a.live.dkim[0].result, 'temperror', 'a timeout is a temp error, like an unreachable key');
+  assert.equal(typeof c, 'object', String(c));
+  assert.equal(c.portable.trust, 'verified', 'the job queued behind the hung lookup ran');
+});
+
+test('worker: a resolver answer that is not plain data is a DNS error: no crash, the same JSON in a worker and in-process, the record saved unverified', { timeout: 60_000 }, async (t) => {
+  // run in a child: on a build that throws out of the postMessage handler, the process dies, and that must fail an assertion, not the runner
+  const script = `
+    import { Mailproof } from ${JSON.stringify(new URL('../../src/index.js', import.meta.url).href)};
+    import { signedMail } from ${JSON.stringify(new URL('../helpers/proof.js', import.meta.url).href)};
+    import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path';
+    const good = await signedMail({ body: 'hello\\r\\n' });
+    const resolver = async () => [{ fn() {} }];
+    const out = {};
+    for (const size of [0, 1]) {
+      const mp = new Mailproof({ trailDir: fs.mkdtempSync(path.join(os.tmpdir(), 'mp-bad-')), resolver, worker: { size }, now: () => new Date('2026-01-01T00:00:00Z') });
+      const c = await mp.check(good.raw);
+      const r = await mp.record(good.raw, { direction: 'in', source: 'x' });
+      const rec = await mp.get(r.id);
+      out[size] = { c, rec: { ...rec, trail: undefined }, dup: r.duplicate };
+      await mp.close();
+    }
+    process.stdout.write(JSON.stringify(out));
+  `;
+  const r = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', timeout: 50_000 });
+  assert.equal(r.status, 0, `the process survived: ${r.stderr.slice(0, 300)}`);
+  const out = JSON.parse(r.stdout);
+  assert.deepEqual(out[1].c, out[0].c, 'check(): same in both modes');
+  assert.deepEqual(out[1].rec, out[0].rec, 'the record: same in both modes');
+  assert.equal(out[1].dup, false);
+  assert.equal(out[1].c.portable.trust, 'unverified');
+  assert.deepEqual(out[1].c.key_errors, ['resolver returned a non-plain value']);
+  assert.equal(out[1].c.live.dkim[0].result, 'temperror');
+  assert.equal(out[1].rec.verdicts.portable.trust, 'unverified');
+});

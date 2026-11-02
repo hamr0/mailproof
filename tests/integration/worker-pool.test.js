@@ -104,3 +104,21 @@ for (const kind of ['exit', 'throw']) {
     assert.equal(p.stats.spawned, 2);
   });
 }
+
+// A worker that cannot START is not a crash of a job: the call rejects and nothing is recorded (SPEC Part B, Limits).
+const STARTFAIL = new URL('../helpers/start-fail-worker.js', import.meta.url);
+
+test('pool: a worker that fails before it is ready rejects the call; it is not recorded as a crash', async (t) => {
+  const p = new mod.WorkerPool({ ...mod.workerConfig({}), workerUrl: STARTFAIL });
+  t.after(() => p.close());
+  await assert.rejects(p.run(buf, input('ok'), undefined), /boom at startup/);
+  assert.equal(p.stats.killed, 1, 'the dead worker is retired');
+  await assert.rejects(p.run(buf, input('ok'), undefined), /boom at startup/, 'and the next call is tried afresh');
+});
+
+test('pool: a resolver answer that cannot be cloned to the worker never throws out of the handler: the worker gets a DNS error', async (t) => {
+  const p = pool(t);
+  const r = await p.run(buf, input('dns'), async () => [{ fn() {} }]);
+  assert.deepEqual(r.out.error, { message: 'resolver returned a non-plain value', code: 'EBADRESP' });
+  await ok(p);
+});

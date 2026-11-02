@@ -69,6 +69,9 @@ export const MAX_BYTES = 2 * 1024 * 1024;
  */
 export const MAX_WORK = 64 * 1024 * 1024;
 
+/** One DNS lookup (a DKIM key, a DMARC record, ...). A lookup that has not answered by then is answered as a DNS error `dns timeout` (resolver-guard.js, keys.js). */
+export const DNS_TIMEOUT_MS = 5000;
+
 /**
  * The deadline backstop (pool.js), for what the gate above does not measure. `cpuMs`: CPU of the worker
  * thread one message may use; `wallMs`: busy wall time (DNS waits excluded); `maxMemoryMb`: heap plus external

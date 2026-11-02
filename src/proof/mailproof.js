@@ -4,6 +4,7 @@
 import path from 'node:path';
 import { overLimitRecord } from './over-limit.js';
 import { workerConfig, leasePool } from './pool.js';
+import { guardResolver } from './resolver-guard.js';
 import { engine } from './verdict.js';
 import { createOts, DEFAULT_OTS_TIMEOUT_MS } from './ots.js';
 import { verifyRecord, matchBodyRecord, matchFileRecord } from './recheck.js';
@@ -20,7 +21,7 @@ const OTS_MIN_TIMEOUT_MS = 5000; // floor for the `ots` timeout, however short l
  * @typedef {Object} MailproofOptions
  * @property {string} trailDir  Directory holding the trails; each trail is a git repo inside it.
  * @property {string} [trail]  Trail name (default "default").
- * @property {(name: string, type?: string) => Promise<any>} [resolver]  mailauth-compatible DNS resolver (tests inject one).
+ * @property {(name: string, type?: string) => Promise<any>} [resolver]  mailauth-compatible DNS resolver (tests inject one). A lookup it has not answered within 5 s is answered as the error `dns timeout` (`code: 'ETIMEOUT'`). It must return plain data, as `node:dns` does (a value structured clone refuses, such as a function, is answered as a DNS error, `code: 'EBADRESP'`).
  * @property {string | null} [otsBin]  Path to the `ots` binary; null/absent keeps OpenTimestamps off.
  * @property {() => Date} [now]  Clock (tests inject one).
  * @property {string[]} [trustedSealers]  ARC sealer domains whose chains may yield `forwarded` (live only).
@@ -93,13 +94,14 @@ class Mailproof {
     const captured = this.now().toISOString();
     const hasEnvelope = Boolean(ctx.envelope && (ctx.envelope.clientIp || ctx.envelope.sender));
     const trustedSealers = this.trustedSealers;
+    const resolver = this.resolver && guardResolver(this.resolver);   // a lookup that never answers, or answers with a non-plain value, is a DNS error, in the worker and in-process alike
     if (this.worker.size === 0) {
       // loaded here, not at the top: with a worker, only the worker pays for mailauth and mailparser
       const { buildRecord } = await import('./build.js');
-      return buildRecord(buf, ctx, { captured, hasEnvelope, trustedSealers, resolver: this.resolver });
+      return buildRecord(buf, ctx, { captured, hasEnvelope, trustedSealers, resolver });
     }
     this._lease ??= leasePool(this.worker);
-    const r = await this._lease.run(buf, { ctx, captured, hasEnvelope, trustedSealers }, this.resolver);
+    const r = await this._lease.run(buf, { ctx, captured, hasEnvelope, trustedSealers }, resolver);
     return 'out' in r ? r.out : overLimitRecord(buf, ctx, { captured, hasEnvelope, trustedSealers }, r.limit);
   }
 

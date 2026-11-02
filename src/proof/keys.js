@@ -16,6 +16,7 @@
 
 
 import { promises as dns } from 'node:dns';
+import { DNS_TIMEOUT_MS } from './limits.js';
 
 // Parse a DKIM record's `p=` value. DKIM records are semicolon-separated
 // tag=value; we only need p (public key). Returns base64 string or null.
@@ -84,7 +85,7 @@ const DKIM_LABEL_RE = /^[a-zA-Z0-9._-]+$/;
  * @param {{ resolver?: (name: string) => Promise<string[][]>, timeoutMs?: number }} [opts]
  * @returns {Promise<DkimArchive>}
  */
-async function fetchDkimKey(domain, selector, { resolver = resolveTxt, timeoutMs = 5000 } = {}) {
+async function fetchDkimKey(domain, selector, { resolver = resolveTxt, timeoutMs = DNS_TIMEOUT_MS } = {}) {
   if (!domain || !selector) return { pem: null, base64: null, error: 'missing domain/selector' };
   // Defensive input validation: selectors and domains in valid DKIM records are
   // ASCII labels. Reject anything weirder so we can't be coerced into looking up
