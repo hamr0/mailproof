@@ -2,7 +2,7 @@
 
 ## What this is
 
-mailproof records a re-checkable proof of each email in a **two-party (A to B) exchange** in a local git trail: the signed headers, never the body. The sender's DKIM public key is archived at capture, so anyone can verify the record offline, years later, after the key has left DNS. Pure ESM, Node >= 22.5, runtime deps `mailauth` + `mailparser`. Wire formats: `docs/product/SPEC.md` Part B (repo only).
+mailproof records a re-checkable proof of each email in a **two-party (A to B) exchange** in a local git trail: the signed headers, never the body. The sender's DKIM public key is archived at capture, so anyone can verify the record offline, years later, after the key has left DNS. Pure ESM, Node >= 22.19, runtime deps `mailauth` + `mailparser`. Wire formats: `docs/product/SPEC.md` Part B (repo only).
 
 ## What mailproof is and is not
 
@@ -34,8 +34,9 @@ import { Mailproof, verifyRecord, hashDocument, TRUST_LEVELS, RULES_VERSION } fr
 | `otsBin` | Path to the `ots` (OpenTimestamps) binary. Absent = OTS off. |
 | `now` | Clock `() => Date`. |
 | `trustedSealers` | ARC sealer domains whose chains may yield live `forwarded`. |
+| `worker` | The deadline backstop, default on: `{ size: 1, cpuMs: 15000, wallMs: 120000, maxMemoryMb: 1536 }`. `check()`/`record()` build in a warm worker thread that is killed over 15 s of its CPU, 120 s of busy wall time (DNS excluded) or 1,536 MB; the message is then recorded `unverified`, `over limit: time` / `over limit: memory`. `size: 0` builds in-process with no backstop. |
 
-All methods are bound: `const { verify } = mp` works.
+All methods are bound: `const { verify } = mp` works. `await mp.close()` stops the worker threads early; it is never needed for the process to exit.
 
 ## Public API
 
@@ -72,6 +73,6 @@ Portable `verified` covers the signed headers; read `body_status` for the body. 
 
 ## Constraints
 
-- Node >= 22.5; pure ESM (`import`, no `require`).
+- Node >= 22.19; pure ESM (`import`, no `require`).
 - One trail = one git repo; in-process writers are serialised, across processes only git's `index.lock` protects it.
 - Trail names match `/^[a-z0-9][a-z0-9_-]{0,63}$/`; record ids are 32 hex characters.

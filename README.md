@@ -22,9 +22,21 @@ await mp.check(emlBytes);             // one-off: verdicts only, writes nothing
 - If the body turns up later, it hashes to the signed `bh=`.
 - Attachment hashes are self-recorded at capture. They are tied to the signature only if the body is produced.
 
-Honest limits: a message over an input limit (more than 25 MiB; a header block over 256 KiB, 4,000 header lines or 1,000 header fields; more than 10 DKIM-Signature headers, 200 names in one `h=` or a signature field over 16 KiB; more than 200 MIME delimiter lines; a body line over 256 KiB; more than 500,000 body lines) is recorded but never parsed or verified: `unverified`, `reason: 'over limit: <name>'` on both verdicts (so a message whose only valid signature is the 11th is not verified); an unsigned email is recorded as `unverified`; a signature with `l=` leaves part of the body unsigned (flagged `partial_body`); SPF can never be re-checked from stored data, so the **portable** verdict uses DKIM only. `captured` is mailproof's own clock; use OpenTimestamps (`otsBin`) to make "captured no later than T" provable.
+Honest limits: a message over an input limit (more than 25 MiB; a header block over 256 KiB, 4,000 header lines or 1,000 header fields; more than 10 DKIM-Signature headers, 200 names in one `h=` or a signature field over 16 KiB; more than 200 MIME delimiter lines; a body line over 256 KiB; more than 500,000 body lines) is recorded but never parsed or verified: `unverified`, `reason: 'over limit: <name>'` on both verdicts (so a message whose only valid signature is the 11th is not verified); a message that, under those limits, still costs more than 15 s of CPU or 1,536 MB of memory is stopped by the worker backstop and recorded the same way (`over limit: time` / `over limit: memory`, see below); an unsigned email is recorded as `unverified`; a signature with `l=` leaves part of the body unsigned (flagged `partial_body`); SPF can never be re-checked from stored data, so the **portable** verdict uses DKIM only. `captured` is mailproof's own clock; use OpenTimestamps (`otsBin`) to make "captured no later than T" provable.
 
 Portable `verified` covers the signed headers; read `body_status` for the body (`matched`, `partial`, `mismatch`, with `explain` hints on what changed).
+
+## Worker thread and deadline
+
+`check()` and `record()` parse and verify in a warm worker thread; the commit, the lock and git stay on your thread. The thread is killed, and the message recorded `unverified` as `over limit: time` or `over limit: memory`, when one message uses more than 15 s of the thread's CPU, 120 s of busy wall time (DNS waits excluded) or 1,536 MB of memory. It backs up the input limits, which stay the first line. Waiting in the queue behind other messages does not count.
+
+```js
+new Mailproof({ trailDir, worker: { size: 1, cpuMs: 15000, wallMs: 120000, maxMemoryMb: 1536 } });  // the defaults
+new Mailproof({ trailDir, worker: { size: 0 } });   // no worker: build in-process, no backstop
+await mp.close();   // optional: idle workers do not keep your process alive
+```
+
+Cost: the first call starts the thread, which loads the parsers (roughly 0.4 to 1 s of wall time and 0.7 s of CPU extra for a program that handles one mail and exits; use `size: 0` there). Warm, a call costs about the same as in-process. Instances with the same options share their workers.
 
 ## Two verdicts
 
@@ -45,4 +57,4 @@ A trail has a single writer at a time, enforced by a lock file (`<trailDir>/.<tr
 
 ## Docs
 
-`docs/README.md` is the map. The record and trail formats are in `docs/product/SPEC.md` (Part B); the adopter contract is `mailproof.context.md`. Two runtime dependencies: `mailauth`, `mailparser`. Node >= 22.5. Pure ESM.
+`docs/README.md` is the map. The record and trail formats are in `docs/product/SPEC.md` (Part B); the adopter contract is `mailproof.context.md`. Two runtime dependencies: `mailauth`, `mailparser`. Node >= 22.19. Pure ESM.

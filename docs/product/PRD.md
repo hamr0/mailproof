@@ -275,7 +275,7 @@ unproven (M0, M1, M2), not for modules whose mechanism exists and is tested.
 AGENT_RULES applies: no commits to `main`; merging and releasing are the owner's call; dependency
 hierarchy vanilla → stdlib → external, with the External Dependency Checklist; types per
 LIBRARY_CONVENTIONS (checkJs + strictNullChecks, generated `.d.ts`, never committed); pure ESM;
-Node ≥ 22.5.
+Node ≥ 22.19 (`Worker#cpuUsage`, see F15).
 
 ## 12. Open questions (recorded, not assumed)
 
