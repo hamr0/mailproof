@@ -34,6 +34,7 @@ import { Mailproof, verifyRecord, hashDocument, TRUST_LEVELS, RULES_VERSION } fr
 | `otsBin` | Path to the `ots` (OpenTimestamps) binary. Absent = OTS off. |
 | `now` | Clock `() => Date`. |
 | `trustedSealers` | ARC sealer domains whose chains may yield live `forwarded`. |
+| `lockTimeoutMs` | How long `record()` waits for another writer of the same trail (default 30000). On timeout it throws `ERR_TRAIL_LOCKED` and writes nothing. |
 | `worker` | The deadline backstop, default on: `{ size: 1, cpuMs: 15000, wallMs: 120000, maxMemoryMb: 1536 }`. `check()`/`record()` build in a warm worker thread that is killed over 15 s of its CPU, 120 s of busy wall time (DNS excluded) or 1,536 MB; the message is then recorded `unverified`, `over limit: time` / `over limit: memory`. `size: 0` builds in-process with no backstop. |
 
 All methods are bound: `const { verify } = mp` works. `await mp.close()` stops the worker threads early; it is never needed for the process to exit.
@@ -41,7 +42,7 @@ All methods are bound: `const { verify } = mp` works. `await mp.close()` stops t
 ## Public API
 
 - `check(raw, { envelope? })` -> `{ live, portable, signatures, unsigned, partial_body, key_errors, body_status, body[] }`. Writes nothing. Judged as of now.
-- `record(raw, { direction: 'in'|'out', source?, envelope? })` -> `{ id, duplicate, commit, record?, ots? }`. One commit per record. Never throws on unverifiable mail (it is recorded `unverified`); throws on empty input, a bad `direction`, or a git failure. The same bytes captured again return `duplicate: true` and write nothing; a copy with any byte difference is a new record. `ots` is `'off'`, `'pending'` or `{ error }` (an OTS failure never blocks the commit).
+- `record(raw, { direction: 'in'|'out', source?, envelope? })` -> `{ id, duplicate, commit, record?, ots? }`. One commit per record. Never throws on unverifiable mail (it is recorded `unverified`); throws on empty input, a bad `direction`, a git failure, or `ERR_TRAIL_LOCKED` (another writer held the trail longer than `lockTimeoutMs`; nothing is written, retry later). The same bytes captured again return `duplicate: true` and write nothing; a copy with any byte difference is a new record. `ots` is `'off'`, `'pending'` or `{ error }` (an OTS failure never blocks the commit).
 - `verify(recordOrId, { at? })` -> `{ ok, trust, basis, at, engine, signatures[] }`. Offline, from the record alone. `at` defaults to the record's `captured`; a missing or garbled `captured` fails closed. `trust` is recomputed now.
 - `matchBody(recordOrId, raw)` -> `{ match, full, signatures[] }`. `full` = body matches `bh=` AND the signature verifies at capture time.
 - `matchFile(recordOrId, bytes)` -> `{ match, attachment }`.
@@ -69,10 +70,11 @@ Portable `verified` covers the signed headers; read `body_status` for the body. 
 
 - Mail altered in transit or by an export tool fails `matchBody` while `verify` still passes (headers intact); `body_status` says so at capture, with hints when the change can be explained.
 - A signature whose key is gone from DNS at capture is stored with `key_error`; it cannot verify.
-- Concurrent writers in one process are serialised; across processes only git's `index.lock` protects the trail.
+- A message over an input limit (25 MiB, 10 DKIM signatures, 256 KiB per body line, 500,000 body lines, ...) or one the worker backstop stops is still recorded, but never parsed: `unverified`, `reason: 'over limit: <name>'` (`time` / `memory` / `crash` for the backstop). A worker that cannot start rejects `check()`/`record()` and records nothing. Limits are in `docs/product/SPEC.md` Part B (Limits).
+- Writers are serialised per trail by a lock file that also covers separate processes (local filesystems only); a writer that waits longer than `lockTimeoutMs` gets `ERR_TRAIL_LOCKED`. Map it to a retry (Postfix: exit 75).
 
 ## Constraints
 
 - Node >= 22.19; pure ESM (`import`, no `require`).
-- One trail = one git repo; in-process writers are serialised, across processes only git's `index.lock` protects it.
+- One trail = one git repo; one writer at a time per trail, across processes too (lock file `<trailDir>/.<trail>.lock`, local filesystems only).
 - Trail names match `/^[a-z0-9][a-z0-9_-]{0,63}$/`; record ids are 32 hex characters.
