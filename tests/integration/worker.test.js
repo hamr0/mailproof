@@ -338,3 +338,26 @@ test('worker: a resolver answer that is not plain data is a DNS error: no crash,
   assert.equal(out[1].c.live.dkim[0].result, 'temperror');
   assert.equal(out[1].rec.verdicts.portable.trust, 'unverified');
 });
+
+test('worker: an envelope with extra, non-cloneable caller fields neither crashes the process nor hangs, and both modes agree', () => {
+  // A subprocess: on a regression the whole process dies (unhandled rejection) or hangs, and the parent asserts on it.
+  const script = `
+    import { Mailproof } from ${JSON.stringify(new URL('../../src/index.js', import.meta.url).href)};
+    import { signedMail } from ${JSON.stringify(new URL('../helpers/proof.js', import.meta.url).href)};
+    import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path';
+    const good = await signedMail({});
+    const resolver = good.resolver;
+    const out = {};
+    for (const size of [1, 0]) {
+      const mp = new Mailproof({ trailDir: fs.mkdtempSync(path.join(os.tmpdir(), 'mp-env-')), resolver, worker: { size }, now: () => new Date('2026-01-01T00:00:00Z') });
+      out[size] = await mp.check(good.raw, { envelope: { clientIp: '1.2.3.4', extra: () => 1 } });
+      await mp.close();
+    }
+    process.stdout.write(JSON.stringify(out));
+  `;
+  const tmp = makeTmpDir('mp-envsub-');
+  const r = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', timeout: 50_000, env: { ...process.env, TMPDIR: tmp } });
+  assert.equal(r.status, 0, `the process survived and finished: status ${r.status} signal ${r.signal} ${r.stderr.slice(0, 300)}`);
+  const out = JSON.parse(r.stdout);
+  assert.deepEqual(out[1], out[0], 'check(): same in both modes');
+});

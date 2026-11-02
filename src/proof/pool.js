@@ -115,10 +115,14 @@ class WorkerPool {
       let w = this.idle.pop();
       if (!w) {
         if (this.all.size >= Math.max(1, this.cfg.size)) return;
-        w = this._spawn();
+        try { w = this._spawn(); } catch (e) {   // the thread could not even be created: that job fails, the pump goes on
+          /** @type {NonNullable<typeof this.queue[number]>} */ (this.queue.shift()).reject(/** @type {Error} */ (e));
+          continue;
+        }
       }
       const job = /** @type {NonNullable<typeof this.queue[number]>} */ (this.queue.shift());
-      this._start(/** @type {any} */ (w), job);
+      // Nothing may escape _start unhandled: a rejected _start settles its own job (a no-op if it already settled).
+      this._start(/** @type {any} */ (w), job).catch((e) => { this._retire(w); job.reject(e instanceof Error ? e : new Error(String(e))); });
     }
   }
 
@@ -221,7 +225,11 @@ class WorkerPool {
       } catch { /* the worker ended between ticks: its own event settles the job */ } finally { reading = false; }
     }, TICK_MS);
     arm();
-    w.postMessage({ type: 'job', job: id, buf: payload, ...job.input }, [payload.buffer]);
+    try {
+      w.postMessage({ type: 'job', job: id, buf: payload, ...job.input }, [payload.buffer]);
+    } catch (e) {   // the input cannot be structured-cloned (a function or similar in a field the worker is sent): nothing reached the worker, so it is intact and reusable
+      finish(new Error(`Mailproof: message input cannot be sent to the worker: ${/** @type {any} */ (e)?.message}`), true);
+    }
   }
 
   /** Terminate every worker; jobs still queued are rejected. */

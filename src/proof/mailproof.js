@@ -91,6 +91,10 @@ class Mailproof {
   async _build(raw, ctx) {
     const buf = Buffer.isBuffer(raw) ? raw : Buffer.from(String(raw ?? ''));
     if (buf.length === 0) throw new Error('Mailproof: empty message');
+    // Only the three envelope fields the build reads (parse.js authenticateMessage) go on: extra caller fields are
+    // dropped here, in both modes, so they can never reach the worker's postMessage.
+    const e = ctx.envelope;
+    if (e && typeof e === 'object') ctx = { ...ctx, envelope: { clientIp: e.clientIp, clientHelo: e.clientHelo, sender: e.sender } };
     const captured = this.now().toISOString();
     const hasEnvelope = Boolean(ctx.envelope && (ctx.envelope.clientIp || ctx.envelope.sender));
     const trustedSealers = this.trustedSealers;

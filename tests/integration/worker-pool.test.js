@@ -149,3 +149,13 @@ test('pool: a crash during a job is still "crash", and the dead worker is gone',
   assert.equal(p.idle.length, 0);
   await ok(p);
 });
+
+test('pool: input that cannot be cloned to the worker rejects that job with a clear error, and the pool serves the next one', async (t) => {
+  const p = pool(t);
+  await ok(p);
+  const bad = input('ok');
+  bad.ctx.envelope = { clientIp: () => 1 };
+  await assert.rejects(() => p.run(buf, bad, undefined), /cannot be sent to the worker/);
+  await ok(p);
+  assert.equal(p.stats.spawned, 1, 'the worker was untouched and reused');
+});
