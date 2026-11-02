@@ -34,7 +34,7 @@
       "when": "Use to release the worker threads at once (a test, a long-lived process that is done checking mail). Workers are shared by instances with the same `worker` options, so they end when the last of those instances closes. Never needed for the process to exit.",
       "import": "import { Mailproof } from 'mailproof'",
       "signature": "mp.close() => Promise<void>",
-      "fails": "Never throws. A call with nothing to stop, or with `worker.size` 0, resolves at once. With a worker (`size` 1 or more), a `record()` or `check()` still running when `close()` is called (or when the last instance sharing the pool closes) rejects, and that message is NOT recorded: await in-flight calls before `close()`.",
+      "fails": "Never throws. A call with nothing to stop, or with `worker.size` 0, resolves at once. With a worker (`size` 1 or more), a `record()` or `check()` still running when `close()` is called (or when the last instance sharing the pool closes) may reject, and if it rejects that message is not recorded: await in-flight calls before `close()`.",
       "example": "await mp.close();"
     },
     {

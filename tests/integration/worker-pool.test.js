@@ -2,6 +2,8 @@
 // job can run away is reproduced here, on demand, and the pool must kill it, report why, and keep serving.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { Mailproof } from '../../src/index.js';
+import { makeTmpDir } from '../helpers/tmp.js';
 
 const mod = await import('../../src/proof/pool.js').catch(() => null);
 const FAULT = new URL('../helpers/fault-worker.js', import.meta.url);
@@ -181,8 +183,6 @@ test('pool: a job whose start rejects settles with that error and retires its wo
 });
 
 test('envelope: a function in an envelope field is read as null, identically with a worker and in-process', async (t) => {
-  const { Mailproof } = await import('../../src/index.js');
-  const { makeTmpDir } = await import('../helpers/tmp.js');
   const raw = Buffer.from('From: a@b.example\r\nSubject: env\r\n\r\nhi\r\n');
   const envelope = { clientIp: () => 1, clientHelo: () => 1, sender: () => 1 };
   const out = [];
@@ -193,6 +193,20 @@ test('envelope: a function in an envelope field is read as null, identically wit
     const r = await mp.record(raw, { direction: 'in', source: 'x', envelope });
     assert.equal(r.duplicate, false, `size ${size} records it`);
     assert.equal(c.live.spf, null, `size ${size}: no usable envelope, so no SPF`);
+    out.push(JSON.stringify([c, r.id, r.record]));
+  }
+  assert.equal(out[0], out[1], 'same result with a worker and in-process');
+});
+
+test('envelope: an envelope that is not an object is read as no envelope, identically with a worker and in-process', async (t) => {
+  const raw = Buffer.from('From: a@b.example\r\nSubject: env\r\n\r\nhi\r\n');
+  const out = [];
+  for (const size of [1, 0]) {
+    const mp = new Mailproof({ trailDir: makeTmpDir('mp-env-'), worker: { size }, now: () => new Date('2026-01-01T00:00:00Z') });
+    t.after(() => mp.close());
+    const c = await mp.check(raw, { envelope: () => 1 });
+    const r = await mp.record(raw, { direction: 'in', source: 'x', envelope: () => 1 });
+    assert.equal(r.duplicate, false, `size ${size} records it`);
     out.push(JSON.stringify([c, r.id, r.record]));
   }
   assert.equal(out[0], out[1], 'same result with a worker and in-process');

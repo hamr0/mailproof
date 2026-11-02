@@ -94,9 +94,11 @@ class Mailproof {
     // Only the three envelope fields the build reads (parse.js authenticateMessage) go on: extra caller fields are
     // dropped here, in both modes, so they can never reach the worker's postMessage. Each is a string or null: a
     // value of any other type (a function would not survive the worker's postMessage) becomes null, in both modes.
+    // An envelope that is not itself a non-null object is treated as absent, in both modes.
     const e = ctx.envelope;
     const str = (/** @type {unknown} */ v) => (typeof v === 'string' ? v : null);
     if (e && typeof e === 'object') ctx = { ...ctx, envelope: { clientIp: str(e.clientIp), clientHelo: str(e.clientHelo), sender: str(e.sender) } };
+    else if (e !== undefined) { const { envelope: _drop, ...rest } = ctx; ctx = rest; }
     const captured = this.now().toISOString();
     const hasEnvelope = Boolean(ctx.envelope && (ctx.envelope.clientIp || ctx.envelope.sender));
     const trustedSealers = this.trustedSealers;
@@ -119,7 +121,7 @@ class Mailproof {
    * @when Use to release the worker threads at once (a test, a long-lived process that is done checking mail). Workers are shared by instances with the same `worker` options, so they end when the last of those instances closes. Never needed for the process to exit.
    * @category proof
    * @signature mp.close() => Promise<void>
-   * @fails Never throws. A call with nothing to stop, or with `worker.size` 0, resolves at once. With a worker (`size` 1 or more), a `record()` or `check()` still running when `close()` is called (or when the last instance sharing the pool closes) rejects, and that message is NOT recorded: await in-flight calls before `close()`.
+   * @fails Never throws. A call with nothing to stop, or with `worker.size` 0, resolves at once. With a worker (`size` 1 or more), a `record()` or `check()` still running when `close()` is called (or when the last instance sharing the pool closes) may reject, and if it rejects that message is not recorded: await in-flight calls before `close()`.
    * @example
    * await mp.close();
    */

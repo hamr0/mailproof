@@ -14,7 +14,9 @@ const resolver = async (name, rr) => {
   return structuredClone(r.v);
 };
 const now = () => new Date('2026-11-02T00:00:00Z');
-const T = fs.mkdtempSync('/tmp/claude-1000/-home-hamr-PycharmProjects-mailproof/1eb0833c-1eeb-422b-ad29-0eeae0eed090/scratchpad/eq-');
+const SCR = process.env.WD_DIR || path.join(os.tmpdir(), 'mailproof-worker-deadline');
+fs.mkdirSync(SCR, { recursive: true });
+const T = fs.mkdtempSync(path.join(SCR, 'eq-'));
 const W = makeWorkerMailproof({ size: 2, deadlineMs: 60000, cpuMs: 30000 });
 const a = new Mailproof({ trailDir: path.join(T, 'a'), resolver, now });
 const b = new W({ trailDir: path.join(T, 'b'), resolver, now });
