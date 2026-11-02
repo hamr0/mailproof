@@ -70,7 +70,7 @@ Portable `verified` covers the signed headers; read `body_status` for the body. 
 
 - Mail altered in transit or by an export tool fails `matchBody` while `verify` still passes (headers intact); `body_status` says so at capture, with hints when the change can be explained.
 - A signature whose key is gone from DNS at capture is stored with `key_error`; it cannot verify.
-- A message over an input limit (25 MiB, 10 DKIM signatures, 256 KiB per body line, 500,000 body lines, ...) or one the worker backstop stops is still recorded, but never parsed: `unverified`, `reason: 'over limit: <name>'` (`time` / `memory` / `crash` for the backstop). A worker that cannot start rejects `check()`/`record()` and records nothing. Limits are in `docs/product/SPEC.md` Part B (Limits).
+- A message over an input limit (25 MiB, 10 DKIM signatures, 256 KiB per body line, 500,000 body lines, ...) or one the worker backstop stops is still recorded, but never parsed: `unverified`, `reason: 'over limit: <name>'` (`time` / `memory` / `crash` for the backstop). A worker that cannot start rejects `check()`/`record()` and records nothing. Only `envelope.clientIp`, `clientHelo` and `sender` are read; a non-plain value (a function) in one of them rejects the call in a worker (`message input cannot be sent to the worker`, nothing recorded) but not with `worker.size: 0`. Limits are in `docs/product/SPEC.md` Part B (Limits).
 - Writers are serialised per trail by a lock file that also covers separate processes (local filesystems only); a writer that waits longer than `lockTimeoutMs` gets `ERR_TRAIL_LOCKED`. Map it to a retry (Postfix: exit 75).
 
 ## Constraints
