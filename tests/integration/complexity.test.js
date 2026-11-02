@@ -235,7 +235,7 @@ for (const [name, mk] of Object.entries(GATE_SHAPES)) {
 // ---- layer 3: ceilings on what is admitted ---------------------------------------------------------------
 // Measured on an idle machine every case below the size cases is under 0.55 s (the 10 tampered signatures: 0.1-0.5 s;
 // before the per-message budget: 2.8-7.9 s). The ceiling is 2 s because CPU time itself stretches ~2x when the whole
-// suite runs its files in parallel; that still separates the two by a wide margin. Size cases: ~75 ms a MiB, linear.
+// suite runs its files in parallel; that still separates the two by a wide margin. Size cases: linear in size at a fixed line width (~75 ms a MiB of 76-column lines); the line-count cases pay per line instead (~3 us a line).
 const CEILING_DEFAULT_MS = 2000;
 /** CPU ms of one call after one warm-up call; the best of `runs` (a ceiling asks "can it be fast?", noise only ever adds). */
 async function bestOf(fn, { runs, warm }) {

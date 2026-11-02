@@ -7,7 +7,7 @@ import crypto from 'node:crypto';
 import { admit } from '../../src/proof/admit.js';
 import {
   MAX_HEADER_BYTES, MAX_HEADER_LINES, MAX_HEADER_FIELDS, MAX_SIGNATURES, MAX_H_NAMES, MAX_SIG_BYTES,
-  MAX_MIME_PARTS, MAX_BODY_LINE,
+  MAX_MIME_PARTS, MAX_BODY_LINE, MAX_BODY_LINES,
 } from '../../src/proof/limits.js';
 import { makeKey, signedMail } from './proof.js';
 
@@ -66,6 +66,8 @@ export const WORST_CASES = [
   { limit: 'body_line', name: 'one 256 KiB line of tabs and spaces, wrong bh', build: () => ({ raw: msg([SIG(), 'From: me@x.example'], 'a \t'.repeat(MAX_BODY_LINE / 3 - 1) + CRLF) }) },
   { limit: 'total_bytes', name: '96 lines of 256 KiB (24 MiB), matching bh', ceilingMs: 6000, why: 'linear in size: ~75 ms a MiB through mailparser, mailauth and our own hashing', build: () => { const b = ('a'.repeat(MAX_BODY_LINE) + CRLF).repeat(96); return { raw: msg([sigFor(b), 'From: me@x.example'], b) }; } },
   { limit: 'signatures', name: '10 valid signatures, tampered, a 256 KiB line then 5000 short lines', build: () => tampered({ body: 'a '.repeat(MAX_BODY_LINE / 2 - 2) + CRLF + Array.from({ length: 5000 }, (_, i) => 'l' + i).join(CRLF) + CRLF, flipFromEnd: 40 }) },
+  // ---- body line count: the cost per LINE, which the byte limits do not bound (3 us a line in mailparser and our canonicalisation) ----
+  { limit: 'body_lines', name: '500,000 one-byte CRLF lines, matching bh', ceilingMs: 6000, why: 'per line, not per byte: ~1.5-3 us a line', build: () => { const b = 'a\r\n'.repeat(MAX_BODY_LINES); return { raw: msg([sigFor(b), 'From: me@x.example'], b) }; } },
   // ---- MIME ----
   { limit: 'mime_parts', name: '190 attachment parts', build: () => ({ raw: msg(mimeHeaders(), parts(MAX_MIME_PARTS - 10, (i) => `--bnd${CRLF}Content-Type: application/octet-stream; name="f${i}.bin"${CRLF}Content-Disposition: attachment; filename="f${i}.bin"${CRLF}${CRLF}data${i}${CRLF}`) + `--bnd--${CRLF}`) }) },
   { limit: 'mime_parts', name: '190 message/rfc822 parts', build: () => ({ raw: msg(mimeHeaders('Subject: Fwd: x'), parts(MAX_MIME_PARTS - 10, () => rfc822(`From: a@b.example${CRLF}Subject: inner${CRLF}${CRLF}inner body${CRLF}`)) + `--bnd--${CRLF}`) }) },

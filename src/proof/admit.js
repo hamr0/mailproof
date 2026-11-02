@@ -17,7 +17,7 @@
 
 import {
   MAX_TOTAL_BYTES, MAX_HEADER_BYTES, MAX_HEADER_LINES, MAX_HEADER_FIELDS, MAX_SIGNATURES, MAX_H_NAMES,
-  MAX_SIG_BYTES, MAX_MIME_PARTS, MAX_BODY_LINE,
+  MAX_SIG_BYTES, MAX_MIME_PARTS, MAX_BODY_LINE, MAX_BODY_LINES,
 } from './limits.js';
 import { TAG_SPACE } from './signed-headers.js';
 
@@ -39,6 +39,7 @@ const lower = (c) => (c >= 65 && c <= 90 ? c + 32 : c);
  * @property {number} maxSigBytes  Largest DKIM-Signature field, folds included.
  * @property {number} mimeParts  Body lines that can be a MIME delimiter (start with `--` or `\r--`).
  * @property {number} maxBodyLine  Longest body line, line ending not counted.
+ * @property {number} bodyLines  Body lines: each LF, plus a last line with no ending.
  */
 
 /** `reason` of both verdicts on a message the gate refused. The one form, used everywhere. */
@@ -72,7 +73,7 @@ function isDkimName(buf, p) {
 }
 
 /**
- * Body: the longest line and the MIME-delimiter-like lines, in `m`. Short lines (most of them) end
+ * Body: the longest line, the line count and the MIME-delimiter-like lines, in `m`. Short lines (most of them) end
  * within a few bytes, so the first 32 bytes of a line are searched with a plain loop and only a longer
  * line costs an indexOf call; an empty line costs one compare. (indexOf alone is ~100 ns a line,
  * which makes a body of nothing but newlines the worst case.) A function of its own so the engine
@@ -81,8 +82,9 @@ function isDkimName(buf, p) {
  */
 function scanBody(buf, start, m) {
   const n = buf.length;
-  let ls = start, maxLine = 0, parts = 0;
+  let ls = start, maxLine = 0, parts = 0, count = 0;
   while (ls < n) {
+    count++;
     if (buf[ls] === LF) { ls++; continue; }
     let e = ls;
     const stop = ls + 32 < n ? ls + 32 : n;
@@ -98,6 +100,7 @@ function scanBody(buf, start, m) {
   }
   m.maxBodyLine = maxLine;
   m.mimeParts = parts;
+  m.bodyLines = count;
 }
 
 /**
@@ -105,12 +108,12 @@ function scanBody(buf, start, m) {
  * @param {Buffer} buf
  * @returns {{ ok: boolean, limit: string | null, m: Measure }}  `limit` names the limit exceeded
  *   (`total_bytes`, `header_bytes`, `header_lines`, `header_fields`, `signatures`, `h_names`,
- *   `sig_bytes`, `mime_parts`, `body_line`), else null.
+ *   `sig_bytes`, `mime_parts`, `body_line`, `body_lines`), else null.
  */
 function admit(buf) {
   const n = buf.length;
   /** @type {Measure} */
-  const m = { bytes: n, headerBytes: 0, headerLines: 0, headerFields: 0, signatures: 0, maxHNames: 0, maxSigBytes: 0, mimeParts: 0, maxBodyLine: 0 };
+  const m = { bytes: n, headerBytes: 0, headerLines: 0, headerFields: 0, signatures: 0, maxHNames: 0, maxSigBytes: 0, mimeParts: 0, maxBodyLine: 0, bodyLines: 0 };
   const refuse = (/** @type {string} */ limit) => ({ ok: false, limit, m });
   if (n > MAX_TOTAL_BYTES) return refuse('total_bytes');
 
@@ -195,6 +198,7 @@ function admit(buf) {
 
   scanBody(buf, bodyStart, m);
   if (m.maxBodyLine > MAX_BODY_LINE) return refuse('body_line');
+  if (m.bodyLines > MAX_BODY_LINES) return refuse('body_lines');
   if (m.mimeParts > MAX_MIME_PARTS) return refuse('mime_parts');
   return { ok: true, limit: null, m };
 }

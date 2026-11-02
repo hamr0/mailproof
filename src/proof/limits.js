@@ -8,7 +8,7 @@
 //
 // Sizing: each value is far above anything seen in real mail (the largest of 37 real messages is
 // 1.1 MB, its header block 17 KB, 212 header lines, 84 fields, 2 signatures, 17 MIME delimiter
-// lines, a longest body line of 1,004 bytes) and below the point where a measured cost stops being
+// lines, a longest body line of 1,004 bytes, 14,200 lines) and below the point where a measured cost stops being
 // linear: the sub-limits exist because header-only, signature-field, MIME-part and long-line costs
 // grow faster than their size (findings F14).
 
@@ -38,6 +38,14 @@ export const MAX_MIME_PARTS = 200;
 
 /** Longest body line, its line ending not counted (mailauth's relaxed body canonicaliser is super-linear in it). */
 export const MAX_BODY_LINE = 256 * 1024;
+
+/**
+ * Body lines (each ended by LF, plus a last one with no ending; a bare CR does not end one). Every layer behind
+ * the gate pays per line, not per byte: mailparser's text conversion, line canonicalisation and the GC
+ * measured ~3 us a line, so 1-byte lines cost 45x a byte more than 76-column ones. Sized by a 25 MiB
+ * base64 message (~345,000 lines of 76 bytes), which must be admitted; real mail peaks at 14,200.
+ */
+export const MAX_BODY_LINES = 500_000;
 
 /** Most inner (`message/rfc822`) messages examined per message, one level deep. */
 export const MAX_INNER = 10;

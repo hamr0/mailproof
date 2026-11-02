@@ -11,7 +11,7 @@ import { MessageParser } from 'mailauth/lib/dkim/message-parser';
 import { parseHeaders } from 'mailauth/lib/tools';
 import { admit, overLimitReason } from '../../src/proof/admit.js';
 import { splitMessage, signedNames, parseTags } from '../../src/proof/signed-headers.js';
-import { MAX_BODY_LINE, MAX_MIME_PARTS, MAX_HEADER_BYTES, MAX_H_NAMES } from '../../src/proof/limits.js';
+import { MAX_BODY_LINE, MAX_BODY_LINES, MAX_MIME_PARTS, MAX_HEADER_BYTES, MAX_H_NAMES, MAX_HEADER_FIELDS } from '../../src/proof/limits.js';
 
 const { simpleParser } = /** @type {any} */ (mailparserPkg);
 
@@ -208,10 +208,34 @@ test('body_line: the line ending is not counted; a last line with no ending is',
   }
 });
 
+test('body_lines: each LF ends a line, empty ones count, a last line with no ending counts, a bare CR does not end one', () => {
+  const head = 'A: 1\r\n\r\n';
+  const N = MAX_BODY_LINES;
+  /** @param {string} unit @param {number} n @param {string} [tail] */
+  const body = (unit, n, tail = '') => Buffer.from(head + unit.repeat(n) + tail);
+  for (const unit of ['a\r\n', 'a\n', '\r\n', '\n']) {
+    assert.equal(admit(body(unit, N)).limit, null, JSON.stringify(unit) + ' at the limit');
+    assert.equal(admit(body(unit, N)).m.bodyLines, N);
+    assert.equal(admit(body(unit, N + 1)).limit, 'body_lines', JSON.stringify(unit) + ' one over');
+  }
+  assert.equal(admit(body('a\n', N - 1, 'a')).limit, null, 'N-1 endings + an unterminated last line is N lines');
+  assert.equal(admit(body('a\n', N, 'a')).limit, 'body_lines', 'N endings + an unterminated last line is N+1');
+  assert.equal(admit(body('a\n', N, '')).m.bodyLines, N, 'a final ending does not open another line');
+  assert.equal(admit(body('a\r'.repeat(5) + '\n', N)).limit, null, 'lone CRs are inside a line, not line ends');
+  assert.equal(admit(body('a\r\r\n', N + 1)).limit, 'body_lines');
+  assert.equal(admit(Buffer.from('A: 1\r\n\r\n')).m.bodyLines, 0, 'no body, no lines');
+});
+
 test('header_bytes is measured to and including the empty line', () => {
   const pad = (n) => Buffer.from('A: ' + 'a'.repeat(n - 3 - 2) + '\r\n\r\nbody');   // header block = n + 2 bytes with the empty line
   assert.equal(admit(pad(MAX_HEADER_BYTES - 2)).limit, null);
   assert.equal(admit(pad(MAX_HEADER_BYTES - 1)).limit, 'header_bytes');
+});
+
+test('header_fields: exactly the limit is admitted, one more is refused', () => {
+  const msg = (n) => Buffer.from(Array.from({ length: n }, (_, i) => `X-${i}: v`).join('\r\n') + '\r\n\r\nb');
+  assert.equal(admit(msg(MAX_HEADER_FIELDS)).limit, null);
+  assert.equal(admit(msg(MAX_HEADER_FIELDS + 1)).limit, 'header_fields');
 });
 
 test('the reason has one stable form', () => {

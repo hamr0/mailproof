@@ -16,7 +16,7 @@ import { Mailproof, hashDocument, verifyRecord } from '../../src/index.js';
 import { admit, overLimitReason } from '../../src/proof/admit.js';
 import {
   MAX_TOTAL_BYTES, MAX_HEADER_BYTES, MAX_HEADER_LINES, MAX_HEADER_FIELDS, MAX_SIGNATURES, MAX_H_NAMES,
-  MAX_SIG_BYTES, MAX_MIME_PARTS, MAX_BODY_LINE,
+  MAX_SIG_BYTES, MAX_MIME_PARTS, MAX_BODY_LINE, MAX_BODY_LINES,
 } from '../../src/proof/limits.js';
 import { splitMessage } from '../../src/proof/signed-headers.js';
 import { signedMail, makeKey, recordOf } from '../helpers/proof.js';
@@ -70,6 +70,7 @@ const CASES = {
   },
   mime_parts: (over) => signedMail({ body: Array.from({ length: MAX_MIME_PARTS + (over ? 1 : 0) }, (_, i) => `--part${i}`).join('\r\n') + '\r\n' }),
   body_line: (over) => signedMail({ body: 'a'.repeat(MAX_BODY_LINE + (over ? 1 : 0)) + '\r\n' }),
+  body_lines: (over) => signedMail({ body: 'a\r\n'.repeat(MAX_BODY_LINES + (over ? 1 : 0)) }),
 };
 
 for (const [limit, build] of Object.entries(CASES)) {
@@ -156,8 +157,8 @@ test('a header block over 1 MiB is recorded over-limit (it used to reject with E
 });
 
 test('the limits are the documented numbers', () => {
-  assert.deepEqual([MAX_TOTAL_BYTES, MAX_HEADER_BYTES, MAX_HEADER_LINES, MAX_HEADER_FIELDS, MAX_SIGNATURES, MAX_H_NAMES, MAX_SIG_BYTES, MAX_MIME_PARTS, MAX_BODY_LINE],
-    [25 * 1024 * 1024, 256 * 1024, 4000, 1000, 10, 200, 16 * 1024, 200, 256 * 1024]);
+  assert.deepEqual([MAX_TOTAL_BYTES, MAX_HEADER_BYTES, MAX_HEADER_LINES, MAX_HEADER_FIELDS, MAX_SIGNATURES, MAX_H_NAMES, MAX_SIG_BYTES, MAX_MIME_PARTS, MAX_BODY_LINE, MAX_BODY_LINES],
+    [25 * 1024 * 1024, 256 * 1024, 4000, 1000, 10, 200, 16 * 1024, 200, 256 * 1024, 500_000]);
 });
 
 test('an h= over the limit never reaches a record, but a stored record carrying one still cannot verify offline', async () => {
