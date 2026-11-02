@@ -3,13 +3,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { Mailproof, verifyRecord, hashDocument, TRUST_LEVELS, RULES_VERSION } from 'mailproof';
 import { signedMail } from '../helpers/proof.js';
+import { makeTmpDir } from '../helpers/tmp.js';
 
 test('public entry: the whole M0 journey', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-e2e-'));
+  const dir = makeTmpDir('mp-e2e-');
   const file = Buffer.from('signed-off budget v3');
   const m = await signedMail({ attachment: { filename: 'budget.xlsx', bytes: file }, inReplyTo: '<ask@me.example>' });
 

@@ -9,9 +9,9 @@ import { MAX_LINES, MAX_WORK } from '../../src/proof/limits.js';
 import { splitMessage, parseTags } from '../../src/proof/signed-headers.js';
 import { Mailproof } from '../../src/proof/mailproof.js';
 import { signedMail, makeKey } from '../helpers/proof.js';
-import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
+import { makeTmpDir } from '../helpers/tmp.js';
 // Sign at the instant the instance clock is pinned to, so t= equals captured whatever the real date.
 const T0 = new Date('2026-11-01T10:00:00Z');
 
@@ -152,7 +152,7 @@ test('canonLines reproduces mailauth canonicalisation (hash over many shapes)', 
 });
 
 test('record()/check(): body_status stored per record, trust verdicts untouched, no body text on disk', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-body-'));
+  const dir = makeTmpDir('mp-body-');
   const m = await signedMail({ signTime: T0, body: BODY });
   const altered = withBody(m.raw, (b) => b + 'LEAKY-FOOTER-TEXT\r\n');
   const mp = new Mailproof({ trailDir: dir, resolver: m.resolver, now: () => new Date('2026-11-01T10:00:00Z') });
@@ -208,7 +208,7 @@ test('work budget: 10 valid signatures on one tampered body: the later ones are 
   const m = await signedMail({ signTime: T0, body, signers });
   const raw = Buffer.from(m.raw);
   raw[raw.length - 5000] ^= 1;                                  // alter the body: every bh= now mismatches
-  const mp = new Mailproof({ trailDir: fs.mkdtempSync(path.join(os.tmpdir(), 'mp-wb-')), resolver: m.resolver, now: () => T0 });
+  const mp = new Mailproof({ trailDir: makeTmpDir('mp-wb-'), resolver: m.resolver, now: () => T0 });
   const c = await mp.check(raw);
   assert.equal(c.body_status, 'mismatch');
   assert.deepEqual(c.body.map((b) => b.status), Array(10).fill('mismatch'));

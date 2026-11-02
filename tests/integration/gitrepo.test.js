@@ -10,10 +10,10 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import os from 'node:os';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createGitrepo } from '../../src/gitrepo.js';
+import { makeTmpDir } from '../helpers/tmp.js';
 
 const _exec = promisify(execFile);
 const gitOut = async (cwd, args) => (await _exec('git', args, { cwd })).stdout.trim();
@@ -26,7 +26,7 @@ let tmp;
 let repo;
 
 before(async () => {
-  tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'mailproof-repo-'));
+  tmp = makeTmpDir('mailproof-repo-');
   repo = createGitrepo({ dataDir: tmp }); // no ots → unanchored
 });
 

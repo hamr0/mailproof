@@ -14,15 +14,15 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import os from 'node:os';
 import { createEventStore } from '../../src/event-store.js';
 import { createGitrepo } from '../../src/gitrepo.js';
+import { makeTmpDir } from '../helpers/tmp.js';
 
 let tmpDir;
 let store;
 
 before(async () => {
-  tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'mailproof-test-'));
+  tmpDir = makeTmpDir('mailproof-test-');
   store = createEventStore({ dataDir: tmpDir });
   await fs.mkdir(path.join(tmpDir, 'events'), { recursive: true });
   await fs.writeFile(

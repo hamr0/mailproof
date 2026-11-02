@@ -11,17 +11,17 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
-import os from 'node:os';
 import path from 'node:path';
 
 import { create } from '../../src/create.js';
 import { verifiedFixture, noDnsResolver } from '../helpers/dkim.js';
+import { makeTmpDir } from '../helpers/tmp.js';
 
 const CRLF = '\r\n';
 const OPERATOR = 'app.example';
 
 async function tmpDir() {
-  return fs.mkdtemp(path.join(os.tmpdir(), 'mailproof-ingest-'));
+  return makeTmpDir('mailproof-ingest-');
 }
 
 // An unsigned plaintext reply — authenticates to 'unverified' under noDnsResolver.

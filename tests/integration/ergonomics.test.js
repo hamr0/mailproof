@@ -7,7 +7,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -15,10 +14,11 @@ import { create } from '../../src/create.js';
 import { saltedSenderHash as topLevelHash } from '../../src/legacy-index.js';
 import { createGitrepo } from '../../src/gitrepo.js';
 import { verifiedSigner } from '../helpers/dkim.js';
+import { makeTmpDir } from '../helpers/tmp.js';
 
 const OPERATOR = 'app.example';
 const envOf = (recipient, sender) => ({ recipient, sender, clientIp: '198.51.100.9', clientHelo: 'mta.example' });
-const tmpDir = () => fs.mkdtemp(path.join(os.tmpdir(), 'mailproof-ergo-'));
+const tmpDir = () => makeTmpDir('mailproof-ergo-');
 
 // G0 — `exports` exposes `./package.json` so a consumer can read mailproof's
 // version (`import pkg from 'mailproof/package.json'`).

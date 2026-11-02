@@ -5,18 +5,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { Mailproof } from '../../src/index.js';
 import { guardResolver } from '../../src/proof/resolver-guard.js';
 import * as limits from '../../src/proof/limits.js';
 import { signedMail } from '../helpers/proof.js';
+import { makeTmpDir } from '../helpers/tmp.js';
 
 const BUDGET = 30000;   // limits.DNS_BUDGET_MS, asserted below; a literal here so a missing export is a failed assertion
 // 30 s of DNS plus the CPU of 110 signatures, twice at once, on a machine the rest of the suite may be loading: the margin is
 // wide on purpose. Without the budget the same message costs ~555 s, so the deadline still separates the two by a factor of 9.
 const SLACK = 30000;
-const dir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'mp-dnsb-'));
+const dir = () => makeTmpDir('mp-dnsb-');
 const CRLF = '\r\n';
 const sig = (d, i) => `DKIM-Signature: v=1; a=rsa-sha256; d=${d}${i}.example; s=sel${i}; c=relaxed/relaxed; h=from; bh=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=; b=AAAA`;
 const inner = (k) => [...Array(10)].map((_, i) => sig('in' + k + 'x', i)).concat(['From: a@in.example', 'Subject: i', '']).join(CRLF) + CRLF + 'hi' + CRLF;

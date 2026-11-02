@@ -12,9 +12,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import os from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { createOts } from '../../src/proof/ots.js';
+import { makeTmpDir } from '../helpers/tmp.js';
 
 // Is a real `ots` client on PATH? Skip the real-binary smoke tests if not.
 const HAS_OTS = (() => {
@@ -32,7 +32,7 @@ test('createOts: requires otsBin', () => {
 });
 
 test('stampFile: returns {error}, never throws, when the ots binary is missing', async () => {
-  const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'mailproof-ots-'));
+  const tmp = makeTmpDir('mailproof-ots-');
   try {
     const f = path.join(tmp, 'dummy.json');
     await fs.writeFile(f, '{}');
@@ -47,7 +47,7 @@ test('stampFile: returns {error}, never throws, when the ots binary is missing',
 });
 
 test('upgradeProof: returns {error}, never throws, when the ots binary is missing', async () => {
-  const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'mailproof-ots-'));
+  const tmp = makeTmpDir('mailproof-ots-');
   try {
     const f = path.join(tmp, 'commit-001.ots');
     await fs.writeFile(f, 'not a real proof');
@@ -64,7 +64,7 @@ test('upgradeProof: returns {error}, never throws, when the ots binary is missin
 });
 
 test('readBlockHeight: returns null, never throws, when the ots binary is missing', async () => {
-  const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'mailproof-ots-'));
+  const tmp = makeTmpDir('mailproof-ots-');
   try {
     const f = path.join(tmp, 'commit-001.ots');
     await fs.writeFile(f, 'not a real proof');
@@ -79,7 +79,7 @@ test('readBlockHeight: returns null, never throws, when the ots binary is missin
 // handling deterministically (a non-proof input fails locally — no network, no
 // Bitcoin confirmation needed). Skipped when no `ots` client is installed.
 test('upgradeProof: real ots on a non-proof file reports pending/no-anchor without throwing', { skip: !HAS_OTS }, async () => {
-  const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'mailproof-ots-'));
+  const tmp = makeTmpDir('mailproof-ots-');
   try {
     const f = path.join(tmp, 'garbage.ots');
     const before = 'definitely not a serialized ots proof';
@@ -99,7 +99,7 @@ test('upgradeProof: real ots on a non-proof file reports pending/no-anchor witho
 });
 
 test('readBlockHeight: real ots on a non-proof file returns null without throwing', { skip: !HAS_OTS }, async () => {
-  const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'mailproof-ots-'));
+  const tmp = makeTmpDir('mailproof-ots-');
   try {
     const f = path.join(tmp, 'garbage.ots');
     await fs.writeFile(f, 'definitely not a serialized ots proof');

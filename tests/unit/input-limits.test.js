@@ -10,7 +10,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { Mailproof, hashDocument, verifyRecord } from '../../src/index.js';
 import { admit, overLimitReason } from '../../src/proof/admit.js';
@@ -20,8 +19,9 @@ import {
 } from '../../src/proof/limits.js';
 import { splitMessage } from '../../src/proof/signed-headers.js';
 import { signedMail, makeKey, recordOf } from '../helpers/proof.js';
+import { makeTmpDir } from '../helpers/tmp.js';
 
-const trailDir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'mp-lim-'));
+const trailDir = () => makeTmpDir('mp-lim-');
 const BASE = ['from', 'to', 'subject', 'date', 'message-id'];
 
 /** Wrap a resolver so every DNS question (any type) is logged. */

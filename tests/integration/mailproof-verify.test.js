@@ -2,14 +2,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { Mailproof } from '../../src/proof/mailproof.js';
 import { signedMail, stubResolver } from '../helpers/proof.js';
+import { makeTmpDir } from '../helpers/tmp.js';
 // Sign at the instant the instance clock is pinned to, so t= equals captured whatever the real date.
 const T0 = new Date('2026-11-01T10:00:00Z');
 
-const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'mp-ver-'));
+const tmp = () => makeTmpDir('mp-ver-');
 const clock = (iso = '2026-11-01T10:00:00Z') => () => new Date(iso);
 
 test('verify is offline: no DNS call, and still passes after the key leaves DNS', async () => {

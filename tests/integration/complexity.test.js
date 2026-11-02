@@ -33,7 +33,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { Mailproof, verifyRecord } from '../../src/index.js';
 import { createOts } from '../../src/proof/ots.js';
@@ -41,6 +40,7 @@ import { admit } from '../../src/proof/admit.js';
 import { MAX_TOTAL_BYTES } from '../../src/proof/limits.js';
 import { makeKey, signedMail } from '../helpers/proof.js';
 import { WORST_CASES, admitted } from '../helpers/worst-cases.js';
+import { makeTmpDir } from '../helpers/tmp.js';
 
 const RATIO = 3;
 const SLACK_MS = 100;
@@ -48,7 +48,7 @@ const CEILING_MS = 2500;
 const RUNS = 3;
 const REPORT = Boolean(process.env.COMPLEXITY_REPORT);
 
-const dir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'mp-cx-'));
+const dir = () => makeTmpDir('mp-cx-');
 const nxdomain = async () => { throw Object.assign(new Error('no record'), { code: 'ENOTFOUND' }); };
 const CRLF = '\r\n';
 const SIG = (extra = '') => `DKIM-Signature: v=1; a=rsa-sha256; d=x.example; s=sel; c=relaxed/relaxed; h=from; bh=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=; b=AAAA${extra}`;

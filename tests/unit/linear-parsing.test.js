@@ -5,7 +5,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { trimTrailingWs } from '../../src/proof/body-status.js';
 import { extractAddresses, verifyRecord } from '../../src/proof/recheck.js';
@@ -13,6 +12,7 @@ import { listIdInner } from '../../src/proof/relay.js';
 import { parseOtsBlockHeight, createOts } from '../../src/proof/ots.js';
 import { Mailproof } from '../../src/index.js';
 import { signedMail, recordOf } from '../helpers/proof.js';
+import { makeTmpDir } from '../helpers/tmp.js';
 
 // --- oracles: the regexes the linear code replaced ---------------------------
 const oracleTrim = (l) => l.replace(/[ \t]+$/, '');
@@ -106,7 +106,7 @@ const MB = 1_000_000;   // the offline entry points (verifyRecord, readBlockHeig
 const FIT = 250_000;    // just under the gate's 256 KiB header block and body line: the biggest a record() input can be
 const LIMIT_MS = 500;
 const SPLIT = Buffer.from('\r\n\r\n');
-const trailDir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'mp-linear-'));
+const trailDir = () => makeTmpDir('mp-linear-');
 async function timed(f) { const t = performance.now(); await f(); return performance.now() - t; }
 
 // record() also runs mailauth and mailsplit over the same bytes, and their parsing sets a
@@ -159,7 +159,7 @@ test('record(): a List-Id of "<" characters at the 256 KiB header limit costs ab
 });
 
 test('readBlockHeight(): 1 MB of attestation nodes with no 6-digit run is parsed in < 500 ms (the old regex rescanned per node)', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-ots-'));
+  const dir = makeTmpDir('mp-ots-');
   const bin = path.join(dir, 'ots');
   fs.writeFileSync(bin, `#!/bin/sh\nyes 'BitcoinBlockHeaderAttestation 12345 ' | head -c ${MB}\n`, { mode: 0o755 });
   const ots = createOts({ otsBin: bin, timeoutMs: 20000 });

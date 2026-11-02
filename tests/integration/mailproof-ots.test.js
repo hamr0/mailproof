@@ -2,14 +2,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { Mailproof, otsTimeoutMs } from '../../src/proof/mailproof.js';
 import { signedMail } from '../helpers/proof.js';
+import { makeTmpDir } from '../helpers/tmp.js';
 
-const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'mp-ots-'));
+const tmp = () => makeTmpDir('mp-ots-');
 function fakeOts(body) {
   const f = path.join(tmp(), 'ots');
   fs.writeFileSync(f, `#!/bin/sh\n${body}\n`, { mode: 0o755 });

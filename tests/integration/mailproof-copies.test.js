@@ -3,14 +3,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { Mailproof } from '../../src/proof/mailproof.js';
 import { signedMail } from '../helpers/proof.js';
+import { makeTmpDir } from '../helpers/tmp.js';
 // Sign at the instant the instance clock is pinned to, so t= equals captured whatever the real date.
 const T0 = new Date('2026-11-01T10:00:00Z');
 
-const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'mp-copies-'));
+const tmp = () => makeTmpDir('mp-copies-');
 const clock = (iso) => () => new Date(iso);
 const BODY = 'Hello there.\r\nSecond line.\r\n';
 const SPLIT = Buffer.from('\r\n\r\n');

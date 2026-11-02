@@ -5,7 +5,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -13,8 +12,9 @@ import { Mailproof } from '../../src/index.js';
 import { signedMail } from '../helpers/proof.js';
 import { WORST_CASES } from '../helpers/worst-cases.js';
 import { WorkerPool, workerConfig } from '../../src/proof/pool.js';
+import { makeTmpDir } from '../helpers/tmp.js';
 
-const dir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'mp-wk-'));
+const dir = () => makeTmpDir('mp-wk-');
 const nxdomain = async () => { throw Object.assign(new Error('no record'), { code: 'ENOTFOUND' }); };
 const git = (mp, ...a) => execFileSync('git', ['-C', mp.root, ...a], { encoding: 'utf8' }).trim();
 const workers = () => process.report.getReport().workers.length;
@@ -327,7 +327,7 @@ test('worker: a resolver answer that is not plain data is a DNS error: no crash,
     }
     process.stdout.write(JSON.stringify(out));
   `;
-  const r = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', timeout: 50_000 });
+  const r = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', timeout: 50_000, env: { ...process.env, TMPDIR: makeTmpDir('mp-badsub-') } });   // the child's own trail dirs live under a dir this process removes
   assert.equal(r.status, 0, `the process survived: ${r.stderr.slice(0, 300)}`);
   const out = JSON.parse(r.stdout);
   assert.deepEqual(out[1].c, out[0].c, 'check(): same in both modes');

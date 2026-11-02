@@ -6,14 +6,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { sendmail } from '../../src/outbound.js';
+import { makeTmpDir } from '../helpers/tmp.js';
 
 // Write an executable fake-sendmail script into a fresh tmp dir; returns
 // { dir, script, ...extra } and registers cleanup on the test context.
 function fakeSendmail(t, bodyLines) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mailproof-outbound-'));
+  const dir = makeTmpDir('mailproof-outbound-');
   const script = path.join(dir, 'fake-sendmail.sh');
   fs.writeFileSync(script, `#!/bin/sh\n${bodyLines.join('\n')}\n`, { mode: 0o755 });
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));

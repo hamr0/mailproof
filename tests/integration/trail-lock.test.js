@@ -10,9 +10,10 @@ import { fileURLToPath } from 'node:url';
 import { Mailproof } from '../../src/proof/mailproof.js';
 import { commitRecord } from '../../src/proof/trail.js';
 import { signedMail } from '../helpers/proof.js';
+import { makeTmpDir } from '../helpers/tmp.js';
 
 const HELPER = fileURLToPath(new URL('../helpers/record-proc.js', import.meta.url));
-const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'mp-lock-'));
+const tmp = () => makeTmpDir('mp-lock-');
 const gitOut = (cwd, ...a) => execFileSync('git', a, { cwd, encoding: 'utf8' }).trim();
 
 /** Run the helper as a child process; resolves { code, out } with the parsed JSON line. */

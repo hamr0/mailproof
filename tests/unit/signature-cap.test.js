@@ -5,13 +5,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { Mailproof } from '../../src/index.js';
 import { MAX_SIGNATURES } from '../../src/proof/limits.js';
 import { signedMail } from '../helpers/proof.js';
+import { makeTmpDir } from '../helpers/tmp.js';
 
-const trailDir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'mp-cap-'));
+const trailDir = () => makeTmpDir('mp-cap-');
 const bogus = (i) => `DKIM-Signature: v=1; a=rsa-sha256; d=bogus${i}.example; s=sel; c=relaxed/relaxed; h=from; bh=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=; b=AAAA`;
 const bogusRows = (n, from = 0) => Array.from({ length: n }, (_, i) => bogus(from + i));
 const plain = (extra) => Buffer.from([...extra, 'From: me@signer.example', 'To: rcpt@other.example', 'Subject: hi', 'Date: Sun, 01 Nov 2026 10:00:00 GMT', 'Message-ID: <cap@signer.example>', '', 'body', ''].join('\r\n'));

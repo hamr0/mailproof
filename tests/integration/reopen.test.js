@@ -10,18 +10,18 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import fss from 'node:fs';
 import { execFileSync } from 'node:child_process';
-import os from 'node:os';
 import path from 'node:path';
 
 import { create } from '../../src/create.js';
 import { verifiedSigner } from '../helpers/dkim.js';
+import { makeTmpDir } from '../helpers/tmp.js';
 
 const OPERATOR = 'app.example';
 const envOf = (recipient, sender) => ({ recipient, sender, clientIp: '198.51.100.9', clientHelo: 'mta.example' });
-const tmpDir = () => fs.mkdtemp(path.join(os.tmpdir(), 'mailproof-reopen-'));
+const tmpDir = () => makeTmpDir('mailproof-reopen-');
 
 function fakeSendmail() {
-  const dir = fss.mkdtempSync(path.join(os.tmpdir(), 'mailproof-reopen-cap-'));
+  const dir = makeTmpDir('mailproof-reopen-cap-');
   const script = path.join(dir, 'sendmail.sh');
   fss.writeFileSync(script, `#!/bin/sh\nf=$(mktemp "${dir}/msg.XXXXXX")\ncat > "$f"\nexit 0\n`, { mode: 0o755 });
   return { script, cleanup: () => fss.rmSync(dir, { recursive: true, force: true }) };
