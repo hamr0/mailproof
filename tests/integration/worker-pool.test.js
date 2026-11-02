@@ -52,11 +52,11 @@ test('pool: a JS heap blow-up is stopped as memory, too', async (t) => {
 });
 
 test('pool: the wall budget is busy time: a lookup waiting on the caller is not counted, a sleep in the worker is', async (t) => {
-  const p = pool(t, { wallMs: 500, cpuMs: 60000 });
-  const slow = async () => { await new Promise((r) => setTimeout(r, 1500)); return [['v=DKIM1']]; };
+  const p = pool(t, { wallMs: 1500, cpuMs: 60000 });   // generous for a loaded machine; the lookup waits longer than this
+  const slow = async () => { await new Promise((r) => setTimeout(r, 2500)); return [['v=DKIM1']]; };
   const r = await p.run(buf, input('dns'), slow);
   assert.deepEqual(r.out.answer, [['v=DKIM1']]);
-  assert.deepEqual(await p.run(buf, input('sleep', { captured: '5000' }), undefined), { limit: 'time' });
+  assert.deepEqual(await p.run(buf, input('sleep', { captured: '8000' }), undefined), { limit: 'time' });
   await ok(p);
 });
 
@@ -67,7 +67,7 @@ test('pool: a resolver error reaches the worker with its message and code', asyn
 });
 
 test('pool: the clock starts when a worker starts the job, never at enqueue', async (t) => {
-  const p = pool(t, { size: 1, wallMs: 1200, cpuMs: 60000 });
+  const p = pool(t, { size: 1, wallMs: 2000, cpuMs: 60000 });
   const t0 = performance.now();
   // 6 jobs of ~400 ms busy each through one worker: 2.4 s in all, twice the budget of one job
   const rs = await Promise.all(Array.from({ length: 6 }, () => p.run(buf, input('sleep', { captured: '400' }), undefined)));

@@ -89,18 +89,29 @@ test('worker: the memory watchdog stops a message that needs more memory than th
 test('worker: wall time counts busy time only; a slow DNS answer does not spend it', async (t) => {
   const good = await signedMail({ body: 'hello\r\n' });
   let lookups = 0;
-  const slow = async (n, ty) => { lookups++; await new Promise((r) => setTimeout(r, 1200)); return good.resolver(n, ty); };
-  const mp = make(t, { worker: { wallMs: 800 }, resolver: slow });
+  let sleepMs = 0;
+  let slowDns = false;
+  const SLEEP = 1500;
+  const resolver = async (n, ty) => {
+    if (slowDns) { lookups++; sleepMs += SLEEP; await new Promise((r) => setTimeout(r, SLEEP)); }
+    return good.resolver(n, ty);
+  };
+  // The budget is far above what the (tiny) job needs even on a loaded machine, and far below the DNS waiting.
+  const mp = make(t, { worker: { wallMs: 2500 }, resolver });
+  // Start the worker first (its module load is slow under load and is not what is measured), with fast DNS.
+  assert.equal((await mp.check(Buffer.concat([Buffer.from('X-Warm: 1\r\n'), good.raw]))).portable.trust, 'verified');
+  slowDns = true;
   const t0 = performance.now();
   const c = await mp.check(good.raw);
-  assert.ok(performance.now() - t0 > 1200, 'the lookups really were slow');
   assert.ok(lookups > 0, 'DNS went through the caller\'s resolver');
+  assert.ok(sleepMs > 2500, `the DNS waits (${sleepMs} ms) alone exceed the wall budget, so counting them would kill the job`);
+  assert.ok(performance.now() - t0 > 2500, 'the lookups really were slow');
   assert.equal(c.portable.trust, 'verified');
   assert.equal(c.portable.reason, undefined);
-  // the same budget does stop a message that is BUSY for longer than it
+  // the same kind of budget does stop a message that is BUSY for longer than it (it needs seconds of CPU)
   const busy = make(t, { worker: { wallMs: 300, cpuMs: 1e9 } });
-  const { raw, resolver } = await heavy(SLOW).build();
-  busy.resolver = resolver;
+  const { raw, resolver: heavyResolver } = await heavy(SLOW).build();
+  busy.resolver = heavyResolver;
   assert.equal((await busy.check(raw)).portable.reason, 'over limit: time');
 });
 
@@ -179,13 +190,13 @@ test('worker: a program that never calls close() exits on its own, after a timed
 test('worker: queueing is not time spent: messages waiting behind a slow job are not timed out', async (t) => {
   const good = await signedMail({ body: 'hello\r\n' });
   let first = true;
-  // the first job waits 2.5 s for DNS, longer than the 1 s busy budget; the four behind it wait in the queue that long
-  const resolver = async (n, ty) => { if (first) { first = false; await new Promise((r) => setTimeout(r, 2500)); } return good.resolver(n, ty); };
-  const mp = make(t, { resolver, worker: { size: 1, wallMs: 1000 } });
+  // the first job waits 3.5 s for DNS, longer than the 2.5 s busy budget; the four behind it wait in the queue that long
+  const resolver = async (n, ty) => { if (first) { first = false; await new Promise((r) => setTimeout(r, 3500)); } return good.resolver(n, ty); };
+  const mp = make(t, { resolver, worker: { size: 1, wallMs: 2500 } });
   const before = workers();
   const t0 = performance.now();
   const all = await Promise.all(Array.from({ length: 5 }, (_, i) => mp.check(Buffer.concat([Buffer.from(`X-N: ${i}\r\n`), good.raw]))));
-  assert.ok(performance.now() - t0 > 2400);
+  assert.ok(performance.now() - t0 > 3400);
   assert.deepEqual(all.map((c) => c.portable.reason), Array(5).fill(undefined));
   assert.equal(workers(), before + 1, 'one worker served all five');
 });
