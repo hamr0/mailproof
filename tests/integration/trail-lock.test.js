@@ -361,7 +361,9 @@ test('a record() child ends on its own right after it answers (no lingering DNS-
 /** record() with a short lockTimeoutMs; fails the test instead of hanging if the wait never settles. */
 async function recordWithDeadline(trailDir, lockTimeoutMs) {
   const m = await signedMail({ body: 'deadline\r\n' });
-  const mp = new Mailproof({ trailDir, resolver: m.resolver, lockTimeoutMs });
+  // in-process, parsers already loaded: the wait being timed is the lock's, not a worker thread's start-up
+  await import('../../src/proof/build.js');
+  const mp = new Mailproof({ trailDir, resolver: m.resolver, lockTimeoutMs, worker: { size: 0 } });
   const t0 = Date.now();
   let timer;
   const hang = new Promise((r) => { timer = setTimeout(() => r('HUNG'), 4000); });

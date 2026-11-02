@@ -1,6 +1,7 @@
 // TEST-ONLY: for every input limit (src/proof/limits.js), the most expensive message that is still
-// ADMITTED, i.e. built just under the limit. check() on each must stay cheap: the gate bounds the size of
-// what reaches the parsers, and these are the shapes that cost the most per byte once they get there.
+// ADMITTED, i.e. built just under the limit. check() on each must stay far inside the worker backstop's budget
+// (pool.js): the gate bounds the size of what reaches the parsers, and these are the shapes that cost the most
+// per byte once they get there. `heavy` marks the ones that cost seconds of CPU (the size and line-count cases).
 // Each case says which limit it sits under; `admitted()` asserts that the gate really lets it through
 // (a case the gate refuses would time the gate, not the code behind it). NEVER imported from src/.
 import crypto from 'node:crypto';
@@ -45,7 +46,7 @@ const rfc822 = (inner) => `--bnd${CRLF}Content-Type: message/rfc822${CRLF}${CRLF
 const parts = (n, mk) => Array.from({ length: n }, (_, i) => mk(i)).join('');
 const mimeHeaders = (...h) => [SIG(), 'From: me@x.example', 'MIME-Version: 1.0', 'Content-Type: multipart/mixed; boundary="bnd"', ...h];
 
-/** @type {Array<{ name: string, limit: string, build: () => Promise<{ raw: Buffer, resolver?: Function }> | { raw: Buffer, resolver?: Function }, ceilingMs?: number, why?: string }>} */
+/** @type {Array<{ name: string, limit: string, build: () => Promise<{ raw: Buffer, resolver?: Function }> | { raw: Buffer, resolver?: Function }, heavy?: boolean, why?: string }>} */
 export const WORST_CASES = [
   // ---- header block ----
   { limit: 'header_bytes', name: 'one unfolded Subject filling the header block', build: () => ({ raw: msg([SIG(), 'From: me@x.example', 'Subject: ' + 'a'.repeat(MAX_HEADER_BYTES - 4096)]) }) },
@@ -64,13 +65,13 @@ export const WORST_CASES = [
   // ---- body line ----
   { limit: 'body_line', name: 'one line of exactly 256 KiB, matching bh', build: () => { const b = 'a'.repeat(MAX_BODY_LINE) + CRLF; return { raw: msg([sigFor(b), 'From: me@x.example'], b) }; } },
   { limit: 'body_line', name: 'one 256 KiB line of tabs and spaces, wrong bh', build: () => ({ raw: msg([SIG(), 'From: me@x.example'], 'a \t'.repeat(MAX_BODY_LINE / 3 - 1) + CRLF) }) },
-  { limit: 'total_bytes', name: '96 lines of 256 KiB (24 MiB), matching bh', ceilingMs: 6000, why: 'linear in size: ~75 ms a MiB through mailparser, mailauth and our own hashing', build: () => { const b = ('a'.repeat(MAX_BODY_LINE) + CRLF).repeat(96); return { raw: msg([sigFor(b), 'From: me@x.example'], b) }; } },
+  { limit: 'total_bytes', name: '96 lines of 256 KiB (24 MiB), matching bh', heavy: true, why: 'linear in size: ~75 ms a MiB through mailparser, mailauth and our own hashing', build: () => { const b = ('a'.repeat(MAX_BODY_LINE) + CRLF).repeat(96); return { raw: msg([sigFor(b), 'From: me@x.example'], b) }; } },
   { limit: 'signatures', name: '10 valid signatures, tampered, a 256 KiB line then 5000 short lines', build: () => tampered({ body: 'a '.repeat(MAX_BODY_LINE / 2 - 2) + CRLF + Array.from({ length: 5000 }, (_, i) => 'l' + i).join(CRLF) + CRLF, flipFromEnd: 40 }) },
   // ---- body line count: the cost per LINE, which the byte limits do not bound (3 us a line in mailparser and our canonicalisation) ----
-  { limit: 'body_lines', name: '500,000 one-byte CRLF lines, matching bh', ceilingMs: 6000, why: 'per line, not per byte: ~1.5-3 us a line', build: () => { const b = 'a\r\n'.repeat(MAX_BODY_LINES); return { raw: msg([sigFor(b), 'From: me@x.example'], b) }; } },
-  { limit: 'body_lines', name: '500,000 empty bare-LF lines, matching bh', ceilingMs: 6000, why: 'per line, not per byte', build: () => { const b = '\n'.repeat(MAX_BODY_LINES); return { raw: msg([sigFor(b), 'From: me@x.example'], b) }; } },
-  { limit: 'body_lines', name: '10 valid signatures, tampered 500,000 one-byte bare-LF lines', ceilingMs: 8000, why: 'bare LF x signatures: mailauth\'s relaxed hasher converted each LF per signature (21 s before the body was converted once)', build: () => tampered({ body: 'a\n'.repeat(MAX_BODY_LINES), flipFromEnd: 40 }) },
-  { limit: 'body_lines', name: '10 keyless signatures with distinct l= and mixed c=, 500,000 bare-LF lines', ceilingMs: 8000, why: 'distinct l=/c= per signature must not bring back a hash pass each (a cache keyed on them would)', build: () => {
+  { limit: 'body_lines', name: '500,000 one-byte CRLF lines, matching bh', heavy: true, why: 'per line, not per byte: ~1.5-3 us a line', build: () => { const b = 'a\r\n'.repeat(MAX_BODY_LINES); return { raw: msg([sigFor(b), 'From: me@x.example'], b) }; } },
+  { limit: 'body_lines', name: '500,000 empty bare-LF lines, matching bh', heavy: true, why: 'per line, not per byte', build: () => { const b = '\n'.repeat(MAX_BODY_LINES); return { raw: msg([sigFor(b), 'From: me@x.example'], b) }; } },
+  { limit: 'body_lines', name: '10 valid signatures, tampered 500,000 one-byte bare-LF lines', heavy: true, why: 'bare LF x signatures: mailauth\'s relaxed hasher converted each LF per signature (21 s before the body was converted once)', build: () => tampered({ body: 'a\n'.repeat(MAX_BODY_LINES), flipFromEnd: 40 }) },
+  { limit: 'body_lines', name: '10 keyless signatures with distinct l= and mixed c=, 500,000 bare-LF lines', heavy: true, why: 'distinct l=/c= per signature must not bring back a hash pass each (a cache keyed on them would)', build: () => {
     const sigs = Array.from({ length: MAX_SIGNATURES }, (_, i) => SIG().replace('c=relaxed/relaxed', i % 2 ? 'c=simple/simple' : 'c=relaxed/relaxed').replace('d=x.example', `d=s${i}.example`).replace('bh=', `l=${100 + i * 7}; bh=`));
     return { raw: msg([...sigs, 'From: me@x.example'], 'a\n'.repeat(MAX_BODY_LINES)) };
   } },
@@ -80,8 +81,8 @@ export const WORST_CASES = [
   { limit: 'mime_parts', name: '190 message/rfc822 parts, each a signed message', build: () => ({ raw: msg(mimeHeaders(), parts(MAX_MIME_PARTS - 10, () => rfc822(`${SIG()}${CRLF}From: a@b.example${CRLF}Subject: inner${CRLF}${CRLF}inner body${CRLF}`)) + `--bnd--${CRLF}`) }) },
   // ---- total size ----
   { limit: 'total_bytes', name: 'ordinary 1 MiB message with a base64 attachment', build: () => ({ raw: normalMessage(MiB) }) },
-  { limit: 'total_bytes', name: 'ordinary 24 MiB message with a base64 attachment', ceilingMs: 6000, why: 'linear in size (see above)', build: () => ({ raw: normalMessage(24 * MiB) }) },
-  { limit: 'total_bytes', name: '10 valid signatures, tampered 5.5 MiB body of short lines', ceilingMs: 4000, why: 'size x signatures: each signature hashes the body once in our own code (mailauth shares one hash)', build: () => tampered({ body: lines(80000, 60).repeat(1), flipFromEnd: 40 }) },
+  { limit: 'total_bytes', name: 'ordinary 24 MiB message with a base64 attachment', heavy: true, why: 'linear in size (see above)', build: () => ({ raw: normalMessage(24 * MiB) }) },
+  { limit: 'total_bytes', name: '10 valid signatures, tampered 5.5 MiB body of short lines', heavy: true, why: 'size x signatures: each signature hashes the body once in our own code (mailauth shares one hash)', build: () => tampered({ body: lines(80000, 60).repeat(1), flipFromEnd: 40 }) },
 ];
 
 /** Assert the gate lets the case through. */

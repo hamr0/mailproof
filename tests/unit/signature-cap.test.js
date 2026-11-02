@@ -33,7 +33,10 @@ test('MAX_SIGNATURES is 10', () => { assert.equal(MAX_SIGNATURES, 10); });
 
 test('40 bogus signatures against a 100 ms resolver: refused whole, not one key lookup, recorded', async () => {
   const { fn, lookups } = slowResolver();
-  const mp = new Mailproof({ trailDir: trailDir(), resolver: fn });
+  // in-process, parsers already loaded: the bound below is about the gate and DNS, not about starting a worker
+  // thread or loading mailauth for the first time
+  await import('../../src/proof/build.js');
+  const mp = new Mailproof({ trailDir: trailDir(), resolver: fn, worker: { size: 0 } });
   const raw = plain(bogusRows(40));
   const t = performance.now();
   const r = await mp.record(raw, { direction: 'in', source: 't' });
