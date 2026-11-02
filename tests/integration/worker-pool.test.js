@@ -93,3 +93,14 @@ test('pool: close() rejects what is still queued and ends the workers', async (t
   assert.ok(await running, 'the running job was rejected, not left hanging');
   await assert.rejects(p.run(buf, input('ok'), undefined), /closed/);
 });
+
+for (const kind of ['exit', 'throw']) {
+  test(`pool: a worker that dies unnamed (${kind}) is reported as a crash and the pool serves the next job`, async (t) => {
+    const p = pool(t, { cpuMs: 60000, wallMs: 60000 });
+    await ok(p);
+    assert.deepEqual(await p.run(buf, input(kind), undefined).catch((e) => `rejected: ${e.message}`), { limit: 'crash' });
+    assert.equal(p.stats.killed, 1);
+    await ok(p);
+    assert.equal(p.stats.spawned, 2);
+  });
+}

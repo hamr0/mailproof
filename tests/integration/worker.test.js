@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { Mailproof } from '../../src/index.js';
 import { signedMail } from '../helpers/proof.js';
 import { WORST_CASES } from '../helpers/worst-cases.js';
+import { WorkerPool, workerConfig } from '../../src/proof/pool.js';
 
 const dir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'mp-wk-'));
 const nxdomain = async () => { throw Object.assign(new Error('no record'), { code: 'ENOTFOUND' }); };
@@ -69,6 +70,40 @@ test('worker: check() reports a timed-out message like any over-limit one', asyn
   assert.equal(c.signatures, 0);
   assert.equal(c.unsigned, false);
   assert.equal(c.body_status, 'not-checked');
+});
+
+test('worker: a worker that dies unnamed still records the message once as "over limit: crash"; check() agrees; the next message verifies', async (t) => {
+  // tests/helpers/fault-worker.js ends its thread (`exit`) or throws outside the build (`throw`), as the message's X-Fault header says
+  const FAULT = new URL('../helpers/fault-worker.js', import.meta.url);
+  const good = await signedMail({ body: 'hello\r\n' });
+  for (const how of ['exit', 'throw']) {
+    const mp = make(t, { resolver: good.resolver });
+    const pool = new WorkerPool({ ...workerConfig({}), workerUrl: FAULT });
+    mp._lease = { run: (...a) => pool.run(...a), release: () => pool.close() };   // the same seam leasePool fills
+    const raw = Buffer.from(`X-Fault: ${how}\r\nFrom: a@example.com\r\nMessage-ID: <${how}@example.com>\r\n\r\nkills its worker\r\n`);
+    const c = await mp.check(raw).catch((e) => ({ portable: { reason: `rejected: ${e.message}` }, live: {} }));
+    assert.equal(c.portable.reason, 'over limit: crash', how);
+    assert.equal(c.live.reason, 'over limit: crash', how);
+    assert.equal(c.portable.trust, 'unverified');
+    const r = await mp.record(raw, { direction: 'in', source: how }).catch((e) => ({ rejected: e.message }));
+    assert.equal(r.rejected, undefined, how);
+    assert.equal(r.duplicate, false);
+    const rec = await mp.get(r.id);
+    assert.equal(rec.verdicts.live.reason, 'over limit: crash', how);
+    assert.equal(rec.verdicts.portable.reason, 'over limit: crash', how);
+    assert.equal(rec.verdicts.portable.trust, 'unverified');
+    assert.deepEqual(rec.signatures, []);
+    assert.equal((await mp.list()).length, 1);
+    assert.equal(git(mp, 'log', '--format=%s').split('\n').filter((l) => l.startsWith('record ')).length, 1, 'one record commit');
+    assert.equal(git(mp, 'status', '--porcelain'), '');
+    assert.deepEqual(fs.readdirSync(path.dirname(mp.root)).filter((f) => f.includes('lock')), []);
+    assert.equal(pool.stats.killed, 2, 'the check and the record each lost a worker');
+    // the real pool takes over (the pool's own recovery is tested in worker-pool.test.js): the next message verifies
+    await mp.close();
+    const ok = await mp.record(good.raw, { direction: 'in', source: 'ok' });
+    assert.equal((await mp.get(ok.id)).verdicts.portable.trust, 'verified', how);
+    assert.equal(git(mp, 'log', '--format=%s').split('\n').filter((l) => l.startsWith('record ')).length, 2);
+  }
 });
 
 test('worker: the memory watchdog stops a message that needs more memory than the budget', async (t) => {

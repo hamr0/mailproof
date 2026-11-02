@@ -3,6 +3,9 @@
 // in a warm worker thread, and the main thread kills the worker when a job spends too much CPU, too much
 // busy wall time or too much memory. A killed job is recorded through the over-limit path (`over limit: time`
 // / `over limit: memory`, unverified): the main thread commits, so a killed worker leaves no partial state.
+// A worker that dies for a reason the pool cannot name (exits, or throws outside the build) is recorded the same
+// way as `over limit: crash`: every message is recorded, even one that deterministically crashes its worker.
+// An Error thrown by the build itself is not a crash: it rejects, exactly as it would in-process.
 //
 // CPU time, not wall time: the worker thread's own CPU (Worker#cpuUsage) does not stretch when the machine
 // is busy, so a legitimate message is never killed because its neighbours were slow. Wall time is only a
@@ -75,8 +78,9 @@ class WorkerPool {
    * @param {Buffer} buf
    * @param {JobInput} input
    * @param {((name: string, type?: string) => Promise<any>) | undefined} resolver  The caller's resolver (absent: the system one).
-   * @returns {Promise<{ out: Built, cpuMs: number } | { limit: 'time' | 'memory' }>}
-   *   Rejects with the build's own error, or when the worker dies for no reason the pool can name.
+   * @returns {Promise<{ out: Built, cpuMs: number } | { limit: 'time' | 'memory' | 'crash' }>}
+   *   Rejects with the build's own error (or when a worker cannot start); a worker that dies mid-job for no
+   *   reason the pool can name is `{ limit: 'crash' }`.
    */
   run(buf, input, resolver) {
     return new Promise((resolve, reject) => {
@@ -137,7 +141,7 @@ class WorkerPool {
     let busySince = 0;    // start of the current stretch
     let rpcOpen = 0;      // DNS lookups the worker is waiting on
 
-    /** @param {{ out: Built, cpuMs: number } | { limit: 'time' | 'memory' } | Error} r @param {boolean} reusable */
+    /** @param {{ out: Built, cpuMs: number } | { limit: 'time' | 'memory' | 'crash' } | Error} r @param {boolean} reusable */
     const finish = (r, reusable) => {
       if (settled) return;
       settled = true;
@@ -148,7 +152,7 @@ class WorkerPool {
       if (r instanceof Error) job.reject(r); else job.resolve(r);
       this._pump();
     };
-    const kill = (/** @type {'time' | 'memory'} */ limit) => finish({ limit }, false);
+    const kill = (/** @type {'time' | 'memory' | 'crash'} */ limit) => finish({ limit }, false);
     const arm = () => {
       busySince = performance.now();
       timer = setTimeout(() => kill('time'), Math.max(0, wallMs - usedBusy));
@@ -183,8 +187,8 @@ class WorkerPool {
         finish(Object.assign(new Error(m.error.message), { code: m.error.code, name: m.error.name }), true);
       }
     };
-    const onError = (/** @type {any} */ e) => finish(e?.code === 'ERR_WORKER_OUT_OF_MEMORY' ? { limit: 'memory' } : new Error(`Mailproof: worker failed: ${e?.message}`), false);
-    const onExit = () => finish(new Error('Mailproof: worker exited unexpectedly'), false);
+    const onError = (/** @type {any} */ e) => this.closed ? finish(new Error(`Mailproof: worker failed: ${e?.message}`), false) : kill(e?.code === 'ERR_WORKER_OUT_OF_MEMORY' ? 'memory' : 'crash');
+    const onExit = () => (this.closed ? finish(new Error('Mailproof: worker exited unexpectedly'), false) : kill('crash'));
     w.on('message', onMessage); w.on('error', onError); w.on('exit', onExit);
     w.ref();   // a busy worker keeps the process alive until its job settles
 
@@ -194,7 +198,7 @@ class WorkerPool {
     // transferred), so the worker gets one private copy, moved rather than cloned.
     const payload = new Uint8Array(job.buf.length);
     payload.set(job.buf);
-    try { cpu0 = cpuOf(await w.cpuUsage()); } catch { return finish(new Error('Mailproof: worker exited unexpectedly'), false); }
+    try { cpu0 = cpuOf(await w.cpuUsage()); } catch { return kill('crash'); }
     if (settled) return;
     let reading = false;
     poll = setInterval(async () => {

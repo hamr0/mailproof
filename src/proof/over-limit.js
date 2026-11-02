@@ -14,7 +14,7 @@ import { buildLive, buildPortable } from './verdict.js';
  * The record of a message that was refused (accept-with-flag): committed like any other, but nothing
  * was parsed, so it holds only what the raw bytes give without a parser: `raw_sha256` (and so the
  * `id`) and `size`. Everything else is empty or null, both verdicts are `unverified`, and their
- * `reason` names the limit (`over limit: body_line`). `limit` is a gate limit, or `time` / `memory` when the
+ * `reason` names the limit (`over limit: body_line`). `limit` is a gate limit, or `time` / `memory` / `crash` when the
  * worker backstop (pool.js) stopped the build.
  * @param {Buffer} buf
  * @param {{ direction: 'in' | 'out', source: string }} ctx
