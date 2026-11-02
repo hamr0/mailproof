@@ -1,373 +1,80 @@
-# mailproof — Integration Guide
-
-> For AI assistants and developers wiring mailproof into a project.
-> `1.3.0` (stable) — P1 lift + m7c verification + m7d triggers + P2 validation COMPLETE | Node.js >= 22.5 | 2 deps (`mailauth`, `mailparser`) | Apache-2.0
+# mailproof (v2) - Integration Guide
 
 ## What this is
 
-mailproof is an **email-native multi-party coordination kernel** for Node.js.
-It does four decoupled things to an inbound email reply: **verify** it
-(DKIM/DMARC trust level), **sequence** it through a workflow or a crypto
-sign-off, **commit** it to a tamper-evident per-event **git** ledger, and
-**trigger** the next email. No web UI, no branding, no policy — those belong to
-the consumer on top.
+mailproof records a re-checkable proof of each email in a **two-party (A to B) exchange** in a local git trail: the signed headers, never the body. The sender's DKIM public key is archived at capture, so anyone can verify the record offline, years later, after the key has left DNS. Pure ESM, Node >= 22.19, runtime deps `mailauth` + `mailparser`. Wire formats: `docs/product/SPEC.md` Part B (repo only).
+
+## What mailproof is and is not
+
+- It is a recorder and an offline verifier: `record`, `verify`, `matchBody`, `matchFile`, `check`, `list`, `get`.
+- It is not a mail client, a sender, a web UI or a multi-party workflow engine (those are gitdone/signedreply.com), not proof of delivery, and not a claim of legal admissibility.
+- It produces a verdict; acting on it is the consumer's job.
+
+## Minimal usage
 
 ```js
-import { create } from 'mailproof'; // pure ESM, vanilla JS
+import { Mailproof } from 'mailproof';
 
-const core = create({
-  dataDir: '/var/lib/mailproof',   // required — events + per-event git repos live here
-  domain:  'app.example',          // required — your address space (Message-Id + plus-tags)
-  sendmailBin: '/usr/sbin/sendmail', // optional — the trigger transport
-  otsBin:  '/usr/bin/ots',         // optional — OpenTimestamps anchoring
-});
-
-// Define a coordination event…
-await core.createEvent({
-  id: 'onboard1', type: 'workflow', flow: 'sequential', initiator: 'boss@app.example',
-  steps: [
-    { id: 'sign',  participant: 'alice@corp.example' },
-    { id: 'countersign', participant: 'bob@corp.example' },
-  ],
-});
-await core.activateEvent('onboard1'); // replies don't count until activated
-
-// …then feed it every inbound reply. mailproof verifies, routes, commits,
-// advances, and fires the next notification.
-const result = await core.ingest(rawRfc822Buffer, envelope);
-// → { routed, mode, eventId, trustLevel, committedSeq, counted, count_reason,
-//     completedStep, signatureCount, eventComplete, notified }
+const mp = new Mailproof({ trailDir: './trails' });
+const { id } = await mp.record(rawEmailBytes, { direction: 'in', source: 'imap' });
+const v = await mp.verify(id);          // offline, from the record alone: v.ok, v.trust
 ```
-
-This is the dense reference. For the *why*, see `docs/01-product/PRD.md`; for
-the wire formats, `docs/02-design/SPEC.md`; for the extraction boundary,
-`docs/02-design/DESIGN.md`.
-
-## What mailproof is and is NOT
-
-mailproof is the **mechanism**: verify → sequence → ledger → trigger. It is
-deliberately NOT a product. It does not brand emails, render a dashboard, send
-magic links, manage accounts, or decide policy. Anything that is *opinion*
-(who may sign, what an email says, how long to retain, whether to revoke) is the
-consumer's job — mailproof gives you the primitives and one body hook.
-
-The design tie-breaker: **a consumer must be able to rebuild gitdone (the source
-project) from mailproof's primitives + thin policy glue.** Keep mechanism in the
-kernel; push policy out. See § "What's NOT in mailproof".
-
-## Which mode do I need?
-
-mailproof has **two generic coordination modes**, both on the same
-DKIM-verified-email + git-ledger substrate, routed by the event's `type`:
-
-| Mode | `type` | Tag | What it coordinates | Completes when |
-|---|---|---|---|---|
-| **Workflow events** | `'workflow'` | `event+{id}-{step}@` | Ordered/parallel/mixed steps, each owned by a participant | every step is `complete` |
-| **Crypto sign-off** | `'crypto'` | `attest+{id}@` | Signatures from named or open signers against an optional document hash | distinct signature count ≥ `threshold` |
-
-Crypto is "one email or many through a link": `threshold: 1` = a single-signer
-**declaration**; `threshold: N` (or `open: true`) = count-to-goal where the
-"link" is the `attest+{id}@` **email address** (not a web link/app/webhook).
-
-## All `create()` options
 
 ```js
-const core = create({
-  // --- Required ---
-  dataDir: '/var/lib/mailproof',  // root for {dataDir}/events/*.json + per-event git repos
-  domain:  'app.example',         // the operator's domain; outbound Message-Ids + plus-tags
-
-  // --- Optional ---
-  sendmailBin: '/usr/sbin/sendmail', // sendmail(8) the trigger pillar submits to.
-                                     //   Absent ⇒ sends report {ok:false}; ingest still advances.
-  otsBin: '/usr/bin/ots',            // `ots` binary for OpenTimestamps. Absent ⇒ no .ots proofs.
-  mtaHostname: 'mx.app.example',     // this MTA's hostname, passed to mailauth as `mta`.
-  resolver: customDnsResolver,       // custom mailauth DNS resolver. Absent ⇒ system resolver.
-                                     //   (tests inject an offline stub; verify+ will re-check archived keys)
-  composeNotification: (ctx) => '…', // body of the neutral notifications ingest()/sweep() trigger.
-                                     //   Absent/falsy ⇒ a neutral default body. See § Triggers.
-  overdueDays: 14,                   // sweep(): idle days before the `overdue` nudge (default 14).
-  archiveDays: 45,                   // sweep(): idle days before auto-archive + `archived` (default 45).
-});
+import { Mailproof, verifyRecord, hashDocument, TRUST_LEVELS, RULES_VERSION } from 'mailproof';
 ```
 
-Config is injected here and **nowhere else** — each pillar factory closes over
-the same `dataDir`. There are no env-var defaults (that's the consumer's glue).
+## All options: `new Mailproof(opts)`
 
-## Public API (`create()` return surface)
-
-| Method | Purpose |
+| Option | Meaning |
 |---|---|
-| `ingest(raw, envelope)` | The inbound pipeline. `raw` = RFC-822 Buffer; `envelope` = `{ sender, recipient, clientIp, clientHelo }`. Returns the result summary (below). |
-| `sweep({ now? })` | The time-driven pass (run it on your own schedule). Scans every event and emits the `overdue` (idle nudge) + `archived` (auto-archive transition) occasions through the same notifier. Returns `{ overdue, archived, notified }`. Thresholds via `create()`'s `overdueDays`/`archiveDays` (14/45). |
-| `upgradeProofs({ now? })` | Drive the Bitcoin half of OTS: walk every event's `.ots` proofs, run `ots upgrade`, record anchored state into the ledger (`ots_anchored`/`ots_anchored_at`/`ots_block` on each commit JSON), and emit the `proof_anchored` occasion when an event newly crosses fully-anchored. Present only when `otsBin` is configured; schedule it on its own cadence (calendar network). |
-| `createEvent(partial)` | Create + persist an event (both modes). Created **pending** (`activated_at: null`). |
-| `activateEvent(id)` | Mark activated + fire the `activation` kickoff to initially-eligible participants/signers (once). `{ event, alreadyActive, notified }`. **Replies don't count until activated.** |
-| `editEvent(id, patch)` | Patch a non-finalised event; writes an audit commit if activated; re-notifies (`reassigned`) a participant moved onto a currently-eligible step. Returns `{ event, prev, changes, commitSequence, notified }`. |
-| `completeEvent(id, {reason?})` | **Consumer-driven completion** — flips `open`→`complete`, stamps `completed_at`, writes the canonical completion record. Policy-free (`reason` opaque, sends no mail). For consumers that own their completion semantics: create with an unreachable `threshold` so the engine never auto-completes, then complete by policy. No-op when already complete; refuses archived. |
-| `reopenEvent(id, {reason?, retractSignatures?})` | **Neutral lifecycle primitive** (the mirror of `completeEvent`) — flips `complete`→`open`, clears `completed_at`, optionally retracts named counted signatures by salted `sender_hash` (the crypto count drops), and appends a tamper-evident `event_reopen` commit (retracted senders as salted hashes only). The seam consumer policies like revoke / close-reversal build on; `reason` opaque. No-op on a non-complete event; refuses archived. |
-| `loadEvent(id)` | Read the event JSON (the master record). |
-| `listCommits(id)` | The per-event commit ledger (every reply, counted or not). |
-| `loadCommit(id, seq)` | One `commit-NNN.json`. |
-| `verifyDocument(id, bytes, {email?})` | Notary lookup: does this document match a committed attachment? |
-| `hashDocument(bytes)` | The canonical `sha256:…` fingerprint (one source of truth). |
-| `verify(id, bytes, {messageId?, resolver?})` | Offline durable verify: match a forwarded email/doc to a commit (`raw_sha256`→`message_id_hash`→attachment) and re-verify its DKIM against the **archived** key — holds with live DNS down. |
-| `reverify(id, seq, rawEml, {resolver?})` | Re-evaluate a contested commit against its archived key; on a DKIM pass, **upgrade** its recorded trust and persist an immutable `reverify-NNN.json` (the original commit is never rewritten). |
+| `trailDir` (required) | Directory holding trails. Each trail is a git repo at `<trailDir>/<trail>/`. |
+| `trail` | Trail name, `/^[a-z0-9][a-z0-9_-]{0,63}$/`, default `default`. |
+| `resolver` | mailauth-compatible DNS resolver `(name, type) => [[txt]]` (tests inject one). A lookup it has not answered within 5 s is answered as the error `dns timeout` (`code: 'ETIMEOUT'`); one message's lookups together may wait 30 s, then further ones fail at once the same way. It must return plain data, as `node:dns` does; anything else is a DNS error (`code: 'EBADRESP'`). |
+| `otsBin` | Path to the `ots` (OpenTimestamps) binary. Absent = OTS off. |
+| `now` | Clock `() => Date`. |
+| `trustedSealers` | ARC sealer domains whose chains may yield live `forwarded`. |
+| `lockTimeoutMs` | How long `record()` waits for another writer of the same trail (default 30000). On timeout it throws `ERR_TRAIL_LOCKED` and writes nothing. |
+| `worker` | The deadline backstop, default on: `{ size: 1, cpuMs: 15000, wallMs: 120000, maxMemoryMb: 1536 }`. `check()`/`record()` build in a warm worker thread that is killed over 15 s of its CPU, 120 s of busy wall time (DNS excluded) or 1,536 MB; the message is then recorded `unverified`, `over limit: time` / `over limit: memory`. `size: 0` builds in-process with no backstop. |
 
-Lower-level pieces are also exported from the package root for consumers that
-compose their own pipeline: `classifyTrust`, `TRUST_LEVELS`, the `router`
-parsers, `preFilter`, `parseEnvelope`, `authenticateMessage`, `parseMessage`,
-`buildRawMessage`/`sendmail`/…, `createEventStore` (returns include the
-schema-level canonical `isComplete(event)`), `withEventMutex`, `createGitrepo`,
-`createOts`, the `completion` + `crypto` engine functions (both re-export
-`isComplete` from event-store — same canonical predicate, every consumer
-imports rather than re-derives `event.status === 'complete'`),
-`crypto.signatures(event)` as the canonical safe-access for the signature
-array, `createNotary`, `hashDocument`.
+All methods are bound: `const { verify } = mp` works. `await mp.close()` stops the worker threads early; it is never needed for the process to exit.
 
-### `ingest()` result shape
+## Public API
 
-```js
-// matched + processed:
-{ routed: true, mode: 'workflow'|'crypto', eventId, trustLevel,
-  committedSeq,            // the reply's ledger sequence (always committed)
-  counted, count_reason,   // did it advance state? if not, the machine-code reason
-  completedStep,           // workflow: the step just completed (or null)
-  signatureCount,          // crypto: distinct signatures so far (or null)
-  eventComplete,           // did THIS reply complete the event?
-  notified }               // [{ kind:'advance'|'ack'|'completion', to, ok, reason }]
+- `check(raw, { envelope? })` -> `{ live, portable, signatures, unsigned, partial_body, key_errors, body_status, body[] }`. Writes nothing. Judged as of now.
+- `record(raw, { direction: 'in'|'out', source?, envelope? })` -> `{ id, duplicate, commit, record?, ots? }`. One commit per record. Never throws on unverifiable mail (it is recorded `unverified`); throws on empty input, a bad `direction`, a git failure, or `ERR_TRAIL_LOCKED` (another writer held the trail longer than `lockTimeoutMs`; nothing is written, retry later). The same bytes captured again return `duplicate: true` and write nothing; a copy with any byte difference is a new record. `ots` is `'off'`, `'pending'` or `{ error }` (an OTS failure never blocks the commit).
+- `verify(recordOrId, { at? })` -> `{ ok, trust, basis, at, engine, signatures[] }`. Offline, from the record alone. `at` defaults to the record's `captured`; a missing or garbled `captured` fails closed. `trust` is recomputed now.
+- `matchBody(recordOrId, raw)` -> `{ match, full, signatures[] }`. `full` = body matches `bh=` AND the signature verifies at capture time.
+- `matchFile(recordOrId, bytes)` -> `{ match, attachment }`.
+- `list({ limit?, direction? })`, `get(id)`.
+- `copies(idOrKey)` -> `{ message_key, original, copies[], contained_in[] }`: every recorded copy of one signed message (the id is the raw-bytes hash, so a list-relayed or forwarded copy is its own record; `message_key` groups them), the derived `original` (earliest `direct` copy with a matched body), and the records (forwards, list digests) that carry it as an attached original. Each record has `copy: { kind: direct|relayed|forward|digest|unknown, evidence }`.
 
-// not attached to any event (NOT committed):
-{ routed: false, reason: 'no_event_tag'|'unknown_event'|<prefilter reason>, rejected? }
+`verifyRecord(record, { at? })` is the same offline check as a pure function, so a third party can verify an exported record with no trail.
 
-// inbound DSN bounce (NOT committed; operational):
-{ routed: false, bounce: true, eventId, stepId, failedRecipients, notified }
-
-// initiator command — remind+/stats+ (NOT committed; operational):
-{ routed: false, command: 'remind'|'stats', eventId, authenticated,
-  reason?,                  // 'unverified'|'sender_not_initiator'|'unknown_event'|'already_complete'
-  snapshot?, notified? }    // stats → snapshot + notified ([{kind:'stats',…}]); remind → notified (advance/activation, ctx.reminder=true)
-
-// public verification email endpoints — verify+/reverify+ (read-only / append-only):
-{ routed: false, command: 'verify',   eventId, report, notified }  // verify+{id}@   → never commits; emits kind:'verify_report'
-{ routed: false, command: 'reverify', eventId, report, notified }  // reverify+{id}-{seq}@ → persists an immutable reverify record; emits kind:'reverify_report'
-```
-
-## The core invariant: accept-with-flag
-
-**Every reply that resolves to a known event is committed to the ledger — even
-when it doesn't count.** Routing, trust, and participant checks gate the *state
-transition*, never the *commit*. The commit records `counted` (did it advance?)
-and `count_reason` (why not, when false). This is what makes the ledger a
-complete audit trail rather than a record of only the "good" replies.
-
-Mail that fails the **humans-only prefilter** (auto-responders, mailing lists,
-bulk, system senders), carries **no event tag**, or names an **unknown event**
-is *not* committed (there's no event to attach it to) and returns `routed:false`.
-
-`count_reason` values — workflow: `event_not_activated`, `event_archived`,
-`already_complete`, `wrong_participant`, `no_step`, `unknown_step`,
-`unverified_trust`, `deps_unmet`, `out_of_order`, `missing_attachment`. Crypto:
-`event_not_activated`, `event_archived`, `already_complete`, `unverified_trust`,
-`initiator_self_reply`, `not_a_signer`, `already_signed`, `doc_hash_mismatch`.
-
-## Verify — trust levels
-
-`classifyTrust(auth)` maps a `mailauth` result to one of four levels, ranked
-strongest→weakest:
-
-| Level | Meaning |
-|---|---|
-| `verified` | DKIM pass + aligned + DMARC pass |
-| `forwarded` | DKIM fail/none, but ARC pass via a trusted intermediary |
-| `authorized` | DKIM fail/none, but SPF pass + DMARC pass |
-| `unverified` | none of the above |
-
-mailproof pins `trustReceived: false` — it never trusts pre-existing
-`Received`/`Authentication-Results` headers, only its own check against the
-envelope.
-
-This path is grounded against real-world mail, not just fixtures: it reaches
-`verified` on a genuine production opendkim-signed message over **live DNS**, and
-**refuses deprecated rsa-sha1** signatures (RFC 8301 — inherited from the
-`mailauth`/OpenSSL digest policy). A committed offline regression
-(`tests/integration/dkim-interop.test.js`) pins the interop deterministically.
-
-## Workflow events
-
-```js
-await core.createEvent({
-  type: 'workflow',
-  flow: 'sequential', // 'sequential' (linear chain) | 'parallel' (no deps) | 'custom' (your dependsOn)
-  initiator: 'boss@app.example',
-  steps: [{
-    id: 'sign',                    // required, unique per event
-    participant: 'alice@corp.example',
-    dependsOn: [],                 // custom flow only; sequential/parallel are derived
-    minTrust: 'verified',          // ⚠️ DEFAULT is 'verified' — see gotchas
-    requires_attachment: false,    // if true, the counting reply must carry SOME attachment
-  }],
-});
-```
-
-One eligibility model: a step counts iff its `dependsOn` are all complete, the
-sender matches `participant`, and trust meets `minTrust`. `flow` is sugar that
-only shapes `dependsOn` at creation (sequential → linear chain). On a step
-completing, ingest pings the participant(s) of every newly-eligible step.
-
-## Crypto sign-off
-
-```js
-await core.createEvent({
-  type: 'crypto',
-  initiator: 'boss@app.example',
-  signers: ['alice@corp.example', 'bob@corp.example'], // explicit allow-list…
-  open: false,                  // …or open:true = any verified sender counts ("the link")
-  threshold: 2,                 // distinct signatures to complete (1 = declaration)
-  requiredDocHash: 'sha256:…',  // optional: a counting reply must attach a matching document
-});
-```
-
-A reply counts as a signature iff: the event is active/not-complete, the reply
-is **`verified`** (hardcoded — crypto is the high-assurance mode, not per-event
-configurable), the sender is **not the initiator** (anti-self-dealing: the
-initiator may reply, but it's committed-for-audit and never counts), the sender
-is a signer (or the event is open), the sender's salted hash is distinct from
-those already counted, and `requiredDocHash` (if set) matches. The event locks
-at distinct count ≥ `threshold`.
-
-## The git ledger + verifiability
-
-State = event JSON + a per-event git repo whose commit chain **is** the
-tamper-evidence and the portable, offline-verifiable proof. Each reply →
-`commits/commit-NNN.json`. Identity at rest is **minimized**: the salted
-`sender_hash` + `message_id_hash` (per-event public salt), `sender_domain` in
-plaintext, never the raw address. With `otsBin` set, each commit also gets an
-`.ots` OpenTimestamps proof. Each accepted reply also **archives the signer's
-DKIM public key** (PEM) on its commit, so `core.verify()` re-checks the signature
-offline — even after the signer rotates DNS — and `core.reverify()` can upgrade a
-contested commit's trust against it. With `otsBin` set, `createOts()` also
-exposes `upgradeProof(abs)` (folds the Bitcoin attestation into a pending `.ots`
-once the calendars have it; the file's sha256 changing = "now anchored") and
-`readBlockHeight(abs)` (reads the anchored block via `ots info`, offline) — so
-the `.ots` proofs are verifiable, not just stored. The bound `upgradeProofs()`
-drives these across an event and emits `proof_anchored` (see § Triggers).
-
-## The notary (documents, both ways)
-
-Inbound attachments are **auto-hashed** on every `ingest` (the capture half) and
-recorded in the commit. `verifyDocument(id, bytes)` re-hashes a document and
-matches it back (the verify half) — a proof-of-participation receipt, not a
-secret. The notary records and verifies; it never gates completion (that's
-`requires_attachment` for workflow / `requiredDocHash` for crypto).
-
-## Triggers + the `composeNotification` hook
-
-Every occasion mailproof derives fires through ONE notifier (`deliver`), with
-`composeNotification` the single body hook. On a **counted** reply, `ingest`
-sends the next neutral email(s) via `sendmailBin`, *after* releasing the event
-lock, and reports them in `notified`:
-
-- workflow → ping the participant(s) of every newly-eligible step (`kind:'advance'`)
-- crypto → ack the verified signer (`kind:'ack'`)
-- both → notify the `initiator` on the completing edge (`kind:'completion'`) — the ctx carries `countedCommits` + a `receipts` array (`{sequence, received_at, step_id, sender_domain, sender_hash, trust_level}`, one per counted reply, ordered by sequence) sourced from the just-finalised git ledger, so the composer can render a per-reply proof block. Senders stay salted-hashed (SPEC §6).
-
-`sweep()` adds the **time-driven** occasions, to the initiator: `kind:'overdue'`
-(idle past `overdueDays`) and `kind:'archived'` (auto-archived past `archiveDays`).
-`activateEvent`/`editEvent` add the **organiser-action** occasions: `kind:'activation'`
-(first activation → ping initially-eligible participants / listed signers) and
-`kind:'reassigned'` (a participant moved onto a currently-eligible step). Both
-append a `notified` array to their return. An inbound **DSN bounce** (a
-notification that failed permanently downstream) is recognised by `ingest()`,
-routed to the event by its plus-tag return path, recorded as a per-step send
-error, and surfaced to the initiator as `kind:'bounce'` (operational — never
-committed to the ledger; `ingest` returns `{ routed:false, bounce:true, eventId,
-stepId, failedRecipients, notified }`). And `upgradeProofs()` emits
-`kind:'proof_anchored'` to the initiator on a fresh full-anchor transition (a
-complete event whose every `.ots` proof has folded in the Bitcoin attestation),
-once. Non-counting replies send nothing. Each message's `From` is the
-plus-tagged reply address so the recipient's reply routes straight back.
-
-The **initiator commands** `remind+{id}@` and `stats+{id}@` route through the
-same `ingest()` (DKIM-verified + envelope sender == event.initiator; never
-committed to the ledger). `remind+` reuses the existing kinds rather than
-minting a new one — workflow remind fires `kind:'advance'` for every currently-
-eligible step, crypto remind fires `kind:'activation'` for every listed signer
-that hasn't yet signed — with `ctx.reminder = true` so a composer keyed on
-`kind` can render "reminder" vs "first prompt" wording from one branch. `stats+`
-returns a structured snapshot on the `ingest()` return (`{ command:'stats',
-authenticated, snapshot, notified:[{kind:'stats', …}] }`) AND sends a neutral
-default reply to the initiator (`kind:'stats'`, a plain ASCII dump of the
-snapshot). The snapshot is on the ctx, so a consumer overrides the prose via
-`composeNotification` keyed on `kind:'stats'` — branding stays policy (§8.6).
-
-The **public verification endpoints** `verify+{id}@` and `reverify+{id}-{seq}@`
-also route through the same `ingest()` (m7c-6) — the email-facing counterparts
-of the `verify()`/`reverify()` methods, open to anyone (not initiator-gated).
-`verify+` matches a forwarded original to a committed reply + re-checks DKIM
-against the archived key and **never commits**, emitting `kind:'verify_report'`;
-`reverify+` re-evaluates the named commit and persists its own immutable reverify
-record, emitting `kind:'reverify_report'`. The forwarded original is recovered
-transiently (hashed, never persisted). With these, the kernel emits **12
-occasion kinds** in total: `activation`, `advance`, `reassigned`, `ack`,
-`completion`, `stats`, `bounce`, `overdue`, `archived`, `proof_anchored`,
-`verify_report`, `reverify_report`.
-
-```js
-composeNotification({ kind, mode?, eventId, event, to, replyAddress, step?, signatureCount?, daysOver?, daysIdle?, countedCommits?, receipts?, reminder? }) {
-  return `Your custom body for ${kind}`; // return falsy → neutral default; a throw → default
-}
-```
-
-Branding is a NO-GO (the body is the only consumer seam). The hook returns a
-**body** only; subjects are kernel-defaulted. There are intentionally no
-`onCounted`/`onRejected`/`onCompleted` hooks — the `ingest()` return value
-already carries that.
-
-## Architecture (four pillars, decoupled)
-
-```
-ingest(raw, envelope)
-  │
-  ├─ prefilter   (prefilter.js)      humans-only gate
-  ├─ decode      (parse.js)          mailparser + mailauth   ── deps
-  ├─ verify      (classifier.js)     trust level
-  ├─ route       (router.js)         event+ / attest+ tag
-  ├─ sequence    (completion.js | crypto.js)   pure engines
-  ├─ ledger      (gitrepo.js + event-store.js + event-mutex.js + ots.js)
-  └─ trigger     (outbound.js)       next email
-```
-
-Each pillar is factory-bound to config and independently testable. `create.js`
-composes them; `ingest.js` orchestrates one inbound reply through them.
+Portable `verified` covers the signed headers; read `body_status` for the body. Each record carries `body_status` and, per signature, `body: { status, explain[] }` (`matched` / `partial` / `mismatch` / `not-checked`; `explain` entries `{ kind, detail }` are counts and domains only: `l_tag`, `appended`, `prepended`, `canonicalisation`, `line_endings`, `forwarded`, `mailing_list`, `search_capped`, `unknown`). It never changes a trust verdict.
 
 ## What's NOT in mailproof, and why
 
-These stay in the **consumer** (gitdone is the reference) as policy on the
-primitives + the `composeNotification` hook:
+- **The body and the raw email are never stored.** A record is the signed headers, the signature, the archived key and hashes; this keeps other people's mail content out of your trail. `matchBody` re-checks a body you produce later.
+- **No per-record erasure.** Records are durable by design (a git chain); privacy is minimisation plus lawful retention, not deletion.
+- **No sending, no IMAP, no third-party mail provider.** You hand mailproof raw bytes.
+- **No acting on a verdict.** `verified` is a statement about the signature, not a decision.
 
-- **Branded / prose email bodies, web dashboard, magic-link auth** — product, not mechanism (use `composeNotification` + your own app).
-- **`revoke`, `latest`/`accumulating` dedup** — the core is **distinct-only**; revoke/reopen cycles are policy.
-- **Multi-doc strict manifests, `reference_docs`, attestor-PII redaction** — the heavy attestation tail.
-- **Per-record erasure / participant self-revoke (RTBF by deletion)** — a **NO-GO**: it breaks tamper-evidence + non-repudiation + offline verify. Privacy = minimization (salted hashes, no plaintext at rest) + lawful retention. The *only* erasure lever is **whole-event deletion** (destroys the salt → residual hashes unlinkable). The operator is the GDPR controller; mailproof *enables* compliance, it does not discharge it.
-- **Document-as-login / second factor** — NO-GO; the notary is a receipt, not a secret.
-- **The orchestrator glue** (`receive.js`-style main) — mailproof exposes `ingest()` + primitives; you write thin glue.
+## Threat model summary
+
+- Guaranteed: a record cannot be edited without failing `verify` (signed headers are re-hashed against the archived key); every tamper in findings F6 fails closed; a bad `captured` fails closed.
+- Assumed: your trail directory is yours. `captured` is mailproof's own clock; turn on OpenTimestamps (`otsBin`) to make "captured no later than T" provable.
+- Out of scope: SPF can never be re-checked from stored data (the portable verdict is DKIM only); a sender who never signs cannot be proven.
 
 ## Gotchas
 
-1. **Events are created pending.** A reply doesn't count until `activateEvent(id)` (or you pass `activated_at` at creation). Otherwise `count_reason: 'event_not_activated'`.
-2. **`minTrust` defaults to `'verified'`.** A workflow step with no explicit `minTrust` requires a DKIM-verified reply — an unverified reply is committed but not counted (`unverified_trust`). Set `minTrust: 'unverified'` to accept anything.
-3. **Crypto trust is hardcoded `verified`** and not per-event configurable.
-4. **The initiator's own reply never counts in crypto** (anti-self-dealing). In *workflow*, the initiator MAY be a counted participant.
-5. **Plaintext sender is never persisted** — only the salted hash. Don't expect to recover addresses from the ledger; that's by design.
-6. **`sendmailBin` absent ⇒ sends report `{ok:false}`** but `ingest` still commits + advances. Triggers are best-effort; a send failure never undoes a transition.
-7. **The event mutex is in-process only.** A multi-worker / multi-process consumer must add its own cross-process lock (the bundled per-message Postfix pipe model relies on MTA delivery serialisation).
-8. **`composeNotification` returns a body string** (subject is kernel-defaulted); a throw or falsy return falls back to the neutral default.
-9. **`ingest` commits even non-counting replies** for matched events. Prefilter-dropped / tagless / unknown-event mail is `routed:false` and *not* committed.
+- Mail altered in transit or by an export tool fails `matchBody` while `verify` still passes (headers intact); `body_status` says so at capture, with hints when the change can be explained.
+- A signature whose key is gone from DNS at capture is stored with `key_error`; it cannot verify.
+- A message over an input limit (25 MiB, 10 DKIM signatures, 256 KiB per body line, 500,000 body lines, ...) or one the worker backstop stops is still recorded, but never parsed: `unverified`, `reason: 'over limit: <name>'` (`time` / `memory` / `crash` for the backstop). A worker that cannot start rejects `check()`/`record()` and records nothing. Only `envelope.clientIp`, `clientHelo` and `sender` are read; a non-plain value (a function) in one of them rejects the call in a worker (`message input cannot be sent to the worker`, nothing recorded) but not with `worker.size: 0`. Limits are in `docs/product/SPEC.md` Part B (Limits).
+- Writers are serialised per trail by a lock file that also covers separate processes (local filesystems only); a writer that waits longer than `lockTimeoutMs` gets `ERR_TRAIL_LOCKED`. Map it to a retry (Postfix: exit 75).
 
 ## Constraints
 
-- Node ≥ 22.5. Vanilla JS (pure ESM — `import`, `"type": "module"`); JSDoc is the single source of truth and the shipped `.d.ts` are generated from it (`checkJs` + `strictNullChecks`, git-ignored, built on publish). No consumer build step.
-- 2 runtime deps (`mailauth`, `mailparser`); the git ledger uses the `git` binary via `child_process` (not `simple-git`). `ots` is an optional external binary.
-- Transport is **bundled self-hosted Postfix/sendmail** with opendkim signing outbound at the MTA — not a pluggable third-party mail provider.
-- Durability-first: the ledger is the single source of truth and is meant to be offline-verifiable; SQL consumers project a read-model, they don't replace it.
+- Node >= 22.19; pure ESM (`import`, no `require`).
+- One trail = one git repo; one writer at a time per trail, across processes too (lock file `<trailDir>/.<trail>.lock`, local filesystems only).
+- Trail names match `/^[a-z0-9][a-z0-9_-]{0,63}$/`; record ids are 32 hex characters.

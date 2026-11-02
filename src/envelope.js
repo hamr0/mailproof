@@ -1,5 +1,5 @@
 // Envelope metadata from the Postfix pipe transport. Convenience helper for
-// consumers using the standard pipe contract documented in OPS.md §5:
+// consumers using the standard pipe contract documented in docs/archive/v1/OPS.md §5:
 //
 //   argv = receive.sh ${client_address} ${client_helo} ${sender} ${original_recipient}
 //

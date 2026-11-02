@@ -8,15 +8,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
-import os from 'node:os';
 import path from 'node:path';
 
 import { create } from '../../src/create.js';
 import { verifiedFixture, noDnsResolver } from '../helpers/dkim.js';
+import { makeTmpDir } from '../helpers/tmp.js';
 
 const OPERATOR = 'app.example';
 const envOf = (recipient, sender) => ({ recipient, sender, clientIp: '198.51.100.9', clientHelo: 'mta.example' });
-const tmpDir = () => fs.mkdtemp(path.join(os.tmpdir(), 'mailproof-verify-'));
+const tmpDir = () => makeTmpDir('mailproof-verify-');
 
 test('verify: the exact committed email re-verifies against the archived key with NO live DNS', async () => {
   const tmp = await tmpDir();

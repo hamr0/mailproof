@@ -1,7 +1,7 @@
 {
   "name": "mailproof",
-  "version": "1.4.0",
-  "description": "Email-native multi-party coordination kernel: turns a promise made over email into proof. DKIM/DMARC-verified replies, a tamper-evident git ledger, workflow sequencing, and email triggers. Extracted from gitdone.",
+  "version": "2.0.0",
+  "description": "Re-checkable proof of an email: the signed headers, never the body, recorded in a local git trail and verifiable offline forever. Two verdicts (live, portable), DKIM key archive, optional OpenTimestamps.",
   "type": "module",
   "main": "src/index.js",
   "types": "./types/index.d.ts",
@@ -11,27 +11,28 @@
       "import": "./src/index.js",
       "default": "./src/index.js"
     },
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./primitives.json": "./primitives.json"
   },
   "scripts": {
-    "poc": "node poc/pipeline.cjs",
-    "test": "node --test 'tests/unit/**/*.test.js' 'tests/integration/**/*.test.js'",
+    "test": "node --test 'tests/unit/**/*.test.js' 'tests/integration/**/*.test.js' tests/primitives-core.test.mjs tests/primitives-completeness.test.js",
     "typecheck": "tsc --noEmit",
-    "build:types": "tsc",
-    "prepublishOnly": "npm run build:types",
-    "check:lockfile": "node scripts/check-lockfile.mjs"
+    "build:types": "node -e \"require('node:fs').rmSync('types',{recursive:true,force:true})\" && tsc -p tsconfig.build.json",
+    "prepack": "npm run build:primitives && npm run build:types",
+    "check:lockfile": "node scripts/check-lockfile.mjs",
+    "check:types": "node scripts/check-types.mjs",
+    "build:primitives": "node scripts/gen-primitives.mjs",
+    "check:primitives": "node scripts/gen-primitives.mjs --check"
   },
   "keywords": [
     "email",
     "dkim",
     "dmarc",
+    "proof",
     "git",
-    "ledger",
     "audit-trail",
     "tamper-evident",
-    "workflow",
-    "coordination",
-    "multi-party",
+    "opentimestamps",
     "verification",
     "vanilla-js",
     "nodejs"
@@ -51,16 +52,16 @@
     "access": "public"
   },
   "engines": {
-    "node": ">=22.5"
+    "node": ">=22.19"
   },
   "files": [
-    "src/",
+    "src/index.js",
+    "src/proof/",
+    "primitives.json",
     "types/",
     "README.md",
     "mailproof.context.md",
-    "OPS.md",
     "CHANGELOG.md",
-    "config.example.env",
     "LICENSE",
     "NOTICE"
   ],
@@ -76,5 +77,6 @@
     "undici": "^7.30.1",
     "nodemailer": "^10.3.1",
     "joi": "^18.3.1"
-  }
+  },
+  "primitives": "./primitives.json"
 }

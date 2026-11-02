@@ -103,6 +103,9 @@ jobs:
         # `prepack` instead get it automatically and this is a no-op.
         if: steps.check.outputs.skip == 'false'
         run: npm run build:types --if-present
+      - name: Adopter-visible declarations (no bare object returns)
+        if: steps.check.outputs.skip == 'false'
+        run: npm run check:types --if-present
       - name: Types are usable BY AN ADOPTER, not just internally
         # `tsc --noEmit` in Typecheck above checks the SOURCE; it cannot see the
         # generated .d.ts resolved from inside node_modules, which is the one
@@ -162,27 +165,29 @@ jobs:
             "moduleResolution": "nodenext", "target": "es2022",
             "noEmit": true, "types": ["node"] } }
           JSON
-          # The documented entry points. It DEREFERENCES the structured results
-          # (`addr.kind`/`addr.domain`, `tag.eventId`) rather than merely calling them — a
-          # call-only check still compiles when a return is annotated as a bare `object`,
-          # which is the bug class this gate catches.
+          # The documented entry points (README minimal usage). It DEREFERENCES the
+          # structured results (`v.ok`, `v.trust`, `rec.captured`) rather than merely
+          # calling them: a call-only check still compiles when a return is annotated
+          # as a bare `object`, which is the bug class this gate catches. The package
+          # has no JS subpaths (only package.json / primitives.json), so the root
+          # entry is the whole typed surface.
           cat > app.ts <<'TS'
-          import { create, parseAddress, parseEventTag, TRUST_LEVELS } from 'mailproof';
+          import { Mailproof, verifyRecord, hashDocument, TRUST_LEVELS, RULES_VERSION } from 'mailproof';
 
-          const mp = create({ dataDir: './data', domain: 'example.com' });
-
-          const addr = parseAddress('event+abc-1@example.com');
-          if (addr) {
-            const kind: string = addr.kind;
-            const domain: string = addr.domain;
-            console.log(kind, domain, addr.extension);
-          }
-
-          const tag = parseEventTag('event+abc-1@example.com');
-          if (tag) console.log(tag.eventId, tag.stepId);
-
-          const event = await mp.createEvent({ title: 'Sign the lease' });
-          console.log(event, TRUST_LEVELS);
+          const mp = new Mailproof({ trailDir: './trails', trail: 'default' });
+          const rec = await mp.record(Buffer.from('From: a@example.com\r\n\r\nhi'), { direction: 'in', source: 'api' });
+          const id: string = rec.id;
+          const dup: boolean = rec.duplicate;
+          const v = await mp.verify(id);
+          const ok: boolean = v.ok;
+          const trust: 'verified' | 'unverified' = v.trust;
+          const c = await mp.check(Buffer.from('x'));
+          const live: string = c.live.trust;
+          const m = await mp.matchBody(id, Buffer.from('x'));
+          const full: boolean = m.full;
+          const got = await mp.get(id);
+          if (got) console.log(verifyRecord(got).ok, got.captured);
+          console.log(dup, ok, trust, live, full, hashDocument(Buffer.from('x')), TRUST_LEVELS, RULES_VERSION);
           TS
           # Native-addon repos: this install BUILDS the addon (better-sqlite3 &c) in
           # the consumer, so it inherits the runner's Node ABI — a reason to hold the

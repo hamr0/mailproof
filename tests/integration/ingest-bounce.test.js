@@ -10,20 +10,20 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import fss from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 
 import { create } from '../../src/create.js';
+import { makeTmpDir } from '../helpers/tmp.js';
 
 const OPERATOR = 'app.example';
 const CRLF = '\r\n';
 
 async function tmpDir() {
-  return fs.mkdtemp(path.join(os.tmpdir(), 'mailproof-bnc-'));
+  return makeTmpDir('mailproof-bnc-');
 }
 
 function fakeSendmail() {
-  const dir = fss.mkdtempSync(path.join(os.tmpdir(), 'mailproof-cap-'));
+  const dir = makeTmpDir('mailproof-cap-');
   const script = path.join(dir, 'sendmail.sh');
   fss.writeFileSync(script, `#!/bin/sh\nf=$(mktemp "${dir}/msg.XXXXXX")\ncat > "$f"\nexit 0\n`, { mode: 0o755 });
   return {

@@ -8,15 +8,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
-import os from 'node:os';
 import path from 'node:path';
 
 import { create } from '../../src/create.js';
 import { makeDkimKeypair, signDkim, buildResolver, verifiedFixture, noDnsResolver } from '../helpers/dkim.js';
+import { makeTmpDir } from '../helpers/tmp.js';
 
 const OPERATOR = 'app.example';
 const envOf = (recipient, sender) => ({ recipient, sender, clientIp: '198.51.100.9', clientHelo: 'mta.example' });
-const tmpDir = () => fs.mkdtemp(path.join(os.tmpdir(), 'mailproof-reverify-'));
+const tmpDir = () => makeTmpDir('mailproof-reverify-');
 
 // A message DKIM-signed by a domain that does NOT match the From domain
 // (non-aligned). DKIM verifies cryptographically (so a key gets archived) but

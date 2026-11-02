@@ -20,18 +20,19 @@
 // Concurrency: the per-event mutex is in-process and non-reentrant, and
 // gitrepo.commitReply allocates its sequence by reading the commits dir — so
 // two replies to one event must be serialised. ingest() therefore holds
-// withEventMutex(eventId) ONCE around load→commit→advance→persist→complete, and
+// withMutex(eventId) ONCE around load→commit→advance→persist→complete, and
 // uses only non-mutex primitives inside it (eventStore.writeEventAtomic, the
 // gitrepo writers, the pure engines). DNS-bound work (authenticate) and the
 // trigger sends (Commit C) stay OUTSIDE the lock.
 
 
-import { withEventMutex } from './event-mutex.js';
+import { withMutex } from './proof/mutex.js';
 import { renderDefault } from './templates.js';
 
 // Scan at most this many leading bytes for the humans-only prefilter. Headers
 // live at the top of the message; this caps work on a hostile multi-megabyte
-// body without parsing it.
+// body without parsing it. This is a truncation window of the v1 receive path (reachable only
+// through src/legacy-index.js), not an admission limit: the v2 limits live in src/proof/limits.js.
 const MAX_HEADER_BYTES = 64 * 1024;
 
 /** @typedef {import('./types.js').Envelope} Envelope */
@@ -504,7 +505,7 @@ function createIngest({
     const hasAttachment = parsed.attachments.length > 0;
 
     // 5–8. Serialise the whole reply against concurrent replies to this event.
-    const outcome = await withEventMutex(eventId, async () => {
+    const outcome = await withMutex(eventId, async () => {
       const event = await loadEvent(eventId); // authoritative, under the lock
       if (!event) return { gone: true };
 

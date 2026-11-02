@@ -1,7 +1,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyTrust, TRUST_LEVELS } from '../../src/classifier.js';
+import { classifyTrust, TRUST_LEVELS } from '../../src/proof/trust.js';
 
 // Synthetic mailauth authenticate() result fragments. These mirror the REAL
 // shape mailauth produces (carried over from gitdone's characterization

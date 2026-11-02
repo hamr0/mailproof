@@ -6,12 +6,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
-import os from 'node:os';
 import path from 'node:path';
 
 import { createEventStore } from '../../src/event-store.js';
 import { createGitrepo } from '../../src/gitrepo.js';
 import { createNotary } from '../../src/notary.js';
+import { makeTmpDir } from '../helpers/tmp.js';
 
 const DOC = Buffer.from('the signed contract, v3 — bytes that get fingerprinted');
 
@@ -19,7 +19,7 @@ const DOC = Buffer.from('the signed contract, v3 — bytes that get fingerprinte
 // carries DOC as an attachment (hashed through the notary's own hashDocument,
 // i.e. what m7's parser will do). Returns the wired pieces + event.
 async function fixture() {
-  const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'mailproof-notary-'));
+  const tmp = makeTmpDir('mailproof-notary-');
   const eventStore = createEventStore({ dataDir: tmp });
   const gitrepo = createGitrepo({ dataDir: tmp });
   const notary = createNotary({ gitrepo, eventStore });

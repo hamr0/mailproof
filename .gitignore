@@ -25,3 +25,8 @@ poc/.data/
 # chasing each new scratch dir with its own line.
 .*/
 !.github/
+
+# Real mail samples are personal and must NEVER enter the repo. Only the
+# synthetic/public test fixtures are admitted.
+*.eml
+!tests/integration/fixtures/*.eml

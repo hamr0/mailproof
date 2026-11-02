@@ -22,23 +22,7 @@
 // those hashes; it does not produce them at commit time.
 
 
-import crypto from 'node:crypto';
-
-// Canonical document fingerprint: `sha256:`-prefixed lowercase hex of the raw
-// bytes. Accepts a Buffer, Uint8Array, or string (utf8). The prefix matches the
-// ledger convention for the hashes gitrepo controls (`sender_hash`,
-// `message_id_hash`) and the existing attachment/`raw_sha256` fixtures, so m7's
-// parser stores a consistent value; verifyDocument still normalises either form
-// when comparing, so a populator that emitted bare hex can't trip the match.
-/**
- * Canonical document fingerprint: `sha256:`-prefixed lowercase hex. Accepts a
- * Buffer, Uint8Array, or utf8 string. Pure.
- * @param {Buffer | Uint8Array | string} bytes
- * @returns {string}
- */
-function hashDocument(bytes) {
-  return `sha256:${crypto.createHash('sha256').update(bytes).digest('hex')}`;
-}
+import { hashDocument } from './proof/hash.js';
 
 /**
  * @param {string | null | undefined} h

@@ -5,7 +5,7 @@
   // from it. The JSDoc is the single source of truth.
   //
   // Anti-drift: the generated .d.ts are emitted to ./types, git-ignored, and
-  // built fresh on publish (package.json `prepublishOnly`) — never committed,
+  // built fresh on pack and publish (package.json `prepack`) — never committed,
   // so no stored artifact can go stale. Emitting to a separate dir (not next to
   // src/*.js) also means no .d.ts is ever both an input and an output, so the
   // declaration emit can't collide with its own prior output.

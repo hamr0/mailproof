@@ -36,7 +36,7 @@
 // service" applies to the evidence, not the dashboard record).
 
 
-import { withEventMutex } from './event-mutex.js';
+import { withMutex } from './proof/mutex.js';
 import { isComplete } from './event-store.js';
 import { renderDefault } from './templates.js';
 
@@ -152,7 +152,7 @@ function createSweep({
         // Transition under the per-event lock; re-load + re-check inside it so a
         // concurrent reply/edit/completion can't be clobbered (the engines and
         // ingest take the same lock; writeEventAtomic is unguarded by contract).
-        const result = await withEventMutex(id, async () => {
+        const result = await withMutex(id, async () => {
           const cur = await loadEvent(id);
           if (!isActive(cur)) return null; // raced: archived/completed since the scan
           const reclock = referenceClockMs(cur);
@@ -184,7 +184,7 @@ function createSweep({
 
       // --- overdue nudge (once) ---
       if (daysOver >= overdueDays && !ev.nudged_overdue_at) {
-        const result = await withEventMutex(id, async () => {
+        const result = await withMutex(id, async () => {
           const cur = await loadEvent(id);
           if (!isActive(cur) || cur.nudged_overdue_at) return null; // raced
           const next = { ...cur, nudged_overdue_at: stamp };

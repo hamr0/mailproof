@@ -10,17 +10,17 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
-import os from 'node:os';
 import path from 'node:path';
 
 import { createEventStore } from '../../src/event-store.js';
 import { createGitrepo } from '../../src/gitrepo.js';
 import { createProofAnchor } from '../../src/proof-anchor.js';
+import { makeTmpDir } from '../helpers/tmp.js';
 
 const OPERATOR = 'app.example';
 
 async function tmpDir() {
-  return fs.mkdtemp(path.join(os.tmpdir(), 'mailproof-pa-'));
+  return makeTmpDir('mailproof-pa-');
 }
 
 // A stub ots that returns the supplied per-call upgrade results in order. When

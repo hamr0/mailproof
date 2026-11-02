@@ -7,7 +7,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseOtsBlockHeight } from '../../src/ots.js';
+import { parseOtsBlockHeight } from '../../src/proof/ots.js';
 
 test('parseOtsBlockHeight: "Bitcoin block <n>" shape', () => {
   assert.equal(parseOtsBlockHeight('Success! Bitcoin block 850123 attests existence'), 850123);

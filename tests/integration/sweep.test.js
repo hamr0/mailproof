@@ -11,11 +11,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import fss from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 
 import { create } from '../../src/create.js';
 import { verifiedSigner } from '../helpers/dkim.js';
+import { makeTmpDir } from '../helpers/tmp.js';
 
 const OPERATOR = 'app.example';
 const DAY = 86400 * 1000;
@@ -23,11 +23,11 @@ const ACTIVATED = '2026-01-01T00:00:00Z';
 const ACT_MS = new Date(ACTIVATED).getTime();
 
 async function tmpDir() {
-  return fs.mkdtemp(path.join(os.tmpdir(), 'mailproof-sweep-'));
+  return makeTmpDir('mailproof-sweep-');
 }
 
 function fakeSendmail() {
-  const dir = fss.mkdtempSync(path.join(os.tmpdir(), 'mailproof-cap-'));
+  const dir = makeTmpDir('mailproof-cap-');
   const script = path.join(dir, 'sendmail.sh');
   fss.writeFileSync(script, `#!/bin/sh\nf=$(mktemp "${dir}/msg.XXXXXX")\ncat > "$f"\nexit 0\n`, { mode: 0o755 });
   return {

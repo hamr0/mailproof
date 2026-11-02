@@ -1,5 +1,5 @@
 
-// Inbound decoding (src/parse.js). parseMessage is a deterministic function of
+// Inbound decoding (src/proof/parse.js). parseMessage is a deterministic function of
 // the raw bytes; authenticateMessage runs the real mailauth pipeline OFFLINE
 // via an injected resolver (no network), so both live here as fast unit tests.
 // We assert the WRAPPER's contract — the structured shape and that the safe
@@ -8,9 +8,9 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseMessage, authenticateMessage } from '../../src/parse.js';
+import { parseMessage, authenticateMessage } from '../../src/proof/parse.js';
 import { hashDocument } from '../../src/notary.js';
-import { classifyTrust } from '../../src/classifier.js';
+import { classifyTrust } from '../../src/proof/trust.js';
 
 const CRLF = '\r\n';
 
