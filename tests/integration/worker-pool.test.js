@@ -122,3 +122,30 @@ test('pool: a resolver answer that cannot be cloned to the worker never throws o
   assert.deepEqual(r.out.error, { message: 'resolver returned a non-plain value', code: 'EBADRESP' });
   await ok(p);
 });
+
+test('pool: a worker that dies while idle is dropped, and the next job gets a fresh one (not "crash")', async () => {
+  const p = new mod.WorkerPool(mod.workerConfig({ size: 1 }));
+  try {
+    const inp = input('idle');
+    const raw = Buffer.from('From: a@b.example\r\nSubject: x\r\n\r\nhi\r\n');
+    const nx = async () => { throw Object.assign(new Error('nx'), { code: 'ENOTFOUND' }); };
+    assert.ok('out' in await p.run(raw, inp, nx));
+    assert.equal(p.idle.length, 1);
+    await p.idle[0].terminate();
+    await new Promise((r) => setTimeout(r, 100));
+    assert.equal(p.idle.length, 0);
+    assert.equal(p.all.size, 0);
+    const r2 = await p.run(raw, inp, nx);
+    assert.ok('out' in r2, JSON.stringify(r2));
+    assert.equal(p.stats.spawned, 2);
+  } finally { await p.close(); }
+});
+
+test('pool: a crash during a job is still "crash", and the dead worker is gone', async (t) => {
+  const p = pool(t);
+  await ok(p);
+  assert.deepEqual(await p.run(buf, input('exit'), undefined), { limit: 'crash' });
+  assert.equal(p.all.size, 0);
+  assert.equal(p.idle.length, 0);
+  await ok(p);
+});

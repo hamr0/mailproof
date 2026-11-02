@@ -96,6 +96,14 @@ class WorkerPool {
     w.unref();   // an idle worker must not keep the process alive
     this.stats.spawned++;
     this.all.add(w);
+    // Permanent, attached once: a worker that exits while idle (nothing else is listening then) must not stay
+    // in `idle`/`all`, or the next job would be handed a dead thread. During a job this changes nothing: the
+    // job's own exit handler settles it (`crash`), and _retire is a no-op for a worker already forgotten.
+    w.once('exit', () => {
+      this.all.delete(w);
+      const i = this.idle.indexOf(w);
+      if (i >= 0) this.idle.splice(i, 1);
+    });
     const ready = new Promise((resolve, reject) => {
       w.once('message', (m) => (m.type === 'ready' ? resolve(undefined) : reject(new Error('Mailproof: bad worker hello'))));
       w.once('error', reject);
