@@ -5,6 +5,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { Mailproof } from '../../src/proof/mailproof.js';
+import { messageKeyOf } from '../../src/proof/copy.js';
+import { splitMessage } from '../../src/proof/signed-headers.js';
 import { signedMail } from '../helpers/proof.js';
 import { makeTmpDir } from '../helpers/tmp.js';
 // Sign at the instant the instance clock is pinned to, so t= equals captured whatever the real date.
@@ -159,4 +161,12 @@ test('a list digest (List-Id or multipart/digest, with rfc822 parts) is a digest
   assert.equal((await mp.record(forwardOf([orig.raw], 'Look at this too'), { direction: 'in' })).record.copy.kind, 'forward');
   const noParts = await mp.record(Buffer.from('From: a@a.example\r\nList-Id: <l.lists.example.org>\r\nMessage-ID: <q@a.example>\r\n\r\nhi\r\n'), { direction: 'in' });
   assert.equal(noParts.record.copy.kind, 'relayed');
+});
+
+test('two different signed messages get different message_keys (the key is the signature, not a constant)', async () => {
+  const a = await signedMail({ signTime: T0, body: BODY });
+  const b = await signedMail({ signTime: T0, body: 'A different message entirely.\r\n' });
+  const key = (m) => messageKeyOf(splitMessage(m.raw).rows);
+  assert.match(key(a), /^[0-9a-f]{32}$/);
+  assert.notEqual(key(a), key(b));
 });

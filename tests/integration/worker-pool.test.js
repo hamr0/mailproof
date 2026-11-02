@@ -159,3 +159,23 @@ test('pool: input that cannot be cloned to the worker rejects that job with a cl
   await ok(p);
   assert.equal(p.stats.spawned, 1, 'the worker was untouched and reused');
 });
+
+test('pool: a thread that cannot even be created rejects that job, and the pump goes on to the next one', async (t) => {
+  const p = pool(t);
+  const real = p._spawn.bind(p);
+  let failNext = true;
+  p._spawn = () => { if (failNext) { failNext = false; throw new Error('thread creation failed'); } return real(); };
+  await assert.rejects(() => p.run(buf, input('ok'), undefined), /thread creation failed/);
+  assert.equal(p.queue.length, 0, 'the failed job left the queue (it is not retried on the next pump)');
+  await ok(p);
+});
+
+test('pool: a job whose start rejects settles with that error and retires its worker; the pool serves the next job', async (t) => {
+  const p = pool(t);
+  const real = p._start.bind(p);
+  let failNext = true;
+  p._start = async (w, job) => { if (failNext) { failNext = false; throw new Error('start failed'); } return real(w, job); };
+  await assert.rejects(() => p.run(buf, input('ok'), undefined), /start failed/);
+  assert.equal(p.stats.killed, 1);
+  await ok(p);
+});

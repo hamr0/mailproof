@@ -1,6 +1,7 @@
 // The one place the caller's resolver is held to its contract. Two things a resolver can do wrong, both answered as a
 // DNS error so the call goes on: never answering, and answering with something that is not plain data. mailproof.js
-// wraps the caller's resolver once, so a worker thread and the in-process path (`worker.size: 0`) behave the same.
+// wraps the resolver (the caller's, or the system one) once per message, so a worker thread and the in-process path
+// (`worker.size: 0`) behave the same.
 
 import dns from 'node:dns';
 import { DNS_TIMEOUT_MS, DNS_BUDGET_MS } from './limits.js';
