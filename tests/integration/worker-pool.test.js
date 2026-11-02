@@ -179,3 +179,21 @@ test('pool: a job whose start rejects settles with that error and retires its wo
   assert.equal(p.stats.killed, 1);
   await ok(p);
 });
+
+test('envelope: a function in an envelope field is read as null, identically with a worker and in-process', async (t) => {
+  const { Mailproof } = await import('../../src/index.js');
+  const { makeTmpDir } = await import('../helpers/tmp.js');
+  const raw = Buffer.from('From: a@b.example\r\nSubject: env\r\n\r\nhi\r\n');
+  const envelope = { clientIp: () => 1, clientHelo: () => 1, sender: () => 1 };
+  const out = [];
+  for (const size of [1, 0]) {
+    const mp = new Mailproof({ trailDir: makeTmpDir('mp-env-'), worker: { size }, now: () => new Date('2026-01-01T00:00:00Z') });
+    t.after(() => mp.close());
+    const c = await mp.check(raw, { envelope });
+    const r = await mp.record(raw, { direction: 'in', source: 'x', envelope });
+    assert.equal(r.duplicate, false, `size ${size} records it`);
+    assert.equal(c.live.spf, null, `size ${size}: no usable envelope, so no SPF`);
+    out.push(JSON.stringify([c, r.id, r.record]));
+  }
+  assert.equal(out[0], out[1], 'same result with a worker and in-process');
+});

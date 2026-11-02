@@ -104,3 +104,19 @@ test('dns budget: a lookup is bounded by the budget that is left, when that is l
   const dt = performance.now() - t0;
   assert.ok(dt >= 200 && dt < 900, `took ${dt} ms`);
 });
+
+test('dns budget: the budget is per message, not per instance: after one message spends it, the next message on the same instance still verifies', async (t) => {
+  // A guard built once (in the constructor, or cached on the instance) would start message 2 with a spent budget, and every lookup would record `dns timeout`.
+  const { raw: good, resolver: answers } = await signedMail({ from: 'a@signer.example' });
+  const resolver = (name, type) => (/\._domainkey\.(out|in)/.test(name) || name.startsWith('_dmarc.o.example') ? new Promise(() => {}) : answers(name, type));
+  const run = async (size) => {
+    const mp = new Mailproof({ trailDir: dir(), resolver, worker: { size } });
+    t.after(() => mp.close());
+    const spent = await mp.check(hangMessage(), ENV);   // spends the whole budget on lookups that never answer
+    assert.ok(spent.key_errors.length > 0 && spent.key_errors.every((e) => e === 'dns timeout'), JSON.stringify(spent.key_errors));
+    const r = await mp.check(good);   // same instance, fresh budget
+    assert.deepEqual(r.key_errors, [], `size ${size}: the second message must get its own budget`);
+    assert.equal(r.live.trust, 'verified', `size ${size}`);
+  };
+  await within(Promise.all([run(1), run(0)]), BUDGET + SLACK, 'a spent budget, then a good message');
+});
