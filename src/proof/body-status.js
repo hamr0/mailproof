@@ -26,6 +26,48 @@ import { relayEvidence } from './relay.js';
  * @typedef {{ left: number }} WorkBudget
  */
 
+/** @type {WeakMap<Buffer, Buffer>} */
+const crlfCache = new WeakMap();
+
+/**
+ * The body with every bare LF (one not preceded by CR) turned into CRLF, built once per body buffer in
+ * one linear pass and shared by every signature. mailauth's body canonicalisers do this conversion
+ * themselves, one subarray per line (~1.4 us a line), and we run them once per signature, so a bare-LF
+ * body of many short lines cost that times the signature count; `relaxed` hashes the same either way
+ * (tests/unit/crlf-body.test.js, against the original on mixed-ending fuzz and real mail; `simple` does NOT:
+ * it hashes a bare LF as is). A lone CR is left alone.
+ * Keyed on the buffer, not on (c=, a=, l=), so distinct tag values cannot bring the passes back.
+ * @param {Buffer} body
+ * @returns {Buffer}  `body` itself when it has no bare LF
+ */
+function crlfBody(body) {
+  const hit = crlfCache.get(body);
+  if (hit) return hit;
+  const n = body.length;
+  let bare = 0;
+  for (let i = 0; i < n; i++) if (body[i] === 10 && (i === 0 || body[i - 1] !== 13)) bare++;
+  let out = body;
+  if (bare) {
+    out = Buffer.allocUnsafe(n + bare);
+    let w = 0;
+    for (let i = 0; i < n; i++) {
+      const c = body[i];
+      if (c === 10 && (i === 0 || body[i - 1] !== 13)) out[w++] = 13;
+      out[w++] = c;
+    }
+  }
+  crlfCache.set(body, out);
+  return out;
+}
+
+/**
+ * What to feed a body hasher of this canonicalisation. Only `relaxed` converts a bare LF itself (and
+ * pays per line for it), so only there is the shared CRLF copy used; `simple` hashes a bare LF as it
+ * is, so it gets the original bytes.
+ * @param {'simple' | 'relaxed' | string} mode @param {Buffer} body @returns {Buffer}
+ */
+const hashInput = (mode, body) => (mode === 'relaxed' ? crlfBody(body) : body);
+
 /** @returns {WorkBudget} a full budget for one message */
 const newBudget = () => ({ left: MAX_WORK });
 
@@ -170,7 +212,7 @@ function analyseBody(tags, body, ctx = {}) {
   let canonLen = 0;
   try {
     const h = dkimBody(mode, alg, l === null ? false : l);
-    h.update(body);
+    h.update(hashInput(mode, body));
     const got = h.digest('base64');
     canonLen = /** @type {any} */ (h).canonicalizedLength;
     if (bh && got === bh) {
@@ -198,7 +240,7 @@ function analyseBody(tags, body, ctx = {}) {
     if (!found) {
       const other = mode === 'simple' ? 'relaxed' : 'simple';
       const o = dkimBody(other, alg, l === null ? false : l);
-      o.update(body);
+      o.update(hashInput(other, body));
       if (o.digest('base64') === bh) found = { kind: 'canonicalisation', detail: { signed_as: mode, matches_as: other } };
     }
     if (!found && /\r(?!\n)/.test(body.toString('binary'))) {
@@ -233,4 +275,4 @@ function summariseBody(signatures, verifies) {
   return /** @type {BodyStatus} */ (pool.map((x) => /** @type {'matched' | 'partial' | 'mismatch'} */ (x.s)).sort((a, b) => RANK[b] - RANK[a])[0]);
 }
 
-export { analyseBody, summariseBody, canonLines, trimTrailingWs, newBudget };
+export { analyseBody, summariseBody, canonLines, trimTrailingWs, newBudget, hashInput, crlfBody };

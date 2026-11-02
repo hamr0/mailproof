@@ -11,6 +11,7 @@ import { parseTags, canonPair, splitMessage, hTooLong, H_TOO_LONG } from './sign
 import { getAlignment } from 'mailauth/lib/tools';
 import { hashDocument } from './hash.js';
 import { admit } from './admit.js';
+import { hashInput } from './body-status.js';
 
 /** @typedef {import('./types.js').MpRecord} MpRecord */
 /** @typedef {import('./types.js').RecordSignature} RecordSignature */
@@ -194,8 +195,9 @@ function verifyRecord(recordOrJson, opts = {}) {
 function bodyMatchesSignature(sig, body) {
   try {
     const t = parseTags(Buffer.from(sig.dkim_signature, 'base64').toString('binary'));
-    const h = dkimBody(canonPair(t.c).b, (t.a || '').split('-').pop(), t.l ? Number(t.l) : false);
-    h.update(body);
+    const mode = canonPair(t.c).b;
+    const h = dkimBody(mode, (t.a || '').split('-').pop(), t.l ? Number(t.l) : false);
+    h.update(hashInput(mode, body));
     return h.digest('base64') === (t.bh || '').replace(/\s+/g, '');
   } catch { return false; }
 }

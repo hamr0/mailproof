@@ -4,7 +4,7 @@
 
 import { dkimBody } from 'mailauth/lib/dkim/body';
 import { parseTags, canonPair, selectSigned } from './signed-headers.js';
-import { analyseBody } from './body-status.js';
+import { analyseBody, hashInput } from './body-status.js';
 
 /** @typedef {import('./types.js').RecordSignature} RecordSignature */
 /** @typedef {import('./signed-headers.js').HeaderRow} HeaderRow */
@@ -20,7 +20,7 @@ const b64 = (s) => (Buffer.isBuffer(s) ? s : Buffer.from(s, 'binary')).toString(
  */
 function canonicalBodyLength(body, canon) {
   const h = dkimBody(canon, 'sha256', false);
-  h.update(body);
+  h.update(hashInput(canon, body));
   h.digest('base64');
   return /** @type {any} */ (h).canonicalizedLength;
 }

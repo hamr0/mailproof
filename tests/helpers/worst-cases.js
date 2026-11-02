@@ -68,6 +68,12 @@ export const WORST_CASES = [
   { limit: 'signatures', name: '10 valid signatures, tampered, a 256 KiB line then 5000 short lines', build: () => tampered({ body: 'a '.repeat(MAX_BODY_LINE / 2 - 2) + CRLF + Array.from({ length: 5000 }, (_, i) => 'l' + i).join(CRLF) + CRLF, flipFromEnd: 40 }) },
   // ---- body line count: the cost per LINE, which the byte limits do not bound (3 us a line in mailparser and our canonicalisation) ----
   { limit: 'body_lines', name: '500,000 one-byte CRLF lines, matching bh', ceilingMs: 6000, why: 'per line, not per byte: ~1.5-3 us a line', build: () => { const b = 'a\r\n'.repeat(MAX_BODY_LINES); return { raw: msg([sigFor(b), 'From: me@x.example'], b) }; } },
+  { limit: 'body_lines', name: '500,000 empty bare-LF lines, matching bh', ceilingMs: 6000, why: 'per line, not per byte', build: () => { const b = '\n'.repeat(MAX_BODY_LINES); return { raw: msg([sigFor(b), 'From: me@x.example'], b) }; } },
+  { limit: 'body_lines', name: '10 valid signatures, tampered 500,000 one-byte bare-LF lines', ceilingMs: 8000, why: 'bare LF x signatures: mailauth\'s relaxed hasher converted each LF per signature (21 s before the body was converted once)', build: () => tampered({ body: 'a\n'.repeat(MAX_BODY_LINES), flipFromEnd: 40 }) },
+  { limit: 'body_lines', name: '10 keyless signatures with distinct l= and mixed c=, 500,000 bare-LF lines', ceilingMs: 8000, why: 'distinct l=/c= per signature must not bring back a hash pass each (a cache keyed on them would)', build: () => {
+    const sigs = Array.from({ length: MAX_SIGNATURES }, (_, i) => SIG().replace('c=relaxed/relaxed', i % 2 ? 'c=simple/simple' : 'c=relaxed/relaxed').replace('d=x.example', `d=s${i}.example`).replace('bh=', `l=${100 + i * 7}; bh=`));
+    return { raw: msg([...sigs, 'From: me@x.example'], 'a\n'.repeat(MAX_BODY_LINES)) };
+  } },
   // ---- MIME ----
   { limit: 'mime_parts', name: '190 attachment parts', build: () => ({ raw: msg(mimeHeaders(), parts(MAX_MIME_PARTS - 10, (i) => `--bnd${CRLF}Content-Type: application/octet-stream; name="f${i}.bin"${CRLF}Content-Disposition: attachment; filename="f${i}.bin"${CRLF}${CRLF}data${i}${CRLF}`) + `--bnd--${CRLF}`) }) },
   { limit: 'mime_parts', name: '190 message/rfc822 parts', build: () => ({ raw: msg(mimeHeaders('Subject: Fwd: x'), parts(MAX_MIME_PARTS - 10, () => rfc822(`From: a@b.example${CRLF}Subject: inner${CRLF}${CRLF}inner body${CRLF}`)) + `--bnd--${CRLF}`) }) },
