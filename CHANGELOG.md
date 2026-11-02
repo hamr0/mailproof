@@ -21,6 +21,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > the first free clean minor, `1.3.0`.) See
 > [`docs/archive/DESIGN.md`](docs/archive/DESIGN.md) for the phasing.
 
+## [2.0.1] - 2026-11-02
+
+### Fixed
+- An envelope reads the same with a worker and with `worker.size: 0`. `clientIp`, `clientHelo` and `sender` values that are not strings are read as `null`, and an envelope that is not a non-null object is read as no envelope. Before, a non-string or function value was rejected with "message input cannot be sent to the worker" when a worker was in use, but passed in-process.
+
+### Changed
+- Docs: `close()` says a call still running at `close()` may reject, and if it does it is not recorded, so await first (JSDoc, SPEC, context). `matchFile` documents that junk bytes give `{ match: false, attachment: null }`.
+- CI runs on Node 22.19, the `engines` floor.
+- Tests pin `message_key` distinctness, the body-status empty-prefix and budget-charge branches, the worker-pool spawn failure paths, and one resolver guard per message. POC scratch paths use `os.tmpdir()`.
+
 ## [2.0.0] - 2026-11-02
 
 mailproof v2.0.0: a new, smaller product. 1.x is frozen at tag `v1.4.0`. See `docs/product/PRD.md`.
