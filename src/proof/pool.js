@@ -14,8 +14,8 @@
 // nothing.
 
 import { Worker } from 'node:worker_threads';
-import dns from 'node:dns';
 import { WORKER_DEFAULTS } from './limits.js';
+import { systemResolver } from './resolver-guard.js';
 
 const WORKER_URL = new URL('./worker.js', import.meta.url);
 const TICK_MS = 50;   // how often a busy worker's CPU and memory are read
@@ -46,9 +46,6 @@ function workerConfig(opts) {
   }
   return cfg;
 }
-
-/** The system resolver, when the caller injected none (what mailauth and the key fetch both default to). */
-const systemResolver = (/** @type {string} */ name, /** @type {string} */ type) => dns.promises.resolve(name, /** @type {any} */ (type));
 
 /**
  * @typedef {Object} JobInput

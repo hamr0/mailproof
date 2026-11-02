@@ -30,7 +30,7 @@ import { Mailproof, verifyRecord, hashDocument, TRUST_LEVELS, RULES_VERSION } fr
 |---|---|
 | `trailDir` (required) | Directory holding trails. Each trail is a git repo at `<trailDir>/<trail>/`. |
 | `trail` | Trail name, `/^[a-z0-9][a-z0-9_-]{0,63}$/`, default `default`. |
-| `resolver` | mailauth-compatible DNS resolver `(name, type) => [[txt]]` (tests inject one). A lookup it has not answered within 5 s is answered as the error `dns timeout` (`code: 'ETIMEOUT'`). It must return plain data, as `node:dns` does; anything else is a DNS error (`code: 'EBADRESP'`). |
+| `resolver` | mailauth-compatible DNS resolver `(name, type) => [[txt]]` (tests inject one). A lookup it has not answered within 5 s is answered as the error `dns timeout` (`code: 'ETIMEOUT'`); one message's lookups together may wait 30 s, then further ones fail at once the same way. It must return plain data, as `node:dns` does; anything else is a DNS error (`code: 'EBADRESP'`). |
 | `otsBin` | Path to the `ots` (OpenTimestamps) binary. Absent = OTS off. |
 | `now` | Clock `() => Date`. |
 | `trustedSealers` | ARC sealer domains whose chains may yield live `forwarded`. |

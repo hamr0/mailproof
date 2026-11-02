@@ -73,6 +73,14 @@ export const MAX_WORK = 64 * 1024 * 1024;
 export const DNS_TIMEOUT_MS = 5000;
 
 /**
+ * All DNS lookups of ONE message together (mailauth's and the DKIM key fetches, outer and inner signatures), as
+ * the wall time during which at least one lookup is in flight (resolver-guard.js). A message with 10 outer and
+ * 10 x 10 inner signatures could otherwise cost a 5 s wait per lookup, in turn, for minutes while the worker's
+ * busy clock (which excludes DNS) never ran. Once spent, further lookups fail at once as `dns timeout`.
+ */
+export const DNS_BUDGET_MS = 30_000;
+
+/**
  * The deadline backstop (pool.js), for what the gate above does not measure. `cpuMs`: CPU of the worker
  * thread one message may use; `wallMs`: busy wall time (DNS waits excluded); `maxMemoryMb`: heap plus external
  * memory of the worker thread. Over any of them the message is recorded `over limit: time` / `over limit: memory`. A worker that dies for no reason the pool can name is `over limit: crash`.

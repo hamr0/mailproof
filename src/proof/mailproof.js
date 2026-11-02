@@ -4,7 +4,7 @@
 import path from 'node:path';
 import { overLimitRecord } from './over-limit.js';
 import { workerConfig, leasePool } from './pool.js';
-import { guardResolver } from './resolver-guard.js';
+import { guardResolver, systemResolver } from './resolver-guard.js';
 import { engine } from './verdict.js';
 import { createOts, DEFAULT_OTS_TIMEOUT_MS } from './ots.js';
 import { verifyRecord, matchBodyRecord, matchFileRecord } from './recheck.js';
@@ -94,7 +94,7 @@ class Mailproof {
     const captured = this.now().toISOString();
     const hasEnvelope = Boolean(ctx.envelope && (ctx.envelope.clientIp || ctx.envelope.sender));
     const trustedSealers = this.trustedSealers;
-    const resolver = this.resolver && guardResolver(this.resolver);   // a lookup that never answers, or answers with a non-plain value, is a DNS error, in the worker and in-process alike
+    const resolver = guardResolver(this.resolver ?? systemResolver);   // one guard per message: a lookup that never answers, or answers with a non-plain value, is a DNS error, and all of one message's lookups share one DNS budget; in the worker and in-process alike, system resolver included
     if (this.worker.size === 0) {
       // loaded here, not at the top: with a worker, only the worker pays for mailauth and mailparser
       const { buildRecord } = await import('./build.js');
