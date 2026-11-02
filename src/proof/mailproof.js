@@ -2,7 +2,7 @@
 // are bound, so `const { verify } = mp` works.
 
 import path from 'node:path';
-import { buildRecord, overLimitRecord } from './build.js';
+import { overLimitRecord } from './over-limit.js';
 import { workerConfig, leasePool } from './pool.js';
 import { engine } from './verdict.js';
 import { createOts, DEFAULT_OTS_TIMEOUT_MS } from './ots.js';
@@ -93,7 +93,11 @@ class Mailproof {
     const captured = this.now().toISOString();
     const hasEnvelope = Boolean(ctx.envelope && (ctx.envelope.clientIp || ctx.envelope.sender));
     const trustedSealers = this.trustedSealers;
-    if (this.worker.size === 0) return buildRecord(buf, ctx, { captured, hasEnvelope, trustedSealers, resolver: this.resolver });
+    if (this.worker.size === 0) {
+      // loaded here, not at the top: with a worker, only the worker pays for mailauth and mailparser
+      const { buildRecord } = await import('./build.js');
+      return buildRecord(buf, ctx, { captured, hasEnvelope, trustedSealers, resolver: this.resolver });
+    }
     this._lease ??= leasePool(this.worker);
     const r = await this._lease.run(buf, { ctx, captured, hasEnvelope, trustedSealers }, this.resolver);
     return 'out' in r ? r.out : overLimitRecord(buf, ctx, { captured, hasEnvelope, trustedSealers }, r.limit);

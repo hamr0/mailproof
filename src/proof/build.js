@@ -7,8 +7,8 @@ import { authenticateMessage, parseMessage } from './parse.js';
 import { fetchDkimKey } from './keys.js';
 import { splitMessage, parseTags } from './signed-headers.js';
 import { MAX_INNER } from './limits.js';
-import { admit, overLimitReason } from './admit.js';
-import { hashDocument } from './hash.js';
+import { admit } from './admit.js';
+import { overLimitRecord } from './over-limit.js';
 import { buildSignatureEntry } from './record.js';
 import { summariseBody, newBudget } from './body-status.js';
 import { messageKeyOf, classifyCopy } from './copy.js';
@@ -28,7 +28,7 @@ import { verifyRecord } from './recheck.js';
  * @property {((name: string, type?: string) => Promise<any>) | undefined} resolver  Absent: the system resolver.
  */
 
-/** @typedef {{ record: MpRecord, keyFiles: Array<{ rel: string, json: unknown }>, overLimit: string | null }} Built */
+/** @typedef {import('./over-limit.js').Built} Built */
 
 /** @param {Buffer | string} raw @returns {string} */
 const sha256hex = (raw) => crypto.createHash('sha256').update(raw).digest('hex');
@@ -102,43 +102,6 @@ async function buildRecord(buf, ctx, env) {
 }
 
 /**
- * The record of a message that was refused (accept-with-flag): committed like any other, but nothing
- * was parsed, so it holds only what the raw bytes give without a parser: `raw_sha256` (and so the
- * `id`) and `size`. Everything else is empty or null, both verdicts are `unverified`, and their
- * `reason` names the limit (`over limit: body_line`). `limit` is a gate limit, or `time` / `memory` when the
- * worker backstop (pool.js) stopped the build.
- * @param {Buffer} buf
- * @param {{ direction: 'in' | 'out', source: string }} ctx
- * @param {{ captured: string, hasEnvelope: boolean, trustedSealers: string[] }} env
- * @param {string} limit
- * @returns {Built & { overLimit: string }}
- */
-function overLimitRecord(buf, ctx, env, limit) {
-  const rawSha256 = hashDocument(buf);
-  const reason = overLimitReason(limit);
-  /** @type {MpRecord} */
-  const record = {
-    v: 2,
-    id: rawSha256.replace(/^sha256:/, '').slice(0, 32),
-    message_key: null,
-    captured: env.captured,
-    direction: ctx.direction,
-    source: ctx.source,
-    message: { message_id: null, in_reply_to: null, references: [], raw_sha256: rawSha256, size: buf.length },
-    attachments: [],
-    signatures: [],
-    body_status: 'not-checked',
-    copy: { kind: 'unknown', evidence: {} },
-    verdicts: {},
-  };
-  record.verdicts = {
-    live: { ...buildLive(/** @type {MailauthResult} */ ({}), { trustedSealers: env.trustedSealers, hasEnvelope: env.hasEnvelope }), reason },
-    portable: { ...buildPortable(record), reason },
-  };
-  return { record, keyFiles: [], overLimit: limit };
-}
-
-/**
  * Signature entries (+ the DKIM keys to archive) for a header block and body that passed the gate
  * (so: at most MAX_SIGNATURES signatures, each listing at most MAX_H_NAMES names).
  * @param {import('./signed-headers.js').HeaderRow[]} rows
@@ -200,4 +163,4 @@ async function innerOf(buf, captured, budget, resolver) {
   };
 }
 
-export { buildRecord, overLimitRecord };
+export { buildRecord };
