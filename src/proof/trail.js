@@ -142,23 +142,43 @@ async function takeOverIfStale(lockPath, timeoutMs) {
   }
 }
 
+/** Lock-file name of the trail's writer lock, beside the repo. */
+const trailLockFile = (/** @type {string} */ name) => `.${name}.lock`;
+/** Lock-file name of the sync lock (SPEC B4.5), beside the repo. */
+const syncLockFile = (/** @type {string} */ name) => `.${name}.sync.lock`;
+
+/** @typedef {{ code: string, failFast: boolean, what: string }} LockKind */
+/** @type {LockKind} The trail writer lock: waits up to the timeout. */
+const TRAIL_LOCK = Object.freeze({ code: 'ERR_TRAIL_LOCKED', failFast: false, what: 'trail' });
+/** @type {LockKind} The sync lock: same mechanism, but a held lock fails at once (a cron run should skip, not queue). */
+const SYNC_LOCK = Object.freeze({ code: 'ERR_SYNC_LOCKED', failFast: true, what: 'sync of trail' });
+
+/** Fail-fast locks held by this process (they skip the queueing mutex, so a second holder must be refused here). */
+const heldFailFast = new Set();
+
 /**
- * Run `work` while holding the trail's cross-process lock (and the in-process mutex).
+ * Run `work` while holding a cross-process lock file `<dirname(root)>/<lockFile>` (and, for a waiting lock, the
+ * in-process mutex). One implementation serves the trail lock and the sync lock; `kind` picks the error and whether
+ * a held lock is waited for (TRAIL_LOCK, default) or refused at once (SYNC_LOCK).
  * @template T
  * @param {string} root  The trail directory.
- * @param {string} name
- * @param {number} timeoutMs
+ * @param {string} lockFile  Lock file name, e.g. `.default.lock` (see trailLockFile, syncLockFile).
+ * @param {number} timeoutMs  How long to wait for a held lock (a fail-fast lock never waits). Also the age past which an
+ *   unparseable lock counts as stale, except that a fail-fast lock uses DEFAULT_LOCK_TIMEOUT_MS for that.
  * @param {() => Promise<T>} work
+ * @param {LockKind} [kind]
  * @returns {Promise<T>}
- * @throws {Error & { code: 'ERR_TRAIL_LOCKED' }} when the lock is not obtained within `timeoutMs`.
+ * @throws {Error & { code: string }} `kind.code` when the lock is not obtained.
  */
-async function withTrailLock(root, name, timeoutMs, work) {
-  return withMutex(root, async () => {
-    const lockPath = path.join(path.dirname(root), `.${name}.lock`);
+async function withTrailLock(root, lockFile, timeoutMs, work, kind = TRAIL_LOCK) {
+  const lockPath = path.join(path.dirname(root), lockFile);
+  const run = async () => {
     await fs.mkdir(path.dirname(root), { recursive: true });
     const mine = JSON.stringify({ pid: process.pid, host: os.hostname(), started: new Date().toISOString() });
-    const deadline = Date.now() + timeoutMs;
+    const staleMs = kind.failFast ? DEFAULT_LOCK_TIMEOUT_MS : timeoutMs;
+    const deadline = Date.now() + (kind.failFast ? 0 : timeoutMs);
     let delay = 20;
+    let takeovers = 0;
     for (;;) {
       try {
         const fh = await fs.open(lockPath, 'wx');
@@ -167,9 +187,10 @@ async function withTrailLock(root, name, timeoutMs, work) {
       } catch (e) {
         if (/** @type {NodeJS.ErrnoException} */ (e).code !== 'EEXIST') throw e;
       }
-      if (await takeOverIfStale(lockPath, timeoutMs) && Date.now() < deadline) continue; // never loops past the deadline
-      if (Date.now() >= deadline) {
-        throw Object.assign(new Error(`trail "${name}" is locked by another writer (${lockPath})`), { code: 'ERR_TRAIL_LOCKED' });
+      // never loops past the deadline; a fail-fast lock has none, so it retries after a takeover a few times instead
+      if (await takeOverIfStale(lockPath, staleMs) && (kind.failFast ? ++takeovers <= 3 : Date.now() < deadline)) continue;
+      if (kind.failFast || Date.now() >= deadline) {
+        throw Object.assign(new Error(`${kind.what} "${path.basename(root)}" is locked by another writer (${lockPath})`), { code: kind.code });
       }
       await sleep(Math.min(delay, Math.max(0, deadline - Date.now())) * (0.5 + Math.random() / 2));
       delay = Math.min(delay * 2, 500);
@@ -180,7 +201,13 @@ async function withTrailLock(root, name, timeoutMs, work) {
       // so takeOverIfStale never judges it stale and nobody else removes it.
       try { if ((await fs.readFile(lockPath, 'utf8')) === mine) await fs.unlink(lockPath); } catch { /* already gone */ }
     }
-  });
+  };
+  if (!kind.failFast) return withMutex(lockPath, run);
+  if (heldFailFast.has(lockPath)) {
+    throw Object.assign(new Error(`${kind.what} "${path.basename(root)}" is locked by another writer in this process (${lockPath})`), { code: kind.code });
+  }
+  heldFailFast.add(lockPath);
+  try { return await run(); } finally { heldFailFast.delete(lockPath); }
 }
 
 /**
@@ -325,7 +352,7 @@ async function listIds(root) {
  * @returns {Promise<{ duplicate: boolean, commit: string, extra: string[] }>}
  */
 async function commitRecord(root, name, { record, keyFiles, message, now, afterWrite, lockTimeoutMs = DEFAULT_LOCK_TIMEOUT_MS }) {
-  return withTrailLock(root, name, lockTimeoutMs, async () => {
+  return withTrailLock(root, trailLockFile(name), lockTimeoutMs, async () => {
     await ensureTrail(root, name, now().toISOString());
     await clearLeftovers(root);
     const rel = `records/${record.id}.json`;
@@ -359,4 +386,4 @@ async function commitRecord(root, name, { record, keyFiles, message, now, afterW
   });
 }
 
-export { TRAIL_NAME_RE, RECORD_ID_RE, DEFAULT_LOCK_TIMEOUT_MS, serialise, ensureTrail, readRecord, listIds, commitRecord };
+export { TRAIL_NAME_RE, RECORD_ID_RE, DEFAULT_LOCK_TIMEOUT_MS, TRAIL_LOCK, SYNC_LOCK, trailLockFile, syncLockFile, withTrailLock, serialise, ensureTrail, readRecord, listIds, commitRecord };
