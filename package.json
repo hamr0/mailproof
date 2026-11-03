@@ -5,6 +5,9 @@
   "type": "module",
   "main": "src/index.js",
   "types": "./types/index.d.ts",
+  "bin": {
+    "mailproof-sync": "./bin/mailproof-sync.js"
+  },
   "exports": {
     ".": {
       "types": "./types/index.d.ts",
@@ -56,6 +59,7 @@
   },
   "files": [
     "src/index.js",
+    "bin/",
     "src/proof/",
     "primitives.json",
     "types/",
