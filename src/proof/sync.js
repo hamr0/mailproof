@@ -12,6 +12,7 @@ import {
   SYNC_CONNECT_MS, SYNC_SOCKET_MS, SYNC_FETCH_MS, SYNC_MAX_RECONNECTS, SYNC_RECONNECT_BACKOFF_MS,
 } from './limits.js';
 import { withTrailLock, syncLockFile, SYNC_LOCK, serialise } from './trail.js';
+import { git } from './git.js';
 
 /**
  * @typedef {Object} SyncOptions
@@ -32,7 +33,7 @@ import { withTrailLock, syncLockFile, SYNC_LOCK, serialise } from './trail.js';
  * @property {'in' | 'out'} direction
  * @property {boolean} attempted  False: the run stopped before this folder.
  * @property {string | null} uidvalidity  Decimal string, never a Number.
- * @property {null | 'uidvalidity' | 'unreadable'} reset  Why the cursor was discarded and the folder rescanned from UID 1.
+ * @property {null | 'uidvalidity' | 'unreadable' | 'trail'} reset  Why the cursor was discarded and the folder rescanned from UID 1 (`trail`: the trail was restored or replaced, so the cursor could be ahead of it).
  * @property {number | null} last_uid  The cursor after this run.
  * @property {number} seen  Messages listed in the window(s) fetched this run.
  * @property {number} recorded  New records, over-limit ones included.
@@ -145,7 +146,7 @@ function effectiveCaps(opts, limits = SYNC_LIMITS) {
 // ---- cursor file (B4.2) ----
 
 /** @typedef {{ uidvalidity: string, last_uid: number, updated: string }} CursorEntry */
-/** @typedef {{ v: 1, accounts: Record<string, Record<string, CursorEntry>> }} CursorFile */
+/** @typedef {{ v: 1, head: string | null, accounts: Record<string, Record<string, CursorEntry>> }} CursorFile  `head`: the trail's git HEAD when the file was last written (null: no commits yet). */
 
 /** @param {string} trailDir @param {string} trail @returns {string} */
 const cursorPath = (trailDir, trail) => path.join(trailDir, `.${trail}.sync.json`);
@@ -158,7 +159,7 @@ const cursorPath = (trailDir, trail) => path.join(trailDir, `.${trail}.sync.json
  */
 async function readCursorFile(file) {
   /** @type {CursorFile} */
-  const empty = { v: 1, accounts: {} };
+  const empty = { v: 1, head: null, accounts: {} };
   let text;
   try { text = await fs.readFile(file, 'utf8'); }
   catch (e) {
@@ -170,6 +171,31 @@ async function readCursorFile(file) {
     if (j && j.v === 1 && j.accounts && typeof j.accounts === 'object' && !Array.isArray(j.accounts)) return { data: j, unreadable: false };
   } catch { /* fall through */ }
   return { data: empty, unreadable: true };
+}
+
+/**
+ * The trail's git HEAD, or null when it has no commits (or is not initialised yet).
+ * @param {string} root
+ * @returns {Promise<string | null>}
+ */
+async function trailHead(root) {
+  try { await fs.access(path.join(root, '.git')); } catch { return null; } // never pick up an enclosing repo's HEAD
+  try { return await git(root, ['rev-parse', '--verify', '-q', 'HEAD']) || null; } catch { return null; }
+}
+
+/**
+ * Is the cursor file consistent with the trail? False when the trail was restored from an older backup or replaced
+ * (the file's `head` is not the current HEAD or an ancestor of it) or is now empty: the cursor could then be ahead
+ * of the trail. A file written while the trail had no commits (`head: null`) is consistent with any trail.
+ * @param {string} root
+ * @param {CursorFile} data
+ * @returns {Promise<boolean>}
+ */
+async function cursorMatchesTrail(root, data) {
+  const now = await trailHead(root);
+  if (data.head === null) return true; // written while the trail had no commits: nothing it points at can be missing
+  if (now === null || typeof data.head !== 'string' || !/^[0-9a-f]{40,64}$/.test(data.head)) return false;
+  try { await git(root, ['merge-base', '--is-ancestor', data.head, now]); return true; } catch { return false; }
 }
 
 /**
@@ -292,6 +318,13 @@ async function runSync(host, rawOpts, deps) {
   return withTrailLock(host.root, syncLockFile(host.trail), 0, async () => {
     const start = clock();
     const cur = await readCursorFile(file);
+    // A trail restored or replaced under a surviving cursor: drop the cursor, remember which folders had one (B4.2).
+    /** @type {Set<string>} */
+    const staleFolders = new Set();
+    if (!cur.unreadable && Object.keys(cur.data.accounts).length > 0 && !(await cursorMatchesTrail(host.root, cur.data))) {
+      for (const f of Object.keys(cur.data.accounts[account] ?? {})) staleFolders.add(f);
+      cur.data.accounts = {};
+    }
     const openArgs = /** @type {OpenSessionArgs} */ ({
       host: opts.host, port: opts.port, user: opts.user, auth: opts.auth,
       ...(opts.tls ? { tls: opts.tls } : {}),
@@ -365,7 +398,7 @@ async function runSync(host, rawOpts, deps) {
       const acct = (cur.data.accounts[account] ??= {});
       acct[folder] = { uidvalidity, last_uid: lastUid, updated: new Date(clock()).toISOString() };
       /** @type {CursorFile} */
-      const out = { v: 1, accounts: {} };
+      const out = { v: 1, head: await trailHead(host.root), accounts: {} };
       for (const [a, folders] of Object.entries(cur.data.accounts)) out.accounts[a] = folders;
       try { await writeFile(file, serialise(out)); }
       catch (err) { throw new TrailFailure(typeof (/** @type {any} */ (err))?.code === 'string' ? /** @type {any} */ (err).code : 'ERR_SYNC_CURSOR', clean(/** @type {any} */ (err)?.message)); }
@@ -393,6 +426,7 @@ async function runSync(host, rawOpts, deps) {
             firstPass = false;
             const stored = cur.data.accounts[account]?.[folderPath];
             if (cur.unreadable || (stored !== undefined && !validCursorEntry(stored))) { e.reset = 'unreadable'; last = 0; }
+            else if (stored === undefined && staleFolders.has(folderPath)) { e.reset = 'trail'; last = 0; }
             else if (stored !== undefined && stored.uidvalidity !== sel.uidvalidity) { e.reset = 'uidvalidity'; last = 0; }
             else if (stored !== undefined) last = stored.last_uid;
             e.uidvalidity = sel.uidvalidity;
@@ -497,7 +531,19 @@ async function runSync(host, rawOpts, deps) {
     };
 
     try {
-      const known = await io(() => /** @type {ImapSession} */ (sess).findSent()).catch((err) => { throw codedError('ERR_IMAP_CONNECT', classify(err).message); });
+      // The \Sent lookup is only needed to find the Sent folder (sent: true) and to tag a listed one as `out`. A failure
+      // is tolerated when it is not needed (sent off, or a path given): no Sent folder is known, listed folders stay `in`.
+      // When Sent is requested, a connect or auth failure ends the run; anything else (throttled, protocol, timeout) lands
+      // on the \Sent entry like ERR_IMAP_NO_SENT, and the other folders still sync.
+      /** @type {{ failure: ImapFailure | null }} */
+      const sentLookup = { failure: null };
+      const known = await io(() => /** @type {ImapSession} */ (sess).findSent()).catch((err) => {
+        const f = classify(err);
+        if (opts.sent === false || typeof opts.sent === 'string') return null;
+        if (f.code === 'ERR_IMAP_CONNECT' || f.code === 'ERR_IMAP_AUTH') throw codedError(f.code, f.message);
+        sentLookup.failure = f;
+        return null;
+      });
       /** @type {Array<{ path: string, direction: 'in' | 'out' }>} */
       const plan = [];
       const seen = new Set();
@@ -511,7 +557,9 @@ async function runSync(host, rawOpts, deps) {
         if (sentPath) add(sentPath, 'out');
         else {
           noSent = newEntry('\\Sent', 'out');
-          noSent.error = { code: 'ERR_IMAP_NO_SENT', message: 'no folder with the \\Sent special-use flag; pass sent: "<path>" or sent: false' };
+          noSent.error = sentLookup.failure
+            ? { code: sentLookup.failure.code, message: sentLookup.failure.message }
+            : { code: 'ERR_IMAP_NO_SENT', message: 'no folder with the \\Sent special-use flag; pass sent: "<path>" or sent: false' };
         }
       }
       for (const item of plan) {

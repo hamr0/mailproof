@@ -9,6 +9,7 @@ import crypto from 'node:crypto';
  * @param {boolean} [cfg.ignoreRange]  Behave like the `N:*` quirk: always also return the highest message, whatever was asked.
  * @param {(ev: { op: string, uid?: number, folder: string | null, n: number }) => void | Promise<void>} [cfg.onCall]  Called before fetch/hash/list/select; may throw or block.
  * @param {(opts: any) => void} [cfg.onOpen]
+ * @param {Error} [cfg.findSentError]  What `findSent()` throws (a failing LIST).
  */
 export function makeFake(cfg) {
   const log = { opens: 0, lists: /** @type {Array<[string, number, number]>} */ ([]), fetches: /** @type {Array<[string, number, number]>} */ ([]), hashes: /** @type {Array<[string, number]>} */ ([]), selects: /** @type {string[]} */ ([]), closes: 0 };
@@ -27,7 +28,7 @@ export function makeFake(cfg) {
       let current = null;
       const call = async (op, uid) => { counters[op]++; await cfg.onCall?.({ op, uid, folder: current, n: counters[op] }); };
       return {
-        async findSent() { return cfg.sent ?? null; },
+        async findSent() { if (cfg.findSentError) throw cfg.findSentError; return cfg.sent ?? null; },
         async select(p) {
           const f = cfg.folders[p];
           log.selects.push(p);

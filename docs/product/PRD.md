@@ -174,6 +174,8 @@ Reuse v1 names where the concept is the same (`verify`, `hashDocument`).
 
 ### M1 — Capture (fully specified)
 
+**Status:** built on `feat/m1-capture`, unreleased; see [SPEC B4](SPEC.md) and [F17](findings.md).
+
 A `sync` run (cron/systemd timer first; a long-running IMAP IDLE watcher later) over **one Gmail label
 or folder plus Sent**, via IMAP. The owner's Gmail account is the target. Resumes where it left off,
 no duplicates. The existing Postfix pipe stays as a capture source.

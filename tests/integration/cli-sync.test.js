@@ -20,7 +20,10 @@ const certFile = path.join(work, 'ca.pem');
 fs.writeFileSync(certFile, CERT.cert);
 // a pass command that prints the secret (a tiny node script: portable, no shell)
 const passScript = path.join(work, 'print-pass.mjs');
-fs.writeFileSync(passScript, `console.log(${JSON.stringify(SECRET.replace(/(.{4})/g, '$1 '))});\nconsole.log('second line ignored');\n`);
+// Google's display shape: four groups of four lowercase letters
+const GROUPED = 'abcd efgh ijkl mnop';
+const GROUPED_PASS = GROUPED.replace(/ /g, '');
+fs.writeFileSync(passScript, `console.log(${JSON.stringify(GROUPED)});\nconsole.log('second line ignored');\n`);
 
 const servers = [];
 const serve = async (n = 2, extra = {}) => {
@@ -46,7 +49,7 @@ const base = (srv, trailDir) => ['--trail-dir', trailDir, '--host', '127.0.0.1',
 const passCmd = `${process.execPath} ${passScript}`;
 
 test('happy run via --pass-command: JSON summary, exit 0, the secret appears nowhere; a second run records 0', async () => {
-  const srv = await serve(2);
+  const srv = await serve(2, { creds: { pass: GROUPED_PASS } });
   const trailDir = makeTmpDir('mp-cli-trail-');
   const args = [...base(srv, trailDir), '--pass-command', passCmd];
   const r1 = await run(args);
@@ -58,7 +61,7 @@ test('happy run via --pass-command: JSON summary, exit 0, the secret appears now
   assert.equal(j1.folders[0].folder, 'INBOX');
   assert.equal(j1.folders[0].recorded, 2);
   for (const out of [r1.stdout, r1.stderr]) {
-    assert.ok(!out.includes(SECRET) && !out.includes(SECRET.replace(/(.{4})/g, '$1 ').trim()), 'the password is never echoed');
+    assert.ok(!out.includes(GROUPED_PASS) && !out.includes(GROUPED), 'the password is never echoed');
   }
   assert.ok(srv.log.some((l) => l.line === 'plain ok'), 'the spaces in the app password were stripped');
 
@@ -81,6 +84,27 @@ test('--pass-file and stdin also work', async () => {
   const b = await run(base(srv, trail2), { input: SECRET + '\n' });
   assert.equal(b.code, 0, b.stderr);
   assert.equal(JSON.parse(b.stdout).folders[0].recorded, 1);
+});
+
+test('passwords: only Google\'s grouped app-password shape loses its spaces; any other password reaches the server intact', async () => {
+  const cases = [
+    ['grouped Google shape is stripped', 'abcd efgh ijkl mnop', 'abcdefghijklmnop'],
+    ['a passphrase with inner spaces is sent as given', 'my pass phrase', 'my pass phrase'],
+    ['four groups but not lowercase letters is sent as given', 'Abcd efgh ijkl mnop', 'Abcd efgh ijkl mnop'],
+    ['surrounding whitespace is trimmed, inner kept', '  my pass phrase \t', 'my pass phrase'],
+  ];
+  for (const [name, written, expected] of cases) {
+    const srv = await serve(1, { creds: { pass: expected } });
+    const pf = path.join(work, 'pw-shape');
+    fs.writeFileSync(pf, written + '\n');
+    const r = await run([...base(srv, makeTmpDir('mp-cli-trail-')), '--pass-file', pf]);
+    assert.equal(r.code, 0, `${name}: ${r.stderr}`);
+    assert.ok(srv.log.some((l) => l.line === 'plain ok'), `${name}: the server received ${JSON.stringify(expected)}`);
+    // stdin takes the same path
+    const srv2 = await serve(1, { creds: { pass: expected } });
+    const r2 = await run(base(srv2, makeTmpDir('mp-cli-trail-')), { input: written + '\n' });
+    assert.equal(r2.code, 0, `${name} (stdin): ${r2.stderr}`);
+  }
 });
 
 test('env fallbacks and the access-token command (XOAUTH2)', async () => {

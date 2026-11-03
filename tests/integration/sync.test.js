@@ -327,7 +327,8 @@ test('11. cursor file: parses after every message, no .tmp left, corrupt file me
   // the real writer: 2-space indent, trailing newline, fixed shape
   const text = fs.readFileSync(s.cursorFile, 'utf8');
   assert.ok(text.endsWith('}\n'));
-  assert.deepEqual(Object.keys(JSON.parse(text)), ['v', 'accounts']);
+  assert.deepEqual(Object.keys(JSON.parse(text)), ['v', 'head', 'accounts']);
+  assert.equal(JSON.parse(text).head, git(s.root, 'rev-parse', 'HEAD'), 'the cursor carries the trail HEAD it was written at');
   fs.writeFileSync(s.cursorFile, '{ not json');
   const fetched = fake.log.fetches.length;
   const r = await run(s, fake);
@@ -338,6 +339,70 @@ test('11. cursor file: parses after every message, no .tmp left, corrupt file me
   assert.equal((await run(s, fake)).folders[0].reset, 'unreadable', 'a wrong version counts as unreadable');
   assert.equal(commits(s.root).length, 3);
   assert.equal(git(s.root, 'status', '--porcelain'), '');
+});
+
+test('11b. a trail restored to an older commit under a newer cursor is detected and rescanned; nothing is missed', async () => {
+  const s = await setup({ n: 5 });
+  const fake = makeFake({ folders: { INBOX: { msgs: s.msgs.slice(0, 2) } } });
+  await run(s, fake);
+  const old = git(s.root, 'rev-parse', 'HEAD'); // the "backup": 2 records
+  fake.folders.INBOX.msgs.push(...s.msgs.slice(2));
+  await run(s, fake);
+  assert.equal(commits(s.root).length, 5);
+  git(s.root, 'reset', '--hard', '-q', old); // restore the older trail; the newer sidecar (last_uid 5) stays
+  assert.equal(commits(s.root).length, 2);
+  const r = await run(s, fake);
+  const f = r.folders[0];
+  assert.equal(f.reset, 'trail');
+  assert.deepEqual([f.recorded, f.duplicate, f.complete, f.last_uid], [3, 2, true, 5]);
+  assert.equal(commits(s.root).length, 5, 'the missing mail is back');
+  assert.equal((await run(s, fake)).folders[0].reset, null, 'the next run is normal again');
+});
+
+test('11c. an emptied or re-initialised trail under a surviving cursor is rescanned', async () => {
+  const s = await setup({ n: 3 });
+  const fake = makeFake({ folders: { INBOX: { msgs: s.msgs } } });
+  await run(s, fake);
+  fs.rmSync(s.root, { recursive: true, force: true }); // trail directory replaced by nothing
+  const r = await run(s, fake);
+  assert.equal(r.folders[0].reset, 'trail');
+  assert.deepEqual([r.folders[0].recorded, r.folders[0].duplicate, r.complete], [3, 0, true]);
+  assert.equal(commits(s.root).length, 3);
+});
+
+test('11d. a normal second run (trail grown since, e.g. by the pipe) is not a reset; a cursor written on an empty trail is not stale', async () => {
+  const s = await setup({ n: 3 });
+  const empty = makeFake({ folders: { INBOX: { msgs: [] } } });
+  const e1 = await run(s, empty); // cursor written while the trail has no commits (head: null)
+  assert.equal(s.cursor().head, null);
+  assert.equal((await run(s, empty)).folders[0].reset, null);
+  assert.equal(e1.complete, true);
+  const fake = makeFake({ folders: { INBOX: { msgs: s.msgs.slice(0, 2) } } });
+  assert.equal((await run(s, fake)).folders[0].reset, null);
+  await s.mp.record((await mails(1, 'pipe')).list[0], { direction: 'in', source: 'pipe' }); // trail HEAD moves on
+  fake.folders.INBOX.msgs.push(s.msgs[2]);
+  const r = await run(s, fake);
+  assert.equal(r.folders[0].reset, null);
+  assert.deepEqual([r.folders[0].recorded, r.folders[0].seen], [1, 1]);
+});
+
+test('11e. sent: false tolerates a failing \\Sent lookup: the listed folders still sync, as `in`', async () => {
+  const s = await setup({ n: 2 });
+  const fake = makeFake({ folders: { INBOX: { msgs: s.msgs } }, findSentError: Object.assign(new Error('LIST failed'), { code: 'ERR_IMAP_THROTTLED' }) });
+  const r = await run(s, fake, { sent: false });
+  assert.equal(r.complete, true);
+  assert.deepEqual([r.folders[0].folder, r.folders[0].direction, r.folders[0].recorded], ['INBOX', 'in', 2]);
+});
+
+test('11f. sent requested + a throttled \\Sent lookup: the classified code is on the \\Sent entry, INBOX still syncs; a connect failure still throws', async () => {
+  const s = await setup({ n: 2 });
+  const fake = makeFake({ folders: { INBOX: { msgs: s.msgs } }, findSentError: Object.assign(new Error('[THROTTLED] slow down'), { code: 'ERR_IMAP_THROTTLED' }) });
+  const r = await run(s, fake, { sent: true });
+  assert.equal(r.complete, false);
+  assert.deepEqual([r.folders[0].folder, r.folders[0].complete, r.folders[0].recorded], ['INBOX', true, 2]);
+  assert.deepEqual([r.folders[1].folder, r.folders[1].direction, r.folders[1].error.code], ['\\Sent', 'out', 'ERR_IMAP_THROTTLED']);
+  const bad = makeFake({ folders: { INBOX: { msgs: s.msgs } }, findSentError: Object.assign(new Error('gone'), { code: 'ERR_IMAP_CONNECT' }) });
+  await assert.rejects(run(s, bad, { sent: true }), { code: 'ERR_IMAP_CONNECT' });
 });
 
 test('12. the secret appears in no result, error, record, trail file or cursor file', async () => {

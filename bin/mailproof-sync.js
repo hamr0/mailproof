@@ -11,6 +11,7 @@ import { Mailproof } from '../src/index.js';
 const EX_USAGE = 64;
 const EX_NOPERM = 77;
 const EX_TEMPFAIL = 75;
+const GOOGLE_APP_PASSWORD_SHAPE = /^[a-z]{4}( [a-z]{4}){3}$/;
 
 const USAGE = `Usage: mailproof-sync --trail-dir <dir> --user <user> [options]
 
@@ -30,6 +31,9 @@ Secret (exactly one source; a plain password in an env var or flag is not accept
                                  [MAILPROOF_PASS_COMMAND], e.g. --pass-command "pass show mailproof/gmail_pass"
   --pass-file <path>             file holding the password [MAILPROOF_PASS_FILE]
   (neither)                      read the password from stdin when stdin is not a terminal
+                                 Spaces are removed only from Google's app-password shape (four groups of four
+                                 lowercase letters, "abcd efgh ijkl mnop"); any other password is used as given,
+                                 minus leading and trailing whitespace and the line ending.
   --access-token-command "<cmd>" OAuth2: first stdout line is a fresh access token (XOAUTH2)
                                  [MAILPROOF_ACCESS_TOKEN_COMMAND]
   -h, --help                     this text
@@ -143,8 +147,10 @@ async function main() {
         catch (e) { throw new UsageError(`cannot read --pass-file: ${/** @type {any} */ (e).code ?? 'error'}`); }
       } else if (!process.stdin.isTTY) raw = await readStdin();
       else throw new UsageError('no password source: use --pass-command, --pass-file or pipe it on stdin');
-      // Google shows app passwords in groups with spaces; the spaces are not part of the password
-      const pass = raw.replace(/\s+/g, '');
+      // Google shows an app password as four groups of four lowercase letters; the spaces are not part of it.
+      // Any other value is a real password: only the surrounding whitespace and the line ending go.
+      const trimmed = raw.trim();
+      const pass = GOOGLE_APP_PASSWORD_SHAPE.test(trimmed) ? trimmed.replace(/ /g, '') : trimmed;
       if (!pass) throw new UsageError('the password source gave an empty password');
       auth = { pass };
     }
