@@ -1,6 +1,6 @@
 # mailproof v2 — PRD
 
-> **Status:** v2 is released as 2.0.0 (M0 shipped). 1.x is frozen at tag `v1.4.0` (v1 code archived in `archive/v1/`; no `v1` branch).
+> **Status:** v2 is released as 2.1.0 (M0 and M1 shipped). 1.x is frozen at tag `v1.4.0` (v1 code archived in `archive/v1/`; no `v1` branch).
 > **Owner:** hamr0 · **Last updated:** 2026-10-31
 >
 > **For future Claude:** this PRD wins on intent and scope. The *why* behind each choice is in
@@ -174,6 +174,8 @@ Reuse v1 names where the concept is the same (`verify`, `hashDocument`).
 
 ### M1 — Capture (fully specified)
 
+**Status:** shipped in 2.1.0; see [SPEC B4](SPEC.md) and [F17](findings.md).
+
 A `sync` run (cron/systemd timer first; a long-running IMAP IDLE watcher later) over **one Gmail label
 or folder plus Sent**, via IMAP. The owner's Gmail account is the target. Resumes where it left off,
 no duplicates. The existing Postfix pipe stays as a capture source.
@@ -281,11 +283,11 @@ Node ≥ 22.19 (`Worker#cpuUsage`, see F15).
 
 1. Is there a public DKIM-key archive for looking up old mail? (Believed: ZK Email runs one; unconfirmed.)
 2. Does Gmail sign `In-Reply-To`/`References`? **Answered: yes for Gmail, no for Microsoft, see [F11](findings.md).**
-3. Gmail login method: OAuth or app password? (M1 POC)
+3. Gmail login method: OAuth or app password? **Answered for app passwords: `AUTHENTICATE PLAIN` over TLS works on the owner's account; OAuth not tested, see [F17](findings.md).**
 4. Are Gmail's Sent copies DKIM-signed? **Closed (owner, 2026-11-01): moot.** Own sent records are `unverified` regardless ([F3](findings.md)); the proof of sending is the counterparty's signed copy, and Gmail does sign outbound from the owner's gmail.com address (the batch-3 gmail.com-signed message, [F11](findings.md)).
-5. Does Gmail add its own ARC seal / `Authentication-Results` on inbound that could make its SPF verdict portable? (M1 POC)
+5. Does Gmail add its own ARC seal / `Authentication-Results` on inbound that could make its SPF verdict portable? **Answered: yes on 8/8 inbound copies (google.com ARC set plus Authentication-Results with spf=); whether to use it is open, see [F17](findings.md).**
 6. Sending from a normal mailbox in M3 vs the no-third-party-provider rule.
 7. Privacy wording for storing other people's addresses and subjects (not legal advice).
-8. OTS stamp per sync run vs per email.
-9. IMAP as an in-core dependency vs a separate package, if the dependency checklist fails.
+8. OTS stamp per sync run vs per email. **Decided (owner, 2026-11-03): per record, as today; advise OTS off for backfills, see [SPEC B4.5](SPEC.md).**
+9. IMAP as an in-core dependency vs a separate package, if the dependency checklist fails. **Decided (owner, 2026-11-03): in core as the third dependency (checklist passed, [F16](findings.md)), see [SPEC B4.6](SPEC.md).**
 10. Portable ARC: an offline re-check of a trusted-sealer ARC chain (archived ARC headers and sealer keys), so `forwarded` could be re-verified later; needs its own spec and POC (findings F7 D1).

@@ -21,6 +21,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > the first free clean minor, `1.3.0`.) See
 > [`archive/v1/docs/DESIGN.md`](archive/v1/docs/DESIGN.md) for the phasing.
 
+## [2.1.0] - 2026-11-03
+
+### Added
+- `Mailproof#sync` (M1, IMAP capture): reads one mailbox read-only over implicit TLS (`EXAMINE`, `BODY.PEEK[]`; no `STORE`, `APPEND`, `COPY`, `MOVE`, `EXPUNGE` or `IDLE`) and records each message through the normal `record()` path. Folders (default `INBOX`, direction `in`) and the `\Sent` folder (direction `out`, found by special-use flag); app password or OAuth2 access token; a resume cursor sidecar `<trailDir>/.<trail>.sync.json` (not in git; stamped with the trail's git HEAD, so a trail restored from an older backup or replaced is detected and rescanned, `reset: 'trail'`); UID windows, never `*`; `UIDVALIDITY` compared as a string with a rescan on change; caps per folder per run (1,000 messages, 512 MiB, 30 minutes per call; the 30-minute cap is also checked before each UID window, so a server announcing a huge `UIDNEXT` with no mail cannot hold the sync lock for hours, and empty windows persist the cursor every 100 windows); reconnect with backoff; messages over 25 MiB are stream-hashed and recorded `over limit: total_bytes` with the id the pipe would give (above 128 MiB: `skipped`); errors `ERR_IMAP_AUTH`, `ERR_IMAP_CONNECT`, `ERR_SYNC_LOCKED` and per-folder `ERR_IMAP_*`. A Sent lookup failure is kept on the Sent entry (a throttle or protocol error) while the other folders still sync, and is ignored when Sent was not requested. SPEC B4.
+- `mailproof-sync` CLI (`bin/mailproof-sync.js`, `bin` in package.json, `bin/` in `files`): one `sync` run for cron and systemd timers. Flags with `MAILPROOF_*` env fallbacks; the password comes from `--pass-command` (no shell), `--pass-file` or stdin, or an OAuth2 token from `--access-token-command`, never from a flag or plain env value. One JSON line on stdout, errors on stderr. Exit codes: 0 done (a capped partial run too), 75 retry later (lock, connect, timeout, throttled), 77 login refused, 64 bad usage, 1 other. Spaces are stripped only from Google's grouped app-password shape; any other password keeps its inner spaces. The pass/token command's stdin is closed, so a command that reads stdin to EOF no longer hangs to the 30 s timeout. systemd timer and cron setups are documented (verified against real Gmail under `ProtectSystem=strict`, `ProtectHome=read-only`).
+- `imapflow` as the third (last) runtime dependency, used only by `src/proof/imap.js`.
+- A second lock file `<trailDir>/.<trail>.sync.lock`, same mechanism as the trail lock, fail-fast.
+
+### Changed
+- `withTrailLock` takes the lock-file name and a lock kind as arguments (one implementation for the trail lock and the sync lock). `record()` is split into build and commit; behaviour is unchanged.
+- Tests: the complexity and wall-time budgets derive from one per-machine CPU measurement (`tests/helpers/cpu-budget.js`) instead of fixed numbers; `makeTmpDir` directories are swept on SIGINT, SIGTERM and SIGHUP, not only on exit; the 18b memory test measures live memory (forced gc) instead of uncollected garbage.
+
 ## [2.0.1] - 2026-11-03
 
 ### Fixed

@@ -86,3 +86,35 @@ export const DNS_BUDGET_MS = 30_000;
  * memory of the worker thread. Over any of them the message is recorded `over limit: time` / `over limit: memory`. A worker that dies for no reason the pool can name is `over limit: crash`.
  */
 export const WORKER_DEFAULTS = Object.freeze({ size: 1, cpuMs: 15_000, wallMs: 120_000, maxMemoryMb: 1536 });
+
+// ---- SYNC (SPEC B4.3): IMAP capture. The server is untrusted input, so each of these bounds what it can make us read or wait for. ----
+
+/** UIDs listed per `UID FETCH lo:hi (UID RFC822.SIZE)` window; bounds the metadata held in memory. `*` is never used. */
+export const SYNC_UID_WINDOW = 1000;
+
+/** Messages handled per folder per run (a caller option can only lower it). */
+export const SYNC_MAX_MESSAGES = 1000;
+
+/** Message bytes read per folder per run (a caller option can only lower it); a backfill takes several runs. */
+export const SYNC_MAX_BYTES = 512 * 1024 * 1024;
+
+/** Largest message that is still read (streamed, to hash it) to be recorded; above it the message is `skipped`. */
+export const SYNC_MAX_MESSAGE_BYTES = 128 * 1024 * 1024;
+
+/** Wall time of one `sync` call, checked between messages. */
+export const SYNC_MAX_MS = 30 * 60 * 1000;
+
+/** TCP/TLS connect and greeting (imapflow `connectionTimeout`, `greetingTimeout`). */
+export const SYNC_CONNECT_MS = 30_000;
+
+/** Idle socket (imapflow `socketTimeout`): a server that goes quiet. */
+export const SYNC_SOCKET_MS = 5 * 60 * 1000;
+
+/** Wall time of reading ONE message; over it the connection is closed and treated as a drop (catches a server that trickles bytes). */
+export const SYNC_FETCH_MS = 5 * 60 * 1000;
+
+/** Reconnects per `sync` run. */
+export const SYNC_MAX_RECONNECTS = 3;
+
+/** Wait before the 1st, 2nd and 3rd reconnect. */
+export const SYNC_RECONNECT_BACKOFF_MS = Object.freeze([1000, 4000, 16000]);

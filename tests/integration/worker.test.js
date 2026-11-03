@@ -14,7 +14,7 @@ import { signedMail } from '../helpers/proof.js';
 import { WORST_CASES } from '../helpers/worst-cases.js';
 import { WorkerPool, workerConfig } from '../../src/proof/pool.js';
 import { makeTmpDir } from '../helpers/tmp.js';
-import { SLOW as SLOW_NAME, SLOW_CPU_MS } from '../helpers/cpu-budget.js';   // SLOW_CPU_MS: calibrated on this machine (geometric mean of an ordinary cold job and SLOW), not a constant
+import { SLOW as SLOW_NAME, SLOW_CPU_MS, SLOW_COST_MS } from '../helpers/cpu-budget.js';   // SLOW_CPU_MS: calibrated on this machine (geometric mean of an ordinary cold job and SLOW), not a constant
 
 const dir = () => makeTmpDir('mp-wk-');
 const nxdomain = async () => { throw Object.assign(new Error('no record'), { code: 'ENOTFOUND' }); };
@@ -146,7 +146,7 @@ test('worker: wall time counts busy time only; a slow DNS answer does not spend 
   assert.equal(c.portable.trust, 'verified');
   assert.equal(c.portable.reason, undefined);
   // the same kind of budget does stop a message that is BUSY for longer than it (it needs seconds of CPU)
-  const busy = make(t, { worker: { wallMs: 300, cpuMs: 1e9 } });
+  const busy = make(t, { worker: { wallMs: Math.round(SLOW_COST_MS / 4), cpuMs: 1e9 } });
   const { raw, resolver: heavyResolver } = await heavy(SLOW).build();
   busy.resolver = heavyResolver;
   assert.equal((await busy.check(raw)).portable.reason, 'over limit: time');

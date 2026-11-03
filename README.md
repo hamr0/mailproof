@@ -47,6 +47,68 @@ Cost: the first call starts the thread, which loads the parsers (roughly 0.4 to 
 
 Trust levels: `verified` (aligned DKIM pass, and DMARC pass if the domain publishes DMARC), `forwarded`, `authorized` (live only), `unverified`. Each verdict carries its engine/rules version.
 
+## Capture over IMAP (`sync`)
+
+`sync` reads one mailbox, read-only, and records every message in it (INBOX as `in`, the Sent folder as `out`). Nothing is marked seen, moved or deleted. It is meant for a cron job or a one-off backfill:
+
+```js
+const res = await mp.sync({
+  host: 'imap.gmail.com', user: 'you@gmail.com',
+  auth: { pass: process.env.APP_PASSWORD },        // or { accessToken } (OAuth2; you obtain and refresh the token)
+  folders: ['INBOX'], sent: true,                  // sent: true finds the \Sent folder; a string is a path; false skips it
+});
+// res.complete, res.folders[i].{ recorded, duplicate, over_limit, skipped, error, last_uid }
+```
+
+Run it again to pick up new mail; a capped run (1,000 messages or 512 MiB per folder, 30 minutes per call) is continued by calling again until `res.complete` is true. A resume cursor lives in `<trailDir>/.<trail>.sync.json`, beside the trail and not in git: a trail restored from an older backup or replaced is detected from the cursor and rescanned (`reset: 'trail'`; same bytes are never recorded twice). TLS is always on with certificate checking (only `tls: { ca }` can be added). Mail over 25 MiB is stream-hashed and recorded `over limit: total_bytes`; over 128 MiB it is listed in `skipped`. A Sent copy is normally unsigned by the provider, so it is recorded `unverified`; the counterparty's signed copy is the proof. Leave OpenTimestamps off for a backfill. A second `sync` on the same trail while one runs throws `ERR_SYNC_LOCKED` at once. Other errors: `ERR_IMAP_AUTH`, `ERR_IMAP_CONNECT`; per folder `ERR_IMAP_NO_FOLDER`, `ERR_IMAP_NO_SENT`, `ERR_IMAP_PROTOCOL`, `ERR_IMAP_TIMEOUT`, `ERR_IMAP_THROTTLED`, `ERR_IMAP_UIDVALIDITY`. The first trail error stops the run. Details: `docs/product/SPEC.md` B4.
+
+## Run on a timer
+
+`mailproof-sync` (shipped as `bin/mailproof-sync.js`, on `PATH` after `npm i mailproof`) is one `sync` run for cron or a systemd timer. It reads the password from a command, a file or stdin, never from a flag or a plain env value, and prints one JSON line (the sync result, no secret) on stdout and errors on stderr.
+
+```bash
+mailproof-sync --trail-dir /var/lib/mailproof --user you@gmail.com \
+  --pass-command "pass show mailproof/gmail_pass"      # host imap.gmail.com, folders INBOX, sent on
+```
+
+Flags (env fallback `MAILPROOF_<NAME>`): `--trail-dir`, `--trail`, `--host`, `--port`, `--user`, `--folders a,b`, `--sent on|off`, `--pass-command` (split into arguments, run without a shell; first stdout line is the password), `--pass-file`, `--access-token-command` (OAuth2 XOAUTH2). With none of the secret sources, the password is read from stdin. Spaces are stripped only from Google's app-password display shape (four groups of four lowercase letters, `abcd efgh ijkl mnop`); any other password is sent as given, minus leading and trailing whitespace and the line ending.
+
+Exit codes: `0` finished (a run cut short by a cap also exits 0 with `"complete": false` and no error: the next run continues from the cursor); `75` try later (`ERR_SYNC_LOCKED` or `ERR_TRAIL_LOCKED`, server unreachable, timeout, throttled); `77` login refused; `64` bad usage; `1` anything else.
+
+`~/.config/systemd/user/mailproof-sync.service`:
+
+```ini
+[Unit]
+Description=mailproof IMAP capture
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/env mailproof-sync --trail-dir %h/mailproof-trails --user you@gmail.com --pass-command "pass show mailproof/gmail_pass"
+SuccessExitStatus=75
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=%h/mailproof-trails
+ProtectHome=read-only
+```
+
+`~/.config/systemd/user/mailproof-sync.timer` (then `systemctl --user enable --now mailproof-sync.timer`):
+
+```ini
+[Timer]
+OnCalendar=*:0/15
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+
+For a system unit add `User=mailproof`. `ProtectHome=read-only` keeps the `pass` store readable; the trail directory needs `ReadWritePaths` because `ProtectSystem=strict` makes everything else read-only. `SuccessExitStatus=75` keeps an overlapping or temporarily unreachable run from marking the unit failed. Equivalent cron line:
+
+```cron
+*/15 * * * * mailproof-sync --trail-dir $HOME/mailproof-trails --user you@gmail.com --pass-command "pass show mailproof/gmail_pass" >> $HOME/mailproof-sync.log 2>&1
+```
+
 ## Concurrency
 
 A trail has a single writer at a time, enforced by a lock file (`<trailDir>/.<trail>.lock`) that also covers separate processes; local filesystems only. A writer that cannot get the lock within `lockTimeoutMs` (default 30000) throws an error with `code: 'ERR_TRAIL_LOCKED'`. Postfix pipe consumers should map `ERR_TRAIL_LOCKED` to exit code 75 (`EX_TEMPFAIL`) so Postfix retries the mail.
@@ -57,4 +119,4 @@ A trail has a single writer at a time, enforced by a lock file (`<trailDir>/.<tr
 
 ## Docs
 
-`docs/README.md` is the map. The record and trail formats are in `docs/product/SPEC.md` (Part B); the adopter contract is `mailproof.context.md`. Two runtime dependencies: `mailauth`, `mailparser`. Node >= 22.19. Pure ESM.
+`docs/README.md` is the map. The record and trail formats are in `docs/product/SPEC.md` (Part B); the adopter contract is `mailproof.context.md`. Three runtime dependencies: `mailauth`, `mailparser`, `imapflow` (used only by `sync`). Node >= 22.19. Pure ESM.

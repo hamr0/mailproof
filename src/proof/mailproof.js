@@ -2,7 +2,8 @@
 // are bound, so `const { verify } = mp` works.
 
 import path from 'node:path';
-import { overLimitRecord } from './over-limit.js';
+import { overLimitRecord, overLimitRecordFromDigest } from './over-limit.js';
+import { runSync } from './sync.js';
 import { workerConfig, leasePool } from './pool.js';
 import { guardResolver, systemResolver } from './resolver-guard.js';
 import { engine } from './verdict.js';
@@ -75,6 +76,7 @@ class Mailproof {
     this.get = this.get.bind(this);
     this.list = this.list.bind(this);
     this.copies = this.copies.bind(this);
+    this.sync = this.sync.bind(this);
     this.close = this.close.bind(this);
   }
 
@@ -193,6 +195,17 @@ class Mailproof {
     if (!ctx || (ctx.direction !== 'in' && ctx.direction !== 'out')) throw new Error("record: ctx.direction must be 'in' or 'out'");
     const source = typeof ctx.source === 'string' && ctx.source ? ctx.source.slice(0, 200) : 'api';
     const { record, keyFiles } = await this._build(raw, { direction: ctx.direction, source, envelope: ctx.envelope });
+    return this._commit(record, keyFiles);
+  }
+
+  /**
+   * Commit a built record under the trail lock (OTS stamp included when enabled). The one commit path of
+   * `record()` and of `_recordDigest()`.
+   * @param {MpRecord} record
+   * @param {Array<{ rel: string, json: unknown }>} keyFiles
+   * @returns {Promise<{ id: string, duplicate: boolean, commit: string, record?: MpRecord, ots?: 'off' | 'pending' | { error: string } }>}
+   */
+  async _commit(record, keyFiles) {
     const message = `record ${record.id.slice(0, 12)} ${record.direction} ${record.verdicts.live.trust}/${record.verdicts.portable.trust}`;
     const ots = this.ots;
     /** @type {'off' | 'pending' | { error: string }} */
@@ -207,6 +220,20 @@ class Mailproof {
     return res.duplicate
       ? { id: record.id, duplicate: true, commit: res.commit }
       : { id: record.id, duplicate: false, commit: res.commit, record, ots: otsState };
+  }
+
+  /**
+   * INTERNAL (used by sync, not an export, not a primitive): record an over-size message that was streamed
+   * through a hash and never held. Builds exactly the over-limit record `record()` writes for the same bytes
+   * (`over limit: total_bytes`, same id), so a later pipe capture of that message is a duplicate. Nothing is parsed.
+   * @param {{ raw_sha256: string, size: number }} digest  `raw_sha256` in the `sha256:<hex>` form of hashDocument.
+   * @param {{ direction: 'in' | 'out', source: string }} ctx
+   * @returns {Promise<{ id: string, duplicate: boolean, commit: string, record?: MpRecord }>}
+   */
+  async _recordDigest(digest, ctx) {
+    const captured = this.now().toISOString();
+    const { record, keyFiles } = overLimitRecordFromDigest(digest, ctx, { captured, hasEnvelope: false, trustedSealers: this.trustedSealers }, 'total_bytes');
+    return this._commit(record, keyFiles);
   }
 
   /**
@@ -339,6 +366,28 @@ class Mailproof {
       id: r.id, captured: r.captured, direction: r.direction,
       live: r.verdicts?.live?.trust, portable: r.verdicts?.portable?.trust, message_id: r.message?.message_id ?? null,
     }));
+  }
+
+  /**
+   * Capture mail over IMAP: read one mailbox, read-only, and `record()` every message in it (inbox folders as
+   * `in`, the Sent folder as `out`). A resume cursor (a sidecar file beside the trail, not in git) makes the next
+   * call fetch only what is new; a capped run is continued by calling again until `complete` is true.
+   * @param {import('./sync.js').SyncOptions} opts
+   * @returns {Promise<import('./sync.js').SyncResult>}
+   * @name Mailproof#sync
+   * @when Use to record the mail in a mailbox you can log in to (Gmail with an app password, or any IMAP server with an OAuth2 access token you obtained), from a cron job or a one-off backfill, instead of piping each mail in by hand. The mailbox is only read: nothing is marked seen, moved or deleted. Run it again to pick up new mail; loop until `complete` is true to backfill a large folder.
+   * @category capture
+   * @signature mp.sync(opts: { host: string, port?: number, user: string, auth: { pass: string } | { accessToken: string }, folders?: string[], sent?: boolean|string, maxMessages?: number, maxBytes?: number, tls?: { ca?: string|Buffer|Array } }) => Promise<{ complete: boolean, folders: Array<{ folder, direction, attempted, uidvalidity, reset, last_uid, seen, recorded, duplicate, over_limit, skipped[], bytes, complete, error }> }>
+   * @fails Throws a TypeError for bad options, before any connection. Then it throws only when the whole run is pointless: `ERR_IMAP_AUTH` (login refused; the message never contains the credential), `ERR_IMAP_CONNECT` (server unreachable, or its TLS certificate did not verify: TLS is always on and certificate checking is never off), `ERR_SYNC_LOCKED` (another `sync` on this trail is running: it fails at once, so a cron job skips an overlapping run). A problem in one folder lands in that folder's `error` (`ERR_IMAP_NO_FOLDER`, `ERR_IMAP_NO_SENT`, `ERR_IMAP_PROTOCOL`, `ERR_IMAP_TIMEOUT`, `ERR_IMAP_THROTTLED`, `ERR_IMAP_UIDVALIDITY`) and the run goes on to the next folder. The first trail error (`ERR_TRAIL_LOCKED` or any `record()` failure) stops the run: that folder carries the error, later folders come back `attempted: false`, and progress already recorded stays recorded. It never throws because a message is unsigned, fails verification or is over a limit: those are recorded `unverified`. A message over 25 MiB is stream-hashed and recorded `over limit: total_bytes`; over 128 MiB it is listed in `skipped` and not recorded. Caps per folder per run: 1,000 messages and 512 MiB (`maxMessages` and `maxBytes` can only lower them), 30 minutes per call. A caller passes the secret only to `sync`; it is never logged, returned or stored. A restored or replaced trail is detected from the cursor file (`reset: 'trail'`) and rescanned automatically (duplicates are no-ops); no manual step. Leave `otsBin` off for a backfill: every record is stamped inside the trail lock.
+   * @example
+   * const res = await mp.sync({ host: 'imap.gmail.com', user: 'you@gmail.com', auth: { pass: process.env.APP_PASSWORD } });
+   * // res.complete, res.folders[0].recorded; call again until res.complete is true
+   */
+  async sync(opts) {
+    const host = { root: this.root, trail: this.trail, record: this.record, recordDigest: (/** @type {{ raw_sha256: string, size: number }} */ d, /** @type {{ direction: 'in' | 'out', source: string }} */ c) => this._recordDigest(d, c) };
+    return runSync(host, opts, {
+      openSession: async (args) => (await import('./imap.js')).openSession(args),
+    });
   }
 }
 

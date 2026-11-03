@@ -7,6 +7,8 @@ import { signedMail } from './proof.js';
 import { WORST_CASES } from './worst-cases.js';
 
 export const SLOW = '10 valid signatures, tampered 500,000 one-byte bare-LF lines';
+// The cheapest `heavy` worst case (measured: ~1/3 of SLOW). A budget a quarter of it kills every heavy case with >= 4x margin.
+const CHEAPEST_HEAVY = '500,000 one-byte CRLF lines, matching bh';
 const MIN_RATIO = 4;
 
 async function measure() {
@@ -17,7 +19,9 @@ async function measure() {
     const slow = await WORST_CASES.find((c) => c.name === SLOW).build();
     const cold = (await pool.run(ord.raw, input, ord.resolver)).cpuMs;   // first job on a fresh worker
     const slowMs = (await pool.run(slow.raw, input, slow.resolver)).cpuMs;
-    return { ordinaryCold: cold, slow: slowMs };
+    const cheap = await WORST_CASES.find((c) => c.name === CHEAPEST_HEAVY).build();
+    const cheapMs = (await pool.run(cheap.raw, input, cheap.resolver)).cpuMs;   // warm worker: cheaper than a cold one, so the budget derived from it is the conservative side
+    return { ordinaryCold: cold, slow: slowMs, cheapHeavy: cheapMs };
   } finally {
     await pool.close();
   }
@@ -31,4 +35,8 @@ if (!(ratio >= MIN_RATIO)) {
 /** CPU budget in ms that kills SLOW but not an ordinary message on a fresh worker, on this machine. */
 export const SLOW_CPU_MS = Math.round(Math.sqrt(m.ordinaryCold * m.slow));
 export const CALIBRATION = { ...m, budget: SLOW_CPU_MS };
-console.log(`# cpu-budget calibration: ordinaryCold=${m.ordinaryCold.toFixed(1)} ms slow=${m.slow.toFixed(1)} ms budget=${SLOW_CPU_MS} ms`);
+/** Worker CPU of SLOW on this machine, ms. A wall budget of SLOW_COST_MS / 4 stops SLOW with >= 4x margin (busy wall time >= CPU time). */
+export const SLOW_COST_MS = Math.round(m.slow);
+/** CPU budget in ms below a quarter of the cheapest heavy worst case: every heavy case exceeds it by >= 4x on this machine. */
+export const HEAVY_CPU_MS = Math.max(1, Math.round(m.cheapHeavy / 4));
+console.log(`# cpu-budget calibration: ordinaryCold=${m.ordinaryCold.toFixed(1)} ms slow=${m.slow.toFixed(1)} ms budget=${SLOW_CPU_MS} ms cheapHeavy=${m.cheapHeavy.toFixed(1)} ms`);

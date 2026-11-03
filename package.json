@@ -1,10 +1,13 @@
 {
   "name": "mailproof",
-  "version": "2.0.1",
+  "version": "2.1.0",
   "description": "Re-checkable proof of an email: the signed headers, never the body, recorded in a local git trail and verifiable offline forever. Two verdicts (live, portable), DKIM key archive, optional OpenTimestamps.",
   "type": "module",
   "main": "src/index.js",
   "types": "./types/index.d.ts",
+  "bin": {
+    "mailproof-sync": "./bin/mailproof-sync.js"
+  },
   "exports": {
     ".": {
       "types": "./types/index.d.ts",
@@ -56,6 +59,7 @@
   },
   "files": [
     "src/index.js",
+    "bin/",
     "src/proof/",
     "primitives.json",
     "types/",
@@ -66,6 +70,7 @@
     "NOTICE"
   ],
   "dependencies": {
+    "imapflow": "^2.10.0",
     "mailauth": "^8.0.4",
     "mailparser": "^3.14.1"
   },

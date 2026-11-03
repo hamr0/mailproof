@@ -41,6 +41,7 @@ import { MAX_TOTAL_BYTES } from '../../src/proof/limits.js';
 import { makeKey, signedMail } from '../helpers/proof.js';
 import { WORST_CASES, admitted } from '../helpers/worst-cases.js';
 import { makeTmpDir } from '../helpers/tmp.js';
+import { HEAVY_CPU_MS } from '../helpers/cpu-budget.js';   // calibrated on this machine, not a constant
 
 const RATIO = 3;
 const SLACK_MS = 100;
@@ -260,7 +261,7 @@ for (const c of WORST_CASES.filter((x) => x.heavy)) {
   test(`backstop fires: ${c.limit}: ${c.name}`, async () => {
     const { raw, resolver } = await c.build();
     admitted(raw);
-    const mp = new Mailproof({ trailDir: dir(), resolver: resolver || nxdomain, worker: { cpuMs: 50 } });
+    const mp = new Mailproof({ trailDir: dir(), resolver: resolver || nxdomain, worker: { cpuMs: HEAVY_CPU_MS } });
     const r = await mp.check(raw);
     assert.equal(r.portable.reason, 'over limit: time', c.name);
     assert.equal(r.live.reason, 'over limit: time', c.name);

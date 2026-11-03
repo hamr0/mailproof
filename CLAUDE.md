@@ -10,7 +10,7 @@ Multi-party workflows, thresholds and N-signer sign-off are **not** here: they l
 
 ## Status
 
-**2.0.0 is released; M0 (record and re-check) has shipped.** The next module is **M1 (IMAP capture)** per PRD §7 (it needs a third runtime dependency that must pass the AGENT_RULES External Dependency Checklist). M2-M6 are later. 1.x (the multi-party kernel) is frozen at tag `v1.4.0`; the v1 code is archived in `archive/v1/` (there is no `v1` branch); there is no compatibility layer between 1.x and 2.x. The PRD status line and `CHANGELOG.md` are authoritative; verify against them before trusting any other doc.
+**2.1.0 ships M1** (IMAP capture via `sync()` and the `mailproof-sync` CLI; `imapflow` is the third runtime dependency, so the dependency ceiling is reached); M0 (record and re-check) shipped in 2.0.0. The next module is **M2 (reading replies)** per PRD §7. M3-M6 are later. 1.x (the multi-party kernel) is frozen at tag `v1.4.0`; the v1 code is archived in `archive/v1/` (there is no `v1` branch); there is no compatibility layer between 1.x and 2.x. The PRD status line and `CHANGELOG.md` are authoritative; verify against them before trusting any other doc.
 
 `src/proof/` plus `src/index.js` is v2 and the only code that ships (`files` in `package.json`). The v1 code (`create.js`, `ingest.js`, `completion.js`, `legacy-index.js`, ...), its tests and its docs live in `archive/v1/`: kept for borrowing in M3/M4 (PRD §9), not run, not type-checked, not shipped. To reuse a part, `git mv` it and its tests back into `src/` and `tests/` and make them pass.
 
@@ -53,7 +53,7 @@ All in `src/proof/`; wire formats in SPEC Part B.
 
 ## Locked rules
 
-- **Runtime deps stay tiny:** `mailauth` and `mailparser` only. Git is used through the `git` binary via `child_process`. Hierarchy vanilla -> stdlib -> external; any new external dep needs the AGENT_RULES checklist (M1's IMAP library would be the third; the ceiling is 3).
+- **Runtime deps stay tiny:** `mailauth`, `mailparser` and `imapflow` (M1, imported only by `src/proof/imap.js`, F16) only. Git is used through the `git` binary via `child_process`. Hierarchy vanilla -> stdlib -> external; the ceiling of 3 runtime deps is reached, so a new external dep means replacing one (AGENT_RULES checklist).
 - **Pure ESM** (`"type": "module"`): `import`/`export`, and `.js` on every relative specifier, including JSDoc `import()` type refs.
 - **Types:** JSDoc is the single source of truth; `checkJs` + `strictNullChecks` only (not full `strict`; follow `LIBRARY_CONVENTIONS.md`). `.d.ts` are generated into git-ignored `./types/` and built on `prepack`, never committed. No `!`, `as any` or `@ts-ignore` to silence findings.
 - **Node >= 22.19** (`engines`; the CPU deadline needs `Worker#cpuUsage`).
