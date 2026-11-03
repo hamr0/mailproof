@@ -126,6 +126,190 @@ Trust levels `verified`, `forwarded`, `authorized`, `unverified` (PRD §3).
 - `records/` and `keys/` are library-managed. At the start of every write (under the lock) the writer runs `git reset -q`, then deletes the untracked files under `records/` and `keys/` that match the library's own paths, and nothing else: `records/<32 lowercase hex>.json`, `records/<32 lowercase hex>.json.ots`, `keys/<domain>/<selector>/<16 hex>.json` (domain and selector lowercase, characters `[a-z0-9._-]`, no `..`, no leading `.`). Key directories this pass emptied are removed. Any other file there is left alone (so `git status` may show it), but a trail is not a place for your own files.
 - **Recovery.** If `ERR_TRAIL_LOCKED` persists and no writer is running (check the `pid` and `host` in `<trailDir>/.<trail>.lock`), delete that file, and `.<trail>.lock.break` if present. A lock from another host is never taken over automatically, including after a hostname change or from a killed container on a shared volume. Volumes shared across hosts are unsupported beyond that manual step.
 
+## B4. IMAP capture (`sync`, M1)
+
+> **Design, not yet built.** Mechanism choices are made here; the six product forks were decided by the owner on 2026-11-03 (list at the end of this section). Evidence: [findings F16](findings.md) (imapflow checklist), [F17](findings.md) (Gmail POC: login, byte-exact fetch, `N:*` quirk, size knobs), F3 (Sent copies are unsigned). Out of scope for M1: the portable SPF/ARC verdict (PRD §12 Q10), an IDLE watcher, the OAuth flow itself, whole-inbox recording, multi-account orchestration.
+
+`sync` is a **fetcher in front of `record()`**: it reads raw messages from one mailbox over IMAP and hands each to the existing `record()` path (gate, worker backstop, trail lock, dedup by `id`). It adds no second way to build a record, no second verdict, no second lock for the trail. The one new piece of state is the resume cursor.
+
+### B4.1 Public surface
+
+A method on the instance, bound like the others (`const { sync } = mp` works). It takes everything about the mailbox as arguments; the `Mailproof` constructor is unchanged.
+
+```js
+const res = await mp.sync({
+  host: 'imap.gmail.com',              // required
+  port: 993,                           // default 993; TLS only (see B4.6)
+  user: 'you@gmail.com',               // required
+  auth: { pass: 'app password' },      // exactly one of:  { pass }  |  { accessToken }  (XOAUTH2)
+  folders: ['INBOX'],                  // default ['INBOX']; each is a folder or label path as the server names it; direction 'in'
+  sent: true,                          // true (default): discover the folder with the \Sent special-use flag; a string: that exact path; false: skip. Direction 'out'
+  maxMessages: 1000, maxBytes: 536870912,  // optional, per folder per run; can only LOWER the limits.js value (see B4.3)
+  tls: { ca: pem },                    // optional: extra CA (private server, tests). Certificate checking is never off
+})
+```
+
+```ts
+type SyncResult = { complete: boolean,               // true when every folder reached the server's end (uidNext - 1) with no error and no cap hit
+                    folders: SyncFolderResult[] }
+type SyncFolderResult = {
+  folder: string, direction: 'in' | 'out',
+  attempted: boolean,                                // false: the run stopped before this folder (see "stops")
+  uidvalidity: string | null,                        // as a decimal string, never a Number
+  reset: null | 'uidvalidity' | 'unreadable',        // why the cursor was discarded and the folder rescanned from UID 1
+  last_uid: number | null,                           // the cursor after this run
+  seen: number,                                      // messages listed in the window(s) fetched this run
+  recorded: number,                                  // new records, over-limit ones included
+  duplicate: number,                                 // the id already existed (a re-fetch, or the same bytes in another folder/label)
+  over_limit: number,                                // subset of `recorded` with `reason: "over limit: ..."` (incl. time/memory/crash)
+  skipped: Array<{ uid: number, size: number, why: string }>,  // not recorded at all (see B4.3: only above SYNC_MAX_MESSAGE_BYTES)
+  bytes: number,                                     // message bytes read from the server (buffered or streamed)
+  complete: boolean,                                 // false when a cap was hit, an error stopped it, or it was not attempted
+  error: { code: string, message: string } | null
+}
+```
+
+- **Credentials.** `auth.pass` is the app password (login works on Gmail, F17); `auth.accessToken` is a ready OAuth2 access token sent with `AUTHENTICATE XOAUTH2`. **The caller obtains and refreshes the token** (a fresh one per cron run; a run is capped at 30 minutes, inside a one-hour token life, B4.3). It is a string, not a callback: mailproof owns no OAuth client. The secret is passed to the wrapper and nowhere else: it is never logged, never in a result, an error message, a record or the cursor file (a test greps for it, B4.8).
+- **Read-only.** Every folder is opened with `EXAMINE` (imapflow `getMailboxLock(path, { readOnly: true })`) and every message is read with `BODY.PEEK[]`: nothing is marked `\Seen`, and the library never issues `STORE`, `APPEND`, `COPY`, `MOVE`, `DELETE`, `EXPUNGE` or `IDLE` (a test checks the command log).
+- **Errors.** Option errors throw before any connection (`TypeError`-class, like the constructor). After that `sync` throws only for failures that make the whole run pointless: `ERR_IMAP_AUTH` (login refused; the message never echoes the credential), `ERR_IMAP_CONNECT` (cannot reach the server or TLS verification failed), `ERR_SYNC_LOCKED` (B4.5). Anything scoped to a folder lands in that folder's `error` and the run goes on to the next folder: `ERR_IMAP_NO_FOLDER`, `ERR_IMAP_NO_SENT` (`sent: true` and no `\Sent` folder; reported on a folder entry named `\Sent`), `ERR_IMAP_PROTOCOL`, `ERR_IMAP_TIMEOUT`, `ERR_IMAP_THROTTLED` (a `[THROTTLED]`/bandwidth-limit answer; not retried), `ERR_IMAP_UIDVALIDITY` (changed mid-run, see B4.2). **The run stops at the first trail error** (`ERR_TRAIL_LOCKED` or any `record()` throw): the trail is shared by every folder, so the same error would repeat. The current folder carries the error; later folders are returned with `attempted: false`. Progress already recorded stays recorded and the cursor stays where the last committed record left it. `sync` never throws because a message is unsigned, fails verification or is over a limit.
+- **Folder rules.** Duplicates in `folders` (and the discovered Sent folder) are synced once. A folder whose special-use is `\Sent` is `out` wherever it was listed; everything else is `in`. Gmail labels are IMAP folders; one message under two labels has two UIDs and the same bytes, so the second is `duplicate` (one definition of identity, B1).
+
+### B4.2 Resume state
+
+- **What.** Per account and folder: `uidvalidity` (decimal string; imapflow gives a BigInt and the wrapper stringifies it once; compared as strings, never as Numbers, which lose precision above 2^53) and `last_uid` (highest UID fully processed). Nothing else: no message list, no headers.
+- **Where: a sidecar file beside the trail, not in the git repo** (rationale: the cursor is not proof, "one commit per record" stays true, and a clone of a trail must not inherit a cursor for someone else's mailbox; the cost is B4.2 "Restore" below).
+
+  ```
+  <trailDir>/.<trail>.sync.json         beside .<trail>.lock; never in git status, never in a clone
+  { "v": 1, "accounts": { "<host>/<user>": { "<folder path>": { "uidvalidity": "1234", "last_uid": 57, "updated": "ISO-8601" } } } }
+  ```
+  Fixed key order, 2-space indent, trailing newline. Written by write-temp (`.<trail>.sync.json.tmp`, same directory) + `fsync` + `rename`, so a reader sees the old or the new file, never half. An unparseable or wrong-`v` file counts as absent: every folder is rescanned (`reset: 'unreadable'`), which is safe (below) but costs a re-download.
+- **Order of writes (the crash contract).** For one message: `record()` resolves (the git commit is durable, or `duplicate: true`) THEN the cursor moves to that UID and the file is rewritten. Messages are processed in ascending UID with no holes, so `last_uid` means "everything at or below was handled". A crash or kill between the commit and the cursor write leaves the cursor one message behind: **at-least-once fetch**. The re-fetched message has the same bytes, so the same `id`, so `record()` returns `duplicate: true` and writes nothing. Nothing is lost and nothing is committed twice. The cursor is never ahead of the trail within one trail's lifetime. The rewrite per message is a tiny file; it is not a git commit.
+- **A message that cannot be recorded stops the folder** at that UID (the cursor stays below it), so the next run retries it; it is never skipped silently. The one exception is `skipped` (B4.3), which is reported and moves the cursor.
+- **Window and the `N:*` quirk.** After `EXAMINE` the wrapper reads `uidNext`. The run lists `UID FETCH <last_uid+1>:<hi> (UID RFC822.SIZE)` where `hi = min(last_uid + SYNC_UID_WINDOW, uidNext - 1)` (`SYNC_UID_WINDOW` 1,000, `limits.js`), repeated window by window until `hi` reaches `uidNext - 1` or a cap is hit. **`*` is never used**, so RFC 3501's "`N:*` always matches the highest message" cannot return the last message again (F17.5), and the untrusted server cannot send more entries than the window holds. The wrapper still **drops every returned UID not in `(last_uid, hi]`** (and sorts ascending), because it does not trust the server's range handling. UIDs added after `EXAMINE` wait for the next run.
+- **`UIDVALIDITY` change** (the stored string differs from the server's): the old UIDs mean nothing. The cursor is discarded (`reset: 'uidvalidity'`), the folder is rescanned from UID 1, and the new value is stored. The rescan re-downloads every message and records none twice (same bytes, same `id`). A change seen on a **reconnect inside a run** stops that folder with `ERR_IMAP_UIDVALIDITY`; the next run does the rescan. A first run (no cursor) is the same scan from UID 1 without a `reset` flag.
+- **Restore.** Restoring a trail from a backup or clone while keeping an older/newer sidecar can leave the cursor AHEAD of the trail (mail silently missing). The rule: **when a trail is restored or replaced, delete `.<trail>.sync.json`**; the next `sync` rescans and the id dedup makes that safe. The same applies if a trail directory is deleted. (Stated in the Recovery note of B3 once built.)
+
+### B4.3 Bounds
+
+Everything bounded here is defined once in `src/proof/limits.js` (a second block, "SYNC", beside the admission and worker blocks). The server is untrusted input; the order is the same as for a pipe message: **size first, then bytes, then the gate.**
+
+| Limit | Value | Meaning |
+|---|---|---|
+| `SYNC_UID_WINDOW` | 1,000 | UIDs listed per `UID FETCH ... (UID RFC822.SIZE)` window; bounds metadata held in memory |
+| `SYNC_MAX_MESSAGES` | 1,000 | messages handled per folder per run |
+| `SYNC_MAX_BYTES` | 512 MiB | message bytes read per folder per run (Gmail also meters IMAP download per day; a backfill is meant to take several runs) |
+| `SYNC_MAX_MESSAGE_BYTES` | 128 MiB | largest message that is still read (streamed) to be recorded; above it, `skipped` |
+| `SYNC_MAX_MS` | 30 min | wall time of one `sync` call, checked between messages; a run past it stops cleanly (`complete: false`) |
+| `SYNC_CONNECT_MS` | 30 s | TCP/TLS connect and greeting (imapflow `connectionTimeout`, `greetingTimeout`) |
+| `SYNC_SOCKET_MS` | 5 min | idle socket (imapflow `socketTimeout`). It covers a server that goes quiet; the record build time (up to the worker's 15 s CPU + 30 s DNS) is well inside it |
+| `SYNC_FETCH_MS` | 5 min | wall time of reading ONE message; over it the connection is closed and treated as a drop (below). Catches a server that trickles bytes and never trips the idle timer |
+| `SYNC_MAX_RECONNECTS` | 3 | reconnects per run, backoff 1 s, 4 s, 16 s |
+
+Caller options `maxMessages` / `maxBytes` take the **smaller** of the option and the constant (a caller can tighten, never loosen: "every bound lives in `limits.js`"). Values are first estimates to be measured in the Gmail run (B4.8), the same way F14's were. A cap that is hit ends that folder cleanly (`complete: false`, cursor saved); calling `sync` again continues. A caller loops until `complete: true`.
+
+- **Size first.** The window listing gives each message's `RFC822.SIZE` (about 100 bytes on the wire per message, F17.6; the POC saw it equal the fetched length 9/9). Messages are then read **one at a time**, in ascending UID, never inside the listing loop (imapflow cannot run a second command while a `fetch` iterator is open; the list is collected first).
+- **Within the gate size (`size <= MAX_TOTAL_BYTES`).** `BODY.PEEK[]<0.MAX_TOTAL_BYTES+1>` (`source: { start: 0, maxLength: MAX_TOTAL_BYTES + 1 }`, F17.6): a server that lies about the size cannot make us buffer more than the gate limit plus one byte. If the returned length is `<= MAX_TOTAL_BYTES` the Buffer goes to `record()` unchanged (`admit()` and the worker backstop decide the rest). If it is longer than the limit the server lied; treat it as an over-size message (next bullet).
+- **Over the gate size (`size > MAX_TOTAL_BYTES`).** Accept-with-flag says it is still recorded. The record `id` is the sha256 of the **whole** raw bytes (B1), so the bytes must be seen once. The wrapper **streams** the message (`download`), feeding a sha256 and a byte counter and keeping nothing (memory is the chunk size, not the message). The result is recorded through an internal path that builds the existing over-limit record from `{ raw_sha256, size }` instead of a Buffer: `over-limit.js` already uses nothing but those two values, so its `overLimitRecord(buf, ...)` becomes a thin wrapper over a digest form (one definition, B1/Limits). The record is exactly the one `record()` would write for the same bytes (`reason: "over limit: total_bytes"`, same `id`): a later pipe capture of that message is `duplicate: true`. This is the only new write path and it is internal (not an export, not a primitive). Nothing is parsed, no DNS asked.
+- **A truncated record is not possible.** A prefix would need a different `id` (the hash of fewer bytes), which would collide with nothing and match no other copy, and it would store a hash that is not the message's. We refuse that: either the whole bytes are hashed or the message is not recorded.  Decided: stream-hash and record; above `SYNC_MAX_MESSAGE_BYTES` report as `skipped` and move on, so one monster cannot block the folder forever.
+- **Connection drop / reconnect.** An error or `close` while reading a message (including `SYNC_FETCH_MS`) ends that attempt: the message is NOT recorded from partial bytes (a short literal is never passed to `record()`). The wrapper reconnects (up to `SYNC_MAX_RECONNECTS` per run, with backoff), re-`EXAMINE`s, re-checks `UIDVALIDITY` (B4.2) and resumes from the in-memory cursor, which equals the file. Out of reconnects: the folder ends with `ERR_IMAP_TIMEOUT` or `ERR_IMAP_PROTOCOL`, cursor at the last committed UID. An auth failure on reconnect is `ERR_IMAP_AUTH`. A token that expired mid-run is that same error; the run cap keeps this unlikely.
+- **No compression.** `disableCompression: true`: wire bytes are not literal bytes under COMPRESS=DEFLATE (F17.6), and a compressed stream is a decompression-bomb surface the caps would have to count a second way.
+
+### B4.4 Direction, copy kind, `source`
+
+- **Direction.** `folders` → `in`; the `\Sent` folder → `out`. The record's `direction` is passed to `record()` as for any capture; nothing else is special-cased.
+- **Sent copies.** Mailbox providers do not sign the Sent copy (F3: msn.com 4/4; Gmail 1/1, F17.3), so a Sent record is what `record()` already makes of unsigned mail: `signatures: []`, `unverified` on both verdicts (`basis: "none"`), `copy.kind` `unknown`, `message.from` set. **No flag is added**; "unverified out" is the whole expression, and the proof of sending is the counterparty's signed copy (F3, PRD §5). If a provider ever does sign a Sent copy, it verifies like any other: sync does not assume.
+- **`source`** = `imap:<folder path>` (e.g. `imap:INBOX`, `imap:[Gmail]/Sent Mail`), clipped by `record()` to 200 chars. The account (user, host) is deliberately NOT in `source`: a trail may be shared or published and the cursor file already knows the account. The first capture's `source` wins when the same bytes are met again in another label (B1).
+- **`captured`** is `record()`'s clock (B1) = when sync fetched it, not the mail's receive time. For a backfill that is "now" for old mail; the evidence of age is the signed `Date`/`t=` in the record. `INTERNALDATE` is not stored.
+- **No envelope.** IMAP carries no client IP/HELO, so `record()` runs without an `envelope`: the live verdict has `spf: null` and `authorized` cannot occur; `verified` (aligned DKIM + DMARC when published) and `forwarded` (ARC with a trusted sealer) can. Gmail's own `Authentication-Results`/ARC set is **not used** for any verdict (F17.4; PRD Q10 is later).
+
+### B4.5 Concurrency
+
+- **sync vs the Postfix pipe (or any other `record()`).** Both go through `commitRecord`, which takes the trail lock for each write (B3, Concurrency). `sync` **never holds the trail lock across IMAP I/O**: it takes it only inside `record()`, per message, for the same few hundred milliseconds as a pipe write. A pipe delivery that arrives during a backfill waits behind at most one message's commit, within its own `lockTimeoutMs`, and keeps its exit-75 mapping for `ERR_TRAIL_LOCKED`. In the other direction, a `record()` inside `sync` that times out surfaces as `ERR_TRAIL_LOCKED` in the folder result and stops the run (B4.1); the cursor is untouched, so the next run retries that message. If the pipe and `sync` capture the same bytes, whichever commits first wins and the other gets `duplicate: true`.
+- **Two syncs at once on one trail.** A second lock file `<trailDir>/.<trail>.sync.lock` with the **same mechanism as the trail lock** (`O_EXCL`, `{pid, host, started}`, dead-pid same-host takeover through a break lock; implementation: `withTrailLock` takes the lock file name as an argument, so there is one lock implementation) guards the whole `sync` call and therefore the cursor file. It is **fail-fast**: a second `sync` on the same trail gets `ERR_SYNC_LOCKED` at once (a cron job should skip an overlapping run, not queue). The sync lock and the trail lock are never taken in the opposite order (sync lock first, then trail lock inside `record()`), so they cannot deadlock. The recovery rule for a stale lock is B3's, with the file name `.<trail>.sync.lock`.
+- **Different trails, or accounts.** Different trails never share a lock or a cursor file. One trail with two accounts is allowed: the cursor file keys by account, calls are serialised by the sync lock, the caller loops over accounts (multi-account orchestration is not in M1).
+- **Worker.** Each message is one `record()` call, so the worker pool is used exactly as for a pipe message (one build at a time per `sync`). While a build runs the IMAP connection is idle (bounded by `SYNC_SOCKET_MS`). One message is in memory at a time on the main thread, plus one in the worker. `worker.size: 0` works too.
+- **OTS.** `record()` stamps each record when `otsBin` is set, inside the trail lock, so a 1,000-message backfill with OTS on makes 1,000 sequential stamps. M1 changes nothing (per email, as `record()` does today); recommended: leave OTS off for backfills. Decided (PRD §12 Q8): per record; docs advise OTS off for backfills.
+
+### B4.6 Dependency and wrapper
+
+- **imapflow is the third (last) runtime dependency** (F16; the ceiling of 3 is reached). The lockfile is the pin (it releases weekly); `check:lockfile` stays a CI gate.
+- **One importer.** `src/proof/imap.js` is the only module that imports `imapflow`. It exposes a small plain-data interface and nothing from imapflow's types leaks out (no `BigInt`, no stream objects other than a Node `Readable` consumed inside it):
+
+  ```js
+  openSession({ host, port, user, auth, tls, timeouts }) => Promise<{
+    findSent():       Promise<string | null>,                         // path with specialUse '\\Sent'
+    select(path):     Promise<{ uidvalidity: string, uidNext: number }>,   // EXAMINE; releases the previous folder
+    list(lo, hi):     Promise<Array<{ uid: number, size: number }>>,       // UID FETCH lo:hi (UID RFC822.SIZE); explicit range only
+    fetch(uid, max):  Promise<Buffer>,                                // BODY.PEEK[]<0.max>; may return max bytes
+    hash(uid):        Promise<{ sha256: string, size: number }>,      // streamed, nothing kept
+    close():          Promise<void>,
+  }>
+  ```
+  `src/proof/sync.js` holds all logic (window loop, cursor, caps, direction, reconnect policy) against that interface, so it is tested with an in-memory fake session; the wrapper is tested against a fake IMAP server (B4.8). `Mailproof#sync` is a thin method that builds the session and calls `sync.js`.
+- **imapflow settings, fixed in the wrapper and not options:** `secure: true` (implicit TLS, default port 993; no plain connection, no STARTTLS upgrade, `tls.rejectUnauthorized` never false, only `tls.ca` can be added), `logger: false`, `emitLogs: false` (logging off; the library would otherwise be a place where credentials and message text reach a log), `disableCompression: true`, `disableAutoIdle: true` (no background IDLE), `verifyOnly` unused, the timeouts of B4.3. `auth` is `{ user, pass }` or `{ user, accessToken }`.
+- **Types and ESM.** imapflow is CJS with an ESM entry and ships `.d.ts` (F16): `import { ImapFlow } from 'imapflow'`; JSDoc types for the interface above are the single source, per LIBRARY_CONVENTIONS. `package.json` gains `"imapflow"` under `dependencies`; `sync` is added to the class JSDoc (`@when`/`@fails`/`@example`) so `primitives.json` regenerates (`check:primitives`).
+- **Fallback, not taken:** PRD §12 Q9's separate `mailproof-imap` package (depends on `mailproof` and imapflow); the interface above is already the seam if this is ever revisited.
+
+### B4.7 Out of scope for M1 (and why)
+
+| Not in M1 | Why / when |
+|---|---|
+| Portable SPF/ARC verdict from Gmail's `Authentication-Results`/ARC set | PRD §12 Q10; owner: later. Needs its own spec and POC. M1 stores the headers' signed parts as M0 does and adds no verdict |
+| IMAP IDLE watcher | M1 is a cron/systemd-timer `sync`; IDLE is a separate state machine (F16), added behind the same wrapper |
+| The OAuth flow (consent, refresh) | The caller passes a ready access token; mailproof has no HTTP client and no client secret |
+| Whole-inbox recording | A later setting on this code (PRD M6 note, §10); M1 syncs named folders |
+| Multi-account orchestration, CLI `sync` subcommand | The method takes one account per call; the CLI is M3 |
+| Any write to the mailbox | Read-only by construction (B4.1) |
+| Non-Gmail providers | Gmail first (F4: Outlook/Exchange bodies are altered on their side); the code is plain IMAP4rev1 and nothing Gmail-specific except the documented `\Sent`/label behaviour |
+| POP3, mbox/Maildir import | Not planned |
+
+### B4.8 Test plan
+
+Two layers plus one manual run. Each test below must be written so that a plausible bug makes it fail (the cause of failure is named). Tests use `makeTmpDir` and leave nothing in `/tmp`; timing assertions use counts or generous margins, not wall-clock.
+
+**Layer 1: `sync.js` against an in-memory fake session** (records real messages from `tests/integration/fixtures/` into a real trail with `worker: { size: 0 }`; the fake logs every call and can inject faults).
+1. *Fresh run, then re-run.* All messages recorded, cursor = highest UID; the second run lists but **fetches zero** messages (the fake's fetch counter) and records zero. Fails if the cursor is not persisted or not read.
+2. *`N:*` quirk.* A fake that ignores the requested range and always also returns the last message: the filter drops it (no fetch, no `duplicate` counted, `seen` excludes it). A second assertion: no `list` call ever contains `*`. Fails if the filter or the explicit range is removed.
+3. *Crash window.* Throw between the `record()` commit and the cursor write (inject into the cursor writer), then run again: the re-fetched message is `duplicate: true`, `git log` has exactly one commit per distinct message, nothing is lost. Fails if the order of writes is reversed (a cursor written first would skip the message in a run that crashes after it) or if dedup is bypassed.
+4. *Never skip a failure.* Make the 3rd of 5 `record()` calls throw (hold the trail lock past a tiny `lockTimeoutMs`): the folder result has `ERR_TRAIL_LOCKED`, cursor = UID of the 2nd, later folders `attempted: false`, messages 4 and 5 not recorded; after releasing the lock the next run records 3-5 and no duplicate. Fails if the loop continues past an error or advances the cursor on it.
+5. *`UIDVALIDITY`.* A changed value: cursor discarded, `reset: 'uidvalidity'`, all messages re-fetched and all `duplicate`, new value stored. Two values that differ only above 2^53 (`"9007199254740993"` vs `"...992"`) are different. Fails if the comparison goes through `Number`. A change on reconnect inside a run gives `ERR_IMAP_UIDVALIDITY` and no records.
+6. *Oversize, honest size.* A 26 MiB message (size above `MAX_TOTAL_BYTES`): the fake counts bytes served through `fetch` (must be 0) and through `hash`; the trail has a record with `reason: "over limit: total_bytes"` whose `id` equals the independent sha256 of the bytes and `size` the true length; then `mp.record()` of the same Buffer returns `duplicate: true`. Fails if it was buffered, hashed wrongly, recorded truncated, or its id differs from the pipe path's.
+7. *Oversize, lying size.* Metadata says 1 KiB, the literal is 26 MiB: `fetch` is asked for at most `MAX_TOTAL_BYTES + 1` and returns that; the sync switches to `hash`, result identical to 6. Above `SYNC_MAX_MESSAGE_BYTES` (limits lowered through the test's constants) the message is in `skipped`, not recorded, cursor moves. Fails if a short or truncated Buffer reaches `record()`.
+8. *Caps.* `SYNC_MAX_MESSAGES`/`SYNC_MAX_BYTES`/`SYNC_MAX_MS` (made small by the test): the folder ends `complete: false`, cursor at the last processed UID, the next run continues with no duplicates; an option larger than the constant is clamped to it (assert the effective cap).
+9. *Direction and source.* INBOX records have `direction: 'in'`, `source: 'imap:INBOX'`; the `\Sent` folder `out`, `unverified`/`unverified`, `signatures: []`; a folder listed in `folders` that is the `\Sent` one is `out`, synced once; `sent: true` with no `\Sent` folder → `ERR_IMAP_NO_SENT` on its entry while INBOX still succeeds. The account name is absent from every record.
+10. *Concurrency.* A second `sync` while the first holds the sync lock (the fake blocks mid-run): `ERR_SYNC_LOCKED` at once, cursor unchanged. A separate `Mailproof` instance (another lock holder path) calling `record()` while `sync` runs: both finish, all records present, none lost. A stale sync lock (dead pid, this host) is taken over.
+11. *Cursor file.* After every message the file parses and no `.tmp` is left; a corrupt file gives `reset: 'unreadable'` and a full rescan without error; the file sits outside the git repo (`git status` clean after a run).
+12. *Secrets.* With a distinctive password/token, `JSON.stringify` of every result and thrown error, every file under the trail dir, and the cursor file contain it nowhere.
+13. *Reconnect policy.* A drop mid-message: that message is not recorded from partial bytes, the session reconnects, resumes at the same UID, final state equals an uninterrupted run; more drops than `SYNC_MAX_RECONNECTS` → folder error, cursor at the last committed UID.
+
+**Layer 2: `imap.js` (real imapflow) against a fake IMAP server** (a small IMAP4rev1 server on `node:tls`; the test generates a throwaway self-signed certificate with `openssl` into `makeTmpDir` and passes it as `tls.ca`; if `openssl` is missing the test **fails**, not skips). The server logs every command line and can drop the socket, lie about sizes, send a bad literal length and change `UIDVALIDITY`.
+14. *Auth.* `LOGIN`/`AUTHENTICATE PLAIN` with a password and `AUTHENTICATE XOAUTH2` with a token (the server checks the exact SASL payload); wrong credentials → `ERR_IMAP_AUTH` and the message does not contain the secret.
+15. *TLS is mandatory.* An untrusted certificate, a hostname mismatch and a server that speaks plain text all give `ERR_IMAP_CONNECT`; the server sees no `LOGIN` or `AUTHENTICATE` in any of them (no credential leaves before the certificate is accepted).
+16. *Read-only command log.* After a full run the server's log contains only `CAPABILITY`, `ID` (if imapflow sends it), `LOGIN`/`AUTHENTICATE`, `LIST`, `EXAMINE`, `UID FETCH`, `NOOP`, `LOGOUT`; `BODY.PEEK` and never `BODY[]`; no `SELECT`, `STORE`, `APPEND`, `COPY`, `MOVE`, `EXPUNGE`, `IDLE`, `COMPRESS`. Fails if a default of imapflow changes under the pinned version.
+17. *Bytes are exact.* A message with bare LF, CRLF mixed and 8-bit bytes (`FF FE 00`): the recorded `raw_sha256` equals the sha256 of the server's bytes (F16 did this by hand; now a regression test). `\Sent` discovery via `SPECIAL-USE` and folder names with spaces/brackets.
+18. *Literal handling.* A server that announces `{n}` and sends fewer bytes then closes: `fetch` rejects, no Buffer is returned; one that sends more than `max`: bounded by `maxLength`. `hash()` of a large literal (100 MiB, generated by the server on the fly) keeps peak `external` + heap growth under a generous margin (e.g. 64 MiB, measured with sampling), proving it streams. The F17 gap "huge literal" is closed here and in the manual run.
+19. *Single importer.* A test greps `src/` for `from 'imapflow'` / `require('imapflow')`: exactly `src/proof/imap.js`; and `dependencies` in `package.json` has exactly `mailauth`, `mailparser`, `imapflow`.
+
+**Manual run against real Gmail** (owner's account, app password from `pass`, a temp trail; records the numbers as a new F-entry, since the POC mailbox was 9 messages):
+- INBOX + Sent: counts equal the POC (8 `verified`, `body_status` matched; 1 Sent `unverified`); re-run: 0 fetched; delete the cursor file: re-run all `duplicate`, `git log` unchanged.
+- `kill -9` mid-run, then re-run: no lost message, no duplicate commit.
+- A label of at least 500 messages (or a lowered `maxMessages`): caps, several runs to `complete: true`; note throughput and any `[THROTTLED]`.
+- One message over 25 MiB (self-send a 24 MiB attachment: base64 makes it about 32 MiB): `over limit: total_bytes`, id equals the sha256 of a downloaded copy, memory flat.
+- XOAUTH2 with a real access token (the F17 gap), once.
+- A pipe-style `record()` of the same message from a second process while `sync` runs.
+
+### Decided (2026-11-03)
+
+Owner decisions on the six forks; rationale in [decisions-log](decisions-log.md).
+
+- **Over-size mail:** stream-hash and record `over limit: total_bytes`; above 128 MiB `skipped`. Keeps accept-with-flag; costs bandwidth only.
+- **First run:** the whole folder history over capped runs. The folder is a deliberate choice.
+- **Cursor:** sidecar beside the trail; delete it when a trail is restored. Simple; keeps one commit per record.
+- **`captured`:** the fetch time, no new field. The age evidence is the signed `Date`/`t=`.
+- **OTS:** per record as today; advise OTS off for backfills. No new proof type.
+- **IMAP:** in core as the third dependency (F16). One library, one entry point.
+
 ---
 
 # Part A — v1 (archived at M3)

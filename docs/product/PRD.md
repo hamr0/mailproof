@@ -286,6 +286,6 @@ Node ≥ 22.19 (`Worker#cpuUsage`, see F15).
 5. Does Gmail add its own ARC seal / `Authentication-Results` on inbound that could make its SPF verdict portable? **Answered: yes on 8/8 inbound copies (google.com ARC set plus Authentication-Results with spf=); whether to use it is open, see [F17](findings.md).**
 6. Sending from a normal mailbox in M3 vs the no-third-party-provider rule.
 7. Privacy wording for storing other people's addresses and subjects (not legal advice).
-8. OTS stamp per sync run vs per email.
-9. IMAP as an in-core dependency vs a separate package, if the dependency checklist fails.
+8. OTS stamp per sync run vs per email. **Decided (owner, 2026-11-03): per record, as today; advise OTS off for backfills, see [SPEC B4.5](SPEC.md).**
+9. IMAP as an in-core dependency vs a separate package, if the dependency checklist fails. **Decided (owner, 2026-11-03): in core as the third dependency (checklist passed, [F16](findings.md)), see [SPEC B4.6](SPEC.md).**
 10. Portable ARC: an offline re-check of a trusted-sealer ARC chain (archived ARC headers and sealer keys), so `forwarded` could be re-verified later; needs its own spec and POC (findings F7 D1).
