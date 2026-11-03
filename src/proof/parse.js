@@ -11,8 +11,8 @@
 // These are the only two places mailproof touches `mailauth` / `mailparser`
 // (the project's two external deps — DKIM/DMARC/ARC and untrusted-MIME parsing
 // are security-critical, so a vetted library is required, never hand-rolled).
-// Attachment + raw hashes go through the notary's `hashDocument` so every
-// fingerprint mailproof writes uses ONE format (the notary "capture" half).
+// Attachment + raw hashes go through `hashDocument` (src/proof/hash.js) so every
+// fingerprint mailproof writes uses ONE format.
 
 
 import { authenticate } from 'mailauth';
@@ -74,11 +74,11 @@ function authenticateMessage(raw, envelope = {}, { mtaHostname = null, resolver 
 }
 
 // Parse an inbound message into the structured shape the kernel consumes.
-// `attachments[].sha256` is the notary fingerprint of the part's bytes — this
-// IS the notary capture half (mandatory auto-hash of every inbound attachment).
+// `attachments[].sha256` is the `hashDocument` fingerprint of the part's bytes
+// (mandatory auto-hash of every inbound attachment).
 /**
  * Parse raw bytes into the structured shape the kernel consumes. Attachment
- * bytes are hashed (notary capture) then dropped. Deterministic, no network.
+ * bytes are hashed (`hashDocument`) then dropped. Deterministic, no network.
  * @param {Buffer | string} raw
  * @returns {Promise<ParsedMessage>}
  */

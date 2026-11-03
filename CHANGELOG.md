@@ -19,7 +19,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > those versions were published and unpublished under this name in 2025 and npm
 > permanently reserves a once-published version, so the stable 1.x line starts at
 > the first free clean minor, `1.3.0`.) See
-> [`docs/archive/DESIGN.md`](docs/archive/DESIGN.md) for the phasing.
+> [`archive/v1/docs/DESIGN.md`](archive/v1/docs/DESIGN.md) for the phasing.
+
+## [2.0.1] - 2026-11-03
+
+### Fixed
+- A job that went over its CPU budget between two checks is now recorded `over limit: time` instead of being accepted. The budget was only read on a 50 ms poll, which stalls on a loaded machine; it is now also checked when the job finishes.
+- An envelope reads the same with a worker and with `worker.size: 0`. `clientIp`, `clientHelo` and `sender` values that are not strings are read as `null`, and an envelope that is not a non-null object is read as no envelope. Before, a non-string or function value was rejected with "message input cannot be sent to the worker" when a worker was in use, but passed in-process.
+
+### Changed
+- Docs: `close()` says a call still running at `close()` may reject, and if it does it is not recorded, so await first (JSDoc, SPEC, context). `matchFile` documents that junk bytes give `{ match: false, attachment: null }`.
+- CI runs on Node 22.19, the `engines` floor.
+- Tests pin `message_key` distinctness, the body-status empty-prefix and budget-charge branches, the worker-pool spawn failure paths, and one resolver guard per message. POC scratch paths use `os.tmpdir()`. The CPU-budget worker tests no longer depend on the machine's speed.
+- CLAUDE.md rewritten for v2.
+- v1 code, tests and docs moved to `archive/v1/` (kept for borrowing; not shipped, not run, not type-checked). 1.x stays frozen at tag `v1.4.0`; there is no `v1` branch.
 
 ## [2.0.0] - 2026-11-02
 

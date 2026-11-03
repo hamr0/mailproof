@@ -2,9 +2,13 @@
 // so record() still commits (trail lock + git) on the MAIN thread only after the worker has returned.
 import { pathToFileURL } from 'node:url';
 import path from 'node:path';
+import os from 'node:os';
 import { DeadlinePool } from './pool.js';
 
-export const SRC = process.env.WD_SRC || '/tmp/claude-1000/-home-hamr-PycharmProjects-mailproof/1eb0833c-1eeb-422b-ad29-0eeae0eed090/scratchpad/wd-src';
+// Setup: these POCs import a frozen copy of the repo at $WD_DIR/wd-src (default <tmpdir>/mailproof-worker-deadline/wd-src; or set WD_SRC).
+// Create it once from the repo root, node_modules included (a plain copy, no git worktree):
+//   mkdir -p "$WD_DIR" && cp -r . "$WD_DIR/wd-src"   # run `npm ci` first if node_modules is missing
+export const SRC = process.env.WD_SRC || path.join(process.env.WD_DIR || path.join(os.tmpdir(), 'mailproof-worker-deadline'), 'wd-src');
 export const mailproofUrl = pathToFileURL(path.join(SRC, 'src/proof/mailproof.js')).href;
 export const { Mailproof } = await import(mailproofUrl);
 const { overLimitReason } = await import(pathToFileURL(path.join(SRC, 'src/proof/admit.js')).href);

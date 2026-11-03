@@ -1,6 +1,7 @@
 // M0 go/no-go POC (throwaway, never shipped): offline DKIM re-check from a stored
 // signed-header record alone. Usage: node poc/m0-header-recheck.js <dir-of-.eml>
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import dns from 'node:dns/promises';
@@ -8,7 +9,7 @@ import { authenticate } from 'mailauth';
 import { generateCanonicalizedHeader } from 'mailauth/lib/dkim/header';
 import { dkimBody } from 'mailauth/lib/dkim/body';
 
-const OUT = '/tmp/claude-1000/-home-hamr-PycharmProjects-mailproof/0823cad8-7c59-4349-9c56-3ea2768689d2/scratchpad/m0';
+const OUT = process.env.M0_OUT || path.join(os.tmpdir(), 'mailproof-m0');   // where the per-signature records are written
 const b64 = (b) => Buffer.from(b).toString('base64');
 
 // ---- header block parsing (raw bytes kept as binary strings, folds preserved) ----

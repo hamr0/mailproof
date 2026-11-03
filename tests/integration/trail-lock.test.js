@@ -170,7 +170,9 @@ test('SIGKILL mid-commit: retrying the same mail commits it, tree clean, dead lo
   fs.writeFileSync(hook, `#!/bin/sh\ntouch '${marker}'\nsleep 60\n`, { mode: 0o755 });
   // detached = own process group, so the sleeping hook dies with the writer
   const child = spawn(process.execPath, [HELPER, trailDir, files[1], mapFile], { stdio: 'ignore', detached: true });
-  await waitFor(() => fs.existsSync(marker));
+  // 30 s, not the 10 s default: spawning a node child under heavy box load has taken longer than 10 s to reach the hook.
+  // This only caps how long a failing run waits; a passing run returns as soon as the marker appears.
+  await waitFor(() => fs.existsSync(marker), 30000);
   process.kill(-child.pid, 'SIGKILL');
   await new Promise((r) => child.on('close', r));
   // the crash left what the reviewer saw: staged record + key, a dead lock, no new commit

@@ -1,7 +1,8 @@
 // The deadline backstop (src/proof/pool.js, worker.js, build.js): check()/record() build in a warm worker thread that is
 // killed over a CPU, busy-wall or memory budget, and the message is recorded `over limit: time` / `over limit: memory`.
-// Every budget here is made tiny so the guarantee is deterministic: a message that costs seconds of CPU against a
-// budget of a few hundred ms fires the deadline on any machine, loaded or not (no test asserts a raw time).
+// The CPU budget is calibrated at load (tests/helpers/cpu-budget.js) between an ordinary message's cold first job and the
+// SLOW worst case, because SLOW costs ~0.6 s of CPU on a fast CI runner and seconds on a slow box: no fixed number
+// separates them everywhere. No test asserts a raw time.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -13,14 +14,15 @@ import { signedMail } from '../helpers/proof.js';
 import { WORST_CASES } from '../helpers/worst-cases.js';
 import { WorkerPool, workerConfig } from '../../src/proof/pool.js';
 import { makeTmpDir } from '../helpers/tmp.js';
+import { SLOW as SLOW_NAME, SLOW_CPU_MS } from '../helpers/cpu-budget.js';   // SLOW_CPU_MS: calibrated on this machine (geometric mean of an ordinary cold job and SLOW), not a constant
 
 const dir = () => makeTmpDir('mp-wk-');
 const nxdomain = async () => { throw Object.assign(new Error('no record'), { code: 'ENOTFOUND' }); };
 const git = (mp, ...a) => execFileSync('git', ['-C', mp.root, ...a], { encoding: 'utf8' }).trim();
 const workers = () => process.report.getReport().workers.length;
 const heavy = (name) => WORST_CASES.find((c) => c.name === name);
-/** Several seconds of CPU, but under every gate limit: it only dies to the backstop. */
-const SLOW = '500,000 one-byte CRLF lines, matching bh';
+/** 10 valid signatures over 500,000 lines: the most the gate admits, so it cannot be made heavier. It dies only to the backstop. */
+const SLOW = SLOW_NAME;
 const BIG = 'ordinary 24 MiB message with a base64 attachment';
 
 /** A Mailproof that is closed when the test ends. */
@@ -32,7 +34,7 @@ function make(t, opts = {}) {
 }
 
 test('worker: a message past the CPU budget is recorded once as "over limit: time", unverified, with nothing left behind', async (t) => {
-  const mp = make(t, { worker: { cpuMs: 300 } });
+  const mp = make(t, { worker: { cpuMs: SLOW_CPU_MS } });
   const { raw, resolver } = await heavy(SLOW).build();
   mp.resolver = resolver;
   const r = await mp.record(raw, { direction: 'in', source: 'slow' });
@@ -60,7 +62,7 @@ test('worker: a message past the CPU budget is recorded once as "over limit: tim
 });
 
 test('worker: check() reports a timed-out message like any over-limit one', async (t) => {
-  const mp = make(t, { worker: { cpuMs: 300 } });
+  const mp = make(t, { worker: { cpuMs: SLOW_CPU_MS } });
   const { raw, resolver } = await heavy(SLOW).build();
   mp.resolver = resolver;
   const c = await mp.check(raw);
@@ -209,7 +211,7 @@ test('worker: a program that never calls close() exits on its own, after a timed
     import { signedMail } from ${JSON.stringify(new URL('../helpers/proof.js', import.meta.url).href)};
     import { WORST_CASES } from ${JSON.stringify(new URL('../helpers/worst-cases.js', import.meta.url).href)};
     const good = await signedMail({ body: 'hi\\r\\n' });
-    const mp = new Mailproof({ trailDir: ${JSON.stringify(dir())}, resolver: good.resolver, worker: { cpuMs: 300 } });
+    const mp = new Mailproof({ trailDir: ${JSON.stringify(dir())}, resolver: good.resolver, worker: { cpuMs: ${SLOW_CPU_MS} } });
     const slow = await WORST_CASES.find((c) => c.name === ${JSON.stringify(SLOW)}).build();
     mp.resolver = slow.resolver;
     const b = await mp.check(slow.raw);   // the worker is killed ...

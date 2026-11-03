@@ -239,7 +239,7 @@ for (const [name, mk] of Object.entries(GATE_SHAPES)) {
 //   (a) with the DEFAULT budget (15 s of worker CPU, 120 s busy wall, 2 GB) no admitted shape is stopped: each is
 //       checked for real and none comes back "over limit: time" or "over limit: memory". Measured on an idle
 //       machine the worst costs about 3-4 s of CPU, so this holds with several times to spare;
-//   (b) the backstop DOES fire: the heavy shapes, which cost seconds, run under a 100 ms CPU budget and must be
+//   (b) the backstop DOES fire: the heavy shapes, which cost seconds, run under a 50 ms CPU budget and must be
 //       recorded "over limit: time". A deadline that never fires would pass (a) alone.
 // Linearity (layer 1) is unchanged: a regression that makes a shape super-linear still fails there.
 const BACKSTOP = /^over limit: (time|memory)$/;
@@ -260,7 +260,7 @@ for (const c of WORST_CASES.filter((x) => x.heavy)) {
   test(`backstop fires: ${c.limit}: ${c.name}`, async () => {
     const { raw, resolver } = await c.build();
     admitted(raw);
-    const mp = new Mailproof({ trailDir: dir(), resolver: resolver || nxdomain, worker: { cpuMs: 100 } });
+    const mp = new Mailproof({ trailDir: dir(), resolver: resolver || nxdomain, worker: { cpuMs: 50 } });
     const r = await mp.check(raw);
     assert.equal(r.portable.reason, 'over limit: time', c.name);
     assert.equal(r.live.reason, 'over limit: time', c.name);

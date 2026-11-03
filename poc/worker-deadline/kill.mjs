@@ -3,7 +3,8 @@ import fs from 'node:fs'; import path from 'node:path'; import os from 'node:os'
 import { Mailproof, makeWorkerMailproof, SRC } from './wm.js';
 const { signedMail } = await import(pathToFileURL(SRC + '/tests/helpers/proof.js').href);
 const { admit } = await import(pathToFileURL(SRC + '/src/proof/admit.js').href);
-const SCR = '/tmp/claude-1000/-home-hamr-PycharmProjects-mailproof/1eb0833c-1eeb-422b-ad29-0eeae0eed090/scratchpad';
+const SCR = process.env.WD_DIR || path.join(os.tmpdir(), 'mailproof-worker-deadline');
+fs.mkdirSync(SCR, { recursive: true });
 const T = fs.mkdtempSync(SCR + '/kill-');
 const DEADLINE = +process.env.DEADLINE || 3000;
 const rss = () => Math.round(process.memoryUsage().rss / 1048576);

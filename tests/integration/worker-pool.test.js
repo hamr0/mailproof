@@ -2,6 +2,8 @@
 // job can run away is reproduced here, on demand, and the pool must kill it, report why, and keep serving.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { Mailproof } from '../../src/index.js';
+import { makeTmpDir } from '../helpers/tmp.js';
 
 const mod = await import('../../src/proof/pool.js').catch(() => null);
 const FAULT = new URL('../helpers/fault-worker.js', import.meta.url);
@@ -28,6 +30,19 @@ for (const kind of ['loop', 'regex']) {
     assert.equal(p.stats.spawned, 2);
   });
 }
+
+test('pool: a job that goes over the CPU budget between two checks is still recorded as time, and its healthy worker is kept', async (t) => {
+  // The job burns ~30 ms of CPU against a 5 ms budget and posts 'done'. The poll tick is switched off (mocked
+  // setInterval that never fires), so on any box load only the check at 'done' can catch the overrun: the result is
+  // { limit: 'time' } and, since the worker finished on its own, it is kept. Without the check at 'done' the job
+  // would be accepted (and with the tick alone the worker would be killed), so this fails without b85a6e2.
+  t.mock.timers.enable({ apis: ['setInterval'] });
+  const p = pool(t, { cpuMs: 5 });
+  assert.deepEqual(await p.run(buf, input('burn'), undefined), { limit: 'time' });
+  assert.equal(p.stats.killed, 0);
+  assert.equal((await p.run(buf, input('ok'), undefined)).out.record.id, 'ok');
+  assert.equal(p.stats.spawned, 1);
+});
 
 test('pool: external memory (Buffers, invisible to the V8 heap limit) is killed by the watchdog before it grows far', async (t) => {
   const p = pool(t, { maxMemoryMb: 256, cpuMs: 60000 });
@@ -158,4 +173,54 @@ test('pool: input that cannot be cloned to the worker rejects that job with a cl
   await assert.rejects(() => p.run(buf, bad, undefined), /cannot be sent to the worker/);
   await ok(p);
   assert.equal(p.stats.spawned, 1, 'the worker was untouched and reused');
+});
+
+test('pool: a thread that cannot even be created rejects that job, and the pump goes on to the next one', async (t) => {
+  const p = pool(t);
+  const real = p._spawn.bind(p);
+  let failNext = true;
+  p._spawn = () => { if (failNext) { failNext = false; throw new Error('thread creation failed'); } return real(); };
+  await assert.rejects(() => p.run(buf, input('ok'), undefined), /thread creation failed/);
+  assert.equal(p.queue.length, 0, 'the failed job left the queue (it is not retried on the next pump)');
+  await ok(p);
+});
+
+test('pool: a job whose start rejects settles with that error and retires its worker; the pool serves the next job', async (t) => {
+  const p = pool(t);
+  const real = p._start.bind(p);
+  let failNext = true;
+  p._start = async (w, job) => { if (failNext) { failNext = false; throw new Error('start failed'); } return real(w, job); };
+  await assert.rejects(() => p.run(buf, input('ok'), undefined), /start failed/);
+  assert.equal(p.stats.killed, 1);
+  await ok(p);
+});
+
+test('envelope: a function in an envelope field is read as null, identically with a worker and in-process', async (t) => {
+  const raw = Buffer.from('From: a@b.example\r\nSubject: env\r\n\r\nhi\r\n');
+  const envelope = { clientIp: () => 1, clientHelo: () => 1, sender: () => 1 };
+  const out = [];
+  for (const size of [1, 0]) {
+    const mp = new Mailproof({ trailDir: makeTmpDir('mp-env-'), worker: { size }, now: () => new Date('2026-01-01T00:00:00Z') });
+    t.after(() => mp.close());
+    const c = await mp.check(raw, { envelope });
+    const r = await mp.record(raw, { direction: 'in', source: 'x', envelope });
+    assert.equal(r.duplicate, false, `size ${size} records it`);
+    assert.equal(c.live.spf, null, `size ${size}: no usable envelope, so no SPF`);
+    out.push(JSON.stringify([c, r.id, r.record]));
+  }
+  assert.equal(out[0], out[1], 'same result with a worker and in-process');
+});
+
+test('envelope: an envelope that is not an object is read as no envelope, identically with a worker and in-process', async (t) => {
+  const raw = Buffer.from('From: a@b.example\r\nSubject: env\r\n\r\nhi\r\n');
+  const out = [];
+  for (const size of [1, 0]) {
+    const mp = new Mailproof({ trailDir: makeTmpDir('mp-env-'), worker: { size }, now: () => new Date('2026-01-01T00:00:00Z') });
+    t.after(() => mp.close());
+    const c = await mp.check(raw, { envelope: () => 1 });
+    const r = await mp.record(raw, { direction: 'in', source: 'x', envelope: () => 1 });
+    assert.equal(r.duplicate, false, `size ${size} records it`);
+    out.push(JSON.stringify([c, r.id, r.record]));
+  }
+  assert.equal(out[0], out[1], 'same result with a worker and in-process');
 });

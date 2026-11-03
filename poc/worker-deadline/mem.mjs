@@ -1,5 +1,5 @@
 // Peak/after RSS per hostile shape, one fresh process per case. node mem.mjs <case> [limits=on|off] [deadline=3000]
-import { pathToFileURL } from 'node:url'; import fs from 'node:fs';
+import { pathToFileURL } from 'node:url'; import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path';
 import { Mailproof, makeWorkerMailproof, SRC } from './wm.js';
 const { signedMail } = await import(pathToFileURL(SRC + '/tests/helpers/proof.js').href);
 const [, , kase, limits = 'on', deadline = '3000'] = process.argv;
@@ -14,7 +14,9 @@ const test = { evil: undefined, loop: 'loop', heap: 'heap', alloc: 'alloc', inpr
 const raw = kase === 'loop' || kase === 'heap' || kase === 'alloc' ? good.raw : evil;
 const base = mb(process.memoryUsage().rss);
 let peak = base; const iv = setInterval(() => { peak = Math.max(peak, mb(process.memoryUsage().rss)); }, 50);
-const T = fs.mkdtempSync('/tmp/claude-1000/-home-hamr-PycharmProjects-mailproof/1eb0833c-1eeb-422b-ad29-0eeae0eed090/scratchpad/mem-');
+const SCR = process.env.WD_DIR || path.join(os.tmpdir(), 'mailproof-worker-deadline');
+fs.mkdirSync(SCR, { recursive: true });
+const T = fs.mkdtempSync(path.join(SCR, 'mem-'));
 const t0 = performance.now(); let reason;
 if (kase === 'inproc') { await new Mailproof({ trailDir: T, resolver: good.resolver }).check(raw); reason = 'in-process'; }
 else {

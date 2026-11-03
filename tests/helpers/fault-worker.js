@@ -15,6 +15,10 @@ port.on('message', async (m) => {
   // the mode is ctx.source, or an `X-Fault:` header of the message (check() has no source of its own)
   const mode = Buffer.from(m.buf).toString('latin1').match(/^X-Fault: (\w+)/m)?.[1] ?? m.ctx.source;
   if (mode === 'loop') for (;;);                                                              // CPU forever
+  if (mode === 'burn') {                                                                      // ~30 ms of this thread's CPU, then a normal 'done': over a 5 ms budget, but done before the first 50 ms tick
+    const cpu = () => { const u = process.threadCpuUsage(); return (u.user + u.system) / 1000; };
+    for (const c0 = cpu(); cpu() - c0 < 30;);
+  }
   if (mode === 'regex') /(a+)+$/.test('a'.repeat(60) + 'b');                                  // catastrophic backtracking
   if (mode === 'alloc') { const keep = []; for (;;) keep.push(Buffer.alloc(1 << 20, 1)); }    // external memory only
   if (mode === 'heap') { const keep = []; for (;;) keep.push({ a: keep.length, s: 'x'.repeat(100) }); }   // JS heap

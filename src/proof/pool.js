@@ -193,7 +193,12 @@ class WorkerPool {
         } catch { /* worker gone: not reusable below */ }
         // A worker that finished holding more than half the memory limit (garbage not yet collected) is
         // replaced: the next job must not start on the previous one's leftovers.
-        finish({ out: m.out, cpuMs: spent }, used > 0 && used < maxBytes / 2);
+        // The tick can miss an overrun (under load its delivery stalls for hundreds of ms), so the budget is
+        // checked here too: a job that went over is `over limit: time`, however it got to 'done'. The worker
+        // finished on its own and is healthy, so it is kept under the same memory rule.
+        const reusable = used > 0 && used < maxBytes / 2;
+        if (spent > cpuMs) finish({ limit: 'time' }, reusable);
+        else finish({ out: m.out, cpuMs: spent }, reusable);
       } else if (m.type === 'fail' && m.job === id) {
         finish(Object.assign(new Error(m.error.message), { code: m.error.code, name: m.error.name }), true);
       }

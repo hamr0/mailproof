@@ -9,7 +9,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseMessage, authenticateMessage } from '../../src/proof/parse.js';
-import { hashDocument } from '../../src/notary.js';
+import { hashDocument } from '../../src/proof/hash.js';
 import { classifyTrust } from '../../src/proof/trust.js';
 
 const CRLF = '\r\n';
@@ -50,7 +50,7 @@ const NO_ATTACHMENT = [
 
 // -- parseMessage --
 
-test('parseMessage: extracts from / messageId / attachment (notary-hashed)', async () => {
+test('parseMessage: extracts from / messageId / attachment (sha256-hashed)', async () => {
   const raw = Buffer.from(WITH_ATTACHMENT);
   const r = await parseMessage(raw);
 
@@ -62,7 +62,7 @@ test('parseMessage: extracts from / messageId / attachment (notary-hashed)', asy
   const att = r.attachments[0];
   assert.equal(att.filename, 'doc.pdf');
   assert.equal(att.size, 9);
-  // The capture half: the stored hash is the notary fingerprint of the bytes.
+  // The capture half: the stored hash is the sha256 fingerprint of the bytes.
   assert.equal(att.sha256, hashDocument(Buffer.from('hello doc')));
 });
 

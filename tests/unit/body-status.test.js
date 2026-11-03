@@ -243,3 +243,22 @@ test('work budget: the linear detectors (canonicalisation, line_endings) are nev
   const none = analyseBody({ a: 'rsa-sha256', c: 'simple/simple', bh: hashOf('simple', Buffer.from('other\r\n')) }, spaced, { budget: { left: 0 } });
   assert.deepEqual(kinds(none), ['search_capped', 'unknown']);
 });
+
+// ---- findAppended: the two spots no other test pins ---------------------------------------------------
+test('appended: a signed body that was empty and had everything appended is explained as appended (the empty-prefix case)', async () => {
+  const m = await signedMail({ signTime: T0, body: '' });
+  assert.deepEqual(analyse(m.raw), { status: 'matched', explain: [] });
+  const r = analyse(withBody(m.raw, () => 'Added by a relay\r\nSecond line\r\n'));
+  assert.equal(r.status, 'mismatch');
+  assert.deepEqual(kinds(r), ['appended']);
+  assert.deepEqual(r.explain[0].detail, { bytes: 'Added by a relay\r\nSecond line\r\n'.length, lines: 2 });
+});
+
+test('work budget: the appended search is charged its own bytes: a budget that covers only the line split leaves it capped', async () => {
+  const m = await signedMail({ signTime: T0, body: BODY });
+  const tampered = withBody(m.raw, (b) => b + 'Footer one\r\nFooter two\r\n');
+  assert.deepEqual(kinds(analyse(tampered)), ['appended'], 'with its full budget the footer is found');
+  const bodyLen = splitMessage(tampered).body.length;
+  const starved = analyse(tampered, { budget: { left: bodyLen } });   // enough for the line split, none left for hashing the lines
+  assert.deepEqual(kinds(starved), ['search_capped', 'unknown']);
+});

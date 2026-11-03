@@ -1,5 +1,5 @@
 // Types for the v2 proof layer (src/proof/*). Declares ONLY types: no runtime
-// code. The v1 src/types.js aliases the shapes shared with it, so there is one
+// code. The v1 archive/v1/src/types.js aliased the shapes shared with it, so there is one
 // definition per concept.
 
 /**
@@ -24,7 +24,7 @@
 
 /**
  * One attachment fingerprint from a parsed message (content stripped; the
- * `sha256` is the notary fingerprint of the part bytes).
+ * `sha256` is the `hashDocument` fingerprint of the part bytes).
  * @typedef {Object} Attachment
  * @property {string | null} filename
  * @property {number} size

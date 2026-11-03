@@ -4,57 +4,70 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What mailproof is
 
-An **email-native multi-party coordination kernel**, being extracted from the sibling `gitdone` project (`~/PycharmProjects/gitdone`) into a standalone vanilla JS library. It does four things: **verify** an inbound reply (DKIM/DMARC trust level), **sequence** it through a workflow of ordered/parallel steps, **commit** it to a tamper-evident per-event **git** ledger, and **trigger** the next email. No web UI, no branding, no crypto-attestation policy — those stay in `gitdone` as a consumer on top.
+A small **two-party (A<->B) email-proof library**. It records a re-checkable proof of each email (the signed headers, never the body) in a local **git trail**, so anyone can verify it offline later, even after the sender's DKIM key leaves DNS (the key is archived at capture). Public surface: a `Mailproof` class (`check`, `record`, `verify`, `matchBody`, `matchFile`, `list`, `get`, `copies`, `close`) plus `verifyRecord`, `hashDocument`, `TRUST_LEVELS`, `RULES_VERSION` (`src/index.js`).
 
-## Project status — read this first
+Multi-party workflows, thresholds and N-signer sign-off are **not** here: they live in `gitdone` / signedreply.com. The old "rebuild gitdone on mailproof" north star is retired. v2 is a new, smaller product, not an edit of v1.
 
-**P1 (the lift) is COMPLETE, and so are the two surfaces built on it — m7c (verification) and m7d (triggers).** `src/` holds the lifted, tested modules: verify (`classifier`), the inbound decoder (`parse` — DKIM/DMARC auth + MIME), sequence routing (`router`), inbound preprocessing (`prefilter`, `envelope`), outbound (`outbound`), the full git-ledger storage (`event-store`, `event-mutex`, `gitrepo`, optional `ots`), **both sequencing engines** (`completion` = workflow events, `crypto` = sign-off), the document notary (`notary`), and **the assembly** (`create` + `ingest`): `create()` composes the pillars over one `dataDir`; `ingest()` runs the prefilter→decode→classify→route→commit-always→advance→persist→trigger pipeline. On top of that: the **verification surface** — durable DKIM-key archive, the offline `verify()`/`reverify()` primitives, OTS-proof anchoring, AND the public `verify+`/`reverify+` email endpoints wired through `ingest()` (m7c-6); and the **trigger pillar** — every kernel-derivable occasion (state/time/bounce/verify) emitted as one of **12 neutral-templated `kind`s** (defaults centralised in `templates.js`, brand-free) over a single `composeNotification` hook. ~307 `node --test` tests pass with **2 runtime deps** (`mailauth`, `mailparser`); the public surface ships generated `.d.ts` (JSDoc-sourced, checkJs-gated in CI). The next phase is **P2** — validate the surface by rebuilding `gitdone` on mailproof on a non-merging branch (PRD §7.1; Step 1 boundary audit done).
-- `docs/` — the doc tier (start at `docs/README.md`): `01-product/PRD.md` (what mailproof is, who adopts it, the NO-GO table + GDPR posture), `02-design/DESIGN.md` (extraction boundary, locked decisions, planned API, phasing), `02-design/SPEC.md` (wire formats — the mechanism authority), `03-logs/decisions-log.md`. **Read the PRD, DESIGN, and SPEC before any lift/extraction work; the CHANGELOG tracks exactly what has landed.**
-- `poc/pipeline.js` — the original P0 stdlib-only proof the four pillars compose; **superseded** by the real modules, kept only as the P0 artifact (never shipped).
+## Status
 
-Describe mailproof by what's actually lifted (the PRD status line + CHANGELOG are authoritative) — neither a finished library nor a bare POC.
+**2.0.0 is released; M0 (record and re-check) has shipped.** The next module is **M1 (IMAP capture)** per PRD §7 (it needs a third runtime dependency that must pass the AGENT_RULES External Dependency Checklist). M2-M6 are later. 1.x (the multi-party kernel) is frozen at tag `v1.4.0`; the v1 code is archived in `archive/v1/` (there is no `v1` branch); there is no compatibility layer between 1.x and 2.x. The PRD status line and `CHANGELOG.md` are authoritative; verify against them before trusting any other doc.
+
+`src/proof/` plus `src/index.js` is v2 and the only code that ships (`files` in `package.json`). The v1 code (`create.js`, `ingest.js`, `completion.js`, `legacy-index.js`, ...), its tests and its docs live in `archive/v1/`: kept for borrowing in M3/M4 (PRD §9), not run, not type-checked, not shipped. To reuse a part, `git mv` it and its tests back into `src/` and `tests/` and make them pass.
+
+`poc/` holds POC evidence, never shipped: the v2 POCs (`poc/m0-header-recheck.js` = M0 go/no-go, F1; `poc/admit-gate/` = F14; `poc/worker-deadline/` = F15); the superseded v1 P0 pipeline is `archive/v1/poc/pipeline.cjs`.
+
+## Docs map
+
+Start at `docs/README.md`; `docs/index.md` is the generated map of every doc.
+- `docs/product/PRD.md`: authoritative on intent and scope (§3 trust rule, §4 record, §7 modules M0-M6, §10 out of scope, §11 process).
+- `docs/product/SPEC.md`: wire formats. **Part B (B1-B3, Limits, Concurrency) is v2 and the mechanism authority; Part A (sections 0-7) and `archive/v1/docs/DESIGN.md` still describe v1.**
+- `docs/product/findings.md`: POC/test results as F-entries with evidence (decisions and results go here; the PRD stays a thin contract).
+- `docs/product/decisions-log.md`: dated design forks with rationale.
+- `archive/v1/`: v1 code, tests and docs (v1 PRD, DESIGN, P2 audit, OPS under `archive/v1/docs/`).
+- `mailproof.context.md` (repo root, ships in the package): dense integration guide for agents.
 
 ## Commands
 
 ```bash
-npm test           # node --test over tests/unit/**/*.test.js + tests/integration/**/*.test.js (~307 tests)
-npm run typecheck  # tsc --noEmit — checkJs + strictNullChecks over src/*.js JSDoc (0 errors; CI gate)
-npm run build:types # tsc — emit the .d.ts to ./types/ (git-ignored; auto-runs on pack and publish via prepack)
-npm run poc        # node poc/pipeline.js — the original P0 proof (superseded; never shipped)
+npm test                 # node --test over tests/unit, tests/integration, and the primitives tests
+npm run typecheck        # tsc --noEmit: checkJs + strictNullChecks over src/ (CI gate)
+npm run build:types      # clean ./types/, then tsc -p tsconfig.build.json (shipped surface only: src/index.js + src/proof/)
+npm run build:primitives # regenerate primitives.json (scripts/gen-primitives.mjs)
+npm run check:primitives # fail if primitives.json is stale vs the generator
+npm run check:types      # fail if an exported function/method in the generated .d.ts returns a bare `object`
+npm run check:lockfile   # lockfile check (scripts/check-lockfile.mjs)
 ```
-Runtime deps: `mailauth` + `mailparser` (2; the git ledger uses the `git` binary via `child_process`, **not** `simple-git`). No build step **for consumers** — vanilla JS + JSDoc, **pure ESM** (`"type": "module"`, `import`/`export`; consumers `import { create } from 'mailproof'`, and all relative specifiers carry the `.js` extension Node ESM requires); the shipped `.d.ts` are generated from that JSDoc by a dev-only `npm run build:types` into git-ignored `./types/` and built fresh on pack and publish (`prepack`), never committed (devDeps: `typescript`, `@types/node`). The JSDoc is the single source of truth; CI runs `typecheck` (`checkJs` + `strictNullChecks`, **not** full `strict` — see `LIBRARY_CONVENTIONS.md`) — no `!`/`as any`/`@ts-ignore` to silence findings. Node ≥ 22.5 required.
+`prepack` runs `build:primitives` then `build:types`, so pack and publish build both fresh.
 
-## Architecture (the big picture)
+## Architecture essentials
 
-The whole design hinges on a clean **boundary** and three **invariants** — understanding these requires `DESIGN.md` + reading how `gitdone/app/bin/receive.js` orchestrates today:
+All in `src/proof/`; wire formats in SPEC Part B.
+- **Record, trail, key archive.** A record (`records/<id>.json`, `"v": 2`) holds the exact headers each DKIM signature covers, the signature, the archived key, both verdicts, attachment hashes and threading ids; never the body or the raw email. One git repo per trail (`trail.js`, `git.js`), one commit per record, keys archived per domain+selector+key. Optional OpenTimestamps stamp (`ots.js`, off by default, needs the `ots` binary).
+- **Record identity.** `id` is the first 32 hex of the raw bytes' sha256, so one record per distinct copy; `message_key` groups copies of a signed message; `copy.kind` marks direct/relayed/forward/digest/unknown (`copy.js`).
+- **Two verdicts** (`verdict.js`, `recheck.js`): **live** (DKIM + DMARC + SPF + ARC, decided at capture) and **portable** (DKIM only, recomputable offline from the record alone). Each carries the engine `RULES_VERSION`. `x=`/`t=` expiry is judged at capture time; a bad capture time fails closed. `body_status` (`body-status.js`) is its own field and never changes a verdict.
+- **Accept-with-flag.** Every inbound mail is recorded, even unverified or over limit; limits and trust gate the verdict, never the record. A refused message is recorded `unverified` with reason `over limit: <name>` (`over-limit.js`) and never parsed.
+- **Admission gate.** `admit()` (`admit.js`) makes one linear pass over the raw bytes before any parser runs; every bound lives in `src/proof/limits.js` and nowhere else. Bound untrusted-input cost with the gate plus the deadline backstop; never patch slow paths one by one (findings F14, F15).
+- **Worker deadline backstop** (`build.js`, `worker.js`, `pool.js`, on by default). `check()`/`record()` build in a warm worker thread; the main thread kills it over its CPU budget (`Worker#cpuUsage`, default 15 s), busy wall time (120 s, DNS waits excluded) or memory (1,536 MB), recording `over limit: time` / `memory` / `crash`. Commit, lock, git and the clock stay on the main thread. `worker: { size: 0 }` runs in-process with no backstop (use for one-mail-per-process callers). A worker that cannot start rejects and records nothing.
+- **DNS budget** (`resolver-guard.js`, `limits.js`): `DNS_TIMEOUT_MS` 5 s per lookup, `DNS_BUDGET_MS` 30 s per message, same in worker and in-process; a non-plain resolver answer is a DNS error (`EBADRESP`).
+- **Trail lock** (`trail.js`, `mutex.js`): in-process mutex plus a cross-process lock file `<trailDir>/.<trail>.lock` (`O_EXCL`) with `lockTimeoutMs`; on timeout `ERR_TRAIL_LOCKED` (map to Postfix exit 75). Local filesystems only. A failed or killed write is rolled back, removing only files mailproof itself created.
 
-- **Four pillars, decoupled.** verify → sequence → git ledger → email triggers. Each maps to specific `gitdone` modules (see DESIGN.md). The orchestrator (`receive.js`) is **app glue and is NOT lifted** — mailproof exposes the primitives (+ an optional `createReceiver()` with policy hooks); each consumer writes its own thin glue.
-- **Accept-with-flag.** *Every* inbound reply is committed to the git ledger as an audit record — even rejected ones (wrong participant, unverified DKIM, out-of-order). A separate `counted` flag records whether it advanced state. Routing/trust never gate the commit; they gate the state transition. The POC demonstrates this (8 commits, 2 counted).
-- **Git-native storage.** Event state = JSON + a per-event git repo whose commit chain *is* the tamper-evidence and the portable, offline-verifiable proof. SQL consumers project a read-model; they don't replace the ledger.
+## Locked rules
 
-### Locked design decisions (do not silently revert — see DESIGN.md)
-- **Two generic coordination modes** — events (`completion.js`, workflow subset) + lean crypto sign-off (`crypto.js`, the parameterized `signers`/`threshold`/`requiredDocHash` engine). *Supersedes the original "generic workflow only" scope* (decisions-log 2026-05-24). The heavy attestation tail stays `gitdone` policy: `revoke`, `latest`/`accumulating` dedup (core is distinct-only), multi-doc strict manifests + `reference_docs`, attestor-PII redaction — do **not** drag these into the core.
-- **Durability-first privacy** — per-record erasure / participant self-revoke is a NO-GO (PRD §8.16); privacy = minimization (salted hashes, no plaintext at rest, SPEC §6) + lawful retention. The only erasure lever is whole-event deletion (destroys the salt). Crypto trust is hardcoded `verified`; the initiator's own reply never counts as a sign-off (anti-self-dealing).
-- **Bundled Postfix/sendmail** transport (self-hosted, opendkim signs outbound at the MTA). Not a pluggable third-party mail provider.
-
-## Dev rules
-
-This project follows the standards in **`.claude/memory/AGENT_RULES.md`** (POC-first, strict dependency hierarchy vanilla→stdlib→external, lightweight over complex, open-source only, Testing-Trophy). They are mandatory, not suggestions. Notably for mailproof: keep the dependency surface tiny (target ≤3 runtime deps, matching gitdone/knowless), and graduate the POC by rewriting — never shipping it.
+- **Runtime deps stay tiny:** `mailauth` and `mailparser` only. Git is used through the `git` binary via `child_process`. Hierarchy vanilla -> stdlib -> external; any new external dep needs the AGENT_RULES checklist (M1's IMAP library would be the third; the ceiling is 3).
+- **Pure ESM** (`"type": "module"`): `import`/`export`, and `.js` on every relative specifier, including JSDoc `import()` type refs.
+- **Types:** JSDoc is the single source of truth; `checkJs` + `strictNullChecks` only (not full `strict`; follow `LIBRARY_CONVENTIONS.md`). `.d.ts` are generated into git-ignored `./types/` and built on `prepack`, never committed. No `!`, `as any` or `@ts-ignore` to silence findings.
+- **Node >= 22.19** (`engines`; the CPU deadline needs `Worker#cpuUsage`).
+- **Never commit directly to `main`:** work on a branch; merging and releasing are the owner's call (PRD §11). Never publish locally (release goes through the publish workflow).
+- **Out of scope** is PRD §10; read it before adding anything multi-party, revoke/threshold, or per-record erasure.
+- Public repo: real mail samples stay outside the repo (`*.eml` is git-ignored except `tests/integration/fixtures/`); tests must not leak `/tmp` (use the helper in `tests/helpers`).
 
 ## Relationship to gitdone
-**`gitdone`** (`~/PycharmProjects/gitdone`) is the source of the extraction and mailproof's eventual first consumer — P2 refactors it to depend on mailproof, reimplementing its crypto modes as policy on mailproof's hooks.
 
-<!-- MEMORY:START -->
+`gitdone` (`~/PycharmProjects/gitdone`, live as signedreply.com) is the multi-party product mailproof was originally extracted from. v2 borrows only engineering ideas (git trail, key archive, accept-and-flag, OTS) and does not depend on it; signedreply.com is gitdone itself, not an independent consumer. First planned consumer: a human-approval channel for the sibling library `bareguard` (PRD §2).
+
 @.claude/remember/MEMORY.md
-<!-- MEMORY:END -->
-
-<!-- AGENT_RULES:START -->
 Consult when building something new or adding a feature — a standards guide, not hot
 context like MEMORY.md above:
 .claude/remember/AGENT_RULES.md
-<!-- AGENT_RULES:END -->
-
-<!-- DOCS_INDEX:START -->
 Docs map: `docs/index.md` — every doc in this project, with line counts.
 Search this corpus instead of reading it whole: `/docs-builder search <query words>`
-<!-- DOCS_INDEX:END -->
