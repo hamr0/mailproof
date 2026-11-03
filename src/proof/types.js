@@ -24,7 +24,7 @@
 
 /**
  * One attachment fingerprint from a parsed message (content stripped; the
- * `sha256` is the notary fingerprint of the part bytes).
+ * `sha256` is the `hashDocument` fingerprint of the part bytes).
  * @typedef {Object} Attachment
  * @property {string | null} filename
  * @property {number} size

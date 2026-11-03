@@ -239,7 +239,7 @@ for (const [name, mk] of Object.entries(GATE_SHAPES)) {
 //   (a) with the DEFAULT budget (15 s of worker CPU, 120 s busy wall, 2 GB) no admitted shape is stopped: each is
 //       checked for real and none comes back "over limit: time" or "over limit: memory". Measured on an idle
 //       machine the worst costs about 3-4 s of CPU, so this holds with several times to spare;
-//   (b) the backstop DOES fire: the heavy shapes, which cost seconds, run under a 100 ms CPU budget and must be
+//   (b) the backstop DOES fire: the heavy shapes, which cost seconds, run under a 50 ms CPU budget and must be
 //       recorded "over limit: time". A deadline that never fires would pass (a) alone.
 // Linearity (layer 1) is unchanged: a regression that makes a shape super-linear still fails there.
 const BACKSTOP = /^over limit: (time|memory)$/;

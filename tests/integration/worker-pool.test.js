@@ -32,15 +32,16 @@ for (const kind of ['loop', 'regex']) {
 }
 
 test('pool: a job that goes over the CPU budget between two checks is still recorded as time, and its healthy worker is kept', async (t) => {
-  // The job burns ~30 ms of CPU against a 5 ms budget and posts 'done' before the first 50 ms tick can read it,
-  // so only the check at 'done' can catch it. Under load the tick may win instead: it kills the worker and the
-  // result is the same { limit: 'time' }, so the worker-reuse check depends on which path won.
+  // The job burns ~30 ms of CPU against a 5 ms budget and posts 'done'. The poll tick is switched off (mocked
+  // setInterval that never fires), so on any box load only the check at 'done' can catch the overrun: the result is
+  // { limit: 'time' } and, since the worker finished on its own, it is kept. Without the check at 'done' the job
+  // would be accepted (and with the tick alone the worker would be killed), so this fails without b85a6e2.
+  t.mock.timers.enable({ apis: ['setInterval'] });
   const p = pool(t, { cpuMs: 5 });
   assert.deepEqual(await p.run(buf, input('burn'), undefined), { limit: 'time' });
-  const tickWon = p.stats.killed !== 0;
+  assert.equal(p.stats.killed, 0);
   assert.equal((await p.run(buf, input('ok'), undefined)).out.record.id, 'ok');
-  if (!tickWon) assert.equal(p.stats.spawned, 1);
-  else assert.equal(p.stats.spawned, 2);
+  assert.equal(p.stats.spawned, 1);
 });
 
 test('pool: external memory (Buffers, invisible to the V8 heap limit) is killed by the watchdog before it grows far', async (t) => {

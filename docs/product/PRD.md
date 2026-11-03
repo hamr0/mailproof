@@ -5,7 +5,7 @@
 >
 > **For future Claude:** this PRD wins on intent and scope. The *why* behind each choice is in
 > [`decisions-log.md`](decisions-log.md). The v1 PRD is archived at
-> [`../archive/v1/PRD.md`](../archive/v1/PRD.md); `DESIGN.md` and `SPEC.md` still describe v1 and are
+> [`../../archive/v1/docs/PRD.md`](../../archive/v1/docs/PRD.md); `DESIGN.md` and `SPEC.md` still describe v1 and are
 > replaced module by module as v2 lands. v2 is a **new, smaller product**, not an edit of v1.
 
 ## 1. Problem and goal

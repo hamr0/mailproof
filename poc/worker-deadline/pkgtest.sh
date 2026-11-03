@@ -1,6 +1,7 @@
 #!/bin/sh
 # Package-import test: a consumer imports mailproof from node_modules (a symlink, like `npm i file:../mailproof`) and the pool's
 # worker file is resolved with new URL('./worker.js', import.meta.url). Also: does `node script.js` exit by itself with an idle pool?
+# Needs $WD_DIR/wd-src, a copy of the repo tree with node_modules; see the setup comment in wm.js.
 set -e
 SCR=${WD_DIR:-${TMPDIR:-/tmp}/mailproof-worker-deadline}
 D=$SCR/pkg; rm -rf $D; mkdir -p $D/consumer/node_modules $D/pkgs

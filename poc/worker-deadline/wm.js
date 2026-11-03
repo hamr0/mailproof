@@ -5,6 +5,9 @@ import path from 'node:path';
 import os from 'node:os';
 import { DeadlinePool } from './pool.js';
 
+// Setup: these POCs import a frozen copy of the repo at $WD_DIR/wd-src (default <tmpdir>/mailproof-worker-deadline/wd-src; or set WD_SRC).
+// Create it once from the repo root, node_modules included (a plain copy, no git worktree):
+//   mkdir -p "$WD_DIR" && cp -r . "$WD_DIR/wd-src"   # run `npm ci` first if node_modules is missing
 export const SRC = process.env.WD_SRC || path.join(process.env.WD_DIR || path.join(os.tmpdir(), 'mailproof-worker-deadline'), 'wd-src');
 export const mailproofUrl = pathToFileURL(path.join(SRC, 'src/proof/mailproof.js')).href;
 export const { Mailproof } = await import(mailproofUrl);
