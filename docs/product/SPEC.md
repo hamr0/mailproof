@@ -81,7 +81,7 @@
 
   | Budget | Default | `over limit:` name | Measured how |
   |---|---|---|---|
-  | CPU of the worker thread | 15,000 ms | `time` | `Worker#cpuUsage` of that thread, polled every 50 ms, counted from when the worker starts the job. CPU, not wall time: a loaded machine stretches wall time of the same message several times over, but not the CPU it burns, so legitimate mail is not killed because its neighbours were busy. |
+  | CPU of the worker thread | 15,000 ms | `time` | `Worker#cpuUsage` of that thread, polled every 50 ms and read once more when the job finishes (a job that went over between two polls is still `over limit: time`), counted from when the worker starts the job. CPU, not wall time: a loaded machine stretches wall time of the same message several times over, but not the CPU it burns, so legitimate mail is not killed because its neighbours were busy. |
   | Busy wall time | 120,000 ms | `time` | Wall time since the job started with DNS waits subtracted (the worker idles while the main thread asks the caller's resolver). Only a cap for a job that hangs without burning CPU. |
   | Worker crash | n/a | `crash` | The worker thread exits, or throws outside the build, while it holds the job. Not a budget: the third way a worker can end without an answer. |
   | Worker memory | 1,536 MB | `memory` | `used_heap_size + external_memory` of that thread (`Worker#getHeapStatistics`, every 50 ms), plus V8's own old-generation limit at the same value. Process RSS is not used: it includes the host program's own memory and every other worker. |

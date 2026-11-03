@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [2.0.1] - 2026-11-02
 
 ### Fixed
+- A job that went over its CPU budget between two checks is now recorded `over limit: time` instead of being accepted. The budget was only read on a 50 ms poll, which stalls on a loaded machine; it is now also checked when the job finishes.
 - An envelope reads the same with a worker and with `worker.size: 0`. `clientIp`, `clientHelo` and `sender` values that are not strings are read as `null`, and an envelope that is not a non-null object is read as no envelope. Before, a non-string or function value was rejected with "message input cannot be sent to the worker" when a worker was in use, but passed in-process.
 
 ### Changed
