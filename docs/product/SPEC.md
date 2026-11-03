@@ -206,7 +206,7 @@ Everything bounded here is defined once in `src/proof/limits.js` (a second block
 | `SYNC_MAX_MESSAGES` | 1,000 | messages handled per folder per run |
 | `SYNC_MAX_BYTES` | 512 MiB | message bytes read per folder per run (Gmail also meters IMAP download per day; a backfill is meant to take several runs) |
 | `SYNC_MAX_MESSAGE_BYTES` | 128 MiB | largest message that is still read (streamed) to be recorded; above it, `skipped` |
-| `SYNC_MAX_MS` | 30 min | wall time of one `sync` call, checked between messages; a run past it stops cleanly (`complete: false`) |
+| `SYNC_MAX_MS` | 30 min | wall time of one `sync` call, checked between messages and between UID windows; a run past it stops cleanly (`complete: false`) |
 | `SYNC_CONNECT_MS` | 30 s | TCP/TLS connect and greeting (imapflow `connectionTimeout`, `greetingTimeout`) |
 | `SYNC_SOCKET_MS` | 5 min | idle socket (imapflow `socketTimeout`). It covers a server that goes quiet; the record build time (up to the worker's 15 s CPU + 30 s DNS) is well inside it |
 | `SYNC_FETCH_MS` | 5 min | wall time of reading ONE message; over it the connection is closed and treated as a drop (below). Catches a server that trickles bytes and never trips the idle timer |

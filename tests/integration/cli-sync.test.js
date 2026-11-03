@@ -172,3 +172,15 @@ test('--help prints usage and exits 0', async () => {
   assert.match(r.stdout, /Usage: mailproof-sync/);
   assert.match(r.stdout, /Exit codes/);
 });
+
+test('a --pass-command that reads stdin to EOF is not left waiting on an open pipe', async () => {
+  const srv = await serve(1, { creds: { pass: 'eofpass' } });
+  const trailDir = makeTmpDir('mp-cli-trail-');
+  const script = path.join(work, 'eof-pass.mjs');
+  fs.writeFileSync(script, "process.stdin.resume();\nprocess.stdin.on('end', () => console.log('eofpass'));\n");
+  const t0 = Date.now();
+  const r = await run([...base(srv, trailDir), '--pass-command', `${process.execPath} ${script}`]);
+  assert.equal(r.code, 0, r.stderr);
+  assert.ok(Date.now() - t0 < 15000, 'did not wait out the 30 s command timeout');
+  assert.equal(JSON.parse(r.stdout).folders[0].recorded, 1);
+});

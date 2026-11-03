@@ -493,3 +493,24 @@ test('an empty message is reported as skipped and does not block the folder', as
   assert.deepEqual(r.folders[0].skipped, [{ uid: 1, size: 0, why: 'empty or no longer on the server' }]);
   assert.deepEqual([r.folders[0].recorded, r.folders[0].complete], [2, true]);
 });
+
+test('windows: the run clock is checked between UID windows, not only between messages', async () => {
+  const s = await setup({ n: 0 });
+  let t = 0;
+  const fake = makeFake({ folders: { INBOX: { msgs: [], uidNext: 50001 } }, onCall: ({ op }) => { if (op === 'list') t = 10 ** 9; } });
+  const r = await run(s, fake, {}, { limits: { SYNC_MAX_MS: 1000 }, clock: () => t });
+  assert.ok(fake.log.lists.length <= 1, `stopped after at most one window, listed ${fake.log.lists.length}`);
+  assert.deepEqual([r.complete, r.folders[0].complete, r.folders[0].error], [false, false, null]);
+});
+
+test('windows: a large empty range persists the cursor only a few times, and still ends past the gap', async () => {
+  const s = await setup({ n: 0 });
+  let rootReads = 0;
+  const host = { ...s.host(), get root() { rootReads++; return s.mp.root; } };
+  const fake = makeFake({ folders: { INBOX: { msgs: [], uidNext: 450001 } } });
+  const r = await runSync(host, { ...base }, { openSession: fake.openSession, sleep: noSleep() });
+  assert.equal(fake.log.lists.length, 450);
+  assert.deepEqual([r.complete, r.folders[0].last_uid], [true, 450000]);
+  assert.equal(s.cursor().accounts['imap.account.test/acct.owner@account.test'].INBOX.last_uid, 450000, 'the cursor still advances past empty windows');
+  assert.ok(rootReads < 25, `trail root read ${rootReads} times (once per cursor write, plus fixed setup)`);
+});

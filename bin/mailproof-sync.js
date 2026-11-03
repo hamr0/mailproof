@@ -80,11 +80,14 @@ function runSecretCommand(cmd, /** @type {string} */ what) {
   const argv = splitCommand(cmd);
   if (!argv.length) throw new UsageError(`${what} is empty`);
   return new Promise((resolve, reject) => {
-    execFile(argv[0], argv.slice(1), { encoding: 'utf8', timeout: 30000, maxBuffer: 1 << 20, stdio: ['ignore', 'pipe', 'ignore'] }, (err, stdout) => {
+    const child = execFile(argv[0], argv.slice(1), { encoding: 'utf8', timeout: 30000, maxBuffer: 1 << 20 }, (err, stdout) => {
       // never echo the command's stderr or stdout: either could hold the secret
       if (err) return reject(Object.assign(new Error(`${what} failed (${/** @type {any} */ (err).code ?? err.name})`), { code: 'EX_SECRET_COMMAND' }));
       resolve(String(stdout).split('\n')[0]);
     });
+    // execFile has no stdio option: close the child's stdin so a command that waits for EOF cannot hang
+    child.stdin?.on('error', () => {});
+    child.stdin?.end();
   });
 }
 

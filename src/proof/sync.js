@@ -14,6 +14,9 @@ import {
 import { withTrailLock, syncLockFile, SYNC_LOCK, serialise } from './trail.js';
 import { git } from './git.js';
 
+/** Empty UID windows between cursor writes (each write spawns git and fsyncs). */
+const EMPTY_WINDOWS_PER_PERSIST = 100;
+
 /**
  * @typedef {Object} SyncOptions
  * @property {string} host
@@ -414,6 +417,8 @@ async function runSync(host, rawOpts, deps) {
       let last = 0;
       let handled = 0;
       let firstPass = true;
+      let dirty = false; // `last` moved past empty windows without being stored
+      let emptyWindows = 0;
       /** @type {ImapFailure | TrailFailure | null} */
       let failure = null;
 
@@ -437,7 +442,11 @@ async function runSync(host, rawOpts, deps) {
           }
 
           const target = sel.uidNext - 1;
+          /** Store the cursor if empty windows moved it (at-least-once plus dedup covers a crash before this). */
+          const flush = async () => { if (dirty) { dirty = false; emptyWindows = 0; await persist(folderPath, sel.uidvalidity, last); } };
           while (last < target) {
+            // the run clock is checked per window too: a huge UIDNEXT over an empty folder is many windows, no messages
+            if (clock() - start > L.SYNC_MAX_MS) { stopped = true; await flush(); e.last_uid = last; return e; }
             const hi = Math.min(last + L.SYNC_UID_WINDOW, target);
             const lo = last + 1;
             const listed = await io(() => s.list(lo, hi));
@@ -451,8 +460,8 @@ async function runSync(host, rawOpts, deps) {
             const msgs = [...byUid.entries()].sort((a, b) => a[0] - b[0]).slice(0, L.SYNC_UID_WINDOW);
             e.seen += msgs.length;
             for (const [uid, size] of msgs) {
-              if (handled >= caps.maxMessages || e.bytes >= caps.maxBytes) { e.last_uid = last; return e; }
-              if (clock() - start > L.SYNC_MAX_MS) { stopped = true; e.last_uid = last; return e; }
+              if (handled >= caps.maxMessages || e.bytes >= caps.maxBytes) { await flush(); e.last_uid = last; return e; }
+              if (clock() - start > L.SYNC_MAX_MS) { stopped = true; await flush(); e.last_uid = last; return e; }
               await handleMessage(s, e, uid, size, source, direction);
               handled++;
               last = uid;
@@ -461,8 +470,11 @@ async function runSync(host, rawOpts, deps) {
             }
             last = hi; // everything in (last, hi] was handled; UIDs with no message are gone
             e.last_uid = last;
-            await persist(folderPath, sel.uidvalidity, last);
+            // an empty window only advances the cursor in memory; store it every EMPTY_WINDOWS_PER_PERSIST windows
+            if (msgs.length === 0 && ++emptyWindows < EMPTY_WINDOWS_PER_PERSIST) dirty = true;
+            else { dirty = false; emptyWindows = 0; await persist(folderPath, sel.uidvalidity, last); }
           }
+          await flush();
           e.complete = true;
           return e;
         } catch (err) {
