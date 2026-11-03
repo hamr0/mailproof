@@ -66,6 +66,7 @@
     "NOTICE"
   ],
   "dependencies": {
+    "imapflow": "^2.10.0",
     "mailauth": "^8.0.4",
     "mailparser": "^3.14.1"
   },
