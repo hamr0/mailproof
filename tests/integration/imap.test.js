@@ -6,6 +6,8 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
+import v8 from 'node:v8';
+import vm from 'node:vm';
 import { openSession } from '../../src/proof/imap.js';
 import { runSync } from '../../src/proof/sync.js';
 import { Mailproof } from '../../src/proof/mailproof.js';
@@ -174,20 +176,26 @@ test('18. literals: a short literal rejects and returns no Buffer; a server igno
   assert.equal((await mp.list()).length, 0, 'nothing recorded from partial bytes');
 });
 
-test('18b. hash() of a 100 MiB literal streams: peak memory growth stays small, and the hash is right', async () => {
+// A forced gc before every sample: without it the figure is mostly garbage Buffers the collector has not freed yet
+// (measured 60-80 MiB for a correct streaming hash), which says nothing about what hash() holds.
+// arrayBuffers is the Buffer memory (`external` includes it, so adding both would count it twice).
+v8.setFlagsFromString('--expose-gc');
+const forceGc = vm.runInNewContext('gc');
+
+test('18b. hash() of a 100 MiB literal streams: live memory growth stays small, and the hash is right', async () => {
   const size = 100 * 1024 * 1024;
   const srv = await serve({ folders: { INBOX: { msgs: [{ uid: 1, genSize: size }] } } });
   await withSession(srv, {}, async (s) => {
     await s.select('INBOX');
-    global.gc?.();
-    const base = process.memoryUsage();
+    const live = () => { forceGc(); const m = process.memoryUsage(); return m.heapUsed + m.arrayBuffers; };
+    const base = live();
     let peak = 0;
-    const timer = setInterval(() => { const m = process.memoryUsage(); peak = Math.max(peak, m.external + m.heapUsed + m.arrayBuffers - (base.external + base.heapUsed + base.arrayBuffers)); }, 10);
+    const timer = setInterval(() => { peak = Math.max(peak, live() - base); }, 10);
     let h;
     try { h = await s.hash(1); } finally { clearInterval(timer); }
     assert.equal(h.size, size);
     assert.equal(h.sha256, genSha256(size));
-    assert.ok(peak < 64 * 1024 * 1024, `memory grew by ${(peak / 1048576).toFixed(1)} MiB while hashing 100 MiB`);
+    assert.ok(peak < 32 * 1024 * 1024, `memory grew by ${(peak / 1048576).toFixed(1)} MiB while hashing 100 MiB`);
     // and the cap: past `max` it stops and says so
     const capped = await s.hash(1, 5 * 1024 * 1024);
     assert.deepEqual([capped.over, capped.sha256], [true, null]);
