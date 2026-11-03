@@ -265,7 +265,7 @@ timestamp.
 The second mode (`type: "crypto"`, PRD §4.2). Same file location, atomic write,
 and serialization invariant as §3, and the same lifecycle fields
 (`activated_at`/`archived_at`/`status`/`completed_at`/`salt`). It has **no
-`steps`**; instead a flat signer/threshold shape. Engine: `src/crypto.js`.
+`steps`**; instead a flat signer/threshold shape. Engine: `archive/v1/src/crypto.js`.
 
 ```jsonc
 {
@@ -454,7 +454,7 @@ re-verification against an archived PEM; never mutates the target commit).
    a regression test.
 
 **Concurrency:** v1 relies on Postfix pipe-transport serialization
-(`maxproc=1`, see docs/archive/v1/OPS.md) so only one delivery touches a repo at a time. The
+(`maxproc=1`, see archive/v1/docs/OPS.md) so only one delivery touches a repo at a time. The
 kernel adds a per-event in-process mutex for non-pipe writers (edits,
 activation).
 

@@ -1,6 +1,6 @@
 # mailproof v2 — PRD
 
-> **Status:** v2 is released as 2.0.0 (M0 shipped). 1.x is frozen at tag `v1.4.0` (branch `v1` takes security fixes only).
+> **Status:** v2 is released as 2.0.0 (M0 shipped). 1.x is frozen at tag `v1.4.0` (v1 code archived in `archive/v1/`; no `v1` branch).
 > **Owner:** hamr0 · **Last updated:** 2026-10-31
 >
 > **For future Claude:** this PRD wins on intent and scope. The *why* behind each choice is in
@@ -101,7 +101,7 @@ stores:
   `unverified` and minimal metadata.
 
 **Contrast with v1.** v1's `verify()` needed the user to bring the email back
-(`findMatch(candidateBytes, commits)` in `src/verifier.js`) because v1 stored only salted hashes and no
+(`findMatch(candidateBytes, commits)` in `archive/v1/src/verifier.js`) because v1 stored only salted hashes and no
 plaintext. v2's record re-checks without the email. This **reverses v1's "no plaintext at rest /
 salted hashes only" posture for headers**. Erasure is whole-trail deletion.
 
@@ -243,11 +243,11 @@ only, which is one reason v2's instance is class-shaped.
 
 Same repo, same npm name, released as **2.0.0**. Build a new layered structure on the `v2` branch and
 **move** the tested v1 modules into it (`git mv`, history kept); rewrite only the tangled core. 1.x is
-frozen at tag `v1.4.0`; branch `v1` takes security fixes only. **No compatibility layer** for 1.x's
+frozen at tag `v1.4.0`; the v1 code is archived in `archive/v1/` (no `v1` branch). **No compatibility layer** for 1.x's
 `create()` (the only known user is the frozen `mailproof-probe`). POCs only where the mechanism is
 unproven (M0, M1, M2), not for modules whose mechanism exists and is tested.
 
-**Reuse map** (v1 `src/`, lines from `wc -l`):
+**Reuse map** (v1 `archive/v1/src/`, lines from `wc -l`):
 
 | Fate | Modules (lines) |
 |---|---|

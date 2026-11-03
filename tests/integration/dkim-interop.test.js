@@ -7,14 +7,15 @@
 // private key (held in `pass`, never committed); the .eml body is a benign
 // fixture with no tokens/PII. The same key, over LIVE DNS, was confirmed
 // `verified` against a genuine signedreply.com message via
-// tests/manual/verify-live.mjs (selector gd202606). This test pins the offline
+// archive/v1/tests/manual/verify-live.mjs (selector gd202606). This test pins the offline
 // half so the interop stays checked, not assumed.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { authenticateMessage, classifyTrust, summariseAuth } from '../../src/legacy-index.js';
+import { authenticateMessage, summariseAuth } from '../../src/proof/parse.js';
+import { classifyTrust } from '../../src/proof/trust.js';
 
 const here = fileURLToPath(new URL('./fixtures/', import.meta.url));
 const eml = fs.readFileSync(here + 'signedreply-sample.eml');

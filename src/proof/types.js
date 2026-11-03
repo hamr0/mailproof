@@ -1,5 +1,5 @@
 // Types for the v2 proof layer (src/proof/*). Declares ONLY types: no runtime
-// code. The v1 src/types.js aliases the shapes shared with it, so there is one
+// code. The v1 archive/v1/src/types.js aliased the shapes shared with it, so there is one
 // definition per concept.
 
 /**

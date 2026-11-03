@@ -10,20 +10,20 @@ Multi-party workflows, thresholds and N-signer sign-off are **not** here: they l
 
 ## Status
 
-**2.0.0 is released; M0 (record and re-check) has shipped.** The next module is **M1 (IMAP capture)** per PRD §7 (it needs a third runtime dependency that must pass the AGENT_RULES External Dependency Checklist). M2-M6 are later. 1.x (the multi-party kernel) is frozen at tag `v1.4.0`; branch `v1` takes security fixes only; there is no compatibility layer between 1.x and 2.x. The PRD status line and `CHANGELOG.md` are authoritative; verify against them before trusting any other doc.
+**2.0.0 is released; M0 (record and re-check) has shipped.** The next module is **M1 (IMAP capture)** per PRD §7 (it needs a third runtime dependency that must pass the AGENT_RULES External Dependency Checklist). M2-M6 are later. 1.x (the multi-party kernel) is frozen at tag `v1.4.0`; the v1 code is archived in `archive/v1/` (there is no `v1` branch); there is no compatibility layer between 1.x and 2.x. The PRD status line and `CHANGELOG.md` are authoritative; verify against them before trusting any other doc.
 
-`src/proof/` plus `src/index.js` is v2 and the only code that ships (`files` in `package.json`). The other `src/*.js` files (`create.js`, `ingest.js`, `completion.js`, `legacy-index.js`, ...) are v1 leftovers kept in the repo for reuse in M3/M4 (PRD §9); they are not shipped and not the public API.
+`src/proof/` plus `src/index.js` is v2 and the only code that ships (`files` in `package.json`). The v1 code (`create.js`, `ingest.js`, `completion.js`, `legacy-index.js`, ...), its tests and its docs live in `archive/v1/`: kept for borrowing in M3/M4 (PRD §9), not run, not type-checked, not shipped. To reuse a part, `git mv` it and its tests back into `src/` and `tests/` and make them pass.
 
-`poc/` holds POC evidence, never shipped: the v2 POCs (`poc/m0-header-recheck.js` = M0 go/no-go, F1; `poc/admit-gate/` = F14; `poc/worker-deadline/` = F15) plus the superseded v1 P0 pipeline (`poc/pipeline.cjs`).
+`poc/` holds POC evidence, never shipped: the v2 POCs (`poc/m0-header-recheck.js` = M0 go/no-go, F1; `poc/admit-gate/` = F14; `poc/worker-deadline/` = F15); the superseded v1 P0 pipeline is `archive/v1/poc/pipeline.cjs`.
 
 ## Docs map
 
 Start at `docs/README.md`; `docs/index.md` is the generated map of every doc.
 - `docs/product/PRD.md`: authoritative on intent and scope (§3 trust rule, §4 record, §7 modules M0-M6, §10 out of scope, §11 process).
-- `docs/product/SPEC.md`: wire formats. **Part B (B1-B3, Limits, Concurrency) is v2 and the mechanism authority; Part A (sections 0-7) and `docs/archive/DESIGN.md` still describe v1.**
+- `docs/product/SPEC.md`: wire formats. **Part B (B1-B3, Limits, Concurrency) is v2 and the mechanism authority; Part A (sections 0-7) and `archive/v1/docs/DESIGN.md` still describe v1.**
 - `docs/product/findings.md`: POC/test results as F-entries with evidence (decisions and results go here; the PRD stays a thin contract).
 - `docs/product/decisions-log.md`: dated design forks with rationale.
-- `docs/archive/`: v1 history (v1 PRD, DESIGN, P2 audit, OPS).
+- `archive/v1/`: v1 code, tests and docs (v1 PRD, DESIGN, P2 audit, OPS under `archive/v1/docs/`).
 - `mailproof.context.md` (repo root, ships in the package): dense integration guide for agents.
 
 ## Commands
