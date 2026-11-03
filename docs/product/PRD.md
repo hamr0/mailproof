@@ -281,9 +281,9 @@ Node ≥ 22.19 (`Worker#cpuUsage`, see F15).
 
 1. Is there a public DKIM-key archive for looking up old mail? (Believed: ZK Email runs one; unconfirmed.)
 2. Does Gmail sign `In-Reply-To`/`References`? **Answered: yes for Gmail, no for Microsoft, see [F11](findings.md).**
-3. Gmail login method: OAuth or app password? (M1 POC)
+3. Gmail login method: OAuth or app password? **Answered for app passwords: `AUTHENTICATE PLAIN` over TLS works on the owner's account; OAuth not tested, see [F17](findings.md).**
 4. Are Gmail's Sent copies DKIM-signed? **Closed (owner, 2026-11-01): moot.** Own sent records are `unverified` regardless ([F3](findings.md)); the proof of sending is the counterparty's signed copy, and Gmail does sign outbound from the owner's gmail.com address (the batch-3 gmail.com-signed message, [F11](findings.md)).
-5. Does Gmail add its own ARC seal / `Authentication-Results` on inbound that could make its SPF verdict portable? (M1 POC)
+5. Does Gmail add its own ARC seal / `Authentication-Results` on inbound that could make its SPF verdict portable? **Answered: yes on 8/8 inbound copies (google.com ARC set plus Authentication-Results with spf=); whether to use it is open, see [F17](findings.md).**
 6. Sending from a normal mailbox in M3 vs the no-third-party-provider rule.
 7. Privacy wording for storing other people's addresses and subjects (not legal advice).
 8. OTS stamp per sync run vs per email.
