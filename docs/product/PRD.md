@@ -1,6 +1,6 @@
 # mailproof v2 — PRD
 
-> **Status:** v2 is released as 2.0.0 (M0 shipped). 1.x is frozen at tag `v1.4.0` (v1 code archived in `archive/v1/`; no `v1` branch).
+> **Status:** v2 is released as 2.1.0 (M0 and M1 shipped). 1.x is frozen at tag `v1.4.0` (v1 code archived in `archive/v1/`; no `v1` branch).
 > **Owner:** hamr0 · **Last updated:** 2026-10-31
 >
 > **For future Claude:** this PRD wins on intent and scope. The *why* behind each choice is in
@@ -174,7 +174,7 @@ Reuse v1 names where the concept is the same (`verify`, `hashDocument`).
 
 ### M1 — Capture (fully specified)
 
-**Status:** built on `feat/m1-capture`, unreleased; see [SPEC B4](SPEC.md) and [F17](findings.md).
+**Status:** shipped in 2.1.0; see [SPEC B4](SPEC.md) and [F17](findings.md).
 
 A `sync` run (cron/systemd timer first; a long-running IMAP IDLE watcher later) over **one Gmail label
 or folder plus Sent**, via IMAP. The owner's Gmail account is the target. Resumes where it left off,
