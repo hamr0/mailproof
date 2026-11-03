@@ -47,6 +47,21 @@ Cost: the first call starts the thread, which loads the parsers (roughly 0.4 to 
 
 Trust levels: `verified` (aligned DKIM pass, and DMARC pass if the domain publishes DMARC), `forwarded`, `authorized` (live only), `unverified`. Each verdict carries its engine/rules version.
 
+## Capture over IMAP (`sync`)
+
+`sync` reads one mailbox, read-only, and records every message in it (INBOX as `in`, the Sent folder as `out`). Nothing is marked seen, moved or deleted. It is meant for a cron job or a one-off backfill:
+
+```js
+const res = await mp.sync({
+  host: 'imap.gmail.com', user: 'you@gmail.com',
+  auth: { pass: process.env.APP_PASSWORD },        // or { accessToken } (OAuth2; you obtain and refresh the token)
+  folders: ['INBOX'], sent: true,                  // sent: true finds the \Sent folder; a string is a path; false skips it
+});
+// res.complete, res.folders[i].{ recorded, duplicate, over_limit, skipped, error, last_uid }
+```
+
+Run it again to pick up new mail; a capped run (1,000 messages or 512 MiB per folder, 30 minutes per call) is continued by calling again until `res.complete` is true. A resume cursor lives in `<trailDir>/.<trail>.sync.json`, beside the trail and not in git: **delete it when you restore or replace a trail** (the next run rescans; same bytes are never recorded twice). TLS is always on with certificate checking (only `tls: { ca }` can be added). Mail over 25 MiB is stream-hashed and recorded `over limit: total_bytes`; over 128 MiB it is listed in `skipped`. A Sent copy is normally unsigned by the provider, so it is recorded `unverified`; the counterparty's signed copy is the proof. Leave OpenTimestamps off for a backfill. A second `sync` on the same trail while one runs throws `ERR_SYNC_LOCKED` at once. Other errors: `ERR_IMAP_AUTH`, `ERR_IMAP_CONNECT`; per folder `ERR_IMAP_NO_FOLDER`, `ERR_IMAP_NO_SENT`, `ERR_IMAP_PROTOCOL`, `ERR_IMAP_TIMEOUT`, `ERR_IMAP_THROTTLED`, `ERR_IMAP_UIDVALIDITY`. The first trail error stops the run. Details: `docs/product/SPEC.md` B4.
+
 ## Concurrency
 
 A trail has a single writer at a time, enforced by a lock file (`<trailDir>/.<trail>.lock`) that also covers separate processes; local filesystems only. A writer that cannot get the lock within `lockTimeoutMs` (default 30000) throws an error with `code: 'ERR_TRAIL_LOCKED'`. Postfix pipe consumers should map `ERR_TRAIL_LOCKED` to exit code 75 (`EX_TEMPFAIL`) so Postfix retries the mail.
@@ -57,4 +72,4 @@ A trail has a single writer at a time, enforced by a lock file (`<trailDir>/.<tr
 
 ## Docs
 
-`docs/README.md` is the map. The record and trail formats are in `docs/product/SPEC.md` (Part B); the adopter contract is `mailproof.context.md`. Two runtime dependencies: `mailauth`, `mailparser`. Node >= 22.19. Pure ESM.
+`docs/README.md` is the map. The record and trail formats are in `docs/product/SPEC.md` (Part B); the adopter contract is `mailproof.context.md`. Three runtime dependencies: `mailauth`, `mailparser`, `imapflow` (used only by `sync`). Node >= 22.19. Pure ESM.

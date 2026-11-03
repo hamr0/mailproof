@@ -2,11 +2,11 @@
 
 ## What this is
 
-mailproof records a re-checkable proof of each email in a **two-party (A to B) exchange** in a local git trail: the signed headers, never the body. The sender's DKIM public key is archived at capture, so anyone can verify the record offline, years later, after the key has left DNS. Pure ESM, Node >= 22.19, runtime deps `mailauth` + `mailparser`. Wire formats: `docs/product/SPEC.md` Part B (repo only).
+mailproof records a re-checkable proof of each email in a **two-party (A to B) exchange** in a local git trail: the signed headers, never the body. The sender's DKIM public key is archived at capture, so anyone can verify the record offline, years later, after the key has left DNS. Pure ESM, Node >= 22.19, runtime deps `mailauth` + `mailparser` + `imapflow` (the last only for `sync`). Wire formats: `docs/product/SPEC.md` Part B (repo only).
 
 ## What mailproof is and is not
 
-- It is a recorder and an offline verifier: `record`, `verify`, `matchBody`, `matchFile`, `check`, `list`, `get`.
+- It is a recorder and an offline verifier: `record`, `verify`, `matchBody`, `matchFile`, `check`, `list`, `get`, and a read-only IMAP fetcher in front of `record`: `sync`.
 - It is not a mail client, a sender, a web UI or a multi-party workflow engine (those are gitdone/signedreply.com), not proof of delivery, and not a claim of legal admissibility.
 - It produces a verdict; acting on it is the consumer's job.
 
@@ -47,6 +47,7 @@ All methods are bound: `const { verify } = mp` works. `await mp.close()` stops t
 - `matchBody(recordOrId, raw)` -> `{ match, full, signatures[] }`. `full` = body matches `bh=` AND the signature verifies at capture time.
 - `matchFile(recordOrId, bytes)` -> `{ match, attachment }`.
 - `list({ limit?, direction? })`, `get(id)`.
+- `sync({ host, port?, user, auth: { pass } | { accessToken }, folders?, sent?, maxMessages?, maxBytes?, tls?: { ca } })` -> `{ complete, folders: [{ folder, direction, attempted, uidvalidity, reset, last_uid, seen, recorded, duplicate, over_limit, skipped[], bytes, complete, error }] }`. Reads one mailbox over IMAP (implicit TLS, certificate always checked, `EXAMINE` + `BODY.PEEK`, so nothing is marked seen, moved or deleted) and `record()`s each message: `folders` (default `['INBOX']`) as `in`, the `\Sent` folder (`sent: true`, default; a path string; `false` skips) as `out`, `source` `imap:<folder>`. One account per call; you obtain and refresh an OAuth token yourself. A resume cursor is kept in `<trailDir>/.<trail>.sync.json` beside the trail (not in git); caps per folder per run are 1,000 messages and 512 MiB (options can only lower them) and 30 minutes per call, so loop until `complete` is true. **Delete the cursor file when you restore or replace a trail.** A re-fetched message has the same bytes, so it is `duplicate`, never a second record. Over 25 MiB: streamed through a hash and recorded `over limit: total_bytes`; over 128 MiB: in `skipped`. Provider Sent copies are unsigned, so they record `unverified`. No envelope on IMAP, so `authorized` cannot occur. Throws a TypeError for bad options, then only `ERR_IMAP_AUTH`, `ERR_IMAP_CONNECT` or `ERR_SYNC_LOCKED` (a second `sync` on the trail: fails at once); everything else is in a folder's `error` (`ERR_IMAP_NO_FOLDER`, `ERR_IMAP_NO_SENT`, `ERR_IMAP_PROTOCOL`, `ERR_IMAP_TIMEOUT`, `ERR_IMAP_THROTTLED`, `ERR_IMAP_UIDVALIDITY`, `ERR_TRAIL_LOCKED`). The first trail error stops the run. The credential is never logged, returned or stored. Leave OTS off for a backfill.
 - `copies(idOrKey)` -> `{ message_key, original, copies[], contained_in[] }`: every recorded copy of one signed message (the id is the raw-bytes hash, so a list-relayed or forwarded copy is its own record; `message_key` groups them), the derived `original` (earliest `direct` copy with a matched body), and the records (forwards, list digests) that carry it as an attached original. Each record has `copy: { kind: direct|relayed|forward|digest|unknown, evidence }`.
 
 `verifyRecord(record, { at? })` is the same offline check as a pure function, so a third party can verify an exported record with no trail.
@@ -57,7 +58,7 @@ Portable `verified` covers the signed headers; read `body_status` for the body. 
 
 - **The body and the raw email are never stored.** A record is the signed headers, the signature, the archived key and hashes; this keeps other people's mail content out of your trail. `matchBody` re-checks a body you produce later.
 - **No per-record erasure.** Records are durable by design (a git chain); privacy is minimisation plus lawful retention, not deletion.
-- **No sending, no IMAP, no third-party mail provider.** You hand mailproof raw bytes.
+- **No sending, no IDLE watcher, no OAuth flow, no whole-mailbox recording, no multi-account orchestration.** You hand mailproof raw bytes, or point `sync` at named folders of one mailbox.
 - **No acting on a verdict.** `verified` is a statement about the signature, not a decision.
 
 ## Threat model summary
@@ -71,6 +72,7 @@ Portable `verified` covers the signed headers; read `body_status` for the body. 
 - Mail altered in transit or by an export tool fails `matchBody` while `verify` still passes (headers intact); `body_status` says so at capture, with hints when the change can be explained.
 - A signature whose key is gone from DNS at capture is stored with `key_error`; it cannot verify.
 - A message over an input limit (25 MiB, 10 DKIM signatures, 256 KiB per body line, 500,000 body lines, ...) or one the worker backstop stops is still recorded, but never parsed: `unverified`, `reason: 'over limit: <name>'` (`time` / `memory` / `crash` for the backstop). A worker that cannot start rejects `check()`/`record()` and records nothing. Only `envelope.clientIp`, `clientHelo` and `sender` are read; each is a string or `null`: any other type (a function, a number) is treated as `null`, in a worker and with `worker.size: 0` alike; an `envelope` that is not itself an object counts as no envelope. Limits are in `docs/product/SPEC.md` Part B (Limits).
+- `sync` holds a second lock file, `<trailDir>/.<trail>.sync.lock`, for the whole call; it never holds the trail lock across IMAP I/O. A pipe delivery during a backfill waits behind at most one message's commit.
 - Writers are serialised per trail by a lock file that also covers separate processes (local filesystems only); a writer that waits longer than `lockTimeoutMs` gets `ERR_TRAIL_LOCKED`. Map it to a retry (Postfix: exit 75).
 
 ## Constraints

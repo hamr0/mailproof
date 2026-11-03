@@ -21,6 +21,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > the first free clean minor, `1.3.0`.) See
 > [`archive/v1/docs/DESIGN.md`](archive/v1/docs/DESIGN.md) for the phasing.
 
+## [Unreleased]
+
+### Added
+- `Mailproof#sync` (M1, IMAP capture): reads one mailbox read-only over implicit TLS (`EXAMINE`, `BODY.PEEK[]`; no `STORE`, `APPEND`, `COPY`, `MOVE`, `EXPUNGE` or `IDLE`) and records each message through the normal `record()` path. Folders (default `INBOX`, direction `in`) and the `\Sent` folder (direction `out`, found by special-use flag); app password or OAuth2 access token; a resume cursor sidecar `<trailDir>/.<trail>.sync.json` (not in git; delete it when a trail is restored); UID windows, never `*`; `UIDVALIDITY` compared as a string with a rescan on change; caps per folder per run (1,000 messages, 512 MiB, 30 minutes per call); reconnect with backoff; messages over 25 MiB are stream-hashed and recorded `over limit: total_bytes` with the id the pipe would give (above 128 MiB: `skipped`); errors `ERR_IMAP_AUTH`, `ERR_IMAP_CONNECT`, `ERR_SYNC_LOCKED` and per-folder `ERR_IMAP_*`. SPEC B4.
+- `imapflow` as the third (last) runtime dependency, used only by `src/proof/imap.js`.
+- A second lock file `<trailDir>/.<trail>.sync.lock`, same mechanism as the trail lock, fail-fast.
+
+### Changed
+- `withTrailLock` takes the lock-file name and a lock kind as arguments (one implementation for the trail lock and the sync lock). `record()` is split into build and commit; behaviour is unchanged.
+
 ## [2.0.1] - 2026-11-03
 
 ### Fixed
