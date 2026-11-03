@@ -53,7 +53,7 @@ All in `src/proof/`; wire formats in SPEC Part B.
 
 ## Locked rules
 
-- **Runtime deps stay tiny:** `mailauth` and `mailparser` only. Git is used through the `git` binary via `child_process`. Hierarchy vanilla -> stdlib -> external; any new external dep needs the AGENT_RULES checklist (M1's IMAP library would be the third; the ceiling is 3).
+- **Runtime deps stay tiny:** `mailauth`, `mailparser` and `imapflow` (M1, imported only by `src/proof/imap.js`, F16) only. Git is used through the `git` binary via `child_process`. Hierarchy vanilla -> stdlib -> external; the ceiling of 3 runtime deps is reached, so a new external dep means replacing one (AGENT_RULES checklist).
 - **Pure ESM** (`"type": "module"`): `import`/`export`, and `.js` on every relative specifier, including JSDoc `import()` type refs.
 - **Types:** JSDoc is the single source of truth; `checkJs` + `strictNullChecks` only (not full `strict`; follow `LIBRARY_CONVENTIONS.md`). `.d.ts` are generated into git-ignored `./types/` and built on `prepack`, never committed. No `!`, `as any` or `@ts-ignore` to silence findings.
 - **Node >= 22.19** (`engines`; the CPU deadline needs `Worker#cpuUsage`).
