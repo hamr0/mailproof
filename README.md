@@ -14,6 +14,7 @@ await mp.verify(id);                  // offline, from the record alone
 await mp.matchBody(id, rawEmail);     // body hash vs the signed bh= -> "full proof"
 await mp.matchFile(id, attachmentBytes);
 await mp.check(emlBytes);             // one-off: verdicts only, writes nothing
+await mp.replyText(rawReply);         // what the sender newly wrote (no quoted history), and whether it is proven
 ```
 
 ## What a record proves

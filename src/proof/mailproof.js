@@ -9,7 +9,9 @@ import { guardResolver, systemResolver } from './resolver-guard.js';
 import { engine } from './verdict.js';
 import { createOts, DEFAULT_OTS_TIMEOUT_MS } from './ots.js';
 import { verifyRecord, matchBodyRecord, matchFileRecord } from './recheck.js';
-import { TRAIL_NAME_RE, RECORD_ID_RE, DEFAULT_LOCK_TIMEOUT_MS, commitRecord, readRecord } from './trail.js';
+import { TRAIL_NAME_RE, RECORD_ID_RE, DEFAULT_LOCK_TIMEOUT_MS, commitRecord, commitFiles, readRecord } from './trail.js';
+import { STRIPPER, replyTextPath, extractReplyText, replyTextRecord } from './reply-text.js';
+import { hashDocument } from './hash.js';
 
 const OTS_MIN_TIMEOUT_MS = 5000; // floor for the `ots` timeout, however short lockTimeoutMs is
 
@@ -17,6 +19,7 @@ const OTS_MIN_TIMEOUT_MS = 5000; // floor for the `ots` timeout, however short l
 /** @typedef {import('./types.js').Envelope} Envelope */
 /** @typedef {{ id: string, captured: string, direction: string, copy: string, body_status: string, live: string, portable: string }} CopySummary */
 /** @typedef {import('./types.js').MailauthResult} MailauthResult */
+/** @typedef {{ id: string, text: string, text_sha256: string, text_bytes: number, quote: 'found' | 'not-found' | 'inline', trailing: boolean, source: 'text/plain' | 'html-only', boundary: string | null, stripper: string, body_status: import('./types.js').BodyStatus, proven: boolean, commit: string, duplicate: boolean }} ReplyText */
 
 /**
  * @typedef {Object} MailproofOptions
@@ -63,7 +66,7 @@ class Mailproof {
     this.now = opts.now || (() => new Date());
     this.trustedSealers = opts.trustedSealers || [];
     this.worker = workerConfig(opts.worker);
-    /** @type {{ run: import('./pool.js').WorkerPool['run'], release: () => Promise<void> } | null} */
+    /** @type {{ run: import('./pool.js').WorkerPool['run'], runReplyText: import('./pool.js').WorkerPool['runReplyText'], release: () => Promise<void> } | null} */
     this._lease = null;
     /** @type {import('./index-db.js').TrailIndex | null} */
     this._ix = null;
@@ -79,6 +82,7 @@ class Mailproof {
     this.list = this.list.bind(this);
     this.copies = this.copies.bind(this);
     this.sync = this.sync.bind(this);
+    this.replyText = this.replyText.bind(this);
     this.close = this.close.bind(this);
   }
 
@@ -241,6 +245,50 @@ class Mailproof {
     const captured = this.now().toISOString();
     const { record, keyFiles } = overLimitRecordFromDigest(digest, ctx, { captured, hasEnvelope: false, trustedSealers: this.trustedSealers }, 'total_bytes');
     return this._commit(record, keyFiles);
+  }
+
+  /**
+   * The text the sender newly wrote in a recorded reply (quoted history removed), with proof flags, and a small
+   * `reply-text` record committed to the trail (SPEC B6).
+   * @param {Buffer | string} raw  The raw RFC-822 bytes of a message already recorded in this trail.
+   * @returns {Promise<ReplyText>}
+   * @name Mailproof#replyText
+   * @when Use to read what a person actually wrote in a reply they sent you, without the quoted history (the trap: a reply that quotes "Approve payment of $5,000?" is not an approval). Record the email first (`record()`, or `sync()`), then hand the same raw bytes to this. `text` is the new text; `proven` is true only when the recorded body matched the signed `bh=` (`body_status` `matched`), so the text really came from that signed email; `quote` says whether a quote boundary was found (`found`), none was (`not-found`: the whole body is returned) or the answer is written inside the quote (`inline`); `trailing` says unquoted text follows the quote and was not returned. The stripper is the versioned, deterministic `mailproof-quote/1`: anyone with the raw email re-runs it and gets the same text byte for byte. Signatures are not stripped. Interpreting the text (approve or decline, in any language) is the consumer's job, not mailproof's.
+   * @category proof
+   * @signature mp.replyText(raw: Buffer|string) => Promise<{ id, text, text_sha256, text_bytes, quote, trailing, source, boundary, stripper, body_status, proven, commit, duplicate }>
+   * @fails Rejects with `err.code === 'ERR_NOT_RECORDED'` when the message is not committed in this trail (record it first), `ERR_OVER_LIMIT` with `err.limit` set when the message is over an input limit or the worker backstop stopped it (`total_bytes`, ..., `time`, `memory`, `crash`; nothing is written), `ERR_TRAIL_LOCKED` when another writer holds the trail longer than `lockTimeoutMs`, or a plain Error on an empty message or a git failure (rolled back). A message with no text/plain part is not an error: `source: 'html-only'`, `text` '' and `proven` false. The committed record holds fingerprints and flags only, never the text, the body or the subject; the same message and stripper version again returns the text with `duplicate: true` and writes nothing. `partial` body status (an `l=` signed prefix) is unproven in v1.
+   * @example
+   * const { id } = await mp.record(raw, { direction: 'in' });
+   * const r = await mp.replyText(raw);   // r.text, r.proven, r.quote, r.trailing
+   */
+  async replyText(raw) {
+    const buf = Buffer.isBuffer(raw) ? raw : Buffer.from(String(raw ?? ''));
+    if (buf.length === 0) throw new Error('Mailproof: empty message');
+    const id = hashDocument(buf).replace(/^sha256:/, '').slice(0, 32);   // the id record() gives these bytes
+    const rec = await this.get(id);
+    if (!rec) throw Object.assign(new Error(`replyText: message ${id} is not recorded in trail "${this.trail}"`), { code: 'ERR_NOT_RECORDED' });
+    /** @type {import('./reply-text.js').Extracted} */
+    let ex;
+    if (this.worker.size === 0) ex = extractReplyText(buf);
+    else {
+      this._lease ??= leasePool(this.worker);
+      const r = await this._lease.runReplyText(buf);
+      ex = 'out' in r ? r.out : { ok: false, limit: r.limit };
+    }
+    if (!ex.ok) throw Object.assign(new Error(`replyText: over limit: ${ex.limit}`), { code: 'ERR_OVER_LIMIT', limit: ex.limit });
+    const s = ex.stripped;
+    const body_status = rec.body_status ?? 'not-checked';
+    const row = replyTextRecord({ id, stripped: s, body_status, extracted_at: this.now().toISOString() });
+    const res = await commitFiles(this.root, this.trail, {
+      rel: replyTextPath(id), json: row, requires: `records/${id}.json`,
+      message: `reply-text ${id.slice(0, 12)} ${STRIPPER} ${s.quote}`,
+      now: this.now, lockTimeoutMs: this.lockTimeoutMs,
+    });
+    return {
+      id, text: s.text, text_sha256: s.text_sha256, text_bytes: s.text_bytes, quote: s.quote, trailing: s.trailing,
+      source: s.source, boundary: s.boundary, stripper: STRIPPER, body_status,
+      proven: s.source === 'text/plain' && body_status === 'matched', commit: res.commit, duplicate: res.duplicate,
+    };
   }
 
   /**

@@ -56,6 +56,10 @@ function workerConfig(opts) {
  */
 
 /** @typedef {import('./build.js').Built} Built */
+// A job that gates and strips the reply text of a message (reply-text.js) instead of building its record.
+/** @typedef {{ kind: 'reply-text' }} ReplyTextInput */
+/** @typedef {import('./reply-text.js').Extracted} Extracted */
+/** @typedef {{ out: Built | Extracted, cpuMs: number } | { limit: 'time' | 'memory' | 'crash' }} JobResult */
 
 class WorkerPool {
   /** @param {WorkerConfig & { workerUrl?: URL }} cfg */
@@ -64,7 +68,7 @@ class WorkerPool {
     this.workerUrl = cfg.workerUrl ?? WORKER_URL;
     /** @type {Set<import('node:worker_threads').Worker>} */ this.all = new Set();
     /** @type {import('node:worker_threads').Worker[]} */ this.idle = [];
-    /** @type {Array<{ buf: Buffer, input: JobInput, resolver: Function, resolve: (v: any) => void, reject: (e: Error) => void }>} */ this.queue = [];
+    /** @type {Array<{ buf: Buffer, input: JobInput | ReplyTextInput, resolver: Function, resolve: (v: any) => void, reject: (e: Error) => void }>} */ this.queue = [];
     this.closed = false;
     this.jobSeq = 1;
     this.stats = { spawned: 0, killed: 0 };
@@ -80,6 +84,25 @@ class WorkerPool {
    *   reason the pool can name is `{ limit: 'crash' }`.
    */
   run(buf, input, resolver) {
+    return /** @type {Promise<{ out: Built, cpuMs: number } | { limit: 'time' | 'memory' | 'crash' }>} */ (this._run(buf, input, resolver));
+  }
+
+  /**
+   * Gate and strip the reply text of a message on a worker, under the same budgets as a build (SPEC B6.1).
+   * @param {Buffer} buf
+   * @returns {Promise<{ out: Extracted, cpuMs: number } | { limit: 'time' | 'memory' | 'crash' }>}
+   */
+  runReplyText(buf) {
+    return /** @type {Promise<{ out: Extracted, cpuMs: number } | { limit: 'time' | 'memory' | 'crash' }>} */ (this._run(buf, { kind: 'reply-text' }, undefined));
+  }
+
+  /**
+   * @param {Buffer} buf
+   * @param {JobInput | ReplyTextInput} input
+   * @param {((name: string, type?: string) => Promise<any>) | undefined} resolver
+   * @returns {Promise<JobResult>}
+   */
+  _run(buf, input, resolver) {
     return new Promise((resolve, reject) => {
       if (this.closed) return reject(new Error('Mailproof: worker pool closed'));
       this.queue.push({ buf, input, resolver: resolver || systemResolver, resolve, reject });
@@ -150,7 +173,7 @@ class WorkerPool {
     let busySince = 0;    // start of the current stretch
     let rpcOpen = 0;      // DNS lookups the worker is waiting on
 
-    /** @param {{ out: Built, cpuMs: number } | { limit: 'time' | 'memory' | 'crash' } | Error} r @param {boolean} reusable */
+    /** @param {JobResult | Error} r @param {boolean} reusable */
     const finish = (r, reusable) => {
       if (settled) return;
       settled = true;
@@ -255,7 +278,7 @@ const shared = new Map();
  * Take a share of the process-wide pool for this config. Instances with the same config share workers, so
  * many `Mailproof` objects do not each start a thread; the pool ends when the last one releases it.
  * @param {WorkerConfig} cfg
- * @returns {{ run: WorkerPool['run'], release: () => Promise<void> }}
+ * @returns {{ run: WorkerPool['run'], runReplyText: WorkerPool['runReplyText'], release: () => Promise<void> }}
  */
 function leasePool(cfg) {
   const key = `${cfg.size}|${cfg.cpuMs}|${cfg.wallMs}|${cfg.maxMemoryMb}`;
@@ -266,6 +289,7 @@ function leasePool(cfg) {
   let released = false;
   return {
     run: (buf, input, resolver) => entry.pool.run(buf, input, resolver),
+    runReplyText: (buf) => entry.pool.runReplyText(buf),
     async release() {
       if (released) return;
       released = true;

@@ -6,7 +6,7 @@ mailproof records a re-checkable proof of each email in a **two-party (A to B) e
 
 ## What mailproof is and is not
 
-- It is a recorder and an offline verifier: `record`, `verify`, `matchBody`, `matchFile`, `check`, `list`, `get`, and a read-only IMAP fetcher in front of `record`: `sync`.
+- It is a recorder and an offline verifier: `record`, `verify`, `matchBody`, `matchFile`, `check`, `list`, `get`, `replyText`, and a read-only IMAP fetcher in front of `record`: `sync`.
 - It is not a mail client, a sender, a web UI or a multi-party workflow engine (those are gitdone/signedreply.com), not proof of delivery, and not a claim of legal admissibility.
 - It produces a verdict; acting on it is the consumer's job.
 
@@ -54,6 +54,15 @@ All methods are bound: `const { verify } = mp` works. `await mp.close()` stops t
 `verifyRecord(record, { at? })` is the same offline check as a pure function, so a third party can verify an exported record with no trail.
 
 Portable `verified` covers the signed headers; read `body_status` for the body. Each record carries `body_status` and, per signature, `body: { status, explain[] }` (`matched` / `partial` / `mismatch` / `not-checked`; `explain` entries `{ kind, detail }` are counts and domains only: `l_tag`, `appended`, `prepended`, `canonicalisation`, `line_endings`, `forwarded`, `mailing_list`, `search_capped`, `unknown`). It never changes a trust verdict.
+
+## Reply text (`replyText`)
+
+`replyText(raw)` -> `{ id, text, text_sha256, text_bytes, quote, trailing, source, boundary, stripper, body_status, proven, commit, duplicate }`. Give it the raw bytes of a reply you already recorded; it returns only what the sender newly wrote (quoted history removed), so a reply that merely quotes "Approve payment of $5,000?" is not read as an approval. Interpreting the text is yours; mailproof does not decide what a reply means.
+- `proven` is true only when the recorded `body_status` is `matched` (the body matches the signed `bh=`) and the text came from a `text/plain` part. `partial` (an `l=` prefix), `mismatch` (for example Outlook/Exchange-received copies) and `not-checked` (unsigned, over limit, your own Sent copy) are unproven: the text is still returned, flagged.
+- `quote`: `found` (a quote boundary was cut), `not-found` (none; the whole body is returned, never a guess), `inline` (answers written inside the quote; not merged). `trailing: true`: unquoted text follows the quote (a signature, or bottom-posted text) and is NOT in `text`; read the raw email if you need it. Signatures are not stripped.
+- `source: 'html-only'`: no text/plain part, nothing extracted (`text` '', `proven` false).
+- The stripper is versioned and deterministic (`mailproof-quote/1`): anyone with the raw email re-runs it and gets the same text and `text_sha256` (over its UTF-8 bytes). One small `reply-text` record (hash, byte count, flags, `body_status`, time; never the text, body or subject) is committed to `replies/<id>.mailproof-quote-1.json`; the same message again is `duplicate: true` and writes nothing. Show the text you acted on; its hash matches `text_sha256` in a commit dated before the action.
+- Errors: `ERR_NOT_RECORDED` (record the message first), `ERR_OVER_LIMIT` with `err.limit` (nothing written), `ERR_TRAIL_LOCKED`. It runs in the worker pool like `record`. Known limits of `/1`: tested on English-style attributions and Outlook/Foxmail header blocks; German/Dutch attributions that put the name after the verb are not recognised (they fall through to the first `>` line, if any). Wire format: `docs/product/SPEC.md` B6.
 
 ## What's NOT in mailproof, and why
 

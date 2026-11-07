@@ -199,16 +199,17 @@ exported via Thunderbird has altered bodies, so M1 is Gmail-first (F4).
 
 **Honest limits, built into the output**
 
-1. The proof holds only where the body verifies (`body_status` matched, or partial covering the text). Outlook/Exchange-received copies have bodies altered on Microsoft's side ([F4](findings.md), [F10](findings.md)): their text is returned but marked unproven, never silently.
+1. The text counts as **proven only when `body_status` is `matched`**. `partial` (an `l=` signed prefix) is unproven in v1: mapping the signed canonical byte count onto the decoded text is not proven, so it fails closed; revisit with evidence (the 3 Foxmail samples in [F20](findings.md) were `partial`). Outlook/Exchange-received copies have bodies altered on Microsoft's side ([F4](findings.md), [F10](findings.md)): their text is returned but marked unproven, never silently.
 2. No quote boundary found: return the whole body, flagged `quote: not-found`. Never guess.
 3. Inline replies (answers written inside the quote) are detected and flagged `quote: inline`, not merged. The POC measures how common they are.
+4. Unquoted text that follows the quoted part (a signature below the quote, or bottom-posted text) is not returned: the text is what is above the first quote boundary. When such text exists the result carries `trailing: true`, so nothing is dropped silently and nothing is merged (9 of 23 real replies, all Thunderbird, [F20](findings.md)). The consumer who needs it reads the raw email.
 
-**Reply-text record** (sketch only; the wire format goes to SPEC Part B when built). One small record is committed to the trail per extraction:
+**Reply-text record** (wire format: [SPEC B6](SPEC.md)). One small record is committed to the trail per extraction:
 
 ```json
 { "v": 2, "kind": "reply-text", "record_id": "...", "text_sha256": "...", "text_bytes": 0,
-  "stripper": "mailproof-quote/1", "quote": "found|not-found|inline",
-  "body_status": "...", "extracted_at": "..." }
+  "stripper": "mailproof-quote/1", "quote": "found|not-found|inline", "trailing": false,
+  "source": "text/plain|html-only", "boundary": "...|null", "body_status": "...", "extracted_at": "..." }
 ```
 
 It stores no text, no body bytes and no subject (the trail stays header-only). In a dispute the consumer shows the text it acted on; its hash matches `text_sha256` in a commit dated before the action; with the raw email anyone re-runs the same stripper version.
