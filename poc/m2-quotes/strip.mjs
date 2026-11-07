@@ -137,21 +137,53 @@ export function normalize(text, flowed, delsp) {
 // ---- boundary detection --------------------------------------------------------------------------------------
 const ATT_START = /^\s*(on|op|am|le|el|il|em|den|på|dne|w dniu)\b/i;
 const ATT_END = /(wrote|schreef|schrieb|a écrit|a ecrit|escribió|escribio|ha scritto|escreveu|skrev|napisał|napisala)\s*:?\s*$/i;
+// Name-after-verb form (`Op vr 7 nov 2026 om 10:00 schreef Amr <a@example.com>:`): an opener, a listed verb anywhere, a signal, a final colon.
+const ATT_VERB = /(?<![\p{L}])(wrote|schreef|schrieb|a écrit|a ecrit|escribió|escribio|ha scritto|escreveu|skrev|napisał|napisala)(?![\p{L}])/iu;
+// Language-independent signal: a 4-digit year, an hh:mm time or an '@'.
+const SIGNAL = /\d{4}|\d{1,2}:\d{2}|@/;
+const LOOKBACK_MAX = 400;   // an attribution line is never longer than this
 const OUT_FROM = /^\s*(from|van|von|de|da|från)\s*:/i;
 const OUT_SENT = /^\s*(sent|verzonden|gesendet|envoyé|envoye|enviado|date|datum)\s*:/i;
 const FWD = /^\s*(-{3,}\s*(forwarded message|doorgestuurd bericht|weitergeleitete nachricht|message transféré|mensaje reenviado)\s*-{3,}|begin forwarded message\s*:|_{3,}\s*forwarded message\s*_{3,})\s*$/i;
 const RULE = /^\s*[_\-=]{10,}\s*$/;
 
+/** Name-after-verb form over at most 2 joined lines (acc is at most 400 chars here). */
+function nameAfterVerb(acc, n) {
+  if (n > 2) return false;
+  const t = acc.trim();
+  return t.endsWith(':') && SIGNAL.test(t) && ATT_VERB.test(t);
+}
 function attributionAt(lines, i) {
   if (!ATT_START.test(lines[i])) return 0;
   let acc = lines[i];
   for (let n = 1; n <= 3; n++) {
     if (acc.length > 400) return 0;
-    if (ATT_END.test(acc.trim())) return n;
+    if (nameAfterVerb(acc, n) || ATT_END.test(acc.trim())) return n;
     if (i + n >= lines.length || lines[i + n].trim() === '') return 0;
     acc += ' ' + lines[i + n].trim();
   }
   return ATT_END.test(acc.trim()) ? 4 : 0;
+}
+/** Is `l` a short line that ends in a colon (spaces after it allowed)? */
+function endsColon(l) { return l.length <= LOOKBACK_MAX && l.trimEnd().endsWith(':'); }
+/** Does this first line of a 2-line block read as the start of a wrapped attribution? */
+function isWrapStart(l) {
+  if (l.trim() === '' || l.length > LOOKBACK_MAX) return false;
+  const t = l.trimEnd();
+  if (t.lastIndexOf('<') > t.lastIndexOf('>')) return true;   // an address opened and not closed
+  return SIGNAL.test(t) && !/[.!?]$/.test(t);                  // a date/time/address that does not end a sentence
+}
+/**
+ * Language-independent attribution above a `>` run that starts at line `q`: up to one blank line, then a block of
+ * 1 or 2 adjacent non-blank lines whose last line ends in ":" and itself carries a signal; the first line of a 2-line
+ * block is part of it only when it is a wrap start. Returns the block's first line, or -1.
+ */
+function attributionAbove(lines, q) {
+  let j = q - 1;
+  if (j >= 0 && lines[j].trim() === '') j--;
+  if (j < 0 || lines[j].trim() === '' || !endsColon(lines[j]) || !SIGNAL.test(lines[j])) return -1;
+  if (j >= 1 && isWrapStart(lines[j - 1])) return j - 1;
+  return j;
 }
 function outlookAt(lines, i) {
   if (!OUT_FROM.test(lines[i])) return false;
@@ -175,7 +207,10 @@ export function findBoundary(lines, { detectors = true } = {}) {
       let e = i; while (e < lines.length && lines[e].trim() !== '') e++;
       return { start: s, end: e, kind: 'outlook-header' };
     }
-    if (l.startsWith('>')) return { start: i, end: i, kind: 'quote-run' };
+    if (l.startsWith('>')) {
+      const s = attributionAbove(lines, i);
+      return s >= 0 ? { start: s, end: i, kind: 'attribution' } : { start: i, end: i, kind: 'quote-run' };
+    }
   }
   return null;
 }

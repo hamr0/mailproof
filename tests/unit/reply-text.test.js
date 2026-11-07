@@ -72,9 +72,8 @@ test('boundary rules: attribution in other languages, up to 4 lines, and what is
   const b = (body) => stripReplyText(plain(body)).boundary;
   assert.equal(b('x\r\nAm 03.11.2025 um 10:00 Bob Example <b@example.net> schrieb:\r\n> q'), 'attribution');
   assert.equal(b('x\r\nOp ma 3 nov. 2025 om 10:00 heeft Bob schreef:\r\n> q'), 'attribution');
-  // a known limit of /1, pinned so a rule change must be a new version: the verb followed by the name is not an attribution
-  // (it falls through to the first > line)
-  assert.equal(b('x\r\nAm 03.11.2025 um 10:00 schrieb Bob:\r\n> q'), 'quote-run');
+  // the verb followed by the name is an attribution too (name-after-verb form, SPEC B6.4 rule 1)
+  assert.equal(b('x\r\nAm 03.11.2025 um 10:00 schrieb Bob:\r\n> q'), 'attribution');
   assert.equal(b('x\r\nLe lun. 3 nov. 2025 à 10:00, Bob a écrit :\r\n> q'), 'attribution');
   assert.equal(b('x\r\nOn Mon,\r\nNov 3,\r\n2025 at 10:00 Bob\r\n<b@example.net> wrote:\r\n> q'), 'attribution');
   assert.equal(b('x\r\nOn Mon,\r\nNov 3,\r\n2025 at 10:00 Bob\r\n<b@example.net>\r\nwrote:\r\n> q'), 'quote-run', 'five lines is too many');
@@ -83,6 +82,62 @@ test('boundary rules: attribution in other languages, up to 4 lines, and what is
   assert.equal(b('x\r\n  > indented is not a quote line'), null);
   assert.equal(b('x\r\nBegin forwarded message:\r\n\r\ny'), 'forward-marker');
   assert.equal(b('x\r\nFrom: a\r\nnothing like a sent line\r\n'), null);
+});
+
+test('attribution with the name after the verb (Dutch, German) and the language-independent rule above a > run', () => {
+  const r = (body) => stripReplyText(plain(body));
+  const nl = 'Op vr 7 nov 2026 om 10:00 schreef Amr <a@example.com>:';
+  // Dutch, > quote: the attribution is not in the text, the text is exactly the reply
+  let x = r(`Ja, akkoord.\r\n\r\n${nl}\r\n> Betaling goedkeuren?\r\n`);
+  assert.deepEqual([x.text, x.boundary, x.quote], ['Ja, akkoord.', 'attribution', 'found']);
+  // wrapped over two lines
+  x = r('Ja, akkoord.\r\n\r\nOp vr 7 nov 2026 om 10:00 schreef Amr <\r\na@example.com>:\r\n> Betaling goedkeuren?\r\n');
+  assert.deepEqual([x.text, x.boundary], ['Ja, akkoord.', 'attribution']);
+  // German with > quote
+  x = r('Einverstanden.\r\n\r\nAm 07.11.2026 um 10:00 schrieb Amr:\r\n> Zahlung freigeben?\r\n');
+  assert.deepEqual([x.text, x.boundary], ['Einverstanden.', 'attribution']);
+  // German without > marks: the quoted request is not in the text
+  x = r('Einverstanden.\r\n\r\nAm 07.11.2026 um 10:00 schrieb Amr:\r\nZahlung freigeben?\r\n');
+  assert.deepEqual([x.text, x.quote, x.boundary], ['Einverstanden.', 'found', 'attribution']);
+  // a language with no listed verb, above a > run (Russian, Japanese)
+  x = r('Да.\r\n\r\n7 ноября 2026 г. в 10:00 Amr <a@example.com> написал:\r\n> Утвердить?\r\n');
+  assert.deepEqual([x.text, x.boundary], ['Да.', 'attribution']);
+  x = r('了解です。\r\n\r\n2026年11月7日 10:00 Amr <a@example.com>:\r\n> 承認しますか？\r\n');
+  assert.deepEqual([x.text, x.boundary], ['了解です。', 'attribution']);
+  // one blank line between the attribution and the > run is allowed; two are not (shown with the unlisted-language form)
+  const ru = '7 ноября 2026 г. в 10:00 Amr <a@example.com> написал:';
+  assert.deepEqual([r('Да.\r\n' + ru + '\r\n> q').text, r('Да.\r\n' + ru + '\r\n\r\n> q').text], ['Да.', 'Да.']);
+  assert.deepEqual([r('Да.\r\n' + ru + '\r\n\r\n\r\n> q').text, r('Да.\r\n' + ru + '\r\n\r\n\r\n> q').boundary], ['Да.\n' + ru, 'quote-run']);
+  // negatives: the sender's own text stays
+  x = r('Op maandag schreef ik het volgende:\r\nBetaal niet.\r\nGroet');
+  assert.deepEqual([x.text, x.boundary], ['Op maandag schreef ik het volgende:\nBetaal niet.\nGroet', null]);
+  x = r('Op maandag schreef ik het volgende:\r\nBetaal niet.\r\n> q');
+  assert.deepEqual([x.text, x.boundary], ['Op maandag schreef ik het volgende:\nBetaal niet.', 'quote-run']);
+  assert.equal(r('Am Montag schrieb ich:\r\nNein.').boundary, null);
+  assert.equal(r('Am Montag schrieb ich:\r\nNein.\r\n> q').text, 'Am Montag schrieb ich:\nNein.');
+  assert.equal(r('See below:\r\n> q').text, 'See below:');
+  assert.equal(r('Ja.\r\nDetails:\r\n> q').text, 'Ja.\nDetails:');
+  assert.equal(r('Ja, akkoord.\r\n' + nl + '\r\n> q').text, 'Ja, akkoord.', 'a reply line directly above the attribution stays');
+  assert.equal(r('Да, согласен.\r\n' + ru + '\r\n> q').text, 'Да, согласен.', 'unlisted language: the reply line above stays');
+  assert.equal(r('Ja, akkoord om 10:00 prima.\r\n' + nl + '\r\n> q').text, 'Ja, akkoord om 10:00 prima.', 'a sentence-ending line is not a wrap');
+  assert.equal(r('Meeting on 12:30 sharp:\r\n> q').boundary, 'attribution', 'a time before a colon is a signal (documented limit: the rule is shape-based)');
+  assert.equal(r('Ik schreef Amr:\r\nZahlung?').boundary, null, 'no opener: not the name-after-verb form');
+  assert.equal(r('Ik schreef Amr op 2026-11-07:\r\nlater').boundary, null);
+});
+
+test('linear time: long lines in the attribution look-back and the name-after-verb form', () => {
+  const long = 'Op ' + 'schreef '.repeat(50000) + ':';
+  const bufs = [
+    plain(long + '\r\n> q'),
+    plain('a'.repeat(300000) + ':\r\n> q'),
+    plain('<'.repeat(300000) + '\r\n' + '1234:'.repeat(1000) + '\r\n> q'),
+    plain((' '.repeat(100000) + ':').repeat(3) + 'x\r\n> q'),
+  ];
+  for (const buf of bufs) {
+    const ms = cpuMs(() => stripReplyText(buf));
+    assert.ok(ms < 3000, `${ms} ms of CPU`);
+  }
+  assert.equal(stripReplyText(bufs[1]).boundary, 'quote-run', 'a very long line is never an attribution');
 });
 
 test('decoding: charset labels, BOM, invalid bytes, unknown charset, CR and lone CR line ends', () => {
