@@ -1,0 +1,151 @@
+{
+ "size": "1000",
+ "N": 1000,
+ "flat": false,
+ "jitter": 0.03,
+ "full": {
+  "list10": 86.1,
+  "list10in": 90.5,
+  "list10out": 84.4,
+  "list1000": 84.1,
+  "copiesKeyMulti": 83.9,
+  "copiesIdOfMulti": 77.5,
+  "copiesKeyContained": 86.9,
+  "copiesNullKeyId": 86,
+  "copiesUnknownKey": 81.4,
+  "midMulti": 77.6,
+  "midUnknown": 75.3
+ },
+ "fullRssMB": {
+  "list10": 129,
+  "list10in": 133,
+  "list10out": 124,
+  "list1000": 129,
+  "copiesKeyMulti": 126,
+  "copiesIdOfMulti": 130,
+  "copiesKeyContained": 129,
+  "copiesNullKeyId": 134,
+  "copiesUnknownKey": 134,
+  "midMulti": 130,
+  "midUnknown": 128
+ },
+ "dlog": {
+  "mode": "dlog",
+  "N": 1000,
+  "res": {
+   "list10": {
+    "medianMs": 7.8,
+    "equalToFullRead": false
+   },
+   "list10in": {
+    "medianMs": 7.8,
+    "equalToFullRead": true
+   },
+   "list10out": {
+    "medianMs": 9.8,
+    "equalToFullRead": false
+   },
+   "list1000": {
+    "medianMs": 165.7,
+    "equalToFullRead": false
+   }
+  },
+  "prefixAll": {
+   "prefixes": 1000,
+   "topTenEqual": 795
+  },
+  "prefixIn": {
+   "prefixes": 794,
+   "topTenEqual": 649
+  },
+  "rssMB": 160
+ },
+ "node-sqlite": {
+  "rebuildMs": 146,
+  "rebuildRssMB": 96,
+  "fileMB": 0.6,
+  "rows": 1000,
+  "importMs": 1.4,
+  "firstOpenMs": 16.4,
+  "openMs": 3.82,
+  "headRevParseMs": 2.79,
+  "headFileMs": 0.023,
+  "queryUs": {
+   "list10": 68,
+   "list10in": 70,
+   "list10out": 67,
+   "list1000": 3891,
+   "copiesKeyMulti": 51,
+   "copiesIdOfMulti": 48,
+   "copiesKeyContained": 36,
+   "copiesNullKeyId": 14,
+   "copiesUnknownKey": 12,
+   "midMulti": 13,
+   "midUnknown": 4
+  },
+  "answersChecked": 11,
+  "queryRssMB": 94,
+  "insert": {
+   "mode": "insert",
+   "engine": "node-sqlite",
+   "N": 1000,
+   "initial": {
+    "mode": "fresh",
+    "ms": 22
+   },
+   "k1": 40,
+   "k2": 100,
+   "commitMedianMs": 38.5,
+   "insertMedianMs": 0.19,
+   "staleCommitMedianMs": 38.1,
+   "catchupMs": 30,
+   "catchupRecords": 100,
+   "verifiedAfter": true,
+   "rssMB": 145
+  }
+ },
+ "better-sqlite3": {
+  "rebuildMs": 154,
+  "rebuildRssMB": 98,
+  "fileMB": 0.6,
+  "rows": 1000,
+  "importMs": 5.7,
+  "firstOpenMs": 21.9,
+  "openMs": 4.37,
+  "headRevParseMs": 3.11,
+  "headFileMs": 0.027,
+  "queryUs": {
+   "list10": 59,
+   "list10in": 57,
+   "list10out": 59,
+   "list1000": 1623,
+   "copiesKeyMulti": 34,
+   "copiesIdOfMulti": 36,
+   "copiesKeyContained": 27,
+   "copiesNullKeyId": 9,
+   "copiesUnknownKey": 15,
+   "midMulti": 9,
+   "midUnknown": 6
+  },
+  "answersChecked": 11,
+  "queryRssMB": 89,
+  "insert": {
+   "mode": "insert",
+   "engine": "better-sqlite3",
+   "N": 1000,
+   "initial": {
+    "mode": "catchup",
+    "ms": 67
+   },
+   "k1": 40,
+   "k2": 100,
+   "commitMedianMs": 40.5,
+   "insertMedianMs": 0.21,
+   "staleCommitMedianMs": 40.9,
+   "catchupMs": 31,
+   "catchupRecords": 100,
+   "verifiedAfter": true,
+   "rssMB": 188
+  }
+ }
+}

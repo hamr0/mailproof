@@ -1,0 +1,134 @@
+{
+ "size": "100000",
+ "N": 100000,
+ "flat": true,
+ "jitter": 0.03,
+ "full": {
+  "list10": 10627.3,
+  "list10in": 11289.9,
+  "list10out": 26703.4,
+  "list1000": 27628.4,
+  "copiesKeyMulti": 28272,
+  "copiesIdOfMulti": 28785.2,
+  "copiesKeyContained": 29791.2,
+  "copiesNullKeyId": 26668,
+  "copiesUnknownKey": 10010.9,
+  "midMulti": 26204.6,
+  "midUnknown": 27244.3
+ },
+ "fullRssMB": {
+  "list10": 2095,
+  "list10in": 2089,
+  "list10out": 2074,
+  "list1000": 2066,
+  "copiesKeyMulti": 2070,
+  "copiesIdOfMulti": 2053,
+  "copiesKeyContained": 2073,
+  "copiesNullKeyId": 2057,
+  "copiesUnknownKey": 2081,
+  "midMulti": 2067,
+  "midUnknown": 2072
+ },
+ "node-sqlite": {
+  "rebuildMs": 40678,
+  "rebuildRssMB": 211,
+  "fileMB": 54.2,
+  "rows": 100000,
+  "importMs": 1.4,
+  "firstOpenMs": 15.5,
+  "openMs": 3.71,
+  "headRevParseMs": 2.63,
+  "headFileMs": 0.024,
+  "queryUs": {
+   "list10": 70,
+   "list10in": 66,
+   "list10out": 68,
+   "list1000": 5348,
+   "copiesKeyMulti": 56,
+   "copiesIdOfMulti": 48,
+   "copiesKeyContained": 54,
+   "copiesNullKeyId": 15,
+   "copiesUnknownKey": 12,
+   "midMulti": 13,
+   "midUnknown": 4
+  },
+  "answersChecked": 11,
+  "queryRssMB": 96,
+  "insert": {
+   "mode": "insert",
+   "engine": "node-sqlite",
+   "N": 100000,
+   "initial": {
+    "mode": "fresh",
+    "ms": 19
+   },
+   "k1": 40,
+   "k2": 100,
+   "commitMedianMs": 852.7,
+   "insertMedianMs": 1.15,
+   "staleCommitMedianMs": 850.6,
+   "catchupMs": 171,
+   "catchupRecords": 100,
+   "verifiedAfter": true,
+   "rssMB": 2164
+  },
+  "rebuildMs_firstRun_loaded": 116528
+ },
+ "better-sqlite3": {
+  "rebuildMs": 36382,
+  "rebuildRssMB": 233,
+  "fileMB": 54.2,
+  "rows": 100000,
+  "importMs": 4.5,
+  "firstOpenMs": 18.3,
+  "openMs": 3.95,
+  "headRevParseMs": 2.83,
+  "headFileMs": 0.024,
+  "queryUs": {
+   "list10": 42,
+   "list10in": 44,
+   "list10out": 43,
+   "list1000": 2509,
+   "copiesKeyMulti": 32,
+   "copiesIdOfMulti": 28,
+   "copiesKeyContained": 33,
+   "copiesNullKeyId": 8,
+   "copiesUnknownKey": 12,
+   "midMulti": 8,
+   "midUnknown": 4
+  },
+  "answersChecked": 11,
+  "queryRssMB": 97,
+  "insert": {
+   "mode": "insert",
+   "engine": "better-sqlite3",
+   "N": 100000,
+   "initial": {
+    "mode": "catchup",
+    "ms": 219
+   },
+   "k1": 40,
+   "k2": 100,
+   "commitMedianMs": 845.6,
+   "insertMedianMs": 1.08,
+   "staleCommitMedianMs": 846.9,
+   "catchupMs": 160,
+   "catchupRecords": 100,
+   "verifiedAfter": true,
+   "rssMB": 2167
+  },
+  "rebuildMs_firstRun_loaded": 37359
+ },
+ "rebuild_repeat_quiet": {
+  "node-sqlite": [
+   40678,
+   40628,
+   40919
+  ],
+  "better-sqlite3": [
+   36433,
+   36157,
+   36382
+  ]
+ }
+}

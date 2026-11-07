@@ -1,0 +1,7 @@
+{
+  "name": "mailproof-poc-trail-index",
+  "private": true,
+  "type": "module",
+  "description": "POC only (F19): index engines for list/copies/message_id lookup. Never shipped.",
+  "dependencies": { "better-sqlite3": "^13" }
+}
