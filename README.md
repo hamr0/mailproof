@@ -119,4 +119,4 @@ A trail has a single writer at a time, enforced by a lock file (`<trailDir>/.<tr
 
 ## Docs
 
-`docs/README.md` is the map. The record and trail formats are in `docs/product/SPEC.md` (Part B); the adopter contract is `mailproof.context.md`. Three runtime dependencies: `mailauth`, `mailparser`, `imapflow` (used only by `sync`). Node >= 22.19. Pure ESM.
+`docs/README.md` is the map. The record and trail formats are in `docs/product/SPEC.md` (Part B); the adopter contract is `mailproof.context.md`. Four runtime dependencies: `mailauth`, `mailparser`, `imapflow` (used only by `sync`) and `better-sqlite3` (used only by `list` and `copies`, for their index). Node >= 22.19. Pure ESM.

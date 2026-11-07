@@ -144,6 +144,8 @@ async function takeOverIfStale(lockPath, timeoutMs) {
 
 /** Lock-file name of the trail's writer lock, beside the repo. */
 const trailLockFile = (/** @type {string} */ name) => `.${name}.lock`;
+/** File name of the trail's index (SPEC B5), beside the repo and outside git. A cache: safe to delete. */
+const trailIndexFile = (/** @type {string} */ name) => `.${name}.index.sqlite`;
 /** Lock-file name of the sync lock (SPEC B4.5), beside the repo. */
 const syncLockFile = (/** @type {string} */ name) => `.${name}.sync.lock`;
 
@@ -347,11 +349,14 @@ async function listIds(root) {
  * @param {string} root
  * @param {string} name
  * @param {{ record: MpRecord, keyFiles: Array<{ rel: string, json: unknown }>, message: string, now: () => Date,
- *           afterWrite?: (recordAbs: string) => Promise<string[]>, lockTimeoutMs?: number }} job
+ *           afterWrite?: (recordAbs: string) => Promise<string[]>, afterCommit?: (commit: string) => Promise<void>,
+ *           lockTimeoutMs?: number }} job
  *   `afterWrite` may add files next to the record (the OTS proof); it returns their trail-relative paths.
+ *   `afterCommit` runs under the lock once the commit exists (the trail index insert). It can never undo or fail the
+ *   commit: whatever it throws is swallowed.
  * @returns {Promise<{ duplicate: boolean, commit: string, extra: string[] }>}
  */
-async function commitRecord(root, name, { record, keyFiles, message, now, afterWrite, lockTimeoutMs = DEFAULT_LOCK_TIMEOUT_MS }) {
+async function commitRecord(root, name, { record, keyFiles, message, now, afterWrite, afterCommit, lockTimeoutMs = DEFAULT_LOCK_TIMEOUT_MS }) {
   return withTrailLock(root, trailLockFile(name), lockTimeoutMs, async () => {
     await ensureTrail(root, name, now().toISOString());
     await clearLeftovers(root);
@@ -361,6 +366,8 @@ async function commitRecord(root, name, { record, keyFiles, message, now, afterW
     }
     /** @type {string[]} */
     const written = []; // only paths that did not exist before this call wrote them
+    /** @type {{ duplicate: boolean, commit: string, extra: string[] }} */
+    let res;
     try {
       for (const k of keyFiles) {
         const abs = path.join(root, k.rel);
@@ -375,7 +382,7 @@ async function commitRecord(root, name, { record, keyFiles, message, now, afterW
       written.push(...extra);
       await git(root, ['add', '--', ...written]);
       await git(root, ['commit', '-m', message]);
-      return { duplicate: false, commit: await git(root, ['rev-parse', 'HEAD']), extra };
+      res = { duplicate: false, commit: await git(root, ['rev-parse', 'HEAD']), extra };
     } catch (err) {
       try { await git(root, ['reset', '-q']); } catch { /* nothing staged */ }
       for (const r of written) {
@@ -383,7 +390,9 @@ async function commitRecord(root, name, { record, keyFiles, message, now, afterW
       }
       throw err;
     }
+    if (afterCommit) { try { await afterCommit(res.commit); } catch { /* a cache; the next index open catches up */ } }
+    return res;
   });
 }
 
-export { TRAIL_NAME_RE, RECORD_ID_RE, DEFAULT_LOCK_TIMEOUT_MS, TRAIL_LOCK, SYNC_LOCK, trailLockFile, syncLockFile, withTrailLock, serialise, ensureTrail, readRecord, listIds, commitRecord };
+export { TRAIL_NAME_RE, RECORD_ID_RE, DEFAULT_LOCK_TIMEOUT_MS, TRAIL_LOCK, SYNC_LOCK, trailLockFile, trailIndexFile, syncLockFile, withTrailLock, serialise, ensureTrail, readRecord, listIds, commitRecord };

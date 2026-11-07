@@ -229,13 +229,13 @@ test('a server that never greets is ERR_IMAP_CONNECT within the connect timeout'
   } finally { mute.close(); mute.closeAllConnections?.(); }
 });
 
-test('19. imapflow has exactly one importer, and the runtime dependencies are exactly the three', () => {
+test('19. imapflow has exactly one importer, and the runtime dependencies are exactly the four (the better-sqlite3 importer check is in trail-index.test.js)', () => {
   const root = new URL('../../src/', import.meta.url).pathname;
   const hits = [];
   const walk = (d) => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, e.name); if (e.isDirectory()) walk(p); else if (/\.(m?js|cjs|ts)$/.test(e.name) && /from\s+['"]imapflow['"]|require\(\s*['"]imapflow['"]\s*\)|import\(\s*['"]imapflow['"]\s*\)|imapflow\//.test(fs.readFileSync(p, 'utf8'))) hits.push(path.relative(root, p)); } };
   walk(root);
   assert.deepEqual(hits, ['proof/imap.js']);
   const pkg = JSON.parse(fs.readFileSync(new URL('../../package.json', import.meta.url), 'utf8'));
-  assert.deepEqual(Object.keys(pkg.dependencies).sort(), ['imapflow', 'mailauth', 'mailparser']);
+  assert.deepEqual(Object.keys(pkg.dependencies).sort(), ['better-sqlite3', 'imapflow', 'mailauth', 'mailparser']);
   assert.match(pkg.dependencies.imapflow, /^\^?\d+\.\d+\.\d+$/);
 });

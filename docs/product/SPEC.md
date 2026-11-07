@@ -239,7 +239,7 @@ Caller options `maxMessages` / `maxBytes` take the **smaller** of the option and
 
 ### B4.6 Dependency and wrapper
 
-- **imapflow is the third (last) runtime dependency** (F16; the ceiling of 3 is reached). The lockfile is the pin (it releases weekly); `check:lockfile` stays a CI gate.
+- **imapflow is the third runtime dependency** (F16; `better-sqlite3`, the fourth, followed in B5). The lockfile is the pin (it releases weekly); `check:lockfile` stays a CI gate.
 - **One importer.** `src/proof/imap.js` is the only module that imports `imapflow`. It exposes a small plain-data interface and nothing from imapflow's types leaks out (no `BigInt`, no stream objects other than a Node `Readable` consumed inside it):
 
   ```js
@@ -315,6 +315,18 @@ Owner decisions on the six forks; rationale in [decisions-log](decisions-log.md)
 - **`captured`:** the fetch time, no new field. The age evidence is the signed `Date`/`t=`.
 - **OTS:** per record as today; advise OTS off for backfills. No new proof type.
 - **IMAP:** in core as the third dependency (F16). One library, one entry point.
+
+## B5. Trail index (`list`, `copies`)
+
+`list()` and `copies()` answer from a SQLite file, not by reading every record (F18, F19). It is a cache: the trail's JSON records stay the single source of truth, nothing is stored only there, and deleting the file loses nothing.
+
+- **File.** `<trailDir>/.<trail>.index.sqlite` (plus SQLite's `-wal` and `-shm` while open), beside the lock file and outside the git repo: never committed, never in a clone. Created on the first `list`/`copies` of a trail that has a commit; `record()` alone never creates it. A missing or empty trail lists `[]` and creates nothing.
+- **Tables** (`schema` 1): `rec` (id, captured, direction, live and portable trust, message_id, message_key, copy kind, body_status), `att` (attached-original `message_key` -> record id, for `contained_in`), `meta` (`schema`, `head`).
+- **HEAD check.** `meta.head` is the trail git HEAD the index reflects. Every `list`/`copies` compares it with `git rev-parse HEAD` first. Equal: use it. Stored HEAD is an ancestor of HEAD: **catch up** from the records `git diff --name-only <stored> HEAD -- records` names (added, changed or deleted), in one transaction. Anything else (restore to an older commit, rewritten history, no index, damaged file, other `schema`): **rebuild** from every record committed in HEAD, in one transaction. Catch-up and rebuild run under the trail lock (B3), so they never see a half-written commit; a waiting `list` can therefore throw `ERR_TRAIL_LOCKED` after `lockTimeoutMs`.
+- **Record commits.** When the instance has the index open, `record()` inserts the new record and moves `head` inside the same lock, right after the commit. If that fails the record is still committed and `record()` still succeeds; the next query catches up.
+- **Answers.** Identical to the former full read: `list` newest `captured` first, `copies` oldest first; records with equal `captured` come in ascending id order (the full read left that to the file system). Only records whose `id` equals their file name are indexed.
+- **Addon.** `better-sqlite3` (native addon, prebuilt for darwin/linux/win32 x64+arm64, linux musl; no install script) is imported only by `src/proof/index-db.js`, on the first `list`/`copies`. If it cannot load, those two reject with `code: 'ERR_INDEX_UNAVAILABLE'`; there is no fallback to a full read. `record`, `check`, `get`, `verify`, `matchBody`, `matchFile` and `sync` never load it, so proof does not depend on it.
+- **Trust.** Whoever can write the index file can change what `list`/`copies` return, never what `get`/`verify`/`matchBody` return, because those read the records. Do not present `list` output as proof; re-check with `verify`. Local filesystems only (SQLite WAL).
 
 ---
 

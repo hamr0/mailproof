@@ -9,7 +9,7 @@ import { guardResolver, systemResolver } from './resolver-guard.js';
 import { engine } from './verdict.js';
 import { createOts, DEFAULT_OTS_TIMEOUT_MS } from './ots.js';
 import { verifyRecord, matchBodyRecord, matchFileRecord } from './recheck.js';
-import { TRAIL_NAME_RE, RECORD_ID_RE, DEFAULT_LOCK_TIMEOUT_MS, commitRecord, readRecord, listIds } from './trail.js';
+import { TRAIL_NAME_RE, RECORD_ID_RE, DEFAULT_LOCK_TIMEOUT_MS, commitRecord, readRecord } from './trail.js';
 
 const OTS_MIN_TIMEOUT_MS = 5000; // floor for the `ots` timeout, however short lockTimeoutMs is
 
@@ -65,6 +65,8 @@ class Mailproof {
     this.worker = workerConfig(opts.worker);
     /** @type {{ run: import('./pool.js').WorkerPool['run'], release: () => Promise<void> } | null} */
     this._lease = null;
+    /** @type {import('./index-db.js').TrailIndex | null} */
+    this._ix = null;
     this.lockTimeoutMs = Number.isFinite(opts.lockTimeoutMs) && /** @type {number} */ (opts.lockTimeoutMs) >= 0 ? /** @type {number} */ (opts.lockTimeoutMs) : DEFAULT_LOCK_TIMEOUT_MS;
     // The stamp runs inside the trail lock, so it is capped at a third of the lock wait (see otsTimeoutMs).
     this.ots = this.otsBin ? createOts({ otsBin: this.otsBin, timeoutMs: otsTimeoutMs(this.lockTimeoutMs) }) : null;
@@ -130,6 +132,9 @@ class Mailproof {
   async close() {
     const lease = this._lease;
     this._lease = null;
+    const ix = this._ix;
+    this._ix = null;
+    await ix?.close();
     await lease?.release();
   }
 
@@ -216,7 +221,9 @@ class Mailproof {
       otsState = 'pending';
       return [`records/${record.id}.json.ots`];
     } : undefined;
-    const res = await commitRecord(this.root, this.trail, { record, keyFiles, message, now: this.now, afterWrite, lockTimeoutMs: this.lockTimeoutMs });
+    // an index this instance has open takes the record in the same lock; if that fails the next query catches up
+    const afterCommit = async (/** @type {string} */ commit) => { await this._ix?.applyCommitted(record, commit); };
+    const res = await commitRecord(this.root, this.trail, { record, keyFiles, message, now: this.now, afterWrite, afterCommit, lockTimeoutMs: this.lockTimeoutMs });
     return res.duplicate
       ? { id: record.id, duplicate: true, commit: res.commit }
       : { id: record.id, duplicate: false, commit: res.commit, record, ots: otsState };
@@ -323,26 +330,12 @@ class Mailproof {
    * @when Use to see every route one signed message reached you by (direct, via a mailing list, forwarded), given the id of any copy or the shared `message_key`. `copies` share the key; `contained_in` lists other records that carry it as an attached original (forwards and list digests). `original` is the earliest `direct` copy whose body matched, or null. Use `get(id)` for a full record.
    * @category read
    * @signature mp.copies(idOrKey: string) => Promise<{ message_key, original, copies[], contained_in[] }>
-   * @fails Never throws. An unknown id or key, or a record with no `message_key` (unsigned mail with no Message-ID), returns just that record (or nothing) with empty `contained_in`.
+   * @fails Rejects with `err.code === 'ERR_INDEX_UNAVAILABLE'` when the `better-sqlite3` native addon cannot load on this platform (there is no fallback; `record`, `get` and `verify` do not need it), or `ERR_TRAIL_LOCKED` when bringing the trail index up to date had to wait for a writer longer than `lockTimeoutMs`. Otherwise never throws. An unknown id or key, or a record with no `message_key` (unsigned mail with no Message-ID), returns just that record (or nothing) with empty `contained_in`. Answers come from the trail index (SPEC B5), a cache beside the trail: whoever can write that file can change this answer, never `get` or `verify`.
    * @example
    * const { copies, contained_in, original } = await mp.copies(id);
    */
   async copies(idOrKey) {
-    const all = (await Promise.all((await listIds(this.root)).map((id) => readRecord(this.root, id)))).filter((r) => r !== null);
-    const self = typeof idOrKey === 'string' ? all.find((r) => r.id === idOrKey) : undefined;
-    const key = self ? self.message_key : (typeof idOrKey === 'string' && RECORD_ID_RE.test(idOrKey) ? idOrKey : null);
-    /** @type {(r: MpRecord) => CopySummary} */
-    const sum = (r) => ({
-      id: r.id, captured: r.captured, direction: r.direction, copy: r.copy?.kind ?? 'unknown', body_status: r.body_status,
-      live: r.verdicts?.live?.trust, portable: r.verdicts?.portable?.trust,
-    });
-    const byTime = (/** @type {MpRecord} */ a, /** @type {MpRecord} */ b) => (a.captured < b.captured ? -1 : a.captured > b.captured ? 1 : 0);
-    const copies = (key ? all.filter((r) => r.message_key === key) : self ? [self] : []).sort(byTime);
-    const containedIn = key
-      ? all.filter((r) => r.message_key !== key && (r.copy?.evidence?.attached_original || []).some((o) => o.message_key === key)).sort(byTime)
-      : [];
-    const original = copies.find((r) => r.copy?.kind === 'direct' && r.body_status === 'matched');
-    return { message_key: key, original: original ? original.id : null, copies: copies.map(sum), contained_in: containedIn.map(sum) };
+    return (await this._index()).copies(idOrKey);
   }
 
   /**
@@ -353,19 +346,24 @@ class Mailproof {
    * @when Use to find recorded emails, newest capture first, optionally by direction. It returns summaries; use `get(id)` for the full record.
    * @category read
    * @signature mp.list(opts?: { limit?: number, direction?: 'in'|'out' }) => Promise<Array<{ id, captured, direction, live, portable, message_id }>>
-   * @fails Never throws. An empty or missing trail returns `[]`.
+   * @fails Rejects with `err.code === 'ERR_INDEX_UNAVAILABLE'` when the `better-sqlite3` native addon cannot load on this platform (there is no fallback; `record`, `get` and `verify` do not need it), or `ERR_TRAIL_LOCKED` when bringing the trail index up to date had to wait for a writer longer than `lockTimeoutMs`. Otherwise never throws. An empty or missing trail returns `[]`. Records captured in the same instant come in ascending id order. Answers come from the trail index (SPEC B5), a cache beside the trail: whoever can write that file can change this answer, never `get` or `verify`.
    * @example
    * const recent = await mp.list({ limit: 10 });
    */
   async list({ limit, direction } = {}) {
-    const recs = (await Promise.all((await listIds(this.root)).map((id) => readRecord(this.root, id))))
-      .filter((r) => r !== null)
-      .filter((r) => !direction || r.direction === direction)
-      .sort((a, b) => (a.captured < b.captured ? 1 : a.captured > b.captured ? -1 : 0));
-    return (limit ? recs.slice(0, limit) : recs).map((r) => ({
-      id: r.id, captured: r.captured, direction: r.direction,
-      live: r.verdicts?.live?.trust, portable: r.verdicts?.portable?.trust, message_id: r.message?.message_id ?? null,
-    }));
+    return (await this._index()).list({ limit, direction });
+  }
+
+  /**
+   * The trail index handle (index-db.js, loaded on the first `list`/`copies`, so no other method pays for it).
+   * @returns {Promise<import('./index-db.js').TrailIndex>}
+   */
+  async _index() {
+    if (!this._ix) {
+      const { createIndex } = await import('./index-db.js');
+      this._ix ??= createIndex({ root: this.root, trail: this.trail, lockTimeoutMs: this.lockTimeoutMs });
+    }
+    return this._ix;
   }
 
   /**

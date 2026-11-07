@@ -10,7 +10,7 @@ Multi-party workflows, thresholds and N-signer sign-off are **not** here: they l
 
 ## Status
 
-**2.1.0 ships M1** (IMAP capture via `sync()` and the `mailproof-sync` CLI; `imapflow` is the third runtime dependency, so the dependency ceiling is reached); M0 (record and re-check) shipped in 2.0.0. The next module is **M2 (reply text: the new text of a signed reply, with proof; interpreting it is the consumer's job)** per PRD §7. M3-M6 are later. 1.x (the multi-party kernel) is frozen at tag `v1.4.0`; the v1 code is archived in `archive/v1/` (there is no `v1` branch); there is no compatibility layer between 1.x and 2.x. The PRD status line and `CHANGELOG.md` are authoritative; verify against them before trusting any other doc.
+**2.1.0 ships M1** (IMAP capture via `sync()` and the `mailproof-sync` CLI; `imapflow` is the third runtime dependency); the trail index (`list`/`copies` from a rebuildable SQLite cache, SPEC B5, F19) adds `better-sqlite3` as the 4th, by owner decision of 2026-11-07, lifting the ceiling of 3; M0 (record and re-check) shipped in 2.0.0. The next module is **M2 (reply text: the new text of a signed reply, with proof; interpreting it is the consumer's job)** per PRD §7. M3-M6 are later. 1.x (the multi-party kernel) is frozen at tag `v1.4.0`; the v1 code is archived in `archive/v1/` (there is no `v1` branch); there is no compatibility layer between 1.x and 2.x. The PRD status line and `CHANGELOG.md` are authoritative; verify against them before trusting any other doc.
 
 `src/proof/` plus `src/index.js` is v2 and the only code that ships (`files` in `package.json`). The v1 code (`create.js`, `ingest.js`, `completion.js`, `legacy-index.js`, ...), its tests and its docs live in `archive/v1/`: kept for borrowing in M3/M4 (PRD §9), not run, not type-checked, not shipped. To reuse a part, `git mv` it and its tests back into `src/` and `tests/` and make them pass.
 
@@ -53,7 +53,7 @@ All in `src/proof/`; wire formats in SPEC Part B.
 
 ## Locked rules
 
-- **Runtime deps stay tiny:** `mailauth`, `mailparser` and `imapflow` (M1, imported only by `src/proof/imap.js`, F16) only. Git is used through the `git` binary via `child_process`. Hierarchy vanilla -> stdlib -> external; the ceiling of 3 runtime deps is reached, so a new external dep means replacing one (AGENT_RULES checklist).
+- **Runtime deps stay tiny:** `mailauth`, `mailparser`, `imapflow` (M1, imported only by `src/proof/imap.js`, F16) and `better-sqlite3` (the trail index, imported only by `src/proof/index-db.js`, F19) only. Git is used through the `git` binary via `child_process`. Hierarchy vanilla -> stdlib -> external; a further external dep still needs the AGENT_RULES checklist and an owner decision.
 - **Pure ESM** (`"type": "module"`): `import`/`export`, and `.js` on every relative specifier, including JSDoc `import()` type refs.
 - **Types:** JSDoc is the single source of truth; `checkJs` + `strictNullChecks` only (not full `strict`; follow `LIBRARY_CONVENTIONS.md`). `.d.ts` are generated into git-ignored `./types/` and built on `prepack`, never committed. No `!`, `as any` or `@ts-ignore` to silence findings.
 - **Node >= 22.19** (`engines`; the CPU deadline needs `Worker#cpuUsage`).
