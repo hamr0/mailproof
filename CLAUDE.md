@@ -10,7 +10,7 @@ Multi-party workflows, thresholds and N-signer sign-off are **not** here: they l
 
 ## Status
 
-**2.1.0 ships M1** (IMAP capture via `sync()` and the `mailproof-sync` CLI; `imapflow` is the third runtime dependency, so the dependency ceiling is reached); M0 (record and re-check) shipped in 2.0.0. The next module is **M2 (reading replies)** per PRD §7. M3-M6 are later. 1.x (the multi-party kernel) is frozen at tag `v1.4.0`; the v1 code is archived in `archive/v1/` (there is no `v1` branch); there is no compatibility layer between 1.x and 2.x. The PRD status line and `CHANGELOG.md` are authoritative; verify against them before trusting any other doc.
+**2.1.0 ships M1** (IMAP capture via `sync()` and the `mailproof-sync` CLI; `imapflow` is the third runtime dependency, so the dependency ceiling is reached); M0 (record and re-check) shipped in 2.0.0. The next module is **M2 (reply text: the new text of a signed reply, with proof; interpreting it is the consumer's job)** per PRD §7. M3-M6 are later. 1.x (the multi-party kernel) is frozen at tag `v1.4.0`; the v1 code is archived in `archive/v1/` (there is no `v1` branch); there is no compatibility layer between 1.x and 2.x. The PRD status line and `CHANGELOG.md` are authoritative; verify against them before trusting any other doc.
 
 `src/proof/` plus `src/index.js` is v2 and the only code that ships (`files` in `package.json`). The v1 code (`create.js`, `ingest.js`, `completion.js`, `legacy-index.js`, ...), its tests and its docs live in `archive/v1/`: kept for borrowing in M3/M4 (PRD §9), not run, not type-checked, not shipped. To reuse a part, `git mv` it and its tests back into `src/` and `tests/` and make them pass.
 
