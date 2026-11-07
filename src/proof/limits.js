@@ -101,7 +101,7 @@ export const SYNC_MAX_BYTES = 512 * 1024 * 1024;
 /** Largest message that is still read (streamed, to hash it) to be recorded; above it the message is `skipped`. */
 export const SYNC_MAX_MESSAGE_BYTES = 128 * 1024 * 1024;
 
-/** Wall time of one `sync` call, checked between messages. */
+/** Wall time of one `sync` call, checked between messages and between UID windows. */
 export const SYNC_MAX_MS = 30 * 60 * 1000;
 
 /** TCP/TLS connect and greeting (imapflow `connectionTimeout`, `greetingTimeout`). */
