@@ -1,4 +1,4 @@
-# mailproof (v2) - Integration Guide
+# mailproof - Integration Guide
 
 ## What this is
 
@@ -9,6 +9,15 @@ mailproof records a re-checkable proof of each email in a **two-party (A to B) e
 - It is a recorder and an offline verifier: `record`, `verify`, `matchBody`, `matchFile`, `check`, `list`, `get`, `replyText`, and a read-only IMAP fetcher in front of `record`: `sync`.
 - It is not a mail client, a sender, a web UI or a multi-party workflow engine (those are gitdone/signedreply.com), not proof of delivery, and not a claim of legal admissibility.
 - It produces a verdict; acting on it is the consumer's job.
+
+## Which entry point do I need?
+
+- One-off verdict on an email, nothing written -> `check(raw)`.
+- Record mail your own pipeline receives (for example a Postfix pipe) -> `record(raw, { direction, source, envelope })`; map `ERR_TRAIL_LOCKED` to exit 75.
+- Capture a mailbox over IMAP -> `sync(...)`, or the `mailproof-sync` CLI under cron or a systemd timer.
+- Re-check later or elsewhere, offline -> `verify(id)`, or `verifyRecord(record)` with no trail.
+- Read what a sender newly wrote in a recorded reply -> `replyText(raw)`, then apply the decision rule in "Reading a reply" below.
+- Build an agent tool menu -> `primitives.json` (14 primitives) plus this file.
 
 ## Minimal usage
 
@@ -64,6 +73,20 @@ Portable `verified` covers the signed headers; read `body_status` for the body. 
 - The stripper is versioned and deterministic (`mailproof-quote/1`): anyone with the raw email re-runs it and gets the same text and `text_sha256` (over its UTF-8 bytes). One small `reply-text` record (hash, byte count, flags, `body_status`, time; never the text, body or subject) is committed to `replies/<id>.mailproof-quote-1.json`; the same message again is `duplicate: true` and writes nothing. Show the text you acted on; its hash matches `text_sha256` in a commit dated before the action.
 - Errors: `ERR_NOT_RECORDED` (record the message first), `ERR_OVER_LIMIT` with `err.limit` (nothing written), `ERR_TRAIL_LOCKED`. It runs in the worker pool like `record`. Known limits of `/1`: tested on English-style attributions and Outlook/Foxmail header blocks; the name after the verb (`... schreef Amr <a@x>:`) and, above a `>` run, any language's attribution line (ends in `:` with a year, hh:mm or `@`) are cut; a quote WITHOUT `>` marks in a language whose verb is not listed falls through to `not-found`. Wire format: `docs/product/SPEC.md` B6.
 
+## Reading a reply: what each outcome means
+
+| Field | Value | Meaning |
+|---|---|---|
+| `proven` | true | `body_status` is `matched` and the text came from `text/plain`: the words are exactly what the signing server sent. |
+| `proven` | false | Words unproven; text is still returned, flagged. Causes: `partial` (only an `l=` prefix is signed), `mismatch` (body altered after signing), `not-checked` (unsigned, over limit, your own Sent copy), `source: 'html-only'` (text is ''). |
+| `quote` | `found` | Normal: `text` is what sits above the quote boundary. |
+| `quote` | `not-found` / `inline` | Whole body returned (never a guess) / answers written inside the quote, not merged. A human reads it. |
+| `trailing` | true | Unquoted text follows the quote (signature or bottom-posted text) and is NOT in `text`. Read the raw mail if it matters. |
+
+- **What stays proven when the body is not:** the sender domain and the signed headers (the portable verdict is unaffected). Threading ("this sender replied to that email") is proven only if the signer covers `In-Reply-To` in `h=`: Gmail does, Microsoft does not (an msn.com-signed reply has no signed threading even when its body matches).
+- **The receiving rule:** mail received at Gmail keeps its body intact whoever sent it. Mail from outside received at Outlook/msn is altered by Microsoft, so `body_status` is `mismatch` and the words are unproven while the headers still verify. msn to msn matched once: a hint, not a rule. So replies whose words matter should be received at Gmail (or another mailbox that does not alter bodies) and captured with `sync`.
+- **Decision rule for an agent:** `proven: false` -> show the text to a human, do not act on it alone. `trailing: true` -> more text sits below the quote; read the raw mail if it matters. `quote: 'not-found'` or `'inline'` -> a human reads it. Otherwise the text is the sender's new words, provably from that signed email; interpreting them is the consumer's job, mailproof never does.
+
 ## What's NOT in mailproof, and why
 
 - **The body and the raw email are never stored.** A record is the signed headers, the signature, the archived key and hashes; this keeps other people's mail content out of your trail. `matchBody` re-checks a body you produce later.
@@ -86,7 +109,7 @@ mailproof-sync --trail-dir /var/lib/mailproof --user you@gmail.com \
   --pass-command "pass show mailproof/gmail_pass"      # host imap.gmail.com, folders INBOX, sent on
 ```
 
-Flags (env fallback `MAILPROOF_<NAME>`): `--trail-dir`, `--trail`, `--host`, `--port`, `--user`, `--folders a,b`, `--sent on|off`, `--pass-command` (split into arguments, run without a shell; first stdout line is the password), `--pass-file`, `--access-token-command` (OAuth2 XOAUTH2). With none of the secret sources, the password is read from stdin. Spaces inside an app password are stripped.
+Flags (env fallback `MAILPROOF_<NAME>`): `--trail-dir`, `--trail`, `--host`, `--port`, `--user`, `--folders a,b`, `--sent on|off`, `--pass-command` (split into arguments, run without a shell; first stdout line is the password), `--pass-file`, `--access-token-command` (OAuth2 XOAUTH2). With none of the secret sources, the password is read from stdin. Spaces are stripped only from Google's app-password display shape (four groups of four lowercase letters); any other password is sent as given, minus surrounding whitespace.
 
 Exit codes: `0` finished (a run cut short by a cap also exits 0 with `"complete": false` and no error: the next run continues from the cursor); `75` try later (`ERR_SYNC_LOCKED` or `ERR_TRAIL_LOCKED`, server unreachable, timeout, throttled); `77` login refused; `64` bad usage; `1` anything else.
 

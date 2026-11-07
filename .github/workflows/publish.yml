@@ -196,6 +196,27 @@ jobs:
           # package count with and without --omit=peer), so no flag is needed for them.
           npm install --no-audit --no-fund --ignore-scripts /tmp/pkg/*.tgz typescript@5 "@types/node@$TYPES_NODE"
           ./node_modules/.bin/tsc
+      - name: Fresh-install smoke (agent menu loads from the installed tarball)
+        # The adopter gate above checks types; this checks the OTHER shipped
+        # artifact an agent consumes: primitives.json, resolved from inside
+        # node_modules via the package `exports` map. Validates the installed
+        # tarball, not the working tree.
+        if: steps.check.outputs.skip == 'false'
+        run: |
+          mkdir -p /tmp/pkg-smoke /tmp/consumer-smoke
+          npm pack --pack-destination /tmp/pkg-smoke
+          cd /tmp/consumer-smoke
+          echo '{ "name": "consumer-smoke", "private": true, "type": "module" }' > package.json
+          npm install --no-audit --no-fund --ignore-scripts /tmp/pkg-smoke/*.tgz
+          node --input-type=module -e "
+            import menu from 'mailproof/primitives.json' with { type: 'json' };
+            const names = (menu.primitives || []).map((p) => p.name);
+            if (!names.includes('Mailproof#replyText')) {
+              console.error('primitives.json does not list Mailproof#replyText:', names);
+              process.exit(1);
+            }
+            console.log('primitives.json ok:', names.length, 'primitives');
+          "
       - name: Publish
         if: steps.check.outputs.skip == 'false'
         run: |
