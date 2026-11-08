@@ -1,5 +1,5 @@
-// close() and the trail index: nothing stays open after close(), even when a list() is still in flight
-// (close() waits for it; the list resolves normally).
+// close() and the trail index: list()/copies() open the index, answer and close it inside one call, so nothing is
+// open between calls and close() has nothing of the index to wait for, release or race with.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -20,17 +20,17 @@ async function setup() {
   const a = await signedMail({ signTime: new Date('2026-11-01T10:00:00Z'), subject: 'A', body: 'Hi\r\n', domain: 'a.example' });
   const mk = () => new Mailproof({ trailDir: dir, resolver: stubResolver(a.map), worker: { size: 0 }, now: () => new Date('2026-11-01T10:05:00Z') });
   const w = mk();
-  await w.record(a.raw, { direction: 'in', source: 'test' });
+  const { id } = await w.record(a.raw, { direction: 'in', source: 'test' });
   await w.close();
-  return { dir, mk };
+  return { dir, mk, id };
 }
 
-test('nothing is open before list; a plain list() then close() leaves nothing open', linuxOnly, async () => {
+test('nothing is open before list, and nothing is open after a list(), even before close()', linuxOnly, async () => {
   const { dir, mk } = await setup();
   assert.deepEqual(openUnder(dir), [], 'nothing open before the list');
   const mp = mk();
   assert.equal((await mp.list()).length, 1);
-  assert.notDeepEqual(openUnder(dir), [], 'the index is open while the instance is');
+  assert.deepEqual(openUnder(dir), [], 'the index is closed when list() returns');
   await mp.close();
   assert.deepEqual(openUnder(dir), [], 'no fd under the trail dir after close()');
 });
@@ -56,4 +56,60 @@ test('close() during the very first list() (index not yet opened) leaves nothing
   assert.equal((await mp.list()).length, 1, 'a call after close() starts fresh');
   await mp.close();
   assert.deepEqual(openUnder(dir), []);
+});
+
+test('close() while a copies() is in flight leaves nothing open, and the copies resolves', linuxOnly, async () => {
+  const { dir, mk, id } = await setup();
+  const mp = mk();
+  const inFlight = mp.copies(id);
+  await mp.close();
+  assert.equal((await inFlight).copies.length, 1);
+  assert.equal((await mp.copies(id)).copies.length, 1, 'a call after close() works');
+  await mp.close();
+  assert.deepEqual(openUnder(dir), []);
+});
+
+test('close() resolves promptly under repeated concurrent list() loops, and no index fd remains once they stop', linuxOnly, async () => {
+  const { dir, mk } = await setup();
+  const mp = mk();
+  let stop = false;
+  const loop = async () => { while (!stop) await mp.list(); };
+  const loops = [loop(), loop(), loop()];
+  await new Promise((r) => setTimeout(r, 50));
+  const t0 = Date.now();
+  await mp.close();
+  const took = Date.now() - t0;
+  assert.ok(took < 1000, `close() took ${took} ms under list() load`);
+  await new Promise((r) => setTimeout(r, 50));   // lists keep starting after close(): they must not leak either
+  stop = true;
+  await Promise.all(loops);
+  assert.deepEqual(openUnder(dir), [], 'no fd under the trail dir once the loops stop');
+  await mp.close();
+});
+
+test('lists started at every point while close() runs leave no index file open', linuxOnly, async () => {
+  const { dir, mk } = await setup();
+  const mp = mk();
+  await mp.list();
+  const lists = [mp.list()];
+  const closing = mp.close();
+  for (let i = 0; i < 40; i++) {   // staggered over the whole of close(), including its last steps
+    lists.push(new Promise((r) => (i % 2 ? setImmediate : setTimeout)(r, i % 7)).then(() => mp.list()));
+  }
+  await Promise.all([closing, ...lists]);
+  assert.deepEqual(openUnder(dir), [], 'no fd under the trail dir');
+  await mp.close();
+});
+
+test('a list() started the instant the in-flight list() settles, while close() is draining, leaves no index file open', linuxOnly, async () => {
+  const { dir, mk } = await setup();
+  const mp = mk();
+  await mp.list();
+  const late = [];
+  const first = mp.list().then((r) => { late.push(mp.list()); return r; });
+  const closing = mp.close();
+  await Promise.all([first, closing]);
+  await Promise.all(late);
+  assert.deepEqual(openUnder(dir), [], 'no fd under the trail dir');
+  await mp.close();
 });

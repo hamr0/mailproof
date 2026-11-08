@@ -68,11 +68,8 @@ class Mailproof {
     this.worker = workerConfig(opts.worker);
     /** @type {{ run: import('./pool.js').WorkerPool['run'], runReplyText: import('./pool.js').WorkerPool['runReplyText'], release: () => Promise<void> } | null} */
     this._lease = null;
-    /** @type {import('./index-db.js').TrailIndex | null} */
-    this._ix = null;
-    /** `list()`/`copies()` calls still running: `close()` waits for them so no index handle opens after it.
-     * @type {Set<Promise<unknown>>} */
-    this._ixOps = new Set();
+    /** Internal (tests): the git output cap, in bytes, for the index's catch-up and rebuild listings. @type {number | undefined} */
+    this._indexGitMaxBuffer = undefined;
     this.lockTimeoutMs = Number.isFinite(opts.lockTimeoutMs) && /** @type {number} */ (opts.lockTimeoutMs) >= 0 ? /** @type {number} */ (opts.lockTimeoutMs) : DEFAULT_LOCK_TIMEOUT_MS;
     // The stamp runs inside the trail lock, so it is capped at a third of the lock wait (see otsTimeoutMs).
     this.ots = this.otsBin ? createOts({ otsBin: this.otsBin, timeoutMs: otsTimeoutMs(this.lockTimeoutMs) }) : null;
@@ -132,19 +129,13 @@ class Mailproof {
    * @when Use to release the worker threads at once (a test, a long-lived process that is done checking mail). Workers are shared by instances with the same `worker` options, so they end when the last of those instances closes. Never needed for the process to exit.
    * @category proof
    * @signature mp.close() => Promise<void>
-   * @fails Never throws. A `list()` or `copies()` still running when `close()` is called is waited for: it resolves normally and its index handle is closed too. A call with nothing to stop, or with `worker.size` 0, resolves at once. With a worker (`size` 1 or more), a `record()` or `check()` still running when `close()` is called (or when the last instance sharing the pool closes) may reject, and if it rejects that message is not recorded: await in-flight calls before `close()`.
+   * @fails Never throws. `list()` and `copies()` keep nothing open between calls, so there is nothing of theirs to close. A call with nothing to stop, or with `worker.size` 0, resolves at once. With a worker (`size` 1 or more), a `record()` or `check()` still running when `close()` is called (or when the last instance sharing the pool closes) may reject, and if it rejects that message is not recorded: await in-flight calls before `close()`.
    * @example
    * await mp.close();
    */
   async close() {
     const lease = this._lease;
     this._lease = null;
-    // Let in-flight list()/copies() finish first (they may still be opening the index), then close whatever index
-    // exists: `_ix` is closed here only, after the last operation, so none can open a handle behind us.
-    while (this._ixOps.size) await Promise.allSettled([...this._ixOps]);
-    const ix = this._ix;
-    this._ix = null;
-    await ix?.close();
     await lease?.release();
   }
 
@@ -231,9 +222,7 @@ class Mailproof {
       otsState = 'pending';
       return [`records/${record.id}.json.ots`];
     } : undefined;
-    // an index this instance has open takes the record in the same lock; if that fails the next query catches up
-    const afterCommit = async (/** @type {string} */ commit) => { await this._ix?.applyCommitted(record, commit); };
-    const res = await commitRecord(this.root, this.trail, { record, keyFiles, message, now: this.now, afterWrite, afterCommit, lockTimeoutMs: this.lockTimeoutMs });
+    const res = await commitRecord(this.root, this.trail, { record, keyFiles, message, now: this.now, afterWrite, lockTimeoutMs: this.lockTimeoutMs });
     return res.duplicate
       ? { id: record.id, duplicate: true, commit: res.commit }
       : { id: record.id, duplicate: false, commit: res.commit, record, ots: otsState };
@@ -384,12 +373,13 @@ class Mailproof {
    * @when Use to see every route one signed message reached you by (direct, via a mailing list, forwarded), given the id of any copy or the shared `message_key`. `copies` share the key; `contained_in` lists other records that carry it as an attached original (forwards and list digests). `original` is the earliest `direct` copy whose body matched, or null. Use `get(id)` for a full record.
    * @category read
    * @signature mp.copies(idOrKey: string) => Promise<{ message_key, original, copies[], contained_in[] }>
-   * @fails Rejects with `err.code === 'ERR_INDEX_UNAVAILABLE'` when the `better-sqlite3` native addon cannot load on this platform (there is no fallback; `record`, `get` and `verify` do not need it), or `ERR_TRAIL_LOCKED` when bringing the trail index up to date had to wait for a writer longer than `lockTimeoutMs`, or `ERR_INDEX_REBUILD` when a first build (or a rebuild) finds more than about 350,000 committed records (a 16 MB git output limit; the trail is too large to index). Otherwise never throws. An unknown id or key, or a record with no `message_key` (unsigned mail with no Message-ID), returns just that record (or nothing) with empty `contained_in`. Answers come from the trail index (SPEC B5), a cache beside the trail: whoever can write that file can change this answer, never `get` or `verify`.
+   * @fails Rejects with `err.code === 'ERR_INDEX_UNAVAILABLE'` when the `better-sqlite3` native addon cannot load on this platform (there is no fallback; `record`, `get` and `verify` do not need it), or `ERR_TRAIL_LOCKED` when bringing the trail index up to date had to wait for a writer longer than `lockTimeoutMs`, or `ERR_INDEX_REBUILD` when a first build (or a rebuild, or a catch-up that falls back to one) finds more than about 350,000 committed records or changes (a 16 MB git output limit; the trail is too large to index). Otherwise never throws. An unknown id or key, or a record with no `message_key` (unsigned mail with no Message-ID), returns just that record (or nothing) with empty `contained_in`. Answers come from the trail index (SPEC B5), a cache beside the trail that is opened and closed inside each call (nothing stays open, so `close()` has nothing to wait for): whoever can write that file can change this answer, never `get` or `verify`.
    * @example
    * const { copies, contained_in, original } = await mp.copies(id);
    */
   async copies(idOrKey) {
-    return this._withIndex((ix) => ix.copies(idOrKey));
+    const { copiesIndex } = await import('./index-db.js');
+    return copiesIndex(this._indexCfg(), idOrKey);
   }
 
   /**
@@ -400,36 +390,21 @@ class Mailproof {
    * @when Use to find recorded emails, newest capture first, optionally by direction. It returns summaries; use `get(id)` for the full record.
    * @category read
    * @signature mp.list(opts?: { limit?: number, direction?: 'in'|'out' }) => Promise<Array<{ id, captured, direction, live, portable, message_id }>>
-   * @fails Rejects with `err.code === 'ERR_INDEX_UNAVAILABLE'` when the `better-sqlite3` native addon cannot load on this platform (there is no fallback; `record`, `get` and `verify` do not need it), or `ERR_TRAIL_LOCKED` when bringing the trail index up to date had to wait for a writer longer than `lockTimeoutMs`, or `ERR_INDEX_REBUILD` when a first build (or a rebuild) finds more than about 350,000 committed records (a 16 MB git output limit; the trail is too large to index). Otherwise never throws. An empty or missing trail returns `[]`. Records captured in the same instant come in ascending id order. Answers come from the trail index (SPEC B5), a cache beside the trail: whoever can write that file can change this answer, never `get` or `verify`.
+   * @fails Rejects with `err.code === 'ERR_INDEX_UNAVAILABLE'` when the `better-sqlite3` native addon cannot load on this platform (there is no fallback; `record`, `get` and `verify` do not need it), or `ERR_TRAIL_LOCKED` when bringing the trail index up to date had to wait for a writer longer than `lockTimeoutMs`, or `ERR_INDEX_REBUILD` when a first build (or a rebuild, or a catch-up that falls back to one) finds more than about 350,000 committed records or changes (a 16 MB git output limit; the trail is too large to index). Otherwise never throws. An empty or missing trail returns `[]`. Records captured in the same instant come in ascending id order. Answers come from the trail index (SPEC B5), a cache beside the trail that is opened and closed inside each call (nothing stays open, so `close()` has nothing to wait for): whoever can write that file can change this answer, never `get` or `verify`.
    * @example
    * const recent = await mp.list({ limit: 10 });
    */
   async list({ limit, direction } = {}) {
-    return this._withIndex((ix) => ix.list({ limit, direction }));
+    const { listIndex } = await import('./index-db.js');
+    return listIndex(this._indexCfg(), { limit, direction });
   }
 
   /**
-   * Run one index query, registered so `close()` can wait for it.
-   * @template T
-   * @param {(ix: import('./index-db.js').TrailIndex) => Promise<T>} fn
-   * @returns {Promise<T>}
+   * What index-db.js needs for one query: the index is opened and closed inside each `list`/`copies` call.
+   * @returns {import('./index-db.js').IndexCfg}
    */
-  async _withIndex(fn) {
-    const p = this._index().then(fn);
-    this._ixOps.add(p);
-    try { return await p; } finally { this._ixOps.delete(p); }
-  }
-
-  /**
-   * The trail index handle (index-db.js, loaded on the first `list`/`copies`, so no other method pays for it).
-   * @returns {Promise<import('./index-db.js').TrailIndex>}
-   */
-  async _index() {
-    if (!this._ix) {
-      const { createIndex } = await import('./index-db.js');
-      this._ix ??= createIndex({ root: this.root, trail: this.trail, lockTimeoutMs: this.lockTimeoutMs });
-    }
-    return this._ix;
+  _indexCfg() {
+    return { root: this.root, trail: this.trail, lockTimeoutMs: this.lockTimeoutMs, gitMaxBuffer: this._indexGitMaxBuffer };
   }
 
   /**

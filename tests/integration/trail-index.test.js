@@ -136,18 +136,21 @@ test('a missing or empty trail lists nothing and creates no index', async () => 
   await mp.close();
 });
 
-test('a record committed while the index is open is inserted in place (stored HEAD moves, no catch-up needed)', async () => {
+test('record() never touches the index: N recorded messages reach it by catch-up on the next list(), and list() equals the full read', async () => {
   const dir = makeTmpDir('mp-ix-');
   const { mp, root } = await buildTrail(dir);
   await mp.list();
   plantSentinel(dir);
-  mp.now = at(50);
-  await mp.record(unsigned('late'), { direction: 'in' });
-  assert.equal(storedMeta(dir, 'head'), gitOut(root, 'rev-parse', 'HEAD'), 'moved by the commit itself');
+  const before = storedMeta(dir, 'head');
+  for (let i = 0; i < 5; i++) { mp.now = at(50 + i); await mp.record(unsigned(`late${i}`), { direction: i % 2 ? 'out' : 'in' }); }
+  assert.equal(storedMeta(dir, 'head'), before, 'record() did not move the stored HEAD');
   const rows = await mp.list();
-  assert.equal(rows[0].id, 'sentinel', 'the index was not rebuilt');
-  assert.ok(rows.some((r) => r.message_id === '<late@u.example>' || r.message_id === 'late@u.example'));
-  assert.equal(rows.length, 10);
+  assert.equal(rows[0].id, 'sentinel', 'caught up, not rebuilt');
+  assert.equal(storedMeta(dir, 'head'), gitOut(root, 'rev-parse', 'HEAD'));
+  assert.equal(rows.length, 14);
+  assert.deepStrictEqual(rows.filter((r) => r.id !== 'sentinel'), (await oracle(root)).list());
+  const d = new Database(indexFile(dir)); d.prepare("DELETE FROM rec WHERE id = 'sentinel'").run(); d.close();
+  await assertSameAsFullRead(mp, root);
   await mp.close();
 });
 
@@ -158,7 +161,7 @@ test('catch-up: records committed while the index existed (another instance) and
   await other.list(); // builds the index from 8 records
   plantSentinel(dir);
   assert.equal(await hasSentinel(other), true);
-  // `mp` has no index handle open, so its commit does not touch the index
+  // `mp` never touches the index, so its commits wait for the next query
   mp.now = at(60);
   await mp.record(unsigned('c1'), { direction: 'in' });
   mp.now = at(61);
@@ -298,20 +301,50 @@ test('without the better-sqlite3 addon: record, get, verify, check, matchBody wo
   await mp.close();
 });
 
-test('a rebuild past the git output cap rejects with ERR_INDEX_REBUILD naming the cause and the limit; a normal one works', async () => {
-  const { createIndex } = await import('../../src/proof/index-db.js');
+/** A one-record trail, the Mailproof on it, and a cfg for the one-shot index API. */
+async function capTrail() {
   const dir = makeTmpDir('mp-ix-cap-');
   const a = await signedMail({ signTime: T0, subject: 'A', body: 'Hi\r\n', domain: 'a.example' });
   const mp = new Mailproof({ trailDir: dir, resolver: stubResolver(a.map), worker: { size: 0 }, now: at(5) });
   await mp.record(a.raw, { direction: 'in', source: 'test' });
+  return { dir, mp, cfg: { root: path.join(dir, 'default'), trail: 'default', lockTimeoutMs: 5000 } };
+}
+const rebuildErr = (e) => e.code === 'ERR_INDEX_REBUILD' && /git output limit/.test(e.message) && /10-byte/.test(e.message);
+
+test('a rebuild past the git output cap rejects with ERR_INDEX_REBUILD naming the cause and the limit; a normal one works', async () => {
+  const { listIndex } = await import('../../src/proof/index-db.js');
+  const { mp, cfg } = await capTrail();
+  await assert.rejects(listIndex({ ...cfg, gitMaxBuffer: 10 }), rebuildErr);
+  assert.equal((await listIndex(cfg)).length, 1);
   await mp.close();
-  const cfg = { root: path.join(dir, 'default'), trail: 'default', lockTimeoutMs: 5000 };
-  const tiny = createIndex({ ...cfg, gitMaxBuffer: 10 });
-  await assert.rejects(tiny.list(), (e) => e.code === 'ERR_INDEX_REBUILD' && /git output limit/.test(e.message) && /10-byte/.test(e.message));
-  await tiny.close();
-  const ok = createIndex(cfg);
-  assert.equal((await ok.list()).length, 1);
-  await ok.close();
+});
+
+test('ERR_INDEX_REBUILD surfaces through Mailproof#list() and #copies()', async () => {
+  const { dir, mp } = await capTrail();
+  const id = (await mp.list()).length === 1 ? (await mp.list())[0].id : null; // builds the index once; remove it so the next call rebuilds
+  for (const f of [indexFile(dir), `${indexFile(dir)}-wal`, `${indexFile(dir)}-shm`]) fs.rmSync(f, { force: true });
+  mp._indexGitMaxBuffer = 10;
+  await assert.rejects(mp.list(), rebuildErr);
+  await assert.rejects(mp.copies(id), rebuildErr);
+  mp._indexGitMaxBuffer = undefined;
+  assert.equal((await mp.list()).length, 1, 'the same instance works with the normal cap');
+  await mp.close();
+});
+
+test('a catch-up whose changed-path list passes the cap falls back to a rebuild, which rejects with ERR_INDEX_REBUILD (never a raw buffer error)', async () => {
+  const { dir, mp, cfg } = await capTrail();
+  const { listIndex } = await import('../../src/proof/index-db.js');
+  await listIndex(cfg); // index at the first HEAD
+  plantSentinel(dir);
+  mp.now = at(9);
+  await mp.record(unsigned('more'), { direction: 'in' });
+  // 10 bytes: the diff of one record path (~50 bytes) overflows, so catch-up falls back to a rebuild, which overflows too
+  await assert.rejects(listIndex({ ...cfg, gitMaxBuffer: 10 }), rebuildErr);
+  // with room for the diff, catch-up (not a rebuild) succeeds: the sentinel survives
+  const rows = await listIndex(cfg);
+  assert.equal(rows[0].id, 'sentinel');
+  assert.equal(rows.length, 3);
+  await mp.close();
 });
 
 test('better-sqlite3 is imported by src/proof/index-db.js and by nothing else in src/', () => {

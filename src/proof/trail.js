@@ -351,15 +351,14 @@ async function listIds(root) {
  * @param {string} root
  * @param {string} name
  * @param {{ rel: string, json: unknown, requires?: string, keyFiles?: Array<{ rel: string, json: unknown }>, message: string, now: () => Date,
- *           afterWrite?: (fileAbs: string) => Promise<string[]>, afterCommit?: (commit: string) => Promise<void>,
+ *           afterWrite?: (fileAbs: string) => Promise<string[]>,
  *           lockTimeoutMs?: number }} job
  *   `rel` is the trail-relative path of the file and `json` its content. `requires`: a trail-relative path that must
  *   be committed in HEAD (checked under the lock), else `ERR_NOT_RECORDED`. `afterWrite` may add files next to the
- *   file (the OTS proof); it returns their trail-relative paths. `afterCommit` runs under the lock once the commit
- *   exists (the trail index insert). It can never undo or fail the commit: whatever it throws is swallowed.
+ *   file (the OTS proof); it returns their trail-relative paths.
  * @returns {Promise<{ duplicate: boolean, commit: string, extra: string[] }>}
  */
-async function commitFiles(root, name, { rel, json, requires, keyFiles = [], message, now, afterWrite, afterCommit, lockTimeoutMs = DEFAULT_LOCK_TIMEOUT_MS }) {
+async function commitFiles(root, name, { rel, json, requires, keyFiles = [], message, now, afterWrite, lockTimeoutMs = DEFAULT_LOCK_TIMEOUT_MS }) {
   return withTrailLock(root, trailLockFile(name), lockTimeoutMs, async () => {
     await ensureTrail(root, name, now().toISOString());
     await clearLeftovers(root);
@@ -396,7 +395,6 @@ async function commitFiles(root, name, { rel, json, requires, keyFiles = [], mes
       }
       throw err;
     }
-    if (afterCommit) { try { await afterCommit(res.commit); } catch { /* a cache; the next index open catches up */ } }
     return res;
   });
 }
@@ -406,7 +404,7 @@ async function commitFiles(root, name, { rel, json, requires, keyFiles = [], mes
  * @param {string} root
  * @param {string} name
  * @param {{ record: MpRecord, keyFiles: Array<{ rel: string, json: unknown }>, message: string, now: () => Date,
- *           afterWrite?: (recordAbs: string) => Promise<string[]>, afterCommit?: (commit: string) => Promise<void>,
+ *           afterWrite?: (recordAbs: string) => Promise<string[]>,
  *           lockTimeoutMs?: number }} job
  * @returns {Promise<{ duplicate: boolean, commit: string, extra: string[] }>}
  */

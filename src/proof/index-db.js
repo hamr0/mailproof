@@ -9,12 +9,17 @@
 //   anything else                 rebuild from every committed record (restore, rewrite, missing, corrupt file,
 //                                 schema-version mismatch).
 // Catch-up and rebuild run under the trail lock (the one `record()` holds), so they never read a half-written commit;
-// a record commit inserts itself in the same lock (`applyCommitted`). A failed index write never fails a record: the
-// record is already committed, and the next query catches up through the HEAD mismatch.
+// two concurrent first builds serialise on it, and the second finds the HEAD already stored. `record()` never touches
+// the index: a new commit reaches it through the catch-up of the next query.
+//
+// No handle lives between calls. Each query opens the file, checks HEAD, catches up or rebuilds, answers, and closes
+// the file, all inside one call (a throw closes it too), so nothing is left open for `close()` to chase. Only the
+// loaded addon (the driver class) is cached, never a connection.
 //
 // One code path: if better-sqlite3 cannot load there is no fallback to a full read, `list`/`copies` reject with
 // `ERR_INDEX_UNAVAILABLE`. A rebuild lists every committed record id through one `git ls-tree` call whose output is
-// capped at 16 MB (about 350,000 records); a trail past that rejects with `ERR_INDEX_REBUILD`.
+// capped at 16 MB (about 350,000 records); a trail past that rejects with `ERR_INDEX_REBUILD`. Catch-up lists only the
+// changed paths under the same cap; if that overflows it falls back to the rebuild, which then rejects the same way.
 
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -32,6 +37,7 @@ const SCHEMA = 1;
 const RECORD_PATH_RE = /^records\/([0-9a-f]{32})\.json$/;
 const READ_BATCH = 500;
 const BUSY_TIMEOUT_MS = 10000;
+const DEFAULT_GIT_MAX_BUFFER = 16 * 1024 * 1024;
 
 const DDL = `
 CREATE TABLE IF NOT EXISTS meta(k TEXT PRIMARY KEY, v TEXT) WITHOUT ROWID;
@@ -126,221 +132,210 @@ async function readMany(root, ids) {
 }
 
 /**
- * @typedef {Object} TrailIndex
- * @property {(opts?: { limit?: number, direction?: 'in' | 'out' }) => Promise<ListRow[]>} list
- * @property {(idOrKey: string) => Promise<{ message_key: string | null, original: string | null, copies: CopyRow[], contained_in: CopyRow[] }>} copies
- * @property {(record: MpRecord, commit: string) => Promise<void>} applyCommitted  Call under the trail lock, right after the commit.
- * @property {() => Promise<void>} close
+ * @typedef {Object} IndexCfg
+ * @property {string} root  The trail repo directory.
+ * @property {string} trail  The trail name.
+ * @property {number} lockTimeoutMs
+ * @property {number} [gitMaxBuffer]  Internal (tests): the output cap, in bytes, for the git listings of a catch-up or rebuild.
  */
+
+/** The loaded driver class: cached after the first successful load. A class, not a handle. @type {any} */
+let Driver = null;
+
+/** Load the addon and probe that the native binding works; only this step means "unavailable". @returns {Promise<any>} */
+async function loadDriver() {
+  if (Driver) return Driver;
+  try {
+    const D = (await import('better-sqlite3')).default;
+    new D(':memory:').close(); // the native binding loads on the first construction
+    Driver = D;
+    return D;
+  } catch (e) { throw unavailable(e); }
+}
+
+/** @param {string} file @returns {string[]} */
+const filesOf = (file) => [file, `${file}-wal`, `${file}-shm`, `${file}-journal`];
 
 /**
- * A handle on the trail's index. Nothing is touched until the first query: the addon is loaded and the file created
- * then, and only when the trail has a commit.
- * @param {{ root: string, trail: string, lockTimeoutMs: number, gitMaxBuffer?: number }} cfg  `gitMaxBuffer` is internal (tests): the output cap for the rebuild's record listing.
- * @returns {TrailIndex}
+ * One open index: the connection plus its prepared statements. Built per query, closed in the same call.
+ * @param {Db} d
  */
-export function createIndex({ root, trail, lockTimeoutMs, gitMaxBuffer = 16 * 1024 * 1024 }) {
-  const file = path.join(path.dirname(root), trailIndexFile(trail));
-  const lockFile = trailLockFile(trail);
-  /** @type {Db | null} */
-  let db = null;
-  /** @type {Promise<Db> | null} */
-  let opening = null;
-  /** @type {Record<string, Stmt>} */
-  let st = {};
-
-  const files = [file, `${file}-wal`, `${file}-shm`, `${file}-journal`];
-
-  /** Open the file, create the tables. A damaged file is deleted (under the trail lock) and created again. @returns {Promise<Db>} */
-  async function openFile() {
-    /** @type {any} */
-    let Database;
-    try {
-      Database = (await import('better-sqlite3')).default;
-      new Database(':memory:').close(); // the native binding loads on the first construction: probe it here, so only this step means "unavailable"
-    } catch (e) { throw unavailable(e); }
-    for (let attempt = 0; ; attempt++) {
-      /** @type {Db | null} */
-      let d = null;
-      try {
-        d = new Database(file);
-        const opened = /** @type {Db} */ (d);
-        opened.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}; PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA temp_store = MEMORY;`);
-        opened.exec(DDL);
-        opened.prepare('SELECT v FROM meta WHERE k = ?').get('head');
-        return opened;
-      } catch (e) {
-        try { d?.close(); } catch { /* already unusable */ }
-        if (!isCorrupt(e) || attempt > 0) throw e;
-        await withTrailLock(root, lockFile, lockTimeoutMs, async () => { for (const f of files) await fs.rm(f, { force: true }); });
-      }
-    }
-  }
-
-  /** @returns {Promise<Db>} */
-  function ensureOpen() {
-    if (db && db.open) return Promise.resolve(db);
-    db = null;
-    opening ??= openFile().then((d) => {
-      db = d;
-      st = {
-        getMeta: d.prepare('SELECT v FROM meta WHERE k = ?'),
-        setMeta: d.prepare('INSERT OR REPLACE INTO meta VALUES (?,?)'),
-        putRec: d.prepare('INSERT OR REPLACE INTO rec VALUES (?,?,?,?,?,?,?,?,?)'),
-        delRec: d.prepare('DELETE FROM rec WHERE id = ?'),
-        delAtt: d.prepare('DELETE FROM att WHERE rec_id = ?'),
-        putAtt: d.prepare('INSERT OR IGNORE INTO att VALUES (?,?)'),
-      };
-      return d;
-    }).finally(() => { opening = null; });
-    return opening;
-  }
-
-  /** @param {string} k @returns {string | undefined} */
-  const meta = (k) => st.getMeta.get(k)?.v;
-
-  /** @param {{ row: Array<string | null>, att: string[] }} x */
-  function put(x) {
-    st.putRec.run(...x.row);
-    st.delAtt.run(x.row[0]);
-    for (const k of x.att) st.putAtt.run(k, x.row[0]);
-  }
-
-  /**
-   * Bring the index to `head`. Caller holds the trail lock.
-   * @param {Db} d @param {string} head
-   */
-  async function reconcile(d, head) {
-    const stored = meta('head');
-    const versionOk = meta('schema') === String(SCHEMA);
-    if (stored === head && versionOk) return;
-    /** @type {string[] | null} */
-    let changed = null;
-    if (stored && versionOk) {
-      try {
-        await git(root, ['merge-base', '--is-ancestor', stored, head]);
-        changed = idsFromPaths(await git(root, ['diff', '--name-only', '-z', stored, head, '--', 'records']));
-      } catch { changed = null; }
-    }
-    if (changed) {
-      const read = await readMany(root, changed);
-      d.transaction(() => {
-        for (const [id, r] of read) {
-          const x = rowOf(id, r);
-          if (x) put(x); else { st.delRec.run(id); st.delAtt.run(id); }
-        }
-        st.setMeta.run('head', head);
-      }).immediate();
-      return;
-    }
-    /** @type {string} */
-    let listing;
-    try {
-      listing = await git(root, ['ls-tree', '-r', '--name-only', '-z', head, '--', 'records'], { maxBuffer: gitMaxBuffer });
-    } catch (e) {
-      const c = e instanceof Error ? /** @type {{ code?: string }} */ (e.cause) : null;
-      throw c?.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' ? rebuildTooLarge(e, gitMaxBuffer) : e;
-    }
-    const read = await readMany(root, idsFromPaths(listing));
-    d.transaction(() => {
-      d.exec('DELETE FROM rec; DELETE FROM att; DELETE FROM meta;');
-      for (const [id, r] of read) { const x = rowOf(id, r); if (x) put(x); }
-      st.setMeta.run('schema', String(SCHEMA));
-      st.setMeta.run('head', head);
-    }).immediate();
-  }
-
-  /**
-   * An open index that reflects the trail's HEAD, or null when the trail has no commit yet (nothing to list).
-   * @returns {Promise<Db | null>}
-   */
-  async function fresh() {
-    const head = await headOf(root);
-    if (head === null) return null;
-    const d = await ensureOpen();
-    if (meta('head') === head && meta('schema') === String(SCHEMA)) return d;
-    await withTrailLock(root, lockFile, lockTimeoutMs, async () => {
-      const h = await headOf(root); // re-read under the lock: a writer may have moved it
-      if (h !== null) await reconcile(d, h);
-    });
-    return d;
-  }
-
-  /**
-   * Run a query against a fresh index. A damaged file is deleted and rebuilt once.
-   * @template T
-   * @param {(d: Db) => T} fn
-   * @param {T} empty  The answer for a trail with no commit.
-   * @returns {Promise<T>}
-   */
-  async function query(fn, empty) {
-    for (let attempt = 0; ; attempt++) {
-      try {
-        const d = await fresh();
-        return d ? fn(d) : empty;
-      } catch (e) {
-        if (!isCorrupt(e) || attempt > 0) throw e;
-        try { db?.close(); } catch { /* already unusable */ }
-        db = null;
-        await withTrailLock(root, lockFile, lockTimeoutMs, async () => { for (const f of files) await fs.rm(f, { force: true }); });
-      }
-    }
-  }
-
-  const SUM = 'id, captured, direction, copy_kind, body_status, live, portable';
-  /** @param {any} r @returns {CopyRow} */
-  const sum = (r) => ({
-    id: r.id, captured: r.captured, direction: r.direction, copy: r.copy_kind ?? 'unknown',
-    body_status: r.body_status ?? undefined, live: r.live ?? undefined, portable: r.portable ?? undefined,
-  });
-
+function session(d) {
+  const st = {
+    getMeta: d.prepare('SELECT v FROM meta WHERE k = ?'),
+    setMeta: d.prepare('INSERT OR REPLACE INTO meta VALUES (?,?)'),
+    putRec: d.prepare('INSERT OR REPLACE INTO rec VALUES (?,?,?,?,?,?,?,?,?)'),
+    delRec: d.prepare('DELETE FROM rec WHERE id = ?'),
+    delAtt: d.prepare('DELETE FROM att WHERE rec_id = ?'),
+    putAtt: d.prepare('INSERT OR IGNORE INTO att VALUES (?,?)'),
+  };
   return {
-    async list({ limit, direction } = {}) {
-      if (direction && typeof direction !== 'string') return [];
-      // A positive number is a SQL LIMIT; any other truthy value keeps Array#slice's meaning on the full ordered list.
-      const sql = typeof limit === 'number' && limit > 0;
-      const n = sql ? (Number.isFinite(limit) ? Math.floor(/** @type {number} */ (limit)) : -1) : -1;
-      return query((d) => {
-        const cols = 'id, captured, direction, live, portable, message_id';
-        // newest capture first; equal captures in ascending id order (the old full read left that to the file system)
-        const rows = direction
-          ? d.prepare(`SELECT ${cols} FROM rec WHERE direction = ? ORDER BY captured DESC, id LIMIT ?`).all(direction, n)
-          : d.prepare(`SELECT ${cols} FROM rec ORDER BY captured DESC, id LIMIT ?`).all(n);
-        return (limit && !sql ? rows.slice(0, /** @type {any} */ (limit)) : rows).map((r) => ({
-          id: r.id, captured: r.captured, direction: r.direction,
-          live: r.live ?? undefined, portable: r.portable ?? undefined, message_id: r.message_id ?? null,
-        }));
-      }, []);
-    },
-
-    async copies(idOrKey) {
-      return query((d) => {
-        const self = typeof idOrKey === 'string' ? d.prepare(`SELECT ${SUM}, message_key FROM rec WHERE id = ?`).get(idOrKey) : undefined;
-        const key = self ? self.message_key : (typeof idOrKey === 'string' && RECORD_ID_RE.test(idOrKey) ? idOrKey : null);
-        const copies = key ? d.prepare(`SELECT ${SUM} FROM rec WHERE message_key = ? ORDER BY captured, id`).all(key) : self ? [self] : [];
-        const contained = key
-          ? d.prepare(`SELECT ${SUM.split(', ').map((c) => `r.${c}`).join(', ')} FROM att a JOIN rec r ON r.id = a.rec_id WHERE a.att_key = ? AND r.message_key IS NOT ? ORDER BY r.captured, r.id`).all(key, key)
-          : [];
-        const original = copies.find((r) => r.copy_kind === 'direct' && r.body_status === 'matched');
-        return { message_key: key ?? null, original: original ? original.id : null, copies: copies.map(sum), contained_in: contained.map(sum) };
-      }, { message_key: typeof idOrKey === 'string' && RECORD_ID_RE.test(idOrKey) ? idOrKey : null, original: null, copies: [], contained_in: [] });
-    },
-
-    async applyCommitted(record, commit) {
-      const d = db;
-      if (!d || !d.open) return; // not open: the first query will catch up
-      const stored = meta('head');
-      if (!stored || meta('schema') !== String(SCHEMA)) return;
-      if (stored !== (await git(root, ['rev-parse', `${commit}^`]))) return; // not exactly one commit behind: catch up on the next query
-      const x = rowOf(record.id, JSON.parse(JSON.stringify(record))); // the record as the file holds it
-      if (!x) return;
-      d.transaction(() => { put(x); st.setMeta.run('head', commit); }).immediate();
-    },
-
-    async close() {
-      const d = db;
-      db = null;
-      try { d?.close(); } catch { /* already closed */ }
+    d,
+    /** @param {string} k @returns {string | undefined} */
+    meta: (k) => st.getMeta.get(k)?.v,
+    /** @param {string} k @param {string} v */
+    setMeta: (k, v) => { st.setMeta.run(k, v); },
+    /** @param {string} id */
+    del: (id) => { st.delRec.run(id); st.delAtt.run(id); },
+    /** @param {{ row: Array<string | null>, att: string[] }} x */
+    put: (x) => {
+      st.putRec.run(...x.row);
+      st.delAtt.run(x.row[0]);
+      for (const k of x.att) st.putAtt.run(k, x.row[0]);
     },
   };
+}
+
+/**
+ * Open the file and create the tables. A damaged file is deleted (under the trail lock) and created again.
+ * @param {IndexCfg} cfg @param {string} file @returns {Promise<Db>}
+ */
+async function openFile({ root, trail, lockTimeoutMs }, file) {
+  const Database = await loadDriver();
+  for (let attempt = 0; ; attempt++) {
+    /** @type {Db | null} */
+    let d = null;
+    try {
+      d = new Database(file);
+      const opened = /** @type {Db} */ (d);
+      opened.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}; PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA temp_store = MEMORY;`);
+      opened.exec(DDL);
+      opened.prepare('SELECT v FROM meta WHERE k = ?').get('head');
+      return opened;
+    } catch (e) {
+      try { d?.close(); } catch { /* already unusable */ }
+      if (!isCorrupt(e) || attempt > 0) throw e;
+      await withTrailLock(root, trailLockFile(trail), lockTimeoutMs, async () => { for (const f of filesOf(file)) await fs.rm(f, { force: true }); });
+    }
+  }
+}
+
+/**
+ * Bring the index to `head`. Caller holds the trail lock.
+ * @param {ReturnType<typeof session>} s @param {IndexCfg} cfg @param {string} head
+ */
+async function reconcile(s, { root, gitMaxBuffer = DEFAULT_GIT_MAX_BUFFER }, head) {
+  const stored = s.meta('head');
+  const versionOk = s.meta('schema') === String(SCHEMA);
+  if (stored === head && versionOk) return;
+  /** @type {string[] | null} */
+  let changed = null;
+  if (stored && versionOk) {
+    try {
+      await git(root, ['merge-base', '--is-ancestor', stored, head]);
+      changed = idsFromPaths(await git(root, ['diff', '--name-only', '-z', stored, head, '--', 'records'], { maxBuffer: gitMaxBuffer }));
+    } catch { changed = null; } // not an ancestor, or a list too big for the cap: rebuild (which rejects if it is too big too)
+  }
+  if (changed) {
+    const read = await readMany(root, changed);
+    s.d.transaction(() => {
+      for (const [id, r] of read) {
+        const x = rowOf(id, r);
+        if (x) s.put(x); else s.del(id);
+      }
+      s.setMeta('head', head);
+    }).immediate();
+    return;
+  }
+  /** @type {string} */
+  let listing;
+  try {
+    listing = await git(root, ['ls-tree', '-r', '--name-only', '-z', head, '--', 'records'], { maxBuffer: gitMaxBuffer });
+  } catch (e) {
+    const c = e instanceof Error ? /** @type {{ code?: string }} */ (e.cause) : null;
+    throw c?.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' ? rebuildTooLarge(e, gitMaxBuffer) : e;
+  }
+  const read = await readMany(root, idsFromPaths(listing));
+  s.d.transaction(() => {
+    s.d.exec('DELETE FROM rec; DELETE FROM att; DELETE FROM meta;');
+    for (const [id, r] of read) { const x = rowOf(id, r); if (x) s.put(x); }
+    s.setMeta('schema', String(SCHEMA));
+    s.setMeta('head', head);
+  }).immediate();
+}
+
+/**
+ * Run `fn` against an index that reflects the trail's HEAD, then close it: open, check, catch up or rebuild, answer,
+ * close, all in this call. A trail with no commit answers `empty` and touches nothing. A damaged file is deleted and
+ * rebuilt once.
+ * @template T
+ * @param {IndexCfg} cfg
+ * @param {(d: Db) => T} fn
+ * @param {T} empty
+ * @returns {Promise<T>}
+ */
+async function query(cfg, fn, empty) {
+  const { root, trail, lockTimeoutMs } = cfg;
+  const file = path.join(path.dirname(root), trailIndexFile(trail));
+  for (let attempt = 0; ; attempt++) {
+    if ((await headOf(root)) === null) return empty;
+    /** @type {Db | null} */
+    let d = null;
+    try {
+      d = await openFile(cfg, file);
+      const s = session(d);
+      if (s.meta('head') !== (await headOf(root)) || s.meta('schema') !== String(SCHEMA)) {
+        await withTrailLock(root, trailLockFile(trail), lockTimeoutMs, async () => {
+          const h = await headOf(root); // re-read under the lock: a writer may have moved it
+          if (h !== null) await reconcile(s, cfg, h);
+        });
+      }
+      return fn(d);
+    } catch (e) {
+      if (!isCorrupt(e) || attempt > 0) throw e;
+    } finally {
+      try { d?.close(); } catch { /* already unusable */ }
+    }
+    await withTrailLock(root, trailLockFile(trail), lockTimeoutMs, async () => { for (const f of filesOf(file)) await fs.rm(f, { force: true }); });
+  }
+}
+
+const SUM = 'id, captured, direction, copy_kind, body_status, live, portable';
+/** @param {any} r @returns {CopyRow} */
+const sum = (r) => ({
+  id: r.id, captured: r.captured, direction: r.direction, copy: r.copy_kind ?? 'unknown',
+  body_status: r.body_status ?? undefined, live: r.live ?? undefined, portable: r.portable ?? undefined,
+});
+
+/**
+ * `Mailproof#list` from the index (opened and closed inside this call).
+ * @param {IndexCfg} cfg
+ * @param {{ limit?: number, direction?: 'in' | 'out' }} [opts]
+ * @returns {Promise<ListRow[]>}
+ */
+export async function listIndex(cfg, { limit, direction } = {}) {
+  if (direction && typeof direction !== 'string') return [];
+  // A positive number is a SQL LIMIT; any other truthy value keeps Array#slice's meaning on the full ordered list.
+  const sql = typeof limit === 'number' && limit > 0;
+  const n = sql ? (Number.isFinite(limit) ? Math.floor(/** @type {number} */ (limit)) : -1) : -1;
+  return query(cfg, (d) => {
+    const cols = 'id, captured, direction, live, portable, message_id';
+    // newest capture first; equal captures in ascending id order (the old full read left that to the file system)
+    const rows = direction
+      ? d.prepare(`SELECT ${cols} FROM rec WHERE direction = ? ORDER BY captured DESC, id LIMIT ?`).all(direction, n)
+      : d.prepare(`SELECT ${cols} FROM rec ORDER BY captured DESC, id LIMIT ?`).all(n);
+    return (limit && !sql ? rows.slice(0, /** @type {any} */ (limit)) : rows).map((r) => ({
+      id: r.id, captured: r.captured, direction: r.direction,
+      live: r.live ?? undefined, portable: r.portable ?? undefined, message_id: r.message_id ?? null,
+    }));
+  }, []);
+}
+
+/**
+ * `Mailproof#copies` from the index (opened and closed inside this call).
+ * @param {IndexCfg} cfg
+ * @param {string} idOrKey
+ * @returns {Promise<{ message_key: string | null, original: string | null, copies: CopyRow[], contained_in: CopyRow[] }>}
+ */
+export async function copiesIndex(cfg, idOrKey) {
+  return query(cfg, (d) => {
+    const self = typeof idOrKey === 'string' ? d.prepare(`SELECT ${SUM}, message_key FROM rec WHERE id = ?`).get(idOrKey) : undefined;
+    const key = self ? self.message_key : (typeof idOrKey === 'string' && RECORD_ID_RE.test(idOrKey) ? idOrKey : null);
+    const copies = key ? d.prepare(`SELECT ${SUM} FROM rec WHERE message_key = ? ORDER BY captured, id`).all(key) : self ? [self] : [];
+    const contained = key
+      ? d.prepare(`SELECT ${SUM.split(', ').map((c) => `r.${c}`).join(', ')} FROM att a JOIN rec r ON r.id = a.rec_id WHERE a.att_key = ? AND r.message_key IS NOT ? ORDER BY r.captured, r.id`).all(key, key)
+      : [];
+    const original = copies.find((r) => r.copy_kind === 'direct' && r.body_status === 'matched');
+    return { message_key: key ?? null, original: original ? original.id : null, copies: copies.map(sum), contained_in: contained.map(sum) };
+  }, { message_key: typeof idOrKey === 'string' && RECORD_ID_RE.test(idOrKey) ? idOrKey : null, original: null, copies: [], contained_in: [] });
 }
