@@ -298,6 +298,22 @@ test('without the better-sqlite3 addon: record, get, verify, check, matchBody wo
   await mp.close();
 });
 
+test('a rebuild past the git output cap rejects with ERR_INDEX_REBUILD naming the cause and the limit; a normal one works', async () => {
+  const { createIndex } = await import('../../src/proof/index-db.js');
+  const dir = makeTmpDir('mp-ix-cap-');
+  const a = await signedMail({ signTime: T0, subject: 'A', body: 'Hi\r\n', domain: 'a.example' });
+  const mp = new Mailproof({ trailDir: dir, resolver: stubResolver(a.map), worker: { size: 0 }, now: at(5) });
+  await mp.record(a.raw, { direction: 'in', source: 'test' });
+  await mp.close();
+  const cfg = { root: path.join(dir, 'default'), trail: 'default', lockTimeoutMs: 5000 };
+  const tiny = createIndex({ ...cfg, gitMaxBuffer: 10 });
+  await assert.rejects(tiny.list(), (e) => e.code === 'ERR_INDEX_REBUILD' && /git output limit/.test(e.message) && /10-byte/.test(e.message));
+  await tiny.close();
+  const ok = createIndex(cfg);
+  assert.equal((await ok.list()).length, 1);
+  await ok.close();
+});
+
 test('better-sqlite3 is imported by src/proof/index-db.js and by nothing else in src/', () => {
   const src = fileURLToPath(new URL('../../src/', import.meta.url));
   const hits = [];

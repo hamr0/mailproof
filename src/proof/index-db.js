@@ -13,7 +13,8 @@
 // record is already committed, and the next query catches up through the HEAD mismatch.
 //
 // One code path: if better-sqlite3 cannot load there is no fallback to a full read, `list`/`copies` reject with
-// `ERR_INDEX_UNAVAILABLE`.
+// `ERR_INDEX_UNAVAILABLE`. A rebuild lists every committed record id through one `git ls-tree` call whose output is
+// capped at 16 MB (about 350,000 records); a trail past that rejects with `ERR_INDEX_REBUILD`.
 
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -54,6 +55,15 @@ const str = (v) => (typeof v === 'string' ? v : null);
 function unavailable(cause) {
   const why = cause && typeof cause === 'object' && 'code' in cause && typeof cause.code === 'string' ? ` (${cause.code})` : '';
   return Object.assign(new Error(`trail index unavailable: the better-sqlite3 native addon could not be loaded${why}`), { code: 'ERR_INDEX_UNAVAILABLE', cause });
+}
+
+/**
+ * @param {unknown} cause
+ * @param {number} limit  The output cap that was hit, in bytes.
+ * @returns {Error & { code: string }}
+ */
+function rebuildTooLarge(cause, limit) {
+  return Object.assign(new Error(`trail index rebuild failed: the list of committed records exceeds the ${limit}-byte git output limit (about ${Math.floor(limit / 47).toLocaleString('en-US')} records); the trail is too large to index`), { code: 'ERR_INDEX_REBUILD', cause });
 }
 
 /** @param {unknown} e @returns {boolean} A damaged index file (rebuilt from the records), as opposed to any other failure. */
@@ -126,10 +136,10 @@ async function readMany(root, ids) {
 /**
  * A handle on the trail's index. Nothing is touched until the first query: the addon is loaded and the file created
  * then, and only when the trail has a commit.
- * @param {{ root: string, trail: string, lockTimeoutMs: number }} cfg
+ * @param {{ root: string, trail: string, lockTimeoutMs: number, gitMaxBuffer?: number }} cfg  `gitMaxBuffer` is internal (tests): the output cap for the rebuild's record listing.
  * @returns {TrailIndex}
  */
-export function createIndex({ root, trail, lockTimeoutMs }) {
+export function createIndex({ root, trail, lockTimeoutMs, gitMaxBuffer = 16 * 1024 * 1024 }) {
   const file = path.join(path.dirname(root), trailIndexFile(trail));
   const lockFile = trailLockFile(trail);
   /** @type {Db | null} */
@@ -223,7 +233,15 @@ export function createIndex({ root, trail, lockTimeoutMs }) {
       }).immediate();
       return;
     }
-    const read = await readMany(root, idsFromPaths(await git(root, ['ls-tree', '-r', '--name-only', '-z', head, '--', 'records'])));
+    /** @type {string} */
+    let listing;
+    try {
+      listing = await git(root, ['ls-tree', '-r', '--name-only', '-z', head, '--', 'records'], { maxBuffer: gitMaxBuffer });
+    } catch (e) {
+      const c = e instanceof Error ? /** @type {{ code?: string }} */ (e.cause) : null;
+      throw c?.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' ? rebuildTooLarge(e, gitMaxBuffer) : e;
+    }
+    const read = await readMany(root, idsFromPaths(listing));
     d.transaction(() => {
       d.exec('DELETE FROM rec; DELETE FROM att; DELETE FROM meta;');
       for (const [id, r] of read) { const x = rowOf(id, r); if (x) put(x); }

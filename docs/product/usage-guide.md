@@ -68,6 +68,8 @@ Trust levels: `verified` (aligned DKIM pass, and DMARC pass if the domain publis
 
 `replyText(raw)` takes a reply you already recorded and returns only what the sender newly wrote (quoted history removed), so a reply that merely quotes "Approve payment of $5,000?" is not read as an approval. Its stripper is versioned and deterministic: anyone with the raw email re-runs it and gets the same text and the same `text_sha256`. mailproof never interprets the words; that is the consumer's job.
 
+**Privacy note.** The trail stores no reply text, only its `text_sha256`. For a short reply ("yes", "approve", "no") that hash can be recovered by hashing candidate words, so the trail is as private as the people who can read it: whoever can read it can confirm a guessed short answer. Keep the trail readable only by those you would trust with the replies themselves.
+
 **Is the text proven (`proven`)?** `proven` is true only when `body_status` is `matched` and the text came from a `text/plain` part.
 
 | Outcome | `proven` | What it means |
@@ -214,7 +216,7 @@ A trail has a single writer at a time, enforced by a lock file (`<trailDir>/.<tr
 
 ## Listing and the trail index (`list`, `copies`)
 
-`list` and `copies` read a rebuildable SQLite index kept beside the trail (`<trailDir>/.<trail>.index.sqlite`, not in git, safe to delete). It is built on the first call, then kept current from the trail's git HEAD. While it catches up, these calls wait on the trail lock (`ERR_TRAIL_LOCKED` after `lockTimeoutMs`). If the `better-sqlite3` native addon cannot load on your platform, they reject with `code: 'ERR_INDEX_UNAVAILABLE'` (there is no fallback); `record`, `get`, `verify`, `matchBody`, `matchFile`, `replyText` and `sync` never need it. Equal `captured` values come in ascending id order. The index is navigation, not proof: re-check with `verify`.
+`list` and `copies` read a rebuildable SQLite index kept beside the trail (`<trailDir>/.<trail>.index.sqlite`, not in git, safe to delete). It is built on the first call, then kept current from the trail's git HEAD. While it catches up, these calls wait on the trail lock (`ERR_TRAIL_LOCKED` after `lockTimeoutMs`). If the `better-sqlite3` native addon cannot load on your platform, they reject with `code: 'ERR_INDEX_UNAVAILABLE'` (there is no fallback). A first build (or a rebuild) of a trail with more than about 350,000 records rejects with `code: 'ERR_INDEX_REBUILD'` (the list of committed records outgrows a 16 MB git output limit). `record`, `get`, `verify`, `matchBody`, `matchFile`, `replyText` and `sync` never need it. Equal `captured` values come in ascending id order. The index is navigation, not proof: re-check with `verify`.
 
 `copies(idOrKey)` returns every recorded copy of one signed message. The id is the hash of the raw bytes, so a list-relayed or forwarded copy is its own record; `message_key` groups them, and each record carries `copy: { kind: direct|relayed|forward|digest|unknown, evidence }`.
 

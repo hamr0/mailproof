@@ -217,6 +217,28 @@ jobs:
             }
             console.log('primitives.json ok:', names.length, 'primitives');
           "
+          # The native addon: record() an unsigned message (no DNS; recorded
+          # `unverified`), then list() must load better-sqlite3 from the installed
+          # tarball (it has no install script; --ignore-scripts proves the prebuild
+          # is shipped) and create the index file beside the trail.
+          node --input-type=module -e "
+            import fs from 'node:fs';
+            import os from 'node:os';
+            import path from 'node:path';
+            import { Mailproof } from 'mailproof';
+            const trailDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-smoke-'));
+            const mp = new Mailproof({ trailDir, worker: { size: 0 } });
+            await mp.record(Buffer.from('From: a@a.example\\r\\nTo: b@b.example\\r\\nMessage-ID: <smoke-1@a.example>\\r\\nSubject: smoke\\r\\n\\r\\nhello\\r\\n'), { direction: 'in', source: 'smoke' });
+            const rows = await mp.list();
+            const index = path.join(trailDir, '.default.index.sqlite');
+            await mp.close();
+            if (rows.length !== 1 || !fs.existsSync(index)) {
+              console.error('index smoke failed:', rows, fs.existsSync(index));
+              process.exit(1);
+            }
+            fs.rmSync(trailDir, { recursive: true, force: true });
+            console.log('index ok: better-sqlite3 loaded, 1 entry,', path.basename(index));
+          "
       - name: Publish
         if: steps.check.outputs.skip == 'false'
         run: |
