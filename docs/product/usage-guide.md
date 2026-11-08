@@ -19,6 +19,18 @@ What a record proves:
 
 What it does not: proof of delivery, legal admissibility, or what a message means. A sender who never signs cannot be proven, and SPF can never be re-checked from stored data (the portable verdict is DKIM only).
 
+## What mailproof stores about other people
+
+Not legal advice.
+
+Proof records contain personal data even without a body: email addresses, display names, CC lists, dates and subject lines. The subject is the riskiest, because it can carry sensitive content. It is usually inside the DKIM-signed headers, so it cannot be dropped without breaking offline verification.
+
+**Today (2.2.0)** mailproof stores proofs only: signed headers, verdicts, archived keys and hashes. Never the body.
+
+**Planned (M3, not built):** content (the raw email and attachments) is also stored locally by default and deleted after 730 days unless you configure otherwise. Proofs are permanent. Prune-before-date is the tool for a proof retention policy.
+
+Whoever runs mailproof keeps that data and is responsible for it. An individual using it for personal purposes is generally outside GDPR-style rules. A business keeps records as evidence, which is a recognised lawful purpose (the right to erasure has an exception for data needed to establish or defend legal claims). It still needs a stated purpose and a retention policy.
+
 ## Which surface do I use
 
 | You want | Use |
