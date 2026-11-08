@@ -12,7 +12,9 @@ are written to `~/mailproof-m2-review/` (mode 700, outside the repo) for the own
 
 - `strip.mjs`: the stripper. Hand-written header/MIME parsing, Content-Transfer-Encoding (7bit/8bit/binary,
   quoted-printable, base64) and charset via `TextDecoder` (fatal off); no mailparser, so the result depends on the
-  bytes and the stripper version only. format=flowed is unfolded. Output: `text`, `text_sha256`, `text_bytes`
+  bytes and the stripper version only (on a Node whose `TextDecoder` is right for windows-1252 and GBK: the shipped
+  `src/proof/reply-text.js` decodes those two in-house, F21, and this frozen POC does not, so the unit parity test
+  skips its windows-1252 fixtures on Node 22.19.0). format=flowed is unfolded. Output: `text`, `text_sha256`, `text_bytes`
   (UTF-8), `quote`, `source` (`text/plain` or `html-only`), the boundary kind. Signatures are not stripped.
 - `run.mjs`: the harness. Collects replies/forwards, runs the stripper twice (determinism), runs it again with the
   detectors off (control), runs the real `Mailproof#check()` for `body_status` (worker size 0, no trail written,
