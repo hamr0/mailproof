@@ -73,6 +73,22 @@ function authenticateMessage(raw, envelope = {}, { mtaHostname = null, resolver 
   });
 }
 
+/**
+ * Each distinct attachment (by sha256) once, with its bytes.
+ * @param {NonNullable<ParsedMail['attachments']>} list
+ * @returns {Array<{ sha256: string, bytes: Buffer }>}
+ */
+function distinctContents(list) {
+  /** @type {Map<string, Buffer>} */
+  const seen = new Map();
+  for (const a of list) {
+    if (!a.content) continue;
+    const sha256 = hashDocument(a.content);
+    if (!seen.has(sha256)) seen.set(sha256, a.content);
+  }
+  return [...seen].map(([sha256, bytes]) => ({ sha256, bytes }));
+}
+
 // Parse an inbound message into the structured shape the kernel consumes.
 // `attachments[].sha256` is the `hashDocument` fingerprint of the part's bytes
 // (mandatory auto-hash of every inbound attachment).
@@ -80,9 +96,11 @@ function authenticateMessage(raw, envelope = {}, { mtaHostname = null, resolver 
  * Parse raw bytes into the structured shape the kernel consumes. Attachment
  * bytes are hashed (`hashDocument`) then dropped. Deterministic, no network.
  * @param {Buffer | string} raw
+ * @param {{ keepAttachments?: boolean }} [opts]  `keepAttachments`: also return each distinct attachment's bytes (the
+ *   content store, SPEC B7), still never persisted by this function.
  * @returns {Promise<ParsedMessage>}
  */
-async function parseMessage(raw) {
+async function parseMessage(raw, { keepAttachments = false } = {}) {
   const parsed = await simpleParser(raw);
   const from = (parsed.from && parsed.from.value && parsed.from.value[0]) || {};
   const attachments = (parsed.attachments || []).map((a) => ({
@@ -97,6 +115,7 @@ async function parseMessage(raw) {
     references: Array.isArray(parsed.references) ? parsed.references : (parsed.references ? String(parsed.references).split(/\s+/).filter(Boolean) : []),
     attachments,
     rawSha256: hashDocument(raw),
+    ...(keepAttachments ? { attachmentBytes: distinctContents(parsed.attachments || []) } : {}),
     subject: parsed.subject || null,
     // message/rfc822 parts (forwards as attachment): transient, for the copy link only
     rfc822: (parsed.attachments || []).filter((a) => a.contentType === 'message/rfc822' && Buffer.isBuffer(a.content)).map((a) => /** @type {Buffer} */ (a.content)),

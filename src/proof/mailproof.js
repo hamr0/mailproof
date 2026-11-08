@@ -9,7 +9,8 @@ import { guardResolver, systemResolver } from './resolver-guard.js';
 import { engine } from './verdict.js';
 import { createOts, DEFAULT_OTS_TIMEOUT_MS } from './ots.js';
 import { verifyRecord, matchBodyRecord, matchFileRecord } from './recheck.js';
-import { TRAIL_NAME_RE, RECORD_ID_RE, DEFAULT_LOCK_TIMEOUT_MS, commitRecord, commitFiles, readRecord } from './trail.js';
+import { TRAIL_NAME_RE, RECORD_ID_RE, DEFAULT_LOCK_TIMEOUT_MS, commitRecord, commitFiles, readRecord, withTrailLock, trailLockFile } from './trail.js';
+import { parseContentOptions, contentDirOf, storeContent, readRaw, readAttachment, expireStore, forgetIds, idsWith, exists, toMs, DAY_MS } from './content.js';
 import { STRIPPER, replyTextPath, extractReplyText, replyTextRecord } from './reply-text.js';
 import { hashDocument } from './hash.js';
 
@@ -21,6 +22,9 @@ const OTS_MIN_TIMEOUT_MS = 5000; // floor for the `ots` timeout, however short l
 /** @typedef {import('./types.js').MailauthResult} MailauthResult */
 /** @typedef {{ id: string, text: string, text_sha256: string, text_bytes: number, quote: 'found' | 'not-found' | 'inline', trailing: boolean, source: 'text/plain' | 'html-only', boundary: string | null, stripper: string, body_status: import('./types.js').BodyStatus, proven: boolean, commit: string, duplicate: boolean }} ReplyText */
 
+/** @typedef {import('./content.js').ContentResult} ContentResult */
+/** @typedef {{ removed: number, attachments: number }} Forgotten */
+
 /**
  * @typedef {Object} MailproofOptions
  * @property {string} trailDir  Directory holding the trails; each trail is a git repo inside it.
@@ -30,6 +34,7 @@ const OTS_MIN_TIMEOUT_MS = 5000; // floor for the `ots` timeout, however short l
  * @property {() => Date} [now]  Clock (tests inject one).
  * @property {string[]} [trustedSealers]  ARC sealer domains whose chains may yield `forwarded` (live only).
  * @property {import('./pool.js').WorkerOptions} [worker]  The deadline backstop (default on): the parsing and verifying half of `check()`/`record()` runs in a warm worker thread that is killed when one message uses more than `cpuMs` (15000) of the thread's CPU, `wallMs` (120000) of busy wall time (DNS waits excluded) or `maxMemoryMb` (1536) of heap plus external memory. The message is then recorded `unverified` as `over limit: time` / `over limit: memory`; a worker that dies for no nameable reason gives `over limit: crash`. `size` is the number of warm workers (default 1); `size: 0` runs everything in-process, with no backstop. Needs Node 22.19 or later.
+ * @property {{ store?: boolean, attachments?: boolean, days?: number }} [content]  The local content store (SPEC B7): the raw email and its attachments, kept beside the trail (`<trailDir>/<trail>.content/`), outside git. `store` (default true) keeps the raw email of every recorded message; `store: false` is "proof only" (nothing is written, the caller supplies raw bytes). `attachments` (default true) also keeps attachment files, once per distinct sha256. `days` (default 730) is how long content is kept after the record's `captured` time (`expireContent()`, run at the end of every `sync()`). Records are never deleted.
  * @property {number} [lockTimeoutMs]  How long `record()` waits for another writer of the same trail (default 30000). On timeout it throws `ERR_TRAIL_LOCKED` and writes nothing. With `otsBin`, the OTS stamp runs inside that lock and is cut off after `clamp(floor(lockTimeoutMs / 3), 5000, 30000)` ms, so a short `lockTimeoutMs` shortens the stamp (5 s floor), and concurrent writers can wait up to that long behind a slow stamp.
  */
 
@@ -45,10 +50,10 @@ function otsTimeoutMs(lockTimeoutMs) {
 class Mailproof {
   /**
    * @param {MailproofOptions} opts
-   * @signature new Mailproof({ trailDir: string, trail?: string, resolver?: Function, otsBin?: string|null, now?: () => Date, trustedSealers?: string[], lockTimeoutMs?: number, worker?: { size?: number, cpuMs?: number, wallMs?: number, maxMemoryMb?: number } })
+   * @signature new Mailproof({ trailDir: string, trail?: string, resolver?: Function, otsBin?: string|null, now?: () => Date, trustedSealers?: string[], lockTimeoutMs?: number, worker?: { size?: number, cpuMs?: number, wallMs?: number, maxMemoryMb?: number }, content?: { store?: boolean, attachments?: boolean, days?: number } })
    * @when Start here. Construct one per trail (a git repo of records under `trailDir`), then `record()` each email you want a re-checkable proof of and `verify()` it later, offline. All methods are bound, so `const { verify } = mp` works.
    * @category proof
-   * @fails Throws at construction when `trailDir` is missing, `trail` is not `[a-z0-9][a-z0-9_-]{0,63}`, or `worker` holds an unknown key or a bad value. Nothing touches the disk until the first `record()`. With `otsBin`, the OTS stamp runs inside the writer lock and is cut off after `clamp(floor(lockTimeoutMs / 3), 5000, 30000)` ms: a short `lockTimeoutMs` shortens the stamp (5 s floor), and concurrent writers can wait up to that long behind a slow stamp.
+   * @fails Throws at construction when `trailDir` is missing, `trail` is not `[a-z0-9][a-z0-9_-]{0,63}`, or `worker` or `content` holds an unknown key or a bad value (`content.store` and `content.attachments` must be booleans, `content.days` a positive integer). Nothing touches the disk until the first `record()`. With `otsBin`, the OTS stamp runs inside the writer lock and is cut off after `clamp(floor(lockTimeoutMs / 3), 5000, 30000)` ms: a short `lockTimeoutMs` shortens the stamp (5 s floor), and concurrent writers can wait up to that long behind a slow stamp.
    * @example
    * import { Mailproof } from 'mailproof';
    * const mp = new Mailproof({ trailDir: './trails' });
@@ -66,6 +71,8 @@ class Mailproof {
     this.now = opts.now || (() => new Date());
     this.trustedSealers = opts.trustedSealers || [];
     this.worker = workerConfig(opts.worker);
+    this.content = parseContentOptions(opts.content);
+    this.contentDir = contentDirOf(this.root);
     /** @type {{ run: import('./pool.js').WorkerPool['run'], runReplyText: import('./pool.js').WorkerPool['runReplyText'], release: () => Promise<void> } | null} */
     this._lease = null;
     /** Internal (tests): the git output cap, in bytes, for the index's catch-up and rebuild listings. @type {number | undefined} */
@@ -83,6 +90,10 @@ class Mailproof {
     this.copies = this.copies.bind(this);
     this.sync = this.sync.bind(this);
     this.replyText = this.replyText.bind(this);
+    this.rawEmail = this.rawEmail.bind(this);
+    this.attachment = this.attachment.bind(this);
+    this.expireContent = this.expireContent.bind(this);
+    this.forget = this.forget.bind(this);
     this.close = this.close.bind(this);
   }
 
@@ -93,10 +104,11 @@ class Mailproof {
    * (`over limit: time` / `over limit: memory`), or whose worker crashed (`over limit: crash`).
    * @param {Buffer | string} raw
    * @param {{ direction: 'in' | 'out', source: string, envelope?: Envelope }} ctx
+   * @param {{ keepAttachments?: boolean }} [opts]  Return the attachment bytes too (`record()` with the content store on).
    * @returns {Promise<import('./build.js').Built>}
    *   `overLimit`: the name of the limit the message exceeded, else null.
    */
-  async _build(raw, ctx) {
+  async _build(raw, ctx, { keepAttachments = false } = {}) {
     const buf = Buffer.isBuffer(raw) ? raw : Buffer.from(String(raw ?? ''));
     if (buf.length === 0) throw new Error('Mailproof: empty message');
     // Only the three envelope fields the build reads (parse.js authenticateMessage) go on: extra caller fields are
@@ -114,10 +126,10 @@ class Mailproof {
     if (this.worker.size === 0) {
       // loaded here, not at the top: with a worker, only the worker pays for mailauth and mailparser
       const { buildRecord } = await import('./build.js');
-      return buildRecord(buf, ctx, { captured, hasEnvelope, trustedSealers, resolver });
+      return buildRecord(buf, ctx, { captured, hasEnvelope, trustedSealers, resolver, keepAttachments });
     }
     this._lease ??= leasePool(this.worker);
-    const r = await this._lease.run(buf, { ctx, captured, hasEnvelope, trustedSealers }, resolver);
+    const r = await this._lease.run(buf, { ctx, captured, hasEnvelope, trustedSealers, keepAttachments }, resolver);
     return 'out' in r ? r.out : overLimitRecord(buf, ctx, { captured, hasEnvelope, trustedSealers }, r.limit);
   }
 
@@ -186,22 +198,26 @@ class Mailproof {
    * Record a message: verdicts + signed-header record + key archive + one git commit.
    * @param {Buffer | string} raw  The raw RFC-822 bytes.
    * @param {{ direction: 'in' | 'out', source?: string, envelope?: Envelope }} ctx
-   * @returns {Promise<{ id: string, duplicate: boolean, commit: string, record?: MpRecord, ots?: 'off' | 'pending' | { error: string } }>}
+   * @returns {Promise<{ id: string, duplicate: boolean, commit: string, record?: MpRecord, ots?: 'off' | 'pending' | { error: string }, content?: ContentResult }>}
+   *   `content`: absent when the content store is off (`content.store: false`); else `{ stored, attachments, error? }`: whether the raw email is in the store after this call, how many distinct attachment files are, and the reason when a write failed (the proof is committed regardless). A duplicate of a message whose content is missing (and not yet expired) writes it now.
    *   `ots`: 'off' unless `otsBin` is set; 'pending' once the stamp is committed beside the record; `{ error }`
    *   when stamping failed (the record is committed regardless: accept-with-flag).
    * @name Mailproof#record
-   * @when Use to keep a proof of an email (one record per distinct copy, marked `direct` / `relayed` / `forward` / `digest`): it stores the signed headers, the signature, the archived key, both verdicts and the body status (`body_status`: did the body match the signed `bh=`, with hints on what changed) as one git commit, and never the body. Call it for every email you may need to prove later, including ones that fail verification (they are recorded as `unverified`).
+   * @when Use to keep a proof of an email (one record per distinct copy, marked `direct` / `relayed` / `forward` / `digest`): it stores the signed headers, the signature, the archived key, both verdicts and the body status (`body_status`: did the body match the signed `bh=`, with hints on what changed) as one git commit, and never the body in the trail. With the content store on (the default) the raw email and its attachments are also kept beside the trail, outside git, for `rawEmail()`, `attachment()`, `replyText({ id })` and `matchBody(id)`. Call it for every email you may need to prove later, including ones that fail verification (they are recorded as `unverified`).
    * @category proof
-   * @signature mp.record(raw: Buffer|string, ctx: { direction: 'in'|'out', source?: string, envelope?: Envelope }) => Promise<{ id, duplicate, commit, record?, ots? }>
-   * @fails Throws on an empty message, a `direction` other than 'in'/'out', a git failure (the tree is rolled back: only files this call created are removed), or `err.code === 'ERR_TRAIL_LOCKED'` when another process holds the trail's writer lock for longer than `lockTimeoutMs` (nothing is written; retry later). Never throws because the mail is unsigned or fails verification. A message over an input limit, or one the worker backstop stopped (see `check()`), is still recorded (committed, accept-with-flag) but never parsed or verified, and no DNS is asked: `unverified` with `reason: 'over limit: <name>'` on both verdicts, `signatures: []`, `body_status` `not-checked`, and only the `id`, `raw_sha256` and `size` taken from the bytes (`message_id` null, no attachments, `copy.kind` `unknown`, `message_key` null). This includes a header block over 256 KiB, which used to reject with `EMAXLEN` and record nothing. The id is the hash of the raw bytes: the identical bytes recorded twice return `duplicate: true` and write nothing, while a copy with any byte difference (a list footer, an added header) is its own record, linked by `message_key` (see `copies()`). An OTS failure or timeout is reported in `ots`, not thrown; the stamp runs inside the writer lock, so it is cut off after `clamp(floor(lockTimeoutMs / 3), 5000, 30000)` ms.
+   * @signature mp.record(raw: Buffer|string, ctx: { direction: 'in'|'out', source?: string, envelope?: Envelope }) => Promise<{ id, duplicate, commit, record?, ots?, content? }>
+   * @fails Throws on an empty message, a `direction` other than 'in'/'out', a git failure (the tree is rolled back: only files this call created are removed), or `err.code === 'ERR_TRAIL_LOCKED'` when another process holds the trail's writer lock for longer than `lockTimeoutMs` (nothing is written; retry later). Never throws because the mail is unsigned or fails verification. A message over an input limit, or one the worker backstop stopped (see `check()`), is still recorded (committed, accept-with-flag) but never parsed or verified, and no DNS is asked: `unverified` with `reason: 'over limit: <name>'` on both verdicts, `signatures: []`, `body_status` `not-checked`, and only the `id`, `raw_sha256` and `size` taken from the bytes (`message_id` null, no attachments, `copy.kind` `unknown`, `message_key` null). This includes a header block over 256 KiB, which used to reject with `EMAXLEN` and record nothing. The id is the hash of the raw bytes: the identical bytes recorded twice return `duplicate: true` and write nothing, while a copy with any byte difference (a list footer, an added header) is its own record, linked by `message_key` (see `copies()`). An OTS failure or timeout is reported in `ots`, not thrown; the stamp runs inside the writer lock, so it is cut off after `clamp(floor(lockTimeoutMs / 3), 5000, 30000)` ms. A content-store write failure (disk full, permissions) never fails the call and never loses the proof: the record commits and `content` is `{ stored: false, attachments: 0, error }`. If the commit fails, the content files this call created are removed with the rest. The raw email of a message over 25 MiB is not stored.
    * @example
    * const { id, duplicate } = await mp.record(fs.readFileSync('mail.eml'), { direction: 'in', source: 'file' });
    */
   async record(raw, ctx) {
     if (!ctx || (ctx.direction !== 'in' && ctx.direction !== 'out')) throw new Error("record: ctx.direction must be 'in' or 'out'");
     const source = typeof ctx.source === 'string' && ctx.source ? ctx.source.slice(0, 200) : 'api';
-    const { record, keyFiles } = await this._build(raw, { direction: ctx.direction, source, envelope: ctx.envelope });
-    return this._commit(record, keyFiles);
+    const buf = Buffer.isBuffer(raw) ? raw : Buffer.from(String(raw ?? ''));   // as _build reads it
+    const keepAttachments = this.content.store && this.content.attachments;
+    const { record, keyFiles, attachmentBytes } = await this._build(buf, { direction: ctx.direction, source, envelope: ctx.envelope }, { keepAttachments });
+    const atts = (attachmentBytes ?? []).map((a) => ({ sha256: a.sha256, bytes: Buffer.from(a.bytes.buffer, a.bytes.byteOffset, a.bytes.byteLength) }));   // a worker hands back plain Uint8Arrays
+    return this._commit(record, keyFiles, this.content.store ? { id: record.id, raw: buf, attachments: atts } : null);
   }
 
   /**
@@ -209,9 +225,10 @@ class Mailproof {
    * `record()` and of `_recordDigest()`.
    * @param {MpRecord} record
    * @param {Array<{ rel: string, json: unknown }>} keyFiles
-   * @returns {Promise<{ id: string, duplicate: boolean, commit: string, record?: MpRecord, ots?: 'off' | 'pending' | { error: string } }>}
+   * @param {import('./content.js').ContentJob | null} [content]  What the content store should keep (null: nothing).
+   * @returns {Promise<{ id: string, duplicate: boolean, commit: string, record?: MpRecord, ots?: 'off' | 'pending' | { error: string }, content?: ContentResult }>}
    */
-  async _commit(record, keyFiles) {
+  async _commit(record, keyFiles, content = null) {
     const message = `record ${record.id.slice(0, 12)} ${record.direction} ${record.verdicts.live.trust}/${record.verdicts.portable.trust}`;
     const ots = this.ots;
     /** @type {'off' | 'pending' | { error: string }} */
@@ -222,10 +239,22 @@ class Mailproof {
       otsState = 'pending';
       return [`records/${record.id}.json.ots`];
     } : undefined;
-    const res = await commitRecord(this.root, this.trail, { record, keyFiles, message, now: this.now, afterWrite, lockTimeoutMs: this.lockTimeoutMs });
+    /** @type {ContentResult | undefined} */
+    let contentState;
+    const sideFiles = content ? async (/** @type {boolean} */ duplicate) => {
+      if (duplicate) {   // backfill, unless the retention of the existing record has already run out
+        const old = await readRecord(this.root, record.id);
+        const at = old ? Date.parse(old.captured) : NaN;
+        if (Number.isFinite(at) && at < this.now().getTime() - this.content.days * DAY_MS) { contentState = { stored: false, attachments: 0 }; return []; }
+      }
+      const { result, created } = await storeContent(this.contentDir, this.content, content);
+      contentState = result;
+      return created;
+    } : undefined;
+    const res = await commitRecord(this.root, this.trail, { record, keyFiles, message, now: this.now, afterWrite, sideFiles, lockTimeoutMs: this.lockTimeoutMs });
     return res.duplicate
-      ? { id: record.id, duplicate: true, commit: res.commit }
-      : { id: record.id, duplicate: false, commit: res.commit, record, ots: otsState };
+      ? { id: record.id, duplicate: true, commit: res.commit, ...(contentState ? { content: contentState } : {}) }
+      : { id: record.id, duplicate: false, commit: res.commit, record, ots: otsState, ...(contentState ? { content: contentState } : {}) };
   }
 
   /**
@@ -245,19 +274,27 @@ class Mailproof {
   /**
    * The text the sender newly wrote in a recorded reply (quoted history removed), with proof flags, and a small
    * `reply-text` record committed to the trail (SPEC B6).
-   * @param {Buffer | string} raw  The raw RFC-822 bytes of a message already recorded in this trail.
+   * @param {Buffer | string | { id: string }} raw  The raw RFC-822 bytes of a message already recorded in this trail, or `{ id }` to read them from the content store.
    * @returns {Promise<ReplyText>}
    * @name Mailproof#replyText
-   * @when Use to read what a person actually wrote in a reply they sent you, without the quoted history (the trap: a reply that quotes "Approve payment of $5,000?" is not an approval). Record the email first (`record()`, or `sync()`), then hand the same raw bytes to this. `text` is the new text; `proven` is true only when the recorded body matched the signed `bh=` (`body_status` `matched`), so the text really came from that signed email; `quote` says whether a quote boundary was found (`found`), none was (`not-found`: the whole body is returned) or the answer is written inside the quote (`inline`); `trailing` says unquoted text follows the quote and was not returned. The stripper is the versioned, deterministic `mailproof-quote/1`: anyone with the raw email re-runs it and gets the same text byte for byte. Signatures are not stripped. Interpreting the text (approve or decline, in any language) is the consumer's job, not mailproof's.
+   * @when Use to read what a person actually wrote in a reply they sent you, without the quoted history (the trap: a reply that quotes "Approve payment of $5,000?" is not an approval). Record the email first (`record()`, or `sync()`), then hand the same raw bytes to this, or just `{ id }` when the content store holds them (the default). `text` is the new text; `proven` is true only when the recorded body matched the signed `bh=` (`body_status` `matched`), so the text really came from that signed email; `quote` says whether a quote boundary was found (`found`), none was (`not-found`: the whole body is returned) or the answer is written inside the quote (`inline`); `trailing` says unquoted text follows the quote and was not returned. The stripper is the versioned, deterministic `mailproof-quote/1`: anyone with the raw email re-runs it and gets the same text byte for byte. Signatures are not stripped. Interpreting the text (approve or decline, in any language) is the consumer's job, not mailproof's.
    * @category proof
-   * @signature mp.replyText(raw: Buffer|string) => Promise<{ id, text, text_sha256, text_bytes, quote, trailing, source, boundary, stripper, body_status, proven, commit, duplicate }>
-   * @fails Rejects with `err.code === 'ERR_NOT_RECORDED'` when the message is not committed in this trail (record it first), `ERR_OVER_LIMIT` with `err.limit` set when the message is over an input limit or the worker backstop stopped it (`total_bytes`, ..., `time`, `memory`, `crash`; nothing is written), `ERR_TRAIL_LOCKED` when another writer holds the trail longer than `lockTimeoutMs`, or a plain Error on an empty message or a git failure (rolled back). A message with no text/plain part is not an error: `source: 'html-only'`, `text` '' and `proven` false. The committed record holds fingerprints and flags only, never the text, the body or the subject; the same message and stripper version again returns the text with `duplicate: true` and writes nothing. `partial` body status (an `l=` signed prefix) is unproven in v1. `proven: false` is normal for mail received at Outlook/msn from outside (Microsoft alters the body): the words are unproven while the signed headers still verify; receive replies whose words matter at Gmail.
+   * @signature mp.replyText(raw: Buffer|string|{ id: string }) => Promise<{ id, text, text_sha256, text_bytes, quote, trailing, source, boundary, stripper, body_status, proven, commit, duplicate }>
+   * @fails `{ id }` with no stored content (store off, expired, forgotten, or the file failed its hash check) rejects with `err.code === 'ERR_NO_CONTENT'`; an `id` that is not 32 hex is a plain Error. Rejects with `err.code === 'ERR_NOT_RECORDED'` when the message is not committed in this trail (record it first), `ERR_OVER_LIMIT` with `err.limit` set when the message is over an input limit or the worker backstop stopped it (`total_bytes`, ..., `time`, `memory`, `crash`; nothing is written), `ERR_TRAIL_LOCKED` when another writer holds the trail longer than `lockTimeoutMs`, or a plain Error on an empty message or a git failure (rolled back). A message with no text/plain part is not an error: `source: 'html-only'`, `text` '' and `proven` false. The committed record holds fingerprints and flags only, never the text, the body or the subject; the same message and stripper version again returns the text with `duplicate: true` and writes nothing. `partial` body status (an `l=` signed prefix) is unproven in v1. `proven: false` is normal for mail received at Outlook/msn from outside (Microsoft alters the body): the words are unproven while the signed headers still verify; receive replies whose words matter at Gmail.
    * @example
    * const { id } = await mp.record(raw, { direction: 'in' });
    * const r = await mp.replyText(raw);   // r.text, r.proven, r.quote, r.trailing
+   * const again = await mp.replyText({ id });   // the same, from the stored raw email
    */
   async replyText(raw) {
-    const buf = Buffer.isBuffer(raw) ? raw : Buffer.from(String(raw ?? ''));
+    /** @type {Buffer} */
+    let buf;
+    if (raw !== null && typeof raw === 'object' && !Buffer.isBuffer(raw) && !(raw instanceof Uint8Array) && 'id' in raw) {
+      if (typeof raw.id !== 'string' || !RECORD_ID_RE.test(raw.id)) throw new Error('replyText: id must be 32 hex characters');
+      const got = await readRaw(this.contentDir, raw.id);
+      if (!got.buf) throw Object.assign(new Error(`replyText: no stored content for ${raw.id} in trail "${this.trail}" (${got.status === 'corrupt' ? 'the stored file failed its hash check' : 'not stored, expired or forgotten'})`), { code: 'ERR_NO_CONTENT' });
+      buf = got.buf;
+    } else buf = Buffer.isBuffer(raw) ? raw : Buffer.from(String(raw ?? ''));
     if (buf.length === 0) throw new Error('Mailproof: empty message');
     const id = hashDocument(buf).replace(/^sha256:/, '').slice(0, 32);   // the id record() gives these bytes
     const rec = await this.get(id);
@@ -284,6 +321,90 @@ class Mailproof {
       source: s.source, boundary: s.boundary, stripper: STRIPPER, body_status,
       proven: s.source === 'text/plain' && body_status === 'matched', commit: res.commit, duplicate: res.duplicate,
     };
+  }
+
+  /**
+   * The stored raw email of a record, re-hashed on read.
+   * @param {string} id  32 hex chars.
+   * @returns {Promise<Buffer | null>}
+   * @name Mailproof#rawEmail
+   * @when Use to get the original bytes of a recorded email back from the local content store (on by default), long after the mailbox has deleted it: hand them to any DKIM tool, to `replyText`, or to an auditor. Nothing leaves the machine. The bytes are checked on every read: their sha256 must be the id, so what you get is exactly what was captured.
+   * @category read
+   * @signature mp.rawEmail(id: string) => Promise<Buffer|null>
+   * @fails Never throws. Returns null for an unknown or malformed id, a store that is off or never held it, content that expired or was forgotten, and a stored file whose hash is not the id (a corrupt or tampered file is never returned; the record still verifies). Takes no lock.
+   * @example
+   * const raw = await mp.rawEmail(id);   // Buffer or null
+   */
+  async rawEmail(id) {
+    return (await readRaw(this.contentDir, id)).buf;
+  }
+
+  /**
+   * A stored attachment by its sha256, re-hashed on read.
+   * @param {string} sha256  `sha256:<hex>` as in `record.attachments[].sha256` (bare hex also works).
+   * @returns {Promise<Buffer | null>}
+   * @name Mailproof#attachment
+   * @when Use to get an attachment of a recorded email back from the local content store (the sha256 comes from `get(id).attachments[]`). An attachment is stored once however many emails carried it.
+   * @category read
+   * @signature mp.attachment(sha256: string) => Promise<Buffer|null>
+   * @fails Never throws. Returns null for a malformed hash, a store without attachments (`content.attachments: false`, or `store: false`), content that expired or was forgotten, and a stored file whose sha256 is not the one asked for (never returned). Takes no lock.
+   * @example
+   * const [a] = (await mp.get(id)).attachments;
+   * const bytes = await mp.attachment(a.sha256);
+   */
+  async attachment(sha256) {
+    return (await readAttachment(this.contentDir, sha256)).buf;
+  }
+
+  /**
+   * Delete stored content older than the retention (`content.days`, counted from each record's `captured`).
+   * @param {{ now?: Date | number }} [opts]  `now` overrides the clock (tests).
+   * @returns {Promise<Forgotten>}
+   * @name Mailproof#expireContent
+   * @when Use to enforce retention on demand; `sync()` already calls it once at the end of every run. Only content goes (raw emails, and attachment files no remaining stored email references): records, archived keys and git history are never touched, so every proof still verifies.
+   * @category content
+   * @signature mp.expireContent(opts?: { now?: Date|number }) => Promise<{ removed: number, attachments: number }>
+   * @fails Rejects with `ERR_TRAIL_LOCKED` when another writer holds the trail longer than `lockTimeoutMs` (nothing is deleted; retry later), or a TypeError for a `now` that is not a Date or finite number. A missing content directory returns zeros without creating anything. A record that cannot be read, or has no usable `captured`, keeps its content. Idempotent. Runs under the trail lock; cost grows with the number of stored emails (SPEC B7).
+   * @example
+   * const { removed, attachments } = await mp.expireContent();
+   */
+  async expireContent({ now } = {}) {
+    const nowMs = now === undefined ? this.now().getTime() : toMs(now, 'now');
+    if (!(await exists(this.contentDir))) return { removed: 0, attachments: 0 };
+    return withTrailLock(this.root, trailLockFile(this.trail), this.lockTimeoutMs, () => expireStore(this.root, this.contentDir, this.content.days, nowMs));
+  }
+
+  /**
+   * Delete the stored content of chosen emails now, keeping their proofs.
+   * @param {string | string[] | { with: string, before?: Date | number | string, after?: Date | number | string }} target  A record id, an array of ids, or every stored email with a counterparty: `with` is one exact address on the From, To or Cc line (case-insensitive), `after` (inclusive) and `before` (exclusive) bound the capture time.
+   * @returns {Promise<Forgotten>}
+   * @name Mailproof#forget
+   * @when Use to erase what you hold of other people's mail earlier than retention would: one email, a list, or everything with one correspondent. Only the raw email and attachment files not needed by any remaining stored email are deleted. The proof stays: headers, verdicts, hashes and archived keys still re-verify offline, and anyone who later produces the raw email (sha256 = the record id) or an attachment gets it re-checked.
+   * @category content
+   * @signature mp.forget(target: string|string[]|{ with: string, before?, after? }) => Promise<{ removed: number, attachments: number }>
+   * @fails Throws a TypeError for a malformed id, an empty or non-string `with`, or a bad `before`/`after`; `ERR_TRAIL_LOCKED` as `expireContent()`. An id with nothing stored is not an error (`removed` counts only what was deleted), so it is idempotent. The counterparty is found from the From/To/Cc lines of the signed headers in the record, of the unsigned record's `from`, and of the stored raw email's header block; the match is exact, `bob@gmail.com` is not `bob@company.com`.
+   * @example
+   * await mp.forget(id);
+   * await mp.forget({ with: 'bob@example.com', before: '2026-01-01' });
+   */
+  async forget(target) {
+    /** @type {string[] | null} */
+    let ids = null;
+    /** @type {{ with: string, before?: Date | number | string, after?: Date | number | string } | null} */
+    let query = null;
+    if (typeof target === 'string') ids = [target];
+    else if (Array.isArray(target)) ids = target;
+    else if (target && typeof target === 'object') {
+      if (typeof target.with !== 'string' || !/^[^\s@]+@[^\s@]+$/.test(target.with.trim())) throw new TypeError('forget: with must be an email address');
+      toMs(target.before ?? 0, 'before'); toMs(target.after ?? 0, 'after');   // validate before taking the lock
+      query = target;
+    } else throw new TypeError('forget: target must be an id, an array of ids, or { with }');
+    if (ids) for (const id of ids) if (typeof id !== 'string' || !RECORD_ID_RE.test(id)) throw new TypeError('forget: ids must be 32 hex characters');
+    if (!(await exists(this.contentDir))) return { removed: 0, attachments: 0 };
+    return withTrailLock(this.root, trailLockFile(this.trail), this.lockTimeoutMs, async () => {
+      const list = ids ?? await idsWith(this.root, this.contentDir, /** @type {NonNullable<typeof query>} */ (query));
+      return forgetIds(this.root, this.contentDir, new Set(list));
+    });
   }
 
   /**
@@ -314,19 +435,25 @@ class Mailproof {
    * Body-match: hash a raw email's body against the record's `bh=`. A match
    * that also verifies at capture time is a full proof (`full`).
    * @param {MpRecord | string} recordOrId
-   * @param {Buffer | string} raw
-   * @returns {Promise<{ match: boolean, full: boolean, signatures: Array<{ index: number, d: string | null, s: string | null, match: boolean }> }>}
+   * @param {Buffer | string} [raw]  Omit to read the raw email from the content store.
+   * @returns {Promise<{ match: boolean, full: boolean, signatures: Array<{ index: number, d: string | null, s: string | null, match: boolean }>, reason?: string }>}
    * @name Mailproof#matchBody
-   * @when Use when the original email turns up later (a mailbox copy, an .eml) and you want to know it is the one the record signed. A match upgrades the record to a full proof (`full`).
+   * @when Use when the original email turns up later (a mailbox copy, an .eml) and you want to know it is the one the record signed. A match upgrades the record to a full proof (`full`). Leave `raw` out and the stored raw email is used (content store, on by default).
    * @category verify
-   * @signature mp.matchBody(recordOrId: Record|string, raw: Buffer|string) => Promise<{ match, full, signatures[] }>
-   * @fails Never throws on a malformed record (non-array `signatures`, junk entries: `match: false`). Returns `match: false` for a different email, an unknown record, a message over an input limit (not examined, see `check()`) or a body altered in transit (mail exported by some clients is altered; `verify()` can still pass in that case).
+   * @signature mp.matchBody(recordOrId: Record|string, raw?: Buffer|string) => Promise<{ match, full, signatures[], reason? }>
+   * @fails Never throws on a malformed record (non-array `signatures`, junk entries: `match: false`). Returns `match: false` for a different email, an unknown record, a message over an input limit (not examined, see `check()`) or a body altered in transit (mail exported by some clients is altered; `verify()` can still pass in that case). With `raw` omitted and no usable stored content (store off, expired, forgotten, or the file failed its hash check) it returns `match: false` with a `reason`.
    * @example
    * const m = await mp.matchBody(id, fs.readFileSync('mail.eml'));   // m.full
+   * const s = await mp.matchBody(id);   // against the stored raw email
    */
   async matchBody(recordOrId, raw) {
     const rec = await this._resolve(recordOrId);
     if (!rec) return { match: false, full: false, signatures: [] };
+    if (raw === undefined) {
+      const got = await readRaw(this.contentDir, rec.id);
+      if (!got.buf) return { match: false, full: false, signatures: [], reason: got.status === 'corrupt' ? 'stored content failed its hash check' : 'no stored content' };
+      return matchBodyRecord(rec, got.buf);
+    }
     return matchBodyRecord(rec, raw);
   }
 
@@ -423,7 +550,7 @@ class Mailproof {
    * // res.complete, res.folders[0].recorded; call again until res.complete is true
    */
   async sync(opts) {
-    const host = { root: this.root, trail: this.trail, record: this.record, recordDigest: (/** @type {{ raw_sha256: string, size: number }} */ d, /** @type {{ direction: 'in' | 'out', source: string }} */ c) => this._recordDigest(d, c) };
+    const host = { root: this.root, trail: this.trail, record: this.record, recordDigest: (/** @type {{ raw_sha256: string, size: number }} */ d, /** @type {{ direction: 'in' | 'out', source: string }} */ c) => this._recordDigest(d, c), expireContent: this.expireContent };
     return runSync(host, opts, {
       openSession: async (args) => (await import('./imap.js')).openSession(args),
     });

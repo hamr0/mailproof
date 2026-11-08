@@ -282,6 +282,7 @@ const realSleep = (ms) => new Promise((r) => setTimeout(r, ms));
  * @property {string} root
  * @property {string} trail
  * @property {(raw: Buffer, ctx: { direction: 'in' | 'out', source: string }) => Promise<{ duplicate: boolean, record?: import('./types.js').MpRecord }>} record
+ * @property {() => Promise<unknown>} [expireContent]  Retention sweep of the content store, called once at the end of a run (errors ignored).
  * @property {(digest: { raw_sha256: string, size: number }, ctx: { direction: 'in' | 'out', source: string }) => Promise<{ duplicate: boolean, record?: import('./types.js').MpRecord }>} recordDigest
  */
 
@@ -589,6 +590,8 @@ async function runSync(host, rawOpts, deps) {
       sess = null;
       if (s) await s.close().catch(() => {});
     }
+    // Retention (SPEC B7): once per run, after the mailbox work. A failure here never fails the run (records are in).
+    if (host.expireContent) await host.expireContent().catch(() => {});
     return { complete: results.every((r) => r.complete), folders: results };
   }, SYNC_LOCK);
 }

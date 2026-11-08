@@ -42,6 +42,7 @@
  * @property {string} rawSha256  `sha256:`-prefixed hex of the raw bytes.
  * @property {string | null} [subject]  Decoded Subject (transient; never stored outside signed_headers).
  * @property {Buffer[]} [rfc822]  Raw bytes of each `message/rfc822` part (transient).
+ * @property {Array<{ sha256: string, bytes: Buffer }>} [attachmentBytes]  Each distinct attachment with its bytes; only when `keepAttachments` was asked (transient: the content store).
  */
 
 /**

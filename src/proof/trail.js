@@ -352,13 +352,18 @@ async function listIds(root) {
  * @param {string} name
  * @param {{ rel: string, json: unknown, requires?: string, keyFiles?: Array<{ rel: string, json: unknown }>, message: string, now: () => Date,
  *           afterWrite?: (fileAbs: string) => Promise<string[]>,
+ *           sideFiles?: (duplicate: boolean) => Promise<string[]>,
  *           lockTimeoutMs?: number }} job
+ *   `sideFiles` writes files outside git (the content store, SPEC B7), under the same lock: it is called with `true`
+ *   when the file is already committed (a backfill) and with `false` just before the git commit. It must not throw
+ *   (a side-file problem never loses the proof); it returns the absolute paths it newly created, which are removed
+ *   if the commit fails.
  *   `rel` is the trail-relative path of the file and `json` its content. `requires`: a trail-relative path that must
  *   be committed in HEAD (checked under the lock), else `ERR_NOT_RECORDED`. `afterWrite` may add files next to the
  *   file (the OTS proof); it returns their trail-relative paths.
  * @returns {Promise<{ duplicate: boolean, commit: string, extra: string[] }>}
  */
-async function commitFiles(root, name, { rel, json, requires, keyFiles = [], message, now, afterWrite, lockTimeoutMs = DEFAULT_LOCK_TIMEOUT_MS }) {
+async function commitFiles(root, name, { rel, json, requires, keyFiles = [], message, now, afterWrite, sideFiles, lockTimeoutMs = DEFAULT_LOCK_TIMEOUT_MS }) {
   return withTrailLock(root, trailLockFile(name), lockTimeoutMs, async () => {
     await ensureTrail(root, name, now().toISOString());
     await clearLeftovers(root);
@@ -366,12 +371,15 @@ async function commitFiles(root, name, { rel, json, requires, keyFiles = [], mes
       throw Object.assign(new Error(`not recorded: ${requires} is not committed in trail "${name}"`), { code: 'ERR_NOT_RECORDED' });
     }
     if (await inHead(root, rel)) {
+      if (sideFiles) await sideFiles(true);
       return { duplicate: true, commit: await git(root, ['rev-parse', 'HEAD']), extra: [] };
     }
     /** @type {string[]} */
     const written = []; // only paths that did not exist before this call wrote them
     /** @type {{ duplicate: boolean, commit: string, extra: string[] }} */
     let res;
+    /** @type {string[]} */
+    let sideCreated = [];
     try {
       for (const k of keyFiles) {
         const abs = path.join(root, k.rel);
@@ -385,11 +393,13 @@ async function commitFiles(root, name, { rel, json, requires, keyFiles = [], mes
       await fs.writeFile(path.join(root, rel), serialise(json));
       const extra = afterWrite ? await afterWrite(path.join(root, rel)) : [];
       written.push(...extra);
+      if (sideFiles) sideCreated = await sideFiles(false);
       await git(root, ['add', '--', ...written]);
       await git(root, ['commit', '-m', message]);
       res = { duplicate: false, commit: await git(root, ['rev-parse', 'HEAD']), extra };
     } catch (err) {
       try { await git(root, ['reset', '-q']); } catch { /* nothing staged */ }
+      for (const f of sideCreated) await fs.rm(f, { force: true });
       for (const r of written) {
         if (!(await isTracked(root, r))) await fs.rm(path.join(root, r), { force: true });
       }
@@ -405,6 +415,7 @@ async function commitFiles(root, name, { rel, json, requires, keyFiles = [], mes
  * @param {string} name
  * @param {{ record: MpRecord, keyFiles: Array<{ rel: string, json: unknown }>, message: string, now: () => Date,
  *           afterWrite?: (recordAbs: string) => Promise<string[]>,
+ *           sideFiles?: (duplicate: boolean) => Promise<string[]>,
  *           lockTimeoutMs?: number }} job
  * @returns {Promise<{ duplicate: boolean, commit: string, extra: string[] }>}
  */
