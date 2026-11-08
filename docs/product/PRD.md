@@ -221,7 +221,7 @@ It stores no text, no body bytes and no subject (the trail stays header-only). I
 
 ### M3 — Two-party record (specified)
 
-**Status:** specified 2026-11-08, not built; sending and the bareguard recipe still open (see Open below). Reasons and options: [decisions-log](decisions-log.md) entry "M3 scope: one trail per owned account, local content store, prune-before-date, CLI + stdlib MCP". No wire formats yet; they go to SPEC Part B when each step is built.
+**Status:** specified 2026-11-08, approvals round added 2026-11-09, not built; a few items still open (see Open below). Reasons and options: [decisions-log](decisions-log.md) entry "M3 scope: one trail per owned account, local content store, prune-before-date, CLI + stdlib MCP". No wire formats yet; they go to SPEC Part B when each step is built.
 
 **Goal.** M3 makes mailproof a two-party record for three use cases on one substrate:
 
@@ -285,6 +285,43 @@ Commit ids after the cutoff change. Kept record files, DKIM proofs, keys, OTS st
 - **Trust profile:** a read-side policy primitive. It sets allowed senders or domains (for example only `@gmail.com`), required checks (DKIM aligned, DMARC, SPF, ARC), required body level (proven / partial / any) and required link strength. Agents use it to gate which email they act on. It is local, deterministic and costs nothing, and can be re-evaluated later on the same record (audit replay).
 - **Graded proof per part:** the email and each attachment have separate results ("email valid, attachment is not the one recorded").
 
+#### Approvals and the fact bundle
+
+Owner decisions, 2026-11-09. Reasons and options: [decisions-log](decisions-log.md) entry "M3 approvals: mailproof never sends; supplies a flat fact bundle; bareguard decides".
+
+- **mailproof never sends email.** It silently shadows the mailbox. Whoever starts an exchange (an agent, bareguard's approval recipe) sends the question with its own tools from the user's own account, ideally setting its own Message-ID. mailproof records the request from Sent and the reply from Inbox like any other mail. The "no third-party sending provider" rule stays intact (§12 Q6).
+- **mailproof supplies, consumers decide.** mailproof never interprets or filters on a consumer's behalf. A new read primitive, `replyFacts({ messageId })` (name proposed), returns a fact bundle for the reply to that Message-ID, or null when there is none. It comes later, after the content store and the read primitives exist. The trust profile stays a separate, optional primitive.
+- **The bundle is flat JSON with string values only.** Each flag comes from a closed set, and claimed and proven values are sibling keys. This shape was agreed with bareguard's session: its rubric reads only its own top-level keys, compares strings exactly, and no rule reads booleans or nested objects. Field names are indicative; they are final at build.
+
+| Field | Meaning |
+|---|---|
+| `messageId` | Message-ID of the reply |
+| `recordId`, `commit`, `trail` | where the reply is recorded |
+| `from` | claimed From address, lower-cased |
+| `fromRaw` | the From address exactly as written |
+| `fromDkimAligned` | `pass`, `fail` or `none`: proven |
+| `to`, `cc` | claimed addresses, lower-cased |
+| `toRaw`, `ccRaw` | the same addresses exactly as written (if convenient) |
+| `date`, `subject` | claimed headers |
+| `dkim`, `dmarc`, `spf`, `arc`, `live`, `portable` | mailproof's existing string verdicts |
+| `link` | `signed`: the request's Message-ID is in a DKIM-signed In-Reply-To/References. `unsigned`: present but not signed. `none`: absent |
+| `text` | the new reply text (M2) |
+| `firstLine` | see below |
+| `bodyProven` | `proven` or `unproven` |
+| `quote` | `found`, `not-found` or `inline` |
+| `attachments` | hashes, as one string |
+
+  **Address fields are supplied normalised.** `from`, `to`, `cc` (and any domain field) are lower-cased, and the contract says so. Reason: bareguard's `in` rule is exact and case-sensitive, so `Ana@Company.com` would not match `ana@company.com` and a genuine approval would be denied. Domains are case-insensitive and mailbox local parts are case-insensitive in practice. The address exactly as written is also supplied as a sibling (`fromRaw`; `toRaw` and `ccRaw` if convenient), so nothing is hidden.
+
+  Multi-value fields (`to`, `cc`, `attachments`) are one string with a stated separator, decided at build and documented then.
+- **`firstLine` is a contract.** Take the new reply text that `replyText` returns (quoted history removed). Split it on any line break (`\r\n`, `\n`, `\r`). Take the first line that is non-empty after trimming. Trim with ECMAScript `String.prototype.trim` (spaces, tabs, NBSP, BOM and other WhiteSpace/LineTerminator characters at both ends). No case folding, no Unicode normalisation. It is `""` when there is no such line. When the text is unproven, `text` and `firstLine` are still supplied and `bodyProven` is `unproven`.
+- **Reference recipe (bareguard side, not mailproof behaviour).** The question email asks the human to reply with an exact approval word chosen by the user (for example `APPROVE`) as the first line. The user-signed rubric uses bareguard's existing `in` rule: `firstLine` in the approval word(s) (exact, case-sensitive), `from` in the allowed addresses (write rubric values for `from` in lower case), `fromDkimAligned` in `["pass"]`, `bodyProven` in `["proven"]`, `link` in `["signed"]`. Anything not green is not approved: "I do not approve", unlisted lower-case variants and empty replies all fail. The adapter (bareguard's `humanChannel`) is documented on mailproof's side, because bareguard imports no peers. It sends the question, polls `replyFacts` until non-null or its own timer fires (set below bareguard's `humanChannelTimeoutMs`; bareguard denies on its timeout but does not cancel the channel), runs bareguard's `checkStep` on the bundle, and returns `{decision}`. One answer per ask: later mail cannot change a returned decision. The proof reference goes into bareguard's audit through `reason` (`mailproof:<recordId>@<commit>`) and/or `gate.annotate` meta. Bareguard's approval line drops extra keys today; a first-class field would be a bareguard change and is not needed now.
+- **Known limitation, Microsoft (documented; no workaround, no carve-out).**
+  - Microsoft does not sign In-Reply-To/References ([F11](findings.md)). A reply from a Microsoft-hosted sender (outlook.com, msn.com, Microsoft 365 business domains) gets `link` = `unsigned`. Its text is still extracted (the stripper recognises Outlook's quote block) and, when received at a Gmail-like mailbox, is still proven.
+  - Mail received at an Outlook/Exchange mailbox has altered bodies ([F10](findings.md)), so `bodyProven` is always `unproven` there. Receive approvals at a non-Microsoft mailbox.
+  - A strict rubric (`link` in `["signed"]`) rejects Microsoft approvers. A relaxed one (`link` in `["signed","unsigned"]`) accepts them, at a cost: a genuine old approval from the same sender could be re-sent and accepted, because nothing signed ties it to the new question. That choice belongs to the bareguard user.
+  - Considered and rejected: a per-question tag in the subject or quoted body (it works, since Microsoft signs Subject, but the owner chose to keep this a known limitation); a tag in git (git only proves what we sent, not what their signed reply answers).
+
 #### Interfaces
 
 - **Library** (exists).
@@ -301,16 +338,16 @@ Commit ids after the cutoff change. Kept record files, DKIM proofs, keys, OTS st
 3. Prune before date.
 4. `mailproof` CLI, config and menu.
 5. MCP, after its POC.
+6. `replyFacts`, after the content store and read primitives (steps 1-2).
 
-POC first where the mechanism is unproven: the stdlib MCP server, and the prune replay. Approvals via bareguard become a recipe on top of steps 2 and 5.
+POC first where the mechanism is unproven: the stdlib MCP server, and the prune replay. Approvals via bareguard become a recipe on top of steps 2, 5 and 6.
 
-#### Open (next interview round, not decided)
+#### Open (not decided)
 
-- **Sending the request email** (§12 Q6): own-mailbox SMTP, bring-your-own Message-ID, or other. A new dependency would need the checklist, and sending partly reopens the "no third-party sending provider" rule.
-- **The bareguard recipe or adapter:** what reply text counts as "approve", and at which trust bar (for example, proven text required?).
 - **MCP write tools** and their human gate.
 - **`watch` mechanism:** interval vs IMAP IDLE. A mechanism choice, decided at build.
 - **Pair/thread export:** whether a minimal one ships in M3 or waits for M6.
+- **Provider sampling (evidence task, not done):** sample one reply each from Yahoo, iCloud, Proton and Fastmail to see whether they sign In-Reply-To/References. Signing is per-provider configuration; only Gmail and Microsoft are measured.
 
 ### M4 — Appointments (highlights)
 
@@ -388,7 +425,7 @@ Node ≥ 22.19 (`Worker#cpuUsage`, see F15).
 3. Gmail login method: OAuth or app password? **Answered for app passwords: `AUTHENTICATE PLAIN` over TLS works on the owner's account; OAuth not tested, see [F17](findings.md).**
 4. Are Gmail's Sent copies DKIM-signed? **Closed (owner, 2026-11-01): moot.** Own sent records are `unverified` regardless ([F3](findings.md)); the proof of sending is the counterparty's signed copy, and Gmail does sign outbound from the owner's gmail.com address (the batch-3 gmail.com-signed message, [F11](findings.md)).
 5. Does Gmail add its own ARC seal / `Authentication-Results` on inbound that could make its SPF verdict portable? **Answered: yes on 8/8 inbound copies (google.com ARC set plus Authentication-Results with spf=); whether to use it is open, see [F17](findings.md).**
-6. Sending from a normal mailbox in M3 vs the no-third-party-provider rule. **Still open**, listed under M3 "Open".
+6. Sending from a normal mailbox in M3 vs the no-third-party-provider rule. **Answered 2026-11-09: mailproof does not send.** The initiator sends with its own tools; the rule stays intact, see M3 "Approvals and the fact bundle".
 7. Privacy wording for storing other people's addresses and subjects (not legal advice). **Answered 2026-11-08:** see the note [What mailproof stores about other people](usage-guide.md#what-mailproof-stores-about-other-people).
 8. OTS stamp per sync run vs per email. **Decided (owner, 2026-11-03): per record, as today; advise OTS off for backfills, see [SPEC B4.5](SPEC.md).**
 9. IMAP as an in-core dependency vs a separate package, if the dependency checklist fails. **Decided (owner, 2026-11-03): in core as the third dependency (checklist passed, [F16](findings.md)), see [SPEC B4.6](SPEC.md).**
