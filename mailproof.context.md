@@ -1,14 +1,23 @@
-# mailproof (v2) - Integration Guide
+# mailproof - Integration Guide
 
 ## What this is
 
-mailproof records a re-checkable proof of each email in a **two-party (A to B) exchange** in a local git trail: the signed headers, never the body. The sender's DKIM public key is archived at capture, so anyone can verify the record offline, years later, after the key has left DNS. Pure ESM, Node >= 22.19, runtime deps `mailauth` + `mailparser` + `imapflow` (the last only for `sync`). Wire formats: `docs/product/SPEC.md` Part B (repo only).
+mailproof records a re-checkable proof of each email in a **two-party (A to B) exchange** in a local git trail: the signed headers, never the body. The sender's DKIM public key is archived at capture, so anyone can verify the record offline, years later, after the key has left DNS. Pure ESM, Node >= 22.19, runtime deps `mailauth` + `mailparser` + `imapflow` (only for `sync`) + `better-sqlite3` (only for `list` and `copies`). Wire formats: `docs/product/SPEC.md` Part B (repo only).
 
 ## What mailproof is and is not
 
-- It is a recorder and an offline verifier: `record`, `verify`, `matchBody`, `matchFile`, `check`, `list`, `get`, and a read-only IMAP fetcher in front of `record`: `sync`.
+- It is a recorder and an offline verifier: `record`, `verify`, `matchBody`, `matchFile`, `check`, `list`, `get`, `replyText`, and a read-only IMAP fetcher in front of `record`: `sync`.
 - It is not a mail client, a sender, a web UI or a multi-party workflow engine (those are gitdone/signedreply.com), not proof of delivery, and not a claim of legal admissibility.
 - It produces a verdict; acting on it is the consumer's job.
+
+## Which entry point do I need?
+
+- One-off verdict on an email, nothing written -> `check(raw)`.
+- Record mail your own pipeline receives (for example a Postfix pipe) -> `record(raw, { direction, source, envelope })`; map `ERR_TRAIL_LOCKED` to exit 75.
+- Capture a mailbox over IMAP -> `sync(...)`, or the `mailproof-sync` CLI under cron or a systemd timer.
+- Re-check later or elsewhere, offline -> `verify(id)`, or `verifyRecord(record)` with no trail.
+- Read what a sender newly wrote in a recorded reply -> `replyText(raw)`, then apply the decision rule in "Reading a reply" below.
+- Build an agent tool menu -> `primitives.json` (14 primitives) plus this file.
 
 ## Minimal usage
 
@@ -49,10 +58,35 @@ All methods are bound: `const { verify } = mp` works. `await mp.close()` stops t
 - `list({ limit?, direction? })`, `get(id)`.
 - `sync({ host, port?, user, auth: { pass } | { accessToken }, folders?, sent?, maxMessages?, maxBytes?, tls?: { ca } })` -> `{ complete, folders: [{ folder, direction, attempted, uidvalidity, reset, last_uid, seen, recorded, duplicate, over_limit, skipped[], bytes, complete, error }] }`. Reads one mailbox over IMAP (implicit TLS, certificate always checked, `EXAMINE` + `BODY.PEEK`, so nothing is marked seen, moved or deleted) and `record()`s each message: `folders` (default `['INBOX']`) as `in`, the `\Sent` folder (`sent: true`, default; a path string; `false` skips) as `out`, `source` `imap:<folder>`. One account per call; you obtain and refresh an OAuth token yourself. A resume cursor is kept in `<trailDir>/.<trail>.sync.json` beside the trail (not in git); caps per folder per run are 1,000 messages and 512 MiB (options can only lower them) and 30 minutes per call, so loop until `complete` is true. A trail restored from an older backup or replaced is detected (the cursor records the trail's HEAD) and the folders rescan with `reset: 'trail'`; no manual step. A re-fetched message has the same bytes, so it is `duplicate`, never a second record. Over 25 MiB: streamed through a hash and recorded `over limit: total_bytes`; over 128 MiB: in `skipped`. Provider Sent copies are unsigned, so they record `unverified`. No envelope on IMAP, so `authorized` cannot occur. Throws a TypeError for bad options, then only `ERR_IMAP_AUTH`, `ERR_IMAP_CONNECT` or `ERR_SYNC_LOCKED` (a second `sync` on the trail: fails at once); everything else is in a folder's `error` (`ERR_IMAP_NO_FOLDER`, `ERR_IMAP_NO_SENT`, `ERR_IMAP_PROTOCOL`, `ERR_IMAP_TIMEOUT`, `ERR_IMAP_THROTTLED`, `ERR_IMAP_UIDVALIDITY`, `ERR_TRAIL_LOCKED`). The first trail error stops the run. The credential is never logged, returned or stored. Leave OTS off for a backfill.
 - `copies(idOrKey)` -> `{ message_key, original, copies[], contained_in[] }`: every recorded copy of one signed message (the id is the raw-bytes hash, so a list-relayed or forwarded copy is its own record; `message_key` groups them), the derived `original` (earliest `direct` copy with a matched body), and the records (forwards, list digests) that carry it as an attached original. Each record has `copy: { kind: direct|relayed|forward|digest|unknown, evidence }`.
+- `list` and `copies` read a rebuildable SQLite index kept beside the trail (`<trailDir>/.<trail>.index.sqlite`, not in git, safe to delete; opened for each call and closed before it returns, so nothing stays open between calls and `close()` has nothing to do for it; built on the first call, then caught up from the trail's git HEAD on the next call after a `record()`). If the `better-sqlite3` native addon cannot load on the platform they reject with `code: 'ERR_INDEX_UNAVAILABLE'` (no fallback); a build over about 350,000 records rejects with `ERR_INDEX_REBUILD` (16 MB git output limit; a catch-up over the limit falls back to the rebuild); `record`, `get`, `verify`, `matchBody`, `matchFile` and `sync` never need it. While the index catches up they wait on the trail lock (`ERR_TRAIL_LOCKED` after `lockTimeoutMs`). Equal `captured` values come in ascending id order. The index is navigation, not proof: re-check with `verify`.
 
 `verifyRecord(record, { at? })` is the same offline check as a pure function, so a third party can verify an exported record with no trail.
 
 Portable `verified` covers the signed headers; read `body_status` for the body. Each record carries `body_status` and, per signature, `body: { status, explain[] }` (`matched` / `partial` / `mismatch` / `not-checked`; `explain` entries `{ kind, detail }` are counts and domains only: `l_tag`, `appended`, `prepended`, `canonicalisation`, `line_endings`, `forwarded`, `mailing_list`, `search_capped`, `unknown`). It never changes a trust verdict.
+
+## Reply text (`replyText`)
+
+`replyText(raw)` -> `{ id, text, text_sha256, text_bytes, quote, trailing, source, boundary, stripper, body_status, proven, commit, duplicate }`. Give it the raw bytes of a reply you already recorded; it returns only what the sender newly wrote (quoted history removed), so a reply that merely quotes "Approve payment of $5,000?" is not read as an approval. Interpreting the text is yours; mailproof does not decide what a reply means.
+- `proven` is true only when the recorded `body_status` is `matched` (the body matches the signed `bh=`) and the text came from a `text/plain` part. `partial` (an `l=` prefix), `mismatch` (for example Outlook/Exchange-received copies) and `not-checked` (unsigned, over limit, your own Sent copy) are unproven: the text is still returned, flagged.
+- `quote`: `found` (a quote boundary was cut), `not-found` (none; the whole body is returned, never a guess), `inline` (answers written inside the quote; not merged). `trailing: true`: unquoted text follows the quote (a signature, or bottom-posted text) and is NOT in `text`; read the raw email if you need it. Signatures are not stripped.
+- `source: 'html-only'`: no text/plain part, nothing extracted (`text` '', `proven` false).
+- The stripper is versioned and deterministic (`mailproof-quote/1`): anyone with the raw email re-runs it and gets the same text and `text_sha256` (over its UTF-8 bytes). One small `reply-text` record (hash, byte count, flags, `body_status`, time; never the text, body or subject) is committed to `replies/<id>.mailproof-quote-1.json`; the same message again is `duplicate: true` and writes nothing. Show the text you acted on; its hash matches `text_sha256` in a commit dated before the action.
+- Privacy: `text_sha256` of a short reply ("yes", "approve") is guessable by hashing candidates; the trail is as private as the people who can read it, and they can confirm a guessed short answer.
+- Errors: `ERR_NOT_RECORDED` (record the message first), `ERR_OVER_LIMIT` with `err.limit` (nothing written), `ERR_TRAIL_LOCKED`. It runs in the worker pool like `record`. Known limits of `/1`: tested on English-style attributions and Outlook/Foxmail header blocks; the name after the verb (`... schreef Amr <a@x>:`) and, above a `>` run, any language's attribution line (ends in `:` with a year, hh:mm or `@`) are cut; a quote WITHOUT `>` marks in a language whose verb is not listed falls through to `not-found`. Wire format: `docs/product/SPEC.md` B6.
+
+## Reading a reply: what each outcome means
+
+| Field | Value | Meaning |
+|---|---|---|
+| `proven` | true | `body_status` is `matched` and the text came from `text/plain`: the words are exactly what the signing server sent. |
+| `proven` | false | Words unproven; text is still returned, flagged. Causes: `partial` (only an `l=` prefix is signed), `mismatch` (body altered after signing), `not-checked` (unsigned, over limit, your own Sent copy), `source: 'html-only'` (text is ''). |
+| `quote` | `found` | Normal: `text` is what sits above the quote boundary. |
+| `quote` | `not-found` / `inline` | Whole body returned (never a guess) / answers written inside the quote, not merged. A human reads it. |
+| `trailing` | true | Unquoted text follows the quote (signature or bottom-posted text) and is NOT in `text`. Read the raw mail if it matters. |
+
+- **What stays proven when the body is not:** the sender domain and the signed headers (the portable verdict is unaffected). Threading ("this sender replied to that email") is proven only if the signer covers `In-Reply-To` in `h=`: Gmail does, Microsoft does not (an msn.com-signed reply has no signed threading even when its body matches).
+- **The receiving rule:** mail received at Gmail keeps its body intact whoever sent it. Mail from outside received at Outlook/msn is altered by Microsoft, so `body_status` is `mismatch` and the words are unproven while the headers still verify. msn to msn matched once: a hint, not a rule. So replies whose words matter should be received at Gmail (or another mailbox that does not alter bodies) and captured with `sync`.
+- **Decision rule for an agent:** `proven: false` -> show the text to a human, do not act on it alone. `trailing: true` -> more text sits below the quote; read the raw mail if it matters. `quote: 'not-found'` or `'inline'` -> a human reads it. Otherwise the text is the sender's new words, provably from that signed email; interpreting them is the consumer's job, mailproof never does.
 
 ## What's NOT in mailproof, and why
 
@@ -76,7 +110,7 @@ mailproof-sync --trail-dir /var/lib/mailproof --user you@gmail.com \
   --pass-command "pass show mailproof/gmail_pass"      # host imap.gmail.com, folders INBOX, sent on
 ```
 
-Flags (env fallback `MAILPROOF_<NAME>`): `--trail-dir`, `--trail`, `--host`, `--port`, `--user`, `--folders a,b`, `--sent on|off`, `--pass-command` (split into arguments, run without a shell; first stdout line is the password), `--pass-file`, `--access-token-command` (OAuth2 XOAUTH2). With none of the secret sources, the password is read from stdin. Spaces inside an app password are stripped.
+Flags (env fallback `MAILPROOF_<NAME>`): `--trail-dir`, `--trail`, `--host`, `--port`, `--user`, `--folders a,b`, `--sent on|off`, `--pass-command` (split into arguments, run without a shell; first stdout line is the password), `--pass-file`, `--access-token-command` (OAuth2 XOAUTH2). With none of the secret sources, the password is read from stdin. Spaces are stripped only from Google's app-password display shape (four groups of four lowercase letters); any other password is sent as given, minus surrounding whitespace.
 
 Exit codes: `0` finished (a run cut short by a cap also exits 0 with `"complete": false` and no error: the next run continues from the cursor); `75` try later (`ERR_SYNC_LOCKED` or `ERR_TRAIL_LOCKED`, server unreachable, timeout, throttled); `77` login refused; `64` bad usage; `1` anything else.
 

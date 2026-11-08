@@ -1,6 +1,6 @@
 {
   "name": "mailproof",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "description": "Re-checkable proof of an email: the signed headers, never the body, recorded in a local git trail and verifiable offline forever. Two verdicts (live, portable), DKIM key archive, optional OpenTimestamps.",
   "type": "module",
   "main": "src/index.js",
@@ -70,6 +70,7 @@
     "NOTICE"
   ],
   "dependencies": {
+    "better-sqlite3": "^13.0.3",
     "imapflow": "^2.10.0",
     "mailauth": "^8.0.4",
     "mailparser": "^3.14.1"

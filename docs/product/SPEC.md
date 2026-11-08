@@ -239,7 +239,7 @@ Caller options `maxMessages` / `maxBytes` take the **smaller** of the option and
 
 ### B4.6 Dependency and wrapper
 
-- **imapflow is the third (last) runtime dependency** (F16; the ceiling of 3 is reached). The lockfile is the pin (it releases weekly); `check:lockfile` stays a CI gate.
+- **imapflow is the third runtime dependency** (F16; `better-sqlite3`, the fourth, followed in B5). The lockfile is the pin (it releases weekly); `check:lockfile` stays a CI gate.
 - **One importer.** `src/proof/imap.js` is the only module that imports `imapflow`. It exposes a small plain-data interface and nothing from imapflow's types leaks out (no `BigInt`, no stream objects other than a Node `Readable` consumed inside it):
 
   ```js
@@ -315,6 +315,106 @@ Owner decisions on the six forks; rationale in [decisions-log](decisions-log.md)
 - **`captured`:** the fetch time, no new field. The age evidence is the signed `Date`/`t=`.
 - **OTS:** per record as today; advise OTS off for backfills. No new proof type.
 - **IMAP:** in core as the third dependency (F16). One library, one entry point.
+
+## B5. Trail index (`list`, `copies`)
+
+`list()` and `copies()` answer from a SQLite file, not by reading every record (F18, F19). It is a cache: the trail's JSON records stay the single source of truth, nothing is stored only there, and deleting the file loses nothing.
+
+- **File.** `<trailDir>/.<trail>.index.sqlite` (plus SQLite's `-wal` and `-shm` while open), beside the lock file and outside the git repo: never committed, never in a clone. **Lifecycle: opened per query.** Each `list`/`copies` opens the file, does the HEAD check, catch-up or rebuild and the query, and closes it before returning (a throw closes it too); no handle, statement or connection lives between calls, so `close()` has nothing of the index to wait for or release. Concurrent calls in one process each open their own connection (WAL); concurrent first builds serialise on the trail lock, and the second finds the HEAD already stored. Created on the first `list`/`copies` of a trail that has a commit; `record()` alone never creates it. A missing or empty trail lists `[]` and creates nothing.
+- **Tables** (`schema` 1): `rec` (id, captured, direction, live and portable trust, message_id, message_key, copy kind, body_status), `att` (attached-original `message_key` -> record id, for `contained_in`), `meta` (`schema`, `head`).
+- **HEAD check.** `meta.head` is the trail git HEAD the index reflects. Every `list`/`copies` compares it with `git rev-parse HEAD` first. Equal: use it. Stored HEAD is an ancestor of HEAD: **catch up** from the records `git diff --name-only --no-renames -z <stored> HEAD -- records` names (added, changed or deleted), in one transaction. Anything else (restore to an older commit, rewritten history, no index, damaged file, other `schema`): **rebuild** from every record committed in HEAD, in one transaction. Records are read in batches of 500 and written as each batch arrives (the transaction stays open across the reads; any throw rolls it back, so the old rows and old head stay), so peak memory does not grow with the trail (F19, note 2026-11-08). Catch-up and rebuild run under the trail lock (B3), so they never see a half-written commit; a waiting `list` can therefore throw `ERR_TRAIL_LOCKED` after `lockTimeoutMs`.
+- **Record commits.** `record()` never touches the index. The new commit moves the trail HEAD, and the next `list`/`copies` catches up from it (one code path, so a failed or skipped index write cannot lose anything).
+- **Answers.** Identical to the former full read: `list` newest `captured` first, `copies` oldest first; records with equal `captured` come in ascending id order (the full read left that to the file system). Only records whose `id` equals their file name are indexed.
+- **Addon.** `better-sqlite3` (native addon, prebuilt for darwin/linux/win32 x64+arm64, linux musl; no install script) is imported only by `src/proof/index-db.js`, on the first `list`/`copies`. If it cannot load, those two reject with `code: 'ERR_INDEX_UNAVAILABLE'`; there is no fallback to a full read. A rebuild lists the committed record ids with one `git ls-tree` call capped at 16 MB of output (about 350,000 records); past that, `list`/`copies` reject with `code: 'ERR_INDEX_REBUILD'` (message names the cause and the limit). A catch-up lists the changed paths under the same cap; if that list overflows, it falls back to the rebuild, which then rejects the same way. `record`, `check`, `get`, `verify`, `matchBody`, `matchFile` and `sync` never load it, so proof does not depend on it.
+- **Trust.** Whoever can write the index file can change what `list`/`copies` return, never what `get`/`verify`/`matchBody` return, because those read the records. Do not present `list` output as proof; re-check with `verify`. Local filesystems only (SQLite WAL).
+
+## B6. Reply text (`replyText`, M2)
+
+`Mailproof#replyText(raw)` returns the text the sender newly wrote in a recorded reply (quoted history removed), plus whether that text is proven to come from the signed email, and commits a small `reply-text` record. Design: PRD §7 M2; evidence and the go decision: findings F20; forks: decisions-log "M2 stripper after the POC". Stripper version string: `mailproof-quote/1`.
+
+### B6.1 Public surface
+
+`replyText(raw: Buffer | string) => Promise<ReplyText>`; `raw` takes the same forms as `record`. Nothing else is public (the stripper itself is internal).
+
+```jsonc
+{
+  "id": "32 hex",                       // of the recorded message (first 32 hex of the sha256 of the raw bytes, exactly as record())
+  "text": "string",                     // the new text; never the quoted history. '' for html-only
+  "text_sha256": "sha256:<hex>",        // hashDocument of the UTF-8 bytes of `text`
+  "text_bytes": 0,                      // length of those UTF-8 bytes
+  "quote": "found" | "not-found" | "inline",
+  "trailing": false,                    // unquoted text follows the quoted part and was NOT returned (B6.4)
+  "source": "text/plain" | "html-only", // html-only: the message has no usable text/plain part (B6.3); nothing is extracted
+  "boundary": "attribution" | "forward-marker" | "outlook-original" | "outlook-header" | "quote-run" | null,
+  "stripper": "mailproof-quote/1",
+  "body_status": "matched|partial|mismatch|not-checked",   // read from the stored record
+  "proven": false,                      // body_status === 'matched' (and source 'text/plain')
+  "commit": "git sha",                  // the commit that holds the reply-text record; for a duplicate, the trail's HEAD (as record())
+  "duplicate": false                    // this id + stripper version was extracted before: no new commit
+}
+```
+
+- **Linked to a recorded message.** The id is computed from `raw` exactly as `record()` does. If `records/<id>.json` is not committed in the trail the call rejects with `code: 'ERR_NOT_RECORDED'` and writes nothing (record first, e.g. with `sync` or `record`). So `raw` is by construction the bytes the record's `body_status` was decided on.
+- **Over limit.** `raw` goes through `admit()` (the gate of "Limits") before the stripper reads it. A message over a gate limit, or one the worker backstop stopped, rejects with `code: 'ERR_OVER_LIMIT'` and `limit` set to the name (`total_bytes`, ..., or `time` / `memory` / `crash`); nothing is written. An empty `raw` rejects with a plain Error.
+- **Where it runs.** The gate and the stripper run in the worker pool of the build (same budgets: CPU, busy wall time, memory), or in-process with `worker: { size: 0 }` (no backstop). The commit stays on the main thread under the trail lock. The stripper is linear in the input: no regular expression backtracks over unbounded input.
+- **Proven.** `proven` is true only when the stored record's `body_status` is `matched` and `source` is `text/plain`. `partial` (an `l=` signed prefix) is unproven in v1: mapping the signed canonical byte count onto decoded text is not proven, so it fails closed (PRD §7 M2 limit 1). `mismatch`, `not-checked` (unsigned or over-limit mail, own-side copies) are unproven. `quote`, `trailing` and `proven` are independent flags: none changes another.
+- `verifyRecord`, `get`, `list`, `copies`, `verify`, `matchBody` are unchanged and never see `replies/`.
+
+### B6.2 Reply-text record (`replies/<id>.<stripper slug>.json`)
+
+```jsonc
+{ "v": 2, "kind": "reply-text", "record_id": "32 hex",
+  "text_sha256": "sha256:<hex>", "text_bytes": 0,
+  "stripper": "mailproof-quote/1", "quote": "found|not-found|inline", "trailing": false,
+  "source": "text/plain|html-only", "boundary": "...|null",
+  "body_status": "matched|partial|mismatch|not-checked", "extracted_at": "ISO-8601" }
+```
+
+- Path: `replies/<id>.<slug>.json`, slug = the stripper string with `/` replaced by `-` and nothing else changed (`mailproof-quote-1`). Serialised like a record (fixed key order, 2-space indent, trailing newline).
+- **No text, no body bytes, no subject, no address**, in the file or in the commit message. The consumer shows the text it acted on; its hash matches `text_sha256` in a commit dated before the action; anyone with the raw email re-runs the same stripper version (B6.5).
+- **Privacy: short replies are guessable.** The record holds no text, but `text_sha256` is a plain hash, so a short answer ("yes", "approve", "no") can be recovered by hashing candidate words and comparing. The trail is as private as the people who can read it: whoever can read it can confirm a guessed short answer. There is no salting in v1 (an open idea).
+- One commit per file, message `reply-text <id[0:12]> <stripper> <quote>`. Same lock, same rollback as a record (B3): it goes through the one write path (`commitFiles`, which `commitRecord` also uses), so the lock, the leftover cleanup and the rollback are not duplicated. The writer first requires `records/<id>.json` to be committed in HEAD (under the lock), else `ERR_NOT_RECORDED`.
+- The same id and stripper version again: the committed file is not rewritten (`duplicate: true`, no commit); the text is still computed and returned. A new stripper version (`/2`) is a different file name, so both can exist.
+- `extracted_at` is the instance clock (`now`) at the call. It is the only part of the file that differs between two extractions.
+- `replies/` is library-managed like `records/`: the start-of-write cleanup (B3) also removes untracked `replies/<32 hex>.<slug>.json` files a crashed writer left (slug `[a-z0-9-]+`), and nothing else.
+- **The trail index (B5) ignores `replies/`.** It reads `records/` only (the catch-up diff and the rebuild listing are limited to that path), so a reply-text commit moves the trail HEAD, the index catches up with no change to its rows, and `list`/`copies` are unaffected.
+
+### B6.3 Source text
+
+The text is taken from the raw bytes by mailproof's own code, not by mailparser, so the hash depends on the bytes and the stripper version only.
+
+1. **Parse.** The bytes are read as Latin-1 (one char per byte). The header block ends at the first empty line (`CR LF CR LF` or `LF LF`, whichever comes first); no empty line means all header. Continuation lines (a line starting with a space or tab) are unfolded to one space. A header name is the text before the first colon, trimmed and lowercased; a line without a colon, or with the colon first, is ignored; the value is trimmed; the first occurrence of a name is used.
+2. **Part selection.** Depth first: a `multipart/*` with a `boundary` parameter is split on its delimiter lines (`--boundary` at the start of the text or after a line break, optionally followed by spaces or tabs, then a line break or the end; `--boundary--` closes; anything before the first delimiter is skipped) and its parts are tried in order; the first part that is `text/plain` and whose `Content-Disposition` does not start with `attachment` wins. A missing `Content-Type` means `text/plain; charset=us-ascii`. `message/rfc822` and every other type are not entered or taken. No such part: `source: 'html-only'` (the name is for the common case; it also covers a message with no text at all). Then: `text` is `''`, `text_sha256` and `text_bytes` are those of the empty string, `quote: 'not-found'`, `trailing: false`, `boundary: null`, `proven: false`. A record is still committed.
+3. **Transfer decoding** by `Content-Transfer-Encoding` (case-insensitive; absent is `7bit`): `quoted-printable`: first every run of spaces/tabs directly before a line break is dropped, then every `=` directly followed by a line break (LF or CR LF) is removed (a soft break), then `=XX` (two hex digits, either case) becomes that byte and any other `=` stays a literal `=`. `base64`: characters outside `A-Z a-z 0-9 + /` (padding, line breaks, junk) are ignored, the rest is decoded, a trailing partial group is dropped. Anything else (`7bit`, `8bit`, `binary`, unknown): the bytes as they are.
+4. **Charset.** `TextDecoder(charset)` from the `charset` parameter of the part (lowercased; absent is `us-ascii`), not fatal: an invalid byte sequence becomes U+FFFD and a leading byte-order mark is removed. A label `TextDecoder` does not know is decoded as `utf-8`. Labels follow the WHATWG Encoding Standard (so `us-ascii` and `iso-8859-1` decode as windows-1252). Two charsets are decoded in-house because Node's `TextDecoder` differs across versions (F21): windows-1252 and all its labels use the WHATWG index table, and GBK labels (`gbk`, `gb2312`, ...) are decoded as gb18030.
+5. **Lines.** CR LF and a lone CR become LF; the text is split on LF.
+6. **format=flowed** (a `format=flowed` parameter of the part, case-insensitive; `delsp=yes` honoured): after splitting, a line that ends in a space and is not exactly `-- ` is joined with the next line when the next line has the same quote depth (the number of leading `>`); the next line's leading `>` characters and one optional space after them are removed first; with `delsp=yes` the joining space is dropped. Joining repeats while the joined line still ends in a space. Space-stuffing is not undone.
+
+### B6.4 Boundary, flags, trim
+
+The first line (from the top) that matches a rule below is the boundary; the new text is every line before the boundary start. Rules are tried per line in this order; a line is checked against all of them before the next line is.
+
+1. **attribution**, in two forms. The boundary region is the attribution lines (and, for form (c), the blank line up to the `>` run is dropped with it); the new text is everything before its first line.
+   - (a) **Verb last.** A line that starts (after optional whitespace) with one of `on`, `op`, `am`, `le`, `el`, `il`, `em`, `den`, `på`, `dne`, `w dniu` (case-insensitive, as a whole word) and, joined with up to 3 following non-empty lines (each trimmed, joined with one space; no match when what is joined so far is longer than 400 characters at one of the first three checks), ends (after trim, optional whitespace, optional colon, optional whitespace) with `wrote`, `schreef`, `schrieb`, `a écrit`, `a ecrit`, `escribió`, `escribio`, `ha scritto`, `escreveu`, `skrev`, `napisał` or `napisala`. 1 to 4 lines.
+   - (b) **Name after the verb** (`Op vr 7 nov 2026 om 10:00 schreef Amr <a@example.com>:`, `Am 07.11.2026 um 10:00 schrieb Amr:`). The same opener, and the line, or the line joined with the one following non-empty line (at most 2 lines, at most 400 characters), contains one of the same verbs as a whole word (no letter directly before or after it), ends with a colon (after trim) and, as joined, also carries a **signal** (the same as in (c): a run of 4 digits, an `hh:mm` time or an `@`). 1 or 2 lines. It applies with or without `>` marks below.
+   - (c) **Language-independent, above a `>` run.** Only when the first boundary would be a `>` line (rule 5, at line `q`): the lines just above `q`, with at most one blank line between, are checked. Let `L` be the nearest non-blank line above `q` (skipping at most one blank line). `L` is an attribution when it is at most 400 characters, ends with `:` (after trim) and carries a **signal**: a run of 4 digits, an `hh:mm` time (one or two digits, a colon, two digits) or an `@`. If the line directly above `L` is non-blank and is a **wrap start**, the attribution is those 2 lines, else just `L`. A wrap start is a line of at most 400 characters that has a `<` after its last `>` (an address opened and not closed), or carries a signal and does not end with `.`, `!` or `?`. The boundary starts at the attribution's first line and its kind is `attribution`. No word list: it works for any language. It never takes a line that lacks a signal (`See below:`, `Details:`) or a reply line that is not a wrap start (`Ja, akkoord.` directly above the attribution).
+2. **forward-marker**: the whole line (trimmed) is `---- Forwarded message ----` (three or more dashes each side; also the localized `doorgestuurd bericht`, `weitergeleitete nachricht`, `message transféré`, `mensaje reenviado`), `Begin forwarded message:`, or the same words between three or more underscores. One line.
+3. **outlook-original**: a line starting with three or more dashes, `original message`, three or more dashes. One line.
+4. **outlook-header**: a line starting with `from`, `van`, `von`, `de`, `da` or `från` and a colon, with, within the next 4 lines, a line starting with `sent`, `verzonden`, `gesendet`, `envoyé`, `envoye`, `enviado`, `date` or `datum` and a colon. The boundary starts one line earlier when that line is a rule of 10 or more `_`, `-` or `=`; the region runs to the first empty line.
+5. **quote-run**: a line whose first character is `>`.
+
+- **Known limits of `/1`** (pinned by tests; a fix is a new version): a quote without `>` marks, in a language whose verb is not listed, falls through to `not-found` (rule 1c needs a `>` run); an attribution whose date is on a first line that does not end like a wrap, with the signal-free last line (`... schreef Amr` / `dat volgt:`) is not taken by 1c (the last line must carry the signal); `trailing` cannot be set for a quoted message that has no `>` lines; the evidence (F20) has no Apple Mail, no non-English attribution, no html-only reply and no real `not-found` reply.
+- **quote**: `not-found` when no rule matches (the text is the whole body, never a guess); `inline` when, after the boundary region, a non-empty unquoted line is followed later by a `>` line (answers written inside the quote; the text is still what is above the first boundary, nothing is merged); else `found`.
+- **trailing**: true when `quote` is `found` and, after the last line starting with `>`, there is a non-empty line that does not start with `>` (a signature below the quote, or bottom-posted text). It is false for `inline`, `not-found`, `html-only`, and for a quote with no `>` line (an Outlook header block or forward marker: everything after it is the quoted message). The trailing text is not returned and not merged; the consumer who needs it reads the raw email.
+- **Trim.** The returned text is the lines before the boundary start joined with LF, with trailing whitespace (the ECMAScript `\s` set) removed. Leading whitespace and signatures are kept: only quoted history is stripped. `text_sha256` is over the UTF-8 encoding of that string.
+
+### B6.5 Determinism and versioning
+
+Given the same bytes and the same stripper version, `text`, `text_sha256`, `text_bytes`, `quote`, `trailing`, `source` and `boundary` are the same on every run, in the worker and in-process, depending on nothing but the bytes, the rules above and the platform's `TextDecoder` (WHATWG labels; windows-1252 and GBK excepted, see Charset). **A future rule change (a new language word, another client's header block, a different trim) is a new stripper version (`mailproof-quote/2`) and a new record file name, never an edit of `/1`.** The evidence behind `/1` is F20 (23 real replies, owner-reviewed); the proof harness `poc/m2-quotes/strip.mjs` computes the same flags, and a test pins the built stripper to it.
+
+### B6.6 Test plan
+
+Hand-built messages, no real mail. One per client style (Thunderbird attribution with format=flowed; Outlook `-----Original Message-----`, From/Sent and a Dutch Van:/Verzonden: header block; a Gmail attribution wrapped over two lines; a Foxmail From/Date block; a forward marker; a `>` run), `not-found`, `inline`, `trailing` (signature below the quote), html-only; quoted-printable, base64, windows-1252, us-ascii decoding; same input twice gives the same hash, and the extracted text stripped again is unchanged; signed and matched gives `proven: true`, a tampered body (mismatch) `proven: false`, unsigned `proven: false`; `ERR_NOT_RECORDED`, `ERR_OVER_LIMIT` (nothing written), `duplicate`; the record file and the commit message hold none of the text; the trail index ignores `replies/`; a control that fails if the stripper returned the whole body; worker and in-process agree; the built stripper equals the POC on every fixture; linear-time cases (long runs of spaces, a long flowed paragraph) finish at a size where a quadratic path would not.
 
 ---
 

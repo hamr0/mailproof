@@ -9,7 +9,9 @@ import { guardResolver, systemResolver } from './resolver-guard.js';
 import { engine } from './verdict.js';
 import { createOts, DEFAULT_OTS_TIMEOUT_MS } from './ots.js';
 import { verifyRecord, matchBodyRecord, matchFileRecord } from './recheck.js';
-import { TRAIL_NAME_RE, RECORD_ID_RE, DEFAULT_LOCK_TIMEOUT_MS, commitRecord, readRecord, listIds } from './trail.js';
+import { TRAIL_NAME_RE, RECORD_ID_RE, DEFAULT_LOCK_TIMEOUT_MS, commitRecord, commitFiles, readRecord } from './trail.js';
+import { STRIPPER, replyTextPath, extractReplyText, replyTextRecord } from './reply-text.js';
+import { hashDocument } from './hash.js';
 
 const OTS_MIN_TIMEOUT_MS = 5000; // floor for the `ots` timeout, however short lockTimeoutMs is
 
@@ -17,6 +19,7 @@ const OTS_MIN_TIMEOUT_MS = 5000; // floor for the `ots` timeout, however short l
 /** @typedef {import('./types.js').Envelope} Envelope */
 /** @typedef {{ id: string, captured: string, direction: string, copy: string, body_status: string, live: string, portable: string }} CopySummary */
 /** @typedef {import('./types.js').MailauthResult} MailauthResult */
+/** @typedef {{ id: string, text: string, text_sha256: string, text_bytes: number, quote: 'found' | 'not-found' | 'inline', trailing: boolean, source: 'text/plain' | 'html-only', boundary: string | null, stripper: string, body_status: import('./types.js').BodyStatus, proven: boolean, commit: string, duplicate: boolean }} ReplyText */
 
 /**
  * @typedef {Object} MailproofOptions
@@ -63,8 +66,10 @@ class Mailproof {
     this.now = opts.now || (() => new Date());
     this.trustedSealers = opts.trustedSealers || [];
     this.worker = workerConfig(opts.worker);
-    /** @type {{ run: import('./pool.js').WorkerPool['run'], release: () => Promise<void> } | null} */
+    /** @type {{ run: import('./pool.js').WorkerPool['run'], runReplyText: import('./pool.js').WorkerPool['runReplyText'], release: () => Promise<void> } | null} */
     this._lease = null;
+    /** Internal (tests): the git output cap, in bytes, for the index's catch-up and rebuild listings. @type {number | undefined} */
+    this._indexGitMaxBuffer = undefined;
     this.lockTimeoutMs = Number.isFinite(opts.lockTimeoutMs) && /** @type {number} */ (opts.lockTimeoutMs) >= 0 ? /** @type {number} */ (opts.lockTimeoutMs) : DEFAULT_LOCK_TIMEOUT_MS;
     // The stamp runs inside the trail lock, so it is capped at a third of the lock wait (see otsTimeoutMs).
     this.ots = this.otsBin ? createOts({ otsBin: this.otsBin, timeoutMs: otsTimeoutMs(this.lockTimeoutMs) }) : null;
@@ -77,6 +82,7 @@ class Mailproof {
     this.list = this.list.bind(this);
     this.copies = this.copies.bind(this);
     this.sync = this.sync.bind(this);
+    this.replyText = this.replyText.bind(this);
     this.close = this.close.bind(this);
   }
 
@@ -123,7 +129,7 @@ class Mailproof {
    * @when Use to release the worker threads at once (a test, a long-lived process that is done checking mail). Workers are shared by instances with the same `worker` options, so they end when the last of those instances closes. Never needed for the process to exit.
    * @category proof
    * @signature mp.close() => Promise<void>
-   * @fails Never throws. A call with nothing to stop, or with `worker.size` 0, resolves at once. With a worker (`size` 1 or more), a `record()` or `check()` still running when `close()` is called (or when the last instance sharing the pool closes) may reject, and if it rejects that message is not recorded: await in-flight calls before `close()`.
+   * @fails Never throws. `list()` and `copies()` keep nothing open between calls, so there is nothing of theirs to close. A call with nothing to stop, or with `worker.size` 0, resolves at once. With a worker (`size` 1 or more), a `record()` or `check()` still running when `close()` is called (or when the last instance sharing the pool closes) may reject, and if it rejects that message is not recorded: await in-flight calls before `close()`.
    * @example
    * await mp.close();
    */
@@ -237,6 +243,50 @@ class Mailproof {
   }
 
   /**
+   * The text the sender newly wrote in a recorded reply (quoted history removed), with proof flags, and a small
+   * `reply-text` record committed to the trail (SPEC B6).
+   * @param {Buffer | string} raw  The raw RFC-822 bytes of a message already recorded in this trail.
+   * @returns {Promise<ReplyText>}
+   * @name Mailproof#replyText
+   * @when Use to read what a person actually wrote in a reply they sent you, without the quoted history (the trap: a reply that quotes "Approve payment of $5,000?" is not an approval). Record the email first (`record()`, or `sync()`), then hand the same raw bytes to this. `text` is the new text; `proven` is true only when the recorded body matched the signed `bh=` (`body_status` `matched`), so the text really came from that signed email; `quote` says whether a quote boundary was found (`found`), none was (`not-found`: the whole body is returned) or the answer is written inside the quote (`inline`); `trailing` says unquoted text follows the quote and was not returned. The stripper is the versioned, deterministic `mailproof-quote/1`: anyone with the raw email re-runs it and gets the same text byte for byte. Signatures are not stripped. Interpreting the text (approve or decline, in any language) is the consumer's job, not mailproof's.
+   * @category proof
+   * @signature mp.replyText(raw: Buffer|string) => Promise<{ id, text, text_sha256, text_bytes, quote, trailing, source, boundary, stripper, body_status, proven, commit, duplicate }>
+   * @fails Rejects with `err.code === 'ERR_NOT_RECORDED'` when the message is not committed in this trail (record it first), `ERR_OVER_LIMIT` with `err.limit` set when the message is over an input limit or the worker backstop stopped it (`total_bytes`, ..., `time`, `memory`, `crash`; nothing is written), `ERR_TRAIL_LOCKED` when another writer holds the trail longer than `lockTimeoutMs`, or a plain Error on an empty message or a git failure (rolled back). A message with no text/plain part is not an error: `source: 'html-only'`, `text` '' and `proven` false. The committed record holds fingerprints and flags only, never the text, the body or the subject; the same message and stripper version again returns the text with `duplicate: true` and writes nothing. `partial` body status (an `l=` signed prefix) is unproven in v1. `proven: false` is normal for mail received at Outlook/msn from outside (Microsoft alters the body): the words are unproven while the signed headers still verify; receive replies whose words matter at Gmail.
+   * @example
+   * const { id } = await mp.record(raw, { direction: 'in' });
+   * const r = await mp.replyText(raw);   // r.text, r.proven, r.quote, r.trailing
+   */
+  async replyText(raw) {
+    const buf = Buffer.isBuffer(raw) ? raw : Buffer.from(String(raw ?? ''));
+    if (buf.length === 0) throw new Error('Mailproof: empty message');
+    const id = hashDocument(buf).replace(/^sha256:/, '').slice(0, 32);   // the id record() gives these bytes
+    const rec = await this.get(id);
+    if (!rec) throw Object.assign(new Error(`replyText: message ${id} is not recorded in trail "${this.trail}"`), { code: 'ERR_NOT_RECORDED' });
+    /** @type {import('./reply-text.js').Extracted} */
+    let ex;
+    if (this.worker.size === 0) ex = extractReplyText(buf);
+    else {
+      this._lease ??= leasePool(this.worker);
+      const r = await this._lease.runReplyText(buf);
+      ex = 'out' in r ? r.out : { ok: false, limit: r.limit };
+    }
+    if (!ex.ok) throw Object.assign(new Error(`replyText: over limit: ${ex.limit}`), { code: 'ERR_OVER_LIMIT', limit: ex.limit });
+    const s = ex.stripped;
+    const body_status = rec.body_status ?? 'not-checked';
+    const row = replyTextRecord({ id, stripped: s, body_status, extracted_at: this.now().toISOString() });
+    const res = await commitFiles(this.root, this.trail, {
+      rel: replyTextPath(id), json: row, requires: `records/${id}.json`,
+      message: `reply-text ${id.slice(0, 12)} ${STRIPPER} ${s.quote}`,
+      now: this.now, lockTimeoutMs: this.lockTimeoutMs,
+    });
+    return {
+      id, text: s.text, text_sha256: s.text_sha256, text_bytes: s.text_bytes, quote: s.quote, trailing: s.trailing,
+      source: s.source, boundary: s.boundary, stripper: STRIPPER, body_status,
+      proven: s.source === 'text/plain' && body_status === 'matched', commit: res.commit, duplicate: res.duplicate,
+    };
+  }
+
+  /**
    * Offline re-check from the record alone (no DNS, no raw email). `at`
    * defaults to the record's capture time; a bad capture time fails closed.
    * `trust` is the portable level recomputed now, never read from the stored verdict.
@@ -323,26 +373,13 @@ class Mailproof {
    * @when Use to see every route one signed message reached you by (direct, via a mailing list, forwarded), given the id of any copy or the shared `message_key`. `copies` share the key; `contained_in` lists other records that carry it as an attached original (forwards and list digests). `original` is the earliest `direct` copy whose body matched, or null. Use `get(id)` for a full record.
    * @category read
    * @signature mp.copies(idOrKey: string) => Promise<{ message_key, original, copies[], contained_in[] }>
-   * @fails Never throws. An unknown id or key, or a record with no `message_key` (unsigned mail with no Message-ID), returns just that record (or nothing) with empty `contained_in`.
+   * @fails Rejects with `err.code === 'ERR_INDEX_UNAVAILABLE'` when the `better-sqlite3` native addon cannot load on this platform (there is no fallback; `record`, `get` and `verify` do not need it), or `ERR_TRAIL_LOCKED` when bringing the trail index up to date had to wait for a writer longer than `lockTimeoutMs`, or `ERR_INDEX_REBUILD` when a first build (or a rebuild, or a catch-up that falls back to one) finds more than about 350,000 committed records or changes (a 16 MB git output limit; the trail is too large to index). Otherwise never throws. An unknown id or key, or a record with no `message_key` (unsigned mail with no Message-ID), returns just that record (or nothing) with empty `contained_in`. Answers come from the trail index (SPEC B5), a cache beside the trail that is opened and closed inside each call (nothing stays open, so `close()` has nothing to wait for): whoever can write that file can change this answer, never `get` or `verify`.
    * @example
    * const { copies, contained_in, original } = await mp.copies(id);
    */
   async copies(idOrKey) {
-    const all = (await Promise.all((await listIds(this.root)).map((id) => readRecord(this.root, id)))).filter((r) => r !== null);
-    const self = typeof idOrKey === 'string' ? all.find((r) => r.id === idOrKey) : undefined;
-    const key = self ? self.message_key : (typeof idOrKey === 'string' && RECORD_ID_RE.test(idOrKey) ? idOrKey : null);
-    /** @type {(r: MpRecord) => CopySummary} */
-    const sum = (r) => ({
-      id: r.id, captured: r.captured, direction: r.direction, copy: r.copy?.kind ?? 'unknown', body_status: r.body_status,
-      live: r.verdicts?.live?.trust, portable: r.verdicts?.portable?.trust,
-    });
-    const byTime = (/** @type {MpRecord} */ a, /** @type {MpRecord} */ b) => (a.captured < b.captured ? -1 : a.captured > b.captured ? 1 : 0);
-    const copies = (key ? all.filter((r) => r.message_key === key) : self ? [self] : []).sort(byTime);
-    const containedIn = key
-      ? all.filter((r) => r.message_key !== key && (r.copy?.evidence?.attached_original || []).some((o) => o.message_key === key)).sort(byTime)
-      : [];
-    const original = copies.find((r) => r.copy?.kind === 'direct' && r.body_status === 'matched');
-    return { message_key: key, original: original ? original.id : null, copies: copies.map(sum), contained_in: containedIn.map(sum) };
+    const { copiesIndex } = await import('./index-db.js');
+    return copiesIndex(this._indexCfg(), idOrKey);
   }
 
   /**
@@ -353,19 +390,21 @@ class Mailproof {
    * @when Use to find recorded emails, newest capture first, optionally by direction. It returns summaries; use `get(id)` for the full record.
    * @category read
    * @signature mp.list(opts?: { limit?: number, direction?: 'in'|'out' }) => Promise<Array<{ id, captured, direction, live, portable, message_id }>>
-   * @fails Never throws. An empty or missing trail returns `[]`.
+   * @fails Rejects with `err.code === 'ERR_INDEX_UNAVAILABLE'` when the `better-sqlite3` native addon cannot load on this platform (there is no fallback; `record`, `get` and `verify` do not need it), or `ERR_TRAIL_LOCKED` when bringing the trail index up to date had to wait for a writer longer than `lockTimeoutMs`, or `ERR_INDEX_REBUILD` when a first build (or a rebuild, or a catch-up that falls back to one) finds more than about 350,000 committed records or changes (a 16 MB git output limit; the trail is too large to index). Otherwise never throws. An empty or missing trail returns `[]`. Records captured in the same instant come in ascending id order. Answers come from the trail index (SPEC B5), a cache beside the trail that is opened and closed inside each call (nothing stays open, so `close()` has nothing to wait for): whoever can write that file can change this answer, never `get` or `verify`.
    * @example
    * const recent = await mp.list({ limit: 10 });
    */
   async list({ limit, direction } = {}) {
-    const recs = (await Promise.all((await listIds(this.root)).map((id) => readRecord(this.root, id))))
-      .filter((r) => r !== null)
-      .filter((r) => !direction || r.direction === direction)
-      .sort((a, b) => (a.captured < b.captured ? 1 : a.captured > b.captured ? -1 : 0));
-    return (limit ? recs.slice(0, limit) : recs).map((r) => ({
-      id: r.id, captured: r.captured, direction: r.direction,
-      live: r.verdicts?.live?.trust, portable: r.verdicts?.portable?.trust, message_id: r.message?.message_id ?? null,
-    }));
+    const { listIndex } = await import('./index-db.js');
+    return listIndex(this._indexCfg(), { limit, direction });
+  }
+
+  /**
+   * What index-db.js needs for one query: the index is opened and closed inside each `list`/`copies` call.
+   * @returns {import('./index-db.js').IndexCfg}
+   */
+  _indexCfg() {
+    return { root: this.root, trail: this.trail, lockTimeoutMs: this.lockTimeoutMs, gitMaxBuffer: this._indexGitMaxBuffer };
   }
 
   /**

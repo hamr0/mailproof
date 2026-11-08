@@ -21,6 +21,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > the first free clean minor, `1.3.0`.) See
 > [`archive/v1/docs/DESIGN.md`](archive/v1/docs/DESIGN.md) for the phasing.
 
+## [2.2.0] - 2026-11-08
+
+### Added
+- `Mailproof#replyText(raw)` (M2, SPEC B6): returns the text the sender newly wrote in a recorded reply, with quoted history removed, plus whether that text is proven to come from the signed email. `proven` is true only when the stored record's `body_status` is `matched` and the message has a `text/plain` part; `partial`, `mismatch`, `not-checked` and html-only messages are unproven (`proven: false` is normal for mail received at Outlook/Exchange, whose copies have altered bodies). The result carries `text`, `text_sha256`, `text_bytes`, `quote` (`found` / `not-found` / `inline`), `trailing`, `source`, `boundary`, `stripper`, `body_status`, `proven`, `commit` and `duplicate`. Each extraction commits a text-free reply-text record at `replies/<id>.mailproof-quote-1.json` (hash and flags only: no text, subject or address); the same id and stripper version is a no-op. It rejects `ERR_NOT_RECORDED` when the message is not recorded in the trail, and `ERR_OVER_LIMIT` (with `limit`) when the message is over a gate limit or the worker backstop stopped it. Interpreting the text (keywords, dates, intent) is the consumer's job.
+- The stripper `mailproof-quote/1`, stdlib code with no new dependency: decodes `text/plain` itself, cuts at the first quote boundary (attribution line, forward marker, Outlook original or header block, or a run of `>` lines), and recognises attribution lines with the name after the verb and in any language (for example Dutch `Op ... schreef Name <addr>:`, German `Am ... schrieb ...`). A sender's own "Op maandag schreef ik:" is kept. It is linear in the input (the attribution check no longer backtracks on long runs of spaces). Checked on 23 owner-reviewed real replies (F20). windows-1252 and GBK (and their aliases, including `us-ascii`, the default, and `iso-8859-1`) are decoded in-house (GBK as gb18030), so the result does not depend on the Node version.
+- A trail index for `list()` and `copies()` (SPEC B5, F19): a rebuildable SQLite cache beside the trail, outside git, keyed by the trail's HEAD. The records stay the single source of truth; the index is caught up from new commits or rebuilt from the records, and can be deleted at any time. Queries no longer read every record (they were linear, about 65 microseconds per record). It is opened and closed inside each call, so nothing outlives a query and `close()` only releases the workers. Same signatures and result shapes as before.
+- `better-sqlite3` as the fourth runtime dependency (a native addon), imported only by `src/proof/index-db.js`; `record`, `get`, `verify` and `replyText` never load it. Owner decision, F19.
+- New errors from `list()` and `copies()`: `ERR_INDEX_UNAVAILABLE` (the addon cannot load; there is no fallback), `ERR_INDEX_REBUILD` (a rebuild over git's 16 MB output, about 350,000 records) and `ERR_TRAIL_LOCKED`.
+- `docs/product/usage-guide.md`: operational guide, including "Reading a reply: what each outcome means" (`proven`, `body_status`, `quote`, `trailing`, html-only, the Gmail receiving rule, the threading caveat, a consumer decision rule). The agent context guide gains "Which entry point do I need?" and the same reply section.
+
+### Changed
+- `list()` and `copies()`: records captured at the same time are now ordered by id.
+- The index rebuild and catch-up use bounded memory: records are read 500 at a time and written in one transaction, rolled back to the previous rows and head on any failure (peak RSS at 80,000 records 391 MB down to 175 MB).
+- Index catch-up ignores git renames (`git diff --no-renames`), so a renamed record file removes the old id from the index.
+- README rewritten around the two goals (verify now, verify offline later), the four ways to use it and what you can rely on.
+- `primitives.json` is covered by `check:primitives`; `.gitattributes` pins LF on the hash-pinned primitives files.
+- The publish workflow loads `mailproof/primitives.json` from the installed tarball, and its smoke step records an unsigned message and calls `list()` from the installed package, proving `better-sqlite3` loads there.
+- Docs: a short reply's `text_sha256` can be confirmed by guessing the text, so treat it as not secret (SPEC B6.2, usage guide, context guide). The `SYNC_MAX_MS` comment says the cap is also checked between UID windows.
+- Tests: two load-flaky tests (`cli-sync` timeout bound, `trail-lock` live break lock) made robust without weakening them.
+
 ## [2.1.0] - 2026-11-03
 
 ### Added

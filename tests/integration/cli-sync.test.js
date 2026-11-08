@@ -181,6 +181,7 @@ test('a --pass-command that reads stdin to EOF is not left waiting on an open pi
   const t0 = Date.now();
   const r = await run([...base(srv, trailDir), '--pass-command', `${process.execPath} ${script}`]);
   assert.equal(r.code, 0, r.stderr);
-  assert.ok(Date.now() - t0 < 15000, 'did not wait out the 30 s command timeout');
+  // the CLI's command timeout is 30 s; a run that waited it out ends at >= 30 s, a prompt one takes ~1 s alone and ~20 s on a loaded box
+  assert.ok(Date.now() - t0 < 25000, 'did not wait out the 30 s command timeout');
   assert.equal(JSON.parse(r.stdout).folders[0].recorded, 1);
 });

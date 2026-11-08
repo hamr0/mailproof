@@ -295,6 +295,12 @@ test('a live break lock: waiters leave the main lock alone and time out', async 
   // main lock stale, break lock held by a live process (this one): nobody may break in
   fs.writeFileSync(main, lockInfo(pid));
   fs.writeFileSync(brk, lockInfo(process.pid));
+  // The child builds the record (parsers, DNS stub) before it first touches the lock; on a loaded box that can take
+  // longer than the 10 s after which a break lock is stale whatever its pid (clearStaleBreakLock), and the child then
+  // breaks in and records (out.code undefined). Date the file ahead so it stays fresh however slow the child is;
+  // the age rule has its own test below.
+  const fresh = new Date(Date.now() + 120000);
+  fs.utimesSync(brk, fresh, fresh);
   const stale = fs.readFileSync(main, 'utf8');
   const r1 = await run(trailDir, files[0], mapFile, 500);
   assert.equal(r1.out.code, 'ERR_TRAIL_LOCKED');

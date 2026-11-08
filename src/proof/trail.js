@@ -144,6 +144,8 @@ async function takeOverIfStale(lockPath, timeoutMs) {
 
 /** Lock-file name of the trail's writer lock, beside the repo. */
 const trailLockFile = (/** @type {string} */ name) => `.${name}.lock`;
+/** File name of the trail's index (SPEC B5), beside the repo and outside git. A cache: safe to delete. */
+const trailIndexFile = (/** @type {string} */ name) => `.${name}.index.sqlite`;
 /** Lock-file name of the sync lock (SPEC B4.5), beside the repo. */
 const syncLockFile = (/** @type {string} */ name) => `.${name}.sync.lock`;
 
@@ -270,6 +272,7 @@ async function ensureTrail(root, name, createdIso) {
  * Is `rel` (a trail-relative, `/`-separated path) a file mailproof itself writes?
  *   records/<32 lowercase hex>.json         the record
  *   records/<32 lowercase hex>.json.ots     its OpenTimestamps proof
+ *   replies/<32 lowercase hex>.<slug>.json  a reply-text record (slug: the stripper version, [a-z0-9-]+)
  *   keys/<domain>/<selector>/<16 hex>.json  an archived DKIM key (domain and selector
  *                                           lowercase, the characters fetchDkimKey allows)
  * @param {string} rel
@@ -281,6 +284,7 @@ function isLibraryFile(rel) {
     const m = /^(.+)\.json(\.ots)?$/.exec(parts[1]);
     return m !== null && RECORD_ID_RE.test(m[1]);
   }
+  if (parts[0] === 'replies' && parts.length === 2) return /^[0-9a-f]{32}\.[a-z0-9-]+\.json$/.test(parts[1]);
   if (parts[0] === 'keys' && parts.length === 4) {
     const label = (/** @type {string} */ l) => DKIM_LABEL_RE.test(l) && l === l.toLowerCase() && !l.startsWith('.') && !l.includes('..');
     return label(parts[1]) && label(parts[2]) && /^[0-9a-f]{16}\.json$/.test(parts[3]);
@@ -298,7 +302,7 @@ function isLibraryFile(rel) {
  */
 async function clearLeftovers(root) {
   await git(root, ['reset', '-q']);
-  const untracked = (await git(root, ['ls-files', '--others', '--exclude-standard', '-z', '--', 'records', 'keys'])).split('\0').filter(Boolean);
+  const untracked = (await git(root, ['ls-files', '--others', '--exclude-standard', '-z', '--', 'records', 'keys', 'replies'])).split('\0').filter(Boolean);
   /** @type {Set<string>} */
   const dirs = new Set();
   for (const rel of untracked) {
@@ -339,28 +343,35 @@ async function listIds(root) {
 }
 
 /**
- * Write one record (+ any new key files) and commit them as one commit, under
- * the trail lock. A record whose id is committed is a no-op (`duplicate`); the
- * start of every call first clears a crashed writer's leftovers. On any
- * failure only the files this call newly created (and git does not track) are
- * removed, so the tree is never left dirty and no committed file is touched.
+ * Write one file (+ any new key files) and commit them as one commit, under the trail lock. The one write path of
+ * records (`commitRecord`) and of reply-text records (B6). A file that is committed in HEAD is a no-op
+ * (`duplicate`); the start of every call first clears a crashed writer's leftovers. On any failure only the
+ * files this call newly created (and git does not track) are removed, so the tree is never left dirty and no
+ * committed file is touched.
  * @param {string} root
  * @param {string} name
- * @param {{ record: MpRecord, keyFiles: Array<{ rel: string, json: unknown }>, message: string, now: () => Date,
- *           afterWrite?: (recordAbs: string) => Promise<string[]>, lockTimeoutMs?: number }} job
- *   `afterWrite` may add files next to the record (the OTS proof); it returns their trail-relative paths.
+ * @param {{ rel: string, json: unknown, requires?: string, keyFiles?: Array<{ rel: string, json: unknown }>, message: string, now: () => Date,
+ *           afterWrite?: (fileAbs: string) => Promise<string[]>,
+ *           lockTimeoutMs?: number }} job
+ *   `rel` is the trail-relative path of the file and `json` its content. `requires`: a trail-relative path that must
+ *   be committed in HEAD (checked under the lock), else `ERR_NOT_RECORDED`. `afterWrite` may add files next to the
+ *   file (the OTS proof); it returns their trail-relative paths.
  * @returns {Promise<{ duplicate: boolean, commit: string, extra: string[] }>}
  */
-async function commitRecord(root, name, { record, keyFiles, message, now, afterWrite, lockTimeoutMs = DEFAULT_LOCK_TIMEOUT_MS }) {
+async function commitFiles(root, name, { rel, json, requires, keyFiles = [], message, now, afterWrite, lockTimeoutMs = DEFAULT_LOCK_TIMEOUT_MS }) {
   return withTrailLock(root, trailLockFile(name), lockTimeoutMs, async () => {
     await ensureTrail(root, name, now().toISOString());
     await clearLeftovers(root);
-    const rel = `records/${record.id}.json`;
+    if (requires !== undefined && !(await inHead(root, requires))) {
+      throw Object.assign(new Error(`not recorded: ${requires} is not committed in trail "${name}"`), { code: 'ERR_NOT_RECORDED' });
+    }
     if (await inHead(root, rel)) {
       return { duplicate: true, commit: await git(root, ['rev-parse', 'HEAD']), extra: [] };
     }
     /** @type {string[]} */
     const written = []; // only paths that did not exist before this call wrote them
+    /** @type {{ duplicate: boolean, commit: string, extra: string[] }} */
+    let res;
     try {
       for (const k of keyFiles) {
         const abs = path.join(root, k.rel);
@@ -369,13 +380,14 @@ async function commitRecord(root, name, { record, keyFiles, message, now, afterW
         written.push(k.rel);
         await fs.writeFile(abs, serialise(k.json));
       }
+      await fs.mkdir(path.dirname(path.join(root, rel)), { recursive: true });
       written.push(rel);
-      await fs.writeFile(path.join(root, rel), serialise(record));
+      await fs.writeFile(path.join(root, rel), serialise(json));
       const extra = afterWrite ? await afterWrite(path.join(root, rel)) : [];
       written.push(...extra);
       await git(root, ['add', '--', ...written]);
       await git(root, ['commit', '-m', message]);
-      return { duplicate: false, commit: await git(root, ['rev-parse', 'HEAD']), extra };
+      res = { duplicate: false, commit: await git(root, ['rev-parse', 'HEAD']), extra };
     } catch (err) {
       try { await git(root, ['reset', '-q']); } catch { /* nothing staged */ }
       for (const r of written) {
@@ -383,7 +395,21 @@ async function commitRecord(root, name, { record, keyFiles, message, now, afterW
       }
       throw err;
     }
+    return res;
   });
 }
 
-export { TRAIL_NAME_RE, RECORD_ID_RE, DEFAULT_LOCK_TIMEOUT_MS, TRAIL_LOCK, SYNC_LOCK, trailLockFile, syncLockFile, withTrailLock, serialise, ensureTrail, readRecord, listIds, commitRecord };
+/**
+ * Write one record (+ any new key files) and commit them as one commit (see commitFiles).
+ * @param {string} root
+ * @param {string} name
+ * @param {{ record: MpRecord, keyFiles: Array<{ rel: string, json: unknown }>, message: string, now: () => Date,
+ *           afterWrite?: (recordAbs: string) => Promise<string[]>,
+ *           lockTimeoutMs?: number }} job
+ * @returns {Promise<{ duplicate: boolean, commit: string, extra: string[] }>}
+ */
+async function commitRecord(root, name, { record, ...rest }) {
+  return commitFiles(root, name, { rel: `records/${record.id}.json`, json: record, ...rest });
+}
+
+export { TRAIL_NAME_RE, RECORD_ID_RE, DEFAULT_LOCK_TIMEOUT_MS, TRAIL_LOCK, SYNC_LOCK, trailLockFile, trailIndexFile, syncLockFile, withTrailLock, serialise, ensureTrail, readRecord, listIds, commitRecord, commitFiles };

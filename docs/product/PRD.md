@@ -1,7 +1,7 @@
 # mailproof v2 — PRD
 
 > **Status:** v2 is released as 2.1.0 (M0 and M1 shipped). 1.x is frozen at tag `v1.4.0` (v1 code archived in `archive/v1/`; no `v1` branch).
-> **Owner:** hamr0 · **Last updated:** 2026-10-31
+> **Owner:** hamr0 · **Last updated:** 2026-11-07
 >
 > **For future Claude:** this PRD wins on intent and scope. The *why* behind each choice is in
 > [`decisions-log.md`](decisions-log.md). The v1 PRD is archived at
@@ -181,22 +181,44 @@ or folder plus Sent**, via IMAP. The owner's Gmail account is the target. Resume
 no duplicates. The existing Postfix pipe stays as a capture source.
 
 IMAP needs a **third runtime dependency** (candidate: `imapflow`, same author as mailauth/mailparser).
-It must pass the AGENT_RULES External Dependency Checklist, and it reaches the ≤3 runtime-dep ceiling.
+It must pass the AGENT_RULES External Dependency Checklist, and it reaches the ≤3 runtime-dep ceiling. (The ceiling was later lifted by the owner on 2026-11-07 for a fourth dependency, `better-sqlite3`, behind the trail index: [decisions-log](decisions-log.md), [SPEC B5](SPEC.md).)
 
 **POC:** fetched mail still verifies; which Gmail
 login method works (Gmail Sent-copy signing is moot, [F3](findings.md)). Already known: msn.com Sent copies are unsigned ([F3](findings.md)); Outlook/Exchange mail
 exported via Thunderbird has altered bodies, so M1 is Gmail-first (F4).
 
-### M2 — Reading replies (specified: goals and design)
+### M2 — Reply text (built, not yet released)
 
-- Extract only the **new** text of a reply (drop quoted history and signature). The trap: a reply
-  quoting "Approve payment of $5,000?" read as an approval.
-- Pluggable interpreters: strict keyword (first line approve/decline); calendar reply (`text/calendar`
-  sent when someone clicks Accept); a hook for an agent's LLM.
-- A **decision record** storing the decision, the hash of the exact text it was based on, and which
-  interpreter decided, so a dispute can re-run it. No plaintext stored.
+**Status:** built as `Mailproof#replyText` (stripper `mailproof-quote/1`); wire format [SPEC B6](SPEC.md), evidence [F20](findings.md). Ships with the next release.
 
-**POC:** quoted-text stripping on real replies from real clients.
+**Re-scoped 2026-11-07** from "Reading replies"; see the [decisions-log](decisions-log.md) entry "M2 is reply text, not reply interpretation".
+
+**Goal:** given a recorded reply and its raw bytes, return only the text the sender newly wrote (quoted history removed), plus proof that this text came from that signed email. The chain: the text comes from the body; the body matches the DKIM `bh=`; the signature is the sender domain's. The trap: a reply quoting "Approve payment of $5,000?" read as an approval.
+
+- Stripping is **deterministic and versioned** (e.g. `mailproof-quote/1`): anyone with the raw email re-runs it and gets the same text byte for byte.
+- Only quoted history is stripped. **Signatures are not stripped**: it is text the sender wrote, and detecting it is another fragile heuristic. The consumer can ignore it.
+- **Out of mailproof, the consumer's job** (§10): the strict-keyword interpreter, the calendar-reply interpreter and the LLM hook that earlier drafts listed here. Interpreting the text (approve/decline, any language, an LLM) is guardrail policy and belongs to bareguard. A calendar reply is not dropped as a concept; if needed it belongs with M4.
+
+**Honest limits, built into the output**
+
+1. The text counts as **proven only when `body_status` is `matched`**. `partial` (an `l=` signed prefix) is unproven in v1: mapping the signed canonical byte count onto the decoded text is not proven, so it fails closed; revisit with evidence (the 3 Foxmail samples in [F20](findings.md) were `partial`). Outlook/Exchange-received copies have bodies altered on Microsoft's side ([F4](findings.md), [F10](findings.md)): their text is returned but marked unproven, never silently.
+2. No quote boundary found: return the whole body, flagged `quote: not-found`. Never guess.
+3. Inline replies (answers written inside the quote) are detected and flagged `quote: inline`, not merged. The POC measures how common they are.
+4. Unquoted text that follows the quoted part (a signature below the quote, or bottom-posted text) is not returned: the text is what is above the first quote boundary. When such text exists the result carries `trailing: true`, so nothing is dropped silently and nothing is merged (9 of 23 real replies, all Thunderbird, [F20](findings.md)). The consumer who needs it reads the raw email.
+
+**Reply-text record** (wire format: [SPEC B6](SPEC.md)). One small record is committed to the trail per extraction:
+
+```json
+{ "v": 2, "kind": "reply-text", "record_id": "...", "text_sha256": "...", "text_bytes": 0,
+  "stripper": "mailproof-quote/1", "quote": "found|not-found|inline", "trailing": false,
+  "source": "text/plain|html-only", "boundary": "...|null", "body_status": "...", "extracted_at": "..." }
+```
+
+It stores no text, no body bytes and no subject (the trail stays header-only). In a dispute the consumer shows the text it acted on; its hash matches `text_sha256` in a commit dated before the action; with the raw email anyone re-runs the same stripper version.
+
+**Started with** ledger item C2 (`list`/`copies` read every record, measured in [F18](findings.md)): done, they now answer from a rebuildable SQLite index ([SPEC B5](SPEC.md), [F19](findings.md)).
+
+**POC (done: GO, owner-reviewed 2026-11-07, [F20](findings.md)):** quote stripping on real replies from real clients (Gmail web, the Gmail app, Outlook/msn, iPhone where available), including a short top reply and an inline answer. Real samples stay outside the repo.
 
 ### M3 — Two-party coordination (goals only)
 
@@ -266,6 +288,7 @@ unproven (M0, M1, M2), not for modules whose mechanism exists and is tested.
 - Web UI or hosted service.
 - RPost-style proof of delivery. We prove what was received; a signed reply is the receipt.
 - Acting as a login/identity provider. mailproof produces a verdict; acting on it is the consumer's job.
+- Interpreting reply text (approve/decline, keywords, an LLM): the consumer's job. M2 returns the new text with proof.
 - Writing our own ZK circuits.
 - Mail encryption (S/MIME, PGP).
 - Spam filtering, or anything like a mail client.

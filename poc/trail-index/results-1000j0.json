@@ -1,0 +1,63 @@
+{
+ "size": "1000j0",
+ "N": 1000,
+ "flat": false,
+ "jitter": 0,
+ "full": {
+  "list10": 92.7,
+  "list10in": 85.1,
+  "list10out": 79,
+  "list1000": 80.7,
+  "copiesKeyMulti": 86.6,
+  "copiesIdOfMulti": 84.3,
+  "copiesKeyContained": 91.3,
+  "copiesNullKeyId": 87.7,
+  "copiesUnknownKey": 93.8,
+  "midMulti": 138.8,
+  "midUnknown": 135.5
+ },
+ "fullRssMB": {
+  "list10": 128,
+  "list10in": 129,
+  "list10out": 134,
+  "list1000": 126,
+  "copiesKeyMulti": 129,
+  "copiesIdOfMulti": 133,
+  "copiesKeyContained": 128,
+  "copiesNullKeyId": 125,
+  "copiesUnknownKey": 127,
+  "midMulti": 128,
+  "midUnknown": 129
+ },
+ "dlog": {
+  "mode": "dlog",
+  "N": 1000,
+  "res": {
+   "list10": {
+    "medianMs": 9,
+    "equalToFullRead": true
+   },
+   "list10in": {
+    "medianMs": 8.6,
+    "equalToFullRead": true
+   },
+   "list10out": {
+    "medianMs": 11.4,
+    "equalToFullRead": true
+   },
+   "list1000": {
+    "medianMs": 286.3,
+    "equalToFullRead": true
+   }
+  },
+  "prefixAll": {
+   "prefixes": 1000,
+   "topTenEqual": 1000
+  },
+  "prefixIn": {
+   "prefixes": 794,
+   "topTenEqual": 794
+  },
+  "rssMB": 147
+ }
+}
