@@ -181,13 +181,15 @@ or folder plus Sent**, via IMAP. The owner's Gmail account is the target. Resume
 no duplicates. The existing Postfix pipe stays as a capture source.
 
 IMAP needs a **third runtime dependency** (candidate: `imapflow`, same author as mailauth/mailparser).
-It must pass the AGENT_RULES External Dependency Checklist, and it reaches the ≤3 runtime-dep ceiling.
+It must pass the AGENT_RULES External Dependency Checklist, and it reaches the ≤3 runtime-dep ceiling. (The ceiling was later lifted by the owner on 2026-11-07 for a fourth dependency, `better-sqlite3`, behind the trail index: [decisions-log](decisions-log.md), [SPEC B5](SPEC.md).)
 
 **POC:** fetched mail still verifies; which Gmail
 login method works (Gmail Sent-copy signing is moot, [F3](findings.md)). Already known: msn.com Sent copies are unsigned ([F3](findings.md)); Outlook/Exchange mail
 exported via Thunderbird has altered bodies, so M1 is Gmail-first (F4).
 
-### M2 — Reply text (specified: goals and design)
+### M2 — Reply text (built, not yet released)
+
+**Status:** built as `Mailproof#replyText` (stripper `mailproof-quote/1`); wire format [SPEC B6](SPEC.md), evidence [F20](findings.md). Ships with the next release.
 
 **Re-scoped 2026-11-07** from "Reading replies"; see the [decisions-log](decisions-log.md) entry "M2 is reply text, not reply interpretation".
 
@@ -214,9 +216,9 @@ exported via Thunderbird has altered bodies, so M1 is Gmail-first (F4).
 
 It stores no text, no body bytes and no subject (the trail stays header-only). In a dispute the consumer shows the text it acted on; its hash matches `text_sha256` in a commit dated before the action; with the raw email anyone re-runs the same stripper version.
 
-**Starts with** ledger item C2: list/copies read every record; measured, fix pending ([F18](findings.md)).
+**Started with** ledger item C2 (`list`/`copies` read every record, measured in [F18](findings.md)): done, they now answer from a rebuildable SQLite index ([SPEC B5](SPEC.md), [F19](findings.md)).
 
-**POC (required; the mechanism is unproven):** quote stripping on real replies from real clients (Gmail web, the Gmail app, Outlook/msn, iPhone where available), including a short top reply and an inline answer. Real samples stay outside the repo.
+**POC (done: GO, owner-reviewed 2026-11-07, [F20](findings.md)):** quote stripping on real replies from real clients (Gmail web, the Gmail app, Outlook/msn, iPhone where available), including a short top reply and an inline answer. Real samples stay outside the repo.
 
 ### M3 — Two-party coordination (goals only)
 
