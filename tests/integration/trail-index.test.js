@@ -347,6 +347,73 @@ test('a catch-up whose changed-path list passes the cap falls back to a rebuild,
   await mp.close();
 });
 
+test('catch-up lists both paths of a renamed record file: the old id leaves the index (git rename detection is off)', async () => {
+  const dir = makeTmpDir('mp-ix-');
+  const { mp, out, root } = await buildTrail(dir);
+  const mp2 = new Mailproof({ trailDir: dir });
+  await mp2.list(); // index at the current HEAD
+  plantSentinel(dir);
+  // rename a record file (same content: git sees a 100% rename) and commit it
+  const NEWID = 'f'.repeat(32);
+  const oldFile = path.join('records', `${out.u1.id}.json`);
+  const body = JSON.parse(fs.readFileSync(path.join(root, oldFile), 'utf8'));
+  fs.writeFileSync(path.join(root, oldFile), JSON.stringify({ ...body, id: NEWID }));
+  gitOut(root, 'mv', oldFile, path.join('records', `${NEWID}.json`));
+  gitOut(root, '-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'diff.renames=true', 'commit', '-q', '-m', 'rename');
+  assert.match(gitOut(root, '-c', 'diff.renames=true', 'diff', '--name-status', 'HEAD~1', 'HEAD'), /^R/, 'git reports a rename');
+  assert.equal(await hasSentinel(mp2), true, 'caught up, not rebuilt');
+  assert.equal(storedMeta(dir, 'head'), gitOut(root, 'rev-parse', 'HEAD'));
+  const ids = (await mp2.list()).map((r) => r.id);
+  assert.equal(ids.includes(out.u1.id), false, 'the old id is gone');
+  assert.equal(ids.includes(NEWID), true);
+  // everything but the planted sentinel equals the full read
+  const o = await oracle(root);
+  assert.deepStrictEqual((await mp2.list()).filter((r) => r.id !== 'sentinel'), o.list());
+  assert.deepStrictEqual(await mp2.copies(out.u1.id), o.copies(out.u1.id));
+  assert.deepStrictEqual(await mp2.copies(NEWID), o.copies(NEWID));
+  await mp2.close();
+  await mp.close();
+});
+
+test('a catch-up or rebuild that throws part-way is rolled back: previous rows kept, stored head not advanced; the next query recovers', async () => {
+  const dir = makeTmpDir('mp-ix-');
+  const { mp, root } = await buildTrail(dir);
+  const other = new Mailproof({ trailDir: dir });
+  await other.list(); // index built at HEAD
+  plantSentinel(dir);
+  const head0 = storedMeta(dir, 'head');
+  // a trigger that aborts the insert of the highest id, so earlier rows are already written when it fires
+  const poison = (id) => { const d = new Database(indexFile(dir)); d.exec(`CREATE TRIGGER boom BEFORE INSERT ON rec WHEN NEW.id = '${id}' BEGIN SELECT RAISE(ABORT, 'boom'); END`); d.close(); };
+  const unpoison = () => { const d = new Database(indexFile(dir)); d.exec('DROP TRIGGER boom'); d.close(); };
+  const rowCount = () => { const d = new Database(indexFile(dir), { readonly: true }); try { return d.prepare('SELECT count(*) AS n FROM rec').get().n; } finally { d.close(); } };
+
+  // catch-up: three new records, the last (highest id) one fails
+  mp.now = at(60);
+  const added = [];
+  for (const [i, tag] of ['c1', 'c2', 'c3'].entries()) { mp.now = at(60 + i); added.push((await mp.record(unsigned(tag), { direction: 'in' })).record.id); }
+  poison(added.slice().sort().at(-1));
+  await assert.rejects(other.list(), /boom/);
+  assert.equal(storedMeta(dir, 'head'), head0, 'head not advanced');
+  assert.equal(rowCount(), 9, 'no new row survived (8 records + sentinel)');
+  unpoison();
+  assert.equal(await hasSentinel(other), true);
+  assert.equal(storedMeta(dir, 'head'), gitOut(root, 'rev-parse', 'HEAD'), 'recovered by catch-up');
+  assert.equal(rowCount(), 12);
+
+  // rebuild (schema mismatch): the wipe at its start is rolled back too
+  const d = new Database(indexFile(dir)); d.prepare("UPDATE meta SET v = '0' WHERE k = 'schema'").run(); d.close();
+  const all = (await oracle(root)).all.map((r) => r.id).sort();
+  poison(all.at(-1));
+  await assert.rejects(other.list(), /boom/);
+  assert.equal(rowCount(), 12, 'the wipe was rolled back');
+  assert.equal(storedMeta(dir, 'schema'), '0');
+  unpoison();
+  assert.equal(await hasSentinel(other), false, 'rebuilt on the next query');
+  await assertSameAsFullRead(other, root);
+  await other.close();
+  await mp.close();
+});
+
 test('better-sqlite3 is imported by src/proof/index-db.js and by nothing else in src/', () => {
   const src = fileURLToPath(new URL('../../src/', import.meta.url));
   const hits = [];

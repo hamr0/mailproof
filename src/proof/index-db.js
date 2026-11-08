@@ -116,19 +116,31 @@ function rowOf(id, r) {
 }
 
 /**
- * Read records in bounded batches (memory stays flat in the number of files read at once).
+ * Read records in batches of READ_BATCH and hand each batch to `fn` before reading the next, so only one batch of
+ * parsed records is alive at a time: peak memory does not grow with the number of ids.
  * @param {string} root
  * @param {string[]} ids
- * @returns {Promise<Array<[string, MpRecord | null]>>}
+ * @param {(batch: Array<[string, MpRecord | null]>) => void} fn
+ * @returns {Promise<void>}
  */
-async function readMany(root, ids) {
-  /** @type {Array<[string, MpRecord | null]>} */
-  const out = [];
+async function eachBatch(root, ids, fn) {
   for (let i = 0; i < ids.length; i += READ_BATCH) {
-    const batch = await Promise.all(ids.slice(i, i + READ_BATCH).map(async (id) => /** @type {[string, MpRecord | null]} */ ([id, await readRecord(root, id)])));
-    out.push(...batch);
+    fn(await Promise.all(ids.slice(i, i + READ_BATCH).map(async (id) => /** @type {[string, MpRecord | null]} */ ([id, await readRecord(root, id)]))));
   }
-  return out;
+}
+
+/**
+ * Run `fn` inside one write transaction that stays open across its awaits (the connection is ours alone and the
+ * caller holds the trail lock; better-sqlite3 statements are synchronous, so nothing interleaves). Commits when `fn`
+ * returns, rolls back on any throw: a failed rebuild or catch-up leaves the previous rows and the previous head.
+ * @param {Db} d @param {() => Promise<void>} fn @returns {Promise<void>}
+ */
+async function atomic(d, fn) {
+  d.exec('BEGIN IMMEDIATE');
+  try { await fn(); d.exec('COMMIT'); } catch (e) {
+    try { d.exec('ROLLBACK'); } catch { /* the connection is already unusable; the open transaction dies with it */ }
+    throw e;
+  }
 }
 
 /**
@@ -223,18 +235,19 @@ async function reconcile(s, { root, gitMaxBuffer = DEFAULT_GIT_MAX_BUFFER }, hea
   if (stored && versionOk) {
     try {
       await git(root, ['merge-base', '--is-ancestor', stored, head]);
-      changed = idsFromPaths(await git(root, ['diff', '--name-only', '-z', stored, head, '--', 'records'], { maxBuffer: gitMaxBuffer }));
+      changed = idsFromPaths(await git(root, ['diff', '--name-only', '--no-renames', '-z', stored, head, '--', 'records'], { maxBuffer: gitMaxBuffer }));
     } catch { changed = null; } // not an ancestor, or a list too big for the cap: rebuild (which rejects if it is too big too)
   }
   if (changed) {
-    const read = await readMany(root, changed);
-    s.d.transaction(() => {
-      for (const [id, r] of read) {
-        const x = rowOf(id, r);
-        if (x) s.put(x); else s.del(id);
-      }
+    await atomic(s.d, async () => {
+      await eachBatch(root, changed, (batch) => {
+        for (const [id, r] of batch) {
+          const x = rowOf(id, r);
+          if (x) s.put(x); else s.del(id);
+        }
+      });
       s.setMeta('head', head);
-    }).immediate();
+    });
     return;
   }
   /** @type {string} */
@@ -245,13 +258,12 @@ async function reconcile(s, { root, gitMaxBuffer = DEFAULT_GIT_MAX_BUFFER }, hea
     const c = e instanceof Error ? /** @type {{ code?: string }} */ (e.cause) : null;
     throw c?.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' ? rebuildTooLarge(e, gitMaxBuffer) : e;
   }
-  const read = await readMany(root, idsFromPaths(listing));
-  s.d.transaction(() => {
+  await atomic(s.d, async () => {
     s.d.exec('DELETE FROM rec; DELETE FROM att; DELETE FROM meta;');
-    for (const [id, r] of read) { const x = rowOf(id, r); if (x) s.put(x); }
+    await eachBatch(root, idsFromPaths(listing), (batch) => { for (const [id, r] of batch) { const x = rowOf(id, r); if (x) s.put(x); } });
     s.setMeta('schema', String(SCHEMA));
     s.setMeta('head', head);
-  }).immediate();
+  });
 }
 
 /**
