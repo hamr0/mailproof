@@ -136,7 +136,14 @@ export function normalize(text, flowed, delsp) {
 
 // ---- boundary detection --------------------------------------------------------------------------------------
 const ATT_START = /^\s*(on|op|am|le|el|il|em|den|på|dne|w dniu)\b/i;
-const ATT_END = /(wrote|schreef|schrieb|a écrit|a ecrit|escribió|escribio|ha scritto|escreveu|skrev|napisał|napisala)\s*:?\s*$/i;
+const ATT_END_TAIL = /(wrote|schreef|schrieb|a écrit|a ecrit|escribió|escribio|ha scritto|escreveu|skrev|napisał|napisala)$/i;
+const ATT_VERB_MAX = 10;   // the longest listed verb ("ha scritto")
+/** Does `s`, trimmed, end in a listed verb, optionally followed by white space, one ':' and white space? Linear: only the last few characters reach a regex. */
+function endsAttribution(s) {
+  let t = s.trimEnd();
+  if (t.endsWith(':')) t = t.slice(0, -1).trimEnd();
+  return ATT_END_TAIL.test(t.slice(-ATT_VERB_MAX));
+}
 // Name-after-verb form (`Op vr 7 nov 2026 om 10:00 schreef Amr <a@example.com>:`): an opener, a listed verb anywhere, a signal, a final colon.
 const ATT_VERB = /(?<![\p{L}])(wrote|schreef|schrieb|a écrit|a ecrit|escribió|escribio|ha scritto|escreveu|skrev|napisał|napisala)(?![\p{L}])/iu;
 // Language-independent signal: a 4-digit year, an hh:mm time or an '@'.
@@ -158,11 +165,11 @@ function attributionAt(lines, i) {
   let acc = lines[i];
   for (let n = 1; n <= 3; n++) {
     if (acc.length > 400) return 0;
-    if (nameAfterVerb(acc, n) || ATT_END.test(acc.trim())) return n;
+    if (nameAfterVerb(acc, n) || endsAttribution(acc)) return n;
     if (i + n >= lines.length || lines[i + n].trim() === '') return 0;
     acc += ' ' + lines[i + n].trim();
   }
-  return ATT_END.test(acc.trim()) ? 4 : 0;
+  return endsAttribution(acc) ? 4 : 0;
 }
 /** Is `l` a short line that ends in a colon (spaces after it allowed)? */
 function endsColon(l) { return l.length <= LOOKBACK_MAX && l.trimEnd().endsWith(':'); }

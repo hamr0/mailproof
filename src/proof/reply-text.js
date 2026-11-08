@@ -231,7 +231,14 @@ function unflow(lines, delsp) {
 
 // ---- boundary detection --------------------------------------------------------------------------------------
 const ATT_START = /^\s*(on|op|am|le|el|il|em|den|på|dne|w dniu)\b/i;
-const ATT_END = /(wrote|schreef|schrieb|a écrit|a ecrit|escribió|escribio|ha scritto|escreveu|skrev|napisał|napisala)\s*:?\s*$/i;
+const ATT_END_TAIL = /(wrote|schreef|schrieb|a écrit|a ecrit|escribió|escribio|ha scritto|escreveu|skrev|napisał|napisala)$/i;
+const ATT_VERB_MAX = 10;   // the longest listed verb ("ha scritto")
+/** Does `s`, trimmed, end in a listed verb, optionally followed by white space, one ':' and white space? Linear: only the last few characters reach a regex. */
+export function endsAttribution(/** @type {string} */ s) {
+  let t = s.trimEnd();
+  if (t.endsWith(':')) t = t.slice(0, -1).trimEnd();
+  return ATT_END_TAIL.test(t.slice(-ATT_VERB_MAX));
+}
 // Name-after-verb form (`Op vr 7 nov 2026 om 10:00 schreef Amr <a@example.com>:`): an opener, a listed verb anywhere, a signal, a final colon.
 const ATT_VERB = /(?<![\p{L}])(wrote|schreef|schrieb|a écrit|a ecrit|escribió|escribio|ha scritto|escreveu|skrev|napisał|napisala)(?![\p{L}])/iu;
 // Language-independent signal: a 4-digit year, an hh:mm time or an '@'.
@@ -243,23 +250,26 @@ const FWD = /^\s*(-{3,}\s*(forwarded message|doorgestuurd bericht|weitergeleitet
 const ORIGINAL = /^\s*-{3,}\s*original message\s*-{3,}/i;
 const RULE = /^\s*[_\-=]{10,}\s*$/;
 
-/** Lines in an attribution that starts at line `i` (0 when none). It spans up to 4 lines and 400 characters. */
 /** Name-after-verb form over at most 2 joined lines (acc is at most 400 chars here). */
 function nameAfterVerb(/** @type {string} */ acc, /** @type {number} */ n) {
   if (n > 2) return false;
   const t = acc.trim();
   return t.endsWith(':') && SIGNAL.test(t) && ATT_VERB.test(t);
 }
+/**
+ * Lines in an attribution that starts at line `i` (0 when none). It spans up to 4 lines; lines 1 to 3 are tested only
+ * while the joined text is at most 400 characters, and the 4-line test has no length cap (it is linear, see endsAttribution).
+ */
 function attributionAt(/** @type {string[]} */ lines, /** @type {number} */ i) {
   if (!ATT_START.test(lines[i])) return 0;
   let acc = lines[i];
   for (let n = 1; n <= 3; n++) {
     if (acc.length > 400) return 0;
-    if (nameAfterVerb(acc, n) || ATT_END.test(acc.trim())) return n;
+    if (nameAfterVerb(acc, n) || endsAttribution(acc)) return n;
     if (i + n >= lines.length || lines[i + n].trim() === '') return 0;
     acc += ' ' + lines[i + n].trim();
   }
-  return ATT_END.test(acc.trim()) ? 4 : 0;
+  return endsAttribution(acc) ? 4 : 0;
 }
 /** Is `l` a short line that ends in a colon (spaces after it allowed)? */
 function endsColon(/** @type {string} */ l) { return l.length <= LOOKBACK_MAX && l.trimEnd().endsWith(':'); }

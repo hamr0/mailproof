@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
-import { stripReplyText, extractReplyText, replyTextPath, STRIPPER } from '../../src/proof/reply-text.js';
+import { stripReplyText, extractReplyText, replyTextPath, STRIPPER, endsAttribution } from '../../src/proof/reply-text.js';
 import { strip as pocStrip } from '../../poc/m2-quotes/strip.mjs';
 import { FIXTURES, QUOTED } from '../helpers/reply-fixtures.js';
 
@@ -138,6 +138,36 @@ test('linear time: long lines in the attribution look-back and the name-after-ve
     assert.ok(ms < 3000, `${ms} ms of CPU`);
   }
   assert.equal(stripReplyText(bufs[1]).boundary, 'quote-run', 'a very long line is never an attribution');
+});
+
+test('linear time: the 4-line attribution test on a long run of white space after a verb', () => {
+  const raw = plain(`hi\r\nOn Mon\r\nfoo\r\nbar\r\nwrote${' '.repeat(250000)}x\r\n`);
+  // measured before the fix: ~479 / 1821 / 7608 ms at 20k / 40k / 80k spaces, ~75 s at 250k; here a few milliseconds
+  const ms = cpuMs(() => stripReplyText(raw));
+  assert.ok(ms < 3000, `${ms} ms of CPU`);
+  assert.equal(stripReplyText(raw).boundary, null);
+  assert.equal(endsAttribution('wrote' + ' '.repeat(250000) + ':'), true);
+  assert.equal(endsAttribution('wrote' + ' '.repeat(250000) + 'x'), false);
+});
+
+test('endsAttribution is exactly the old unanchored regex, on generated strings', () => {
+  const OLD = /(wrote|schreef|schrieb|a écrit|a ecrit|escribió|escribio|ha scritto|escreveu|skrev|napisał|napisala)\s*:?\s*$/i;
+  let seed = 12345;
+  const rnd = (n) => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed % n; };
+  const verbs = ['wrote', 'schreef', 'schrieb', 'a écrit', 'a ecrit', 'escribió', 'escribio', 'ha scritto', 'escreveu', 'skrev', 'napisał', 'napisala',
+    'WROTE', 'Wrote', 'A ÉCRIT', 'ESCRIBIÓ', 'NAPISAŁ', 'ha  scritto', 'rote', 'wrot', 'scritto', 'écrit'];
+  const bits = [':', ' ', '  ', '\t', '\n', '\u00a0', '\u2003', '\ufeff', 'x', 'a', 'é', 'É', '.', '::', ' : ', 'ł', 'İ', 'ſ', '\u212a'];
+  let n = 0, hits = 0;
+  for (let k = 0; k < 20000; k++) {
+    let s = '';
+    const parts = 1 + rnd(6);
+    for (let j = 0; j < parts; j++) s += rnd(3) === 0 ? bits[rnd(bits.length)] : rnd(2) ? verbs[rnd(verbs.length)] : bits[rnd(bits.length)];
+    if (k % 2) s = s + verbs[rnd(verbs.length)] + bits[rnd(bits.length)] + (rnd(2) ? bits[rnd(bits.length)] : '');   // end on a verb plus a tail
+    const want = OLD.test(s.trim());
+    assert.equal(endsAttribution(s), want, JSON.stringify(s));
+    n++; if (want) hits++;
+  }
+  assert.ok(hits > 1000 && hits < n - 1000, `both outcomes are exercised (${hits}/${n})`);
 });
 
 test('decoding: charset labels, BOM, invalid bytes, unknown charset, CR and lone CR line ends', () => {
