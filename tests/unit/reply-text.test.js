@@ -232,7 +232,11 @@ test('replyTextPath: the version string with / replaced by -', () => {
 });
 
 test('parity with the POC stripper (poc/m2-quotes/strip.mjs): text, hash and flags on every fixture', () => {
+  // The POC decodes with the platform TextDecoder; on Node versions that get windows-1252 0x80-0x9F wrong (22.19.0) its
+  // output differs by design from the in-house decoder, so those fixtures are compared only where the platform is right.
+  const platform1252Ok = new TextDecoder('windows-1252').decode(Uint8Array.of(0x80)) === '\u20ac';
   for (const f of FIXTURES) {
+    if (!platform1252Ok && /windows-1252/.test(f.name)) continue;
     const a = stripReplyText(f.raw);
     const p = pocStrip(f.raw);
     assert.equal(a.source, p.source, f.name);
@@ -243,5 +247,27 @@ test('parity with the POC stripper (poc/m2-quotes/strip.mjs): text, hash and fla
     assert.equal(a.quote, p.quote, f.name);
     assert.equal(a.boundary, p.boundary, f.name);
     assert.equal(a.trailing, p.trailing, f.name);
+  }
+});
+
+// windows-1252 is decoded in-house: Node's TextDecoder returns raw C1 controls for 0x80-0x9F on 22.19.0 and the real
+// characters on 22.22, which made the stripper's text and text_sha256 depend on the Node version.
+test('stripper: windows-1252 table for 0x80-0x9F is pinned for every WHATWG label, including no charset', () => {
+  const expected = '€\x81‚ƒ„…†‡ˆ‰Š‹Œ\x8DŽ\x8F\x90‘’“”•–—˜™š›œ\x9DžŸ';
+  assert.equal([...expected].length, 32);
+  const bytes = Buffer.from(Array.from({ length: 32 }, (_, i) => 0x80 + i));
+  const body = bytes.toString('latin1');
+  for (const label of ['windows-1252', 'iso-8859-1', 'latin1', 'cp1252', 'US-ASCII', ' Windows-1252 ', null]) {
+    const ct = label === null ? 'text/plain' : `text/plain; charset="${label}"`;
+    const r = stripReplyText(Buffer.from(`Content-Type: ${ct}\r\n\r\n${body}`, 'latin1'));
+    assert.equal(r.text, expected, `label ${label}`);
+  }
+});
+
+// GBK is decoded as gb18030 (what WHATWG defines it to be): Node 22.19.0's own gbk maps these to private-use code points.
+test('stripper: gbk and gb2312 decode like gb18030 (0xFF, A2E3, A3A0, A6D9)', () => {
+  for (const label of ['gbk', 'gb2312']) {
+    const r = stripReplyText(Buffer.from(`Content-Type: text/plain; charset=${label}\r\n\r\n[\xff][\xa2\xe3][\xa3\xa0][\xa6\xd9]`, 'latin1'));
+    assert.equal(r.text, '[\ufffd][\u20ac][\u3000][\ufe10]', label);
   }
 });

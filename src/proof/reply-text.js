@@ -1,6 +1,9 @@
 // M2 reply text (SPEC B6): the text a sender newly wrote in a reply, with quoted history removed, by the versioned,
 // deterministic stripper `mailproof-quote/1`. Stdlib only and no mailparser: the result depends on the raw bytes, the
-// rules below and the platform's TextDecoder, nothing else. The rules are FROZEN: a change is a new stripper version
+// rules below and the platform's TextDecoder, nothing else, except two charsets whose Node 22.19.0 TextDecoder differs from later versions: windows-1252 (and every label WHATWG
+// maps to it, including us-ascii and iso-8859-1) returns raw C1 controls for 0x80-0x9F, so it is decoded in-house
+// (decodeWindows1252); GBK (gbk, gb2312, ...) maps some sequences to private-use code points, so it is decoded as
+// gb18030, which the WHATWG standard defines it to be. The rules are FROZEN: a change is a new stripper version
 // (`/2`) in a new file name, never an edit of `/1` (SPEC B6.5). The POC it was proven with is poc/m2-quotes/strip.mjs
 // (findings F20); a test pins the two together.
 //
@@ -173,6 +176,24 @@ function decodeB64(s) {
   return out.subarray(0, o);
 }
 
+/** WHATWG index-windows-1252 for bytes 0x80-0x9F; the five unmapped bytes (81 8D 8F 90 9D) map to the C1 control of the same value. */
+const WINDOWS_1252_C1 = '\u20AC\u0081\u201A\u0192\u201E\u2026\u2020\u2021\u02C6\u2030\u0160\u2039\u0152\u008D\u017D\u008F'
+  + '\u0090\u2018\u2019\u201C\u201D\u2022\u2013\u2014\u02DC\u2122\u0161\u203A\u0153\u009D\u017E\u0178';
+
+/**
+ * windows-1252 decoded here, not by TextDecoder, which differs across Node versions for 0x80-0x9F.
+ * @param {Uint8Array} bytes
+ * @returns {string}
+ */
+function decodeWindows1252(bytes) {
+  const parts = [];
+  for (let i = 0; i < bytes.length; i += 8192) {
+    const chunk = bytes.subarray(i, i + 8192);
+    parts.push(String.fromCharCode(...Array.from(chunk, (b) => (b >= 0x80 && b <= 0x9f ? WINDOWS_1252_C1.charCodeAt(b - 0x80) : b))));
+  }
+  return parts.join('');
+}
+
 /**
  * @param {{ msg: Msg, ct: { type: string, params: Record<string, string> } }} part
  * @returns {{ text: string, flowed: boolean, delsp: boolean }}
@@ -183,8 +204,12 @@ function decodePart(part) {
   const bytes = cte === 'quoted-printable' ? decodeQP(body) : cte === 'base64' ? decodeB64(body) : Buffer.from(body, 'latin1');
   const charset = (part.ct.params.charset || 'us-ascii').toLowerCase();
   let text;
-  try { text = new TextDecoder(charset, { fatal: false }).decode(bytes); }
-  catch { text = new TextDecoder('utf-8', { fatal: false }).decode(bytes); }
+  try {
+    const decoder = new TextDecoder(charset, { fatal: false });
+    text = decoder.encoding === 'windows-1252' ? decodeWindows1252(bytes)
+      : decoder.encoding === 'gbk' ? new TextDecoder('gb18030', { fatal: false }).decode(bytes)
+      : decoder.decode(bytes);
+  } catch { text = new TextDecoder('utf-8', { fatal: false }).decode(bytes); }
   return { text, flowed: (part.ct.params.format || '').toLowerCase() === 'flowed', delsp: (part.ct.params.delsp || '').toLowerCase() === 'yes' };
 }
 
