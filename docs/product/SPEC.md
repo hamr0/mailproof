@@ -87,7 +87,7 @@
   | Worker memory | 1,536 MB | `memory` | `used_heap_size + external_memory` of that thread (`Worker#getHeapStatistics`, every 50 ms), plus V8's own old-generation limit at the same value. Process RSS is not used: it includes the host program's own memory and every other worker. |
 
   A worker that goes over is terminated, and the message is recorded exactly like a gate refusal (the over-limit record below), with `reason: "over limit: time"` or `"over limit: memory"` on both verdicts: `unverified`, nothing parsed, `id`/`raw_sha256`/`size` from the bytes. The worker writes nothing: the commit, the lock, git and `now()` stay on the main thread and run only after the worker has returned, so a killed worker leaves no partial state. DNS goes through the caller's `resolver` (the system resolver when none is given) with the error `code` kept. A lookup that has not answered within `DNS_TIMEOUT_MS` (5,000 ms, `limits.js`, also the bound `fetchDkimKey` uses) is answered as the error `dns timeout` with `code: 'ETIMEOUT'`, a temporary error, and the job goes on; the lookups of one message together may wait at most `DNS_BUDGET_MS` (30,000 ms, `limits.js`): the wall time during which at least one lookup is in flight, so a burst of parallel lookups counts once; each lookup is bounded by the budget left, and once it is spent further lookups fail at once with the same error. It is the same in a worker and in-process, so a resolver that never settles costs one message at most about `DNS_BUDGET_MS` of DNS time plus its CPU (DNS waits are not busy time, so the worker deadline does not see them) and then lets the messages queued behind it run. The resolver returns plain data, as `node:dns` does: an answer that structured clone refuses (a function, a symbol, ...), which is what a worker's `postMessage` would refuse, is answered as the error `resolver returned a non-plain value` with `code: 'EBADRESP'`, in a worker and in-process alike, and is recorded like any unreachable key (`unverified`, a temporary error). The deadline never counts time spent waiting in the queue behind other messages. `worker.size` is the number of warm workers (default 1); `size: 0` runs everything in-process with no backstop, as before. Results are identical either way (checked on 37 real messages and the test fixtures). A worker that dies for a reason nobody can name (the thread exits, or throws outside the build) is recorded the same way with `reason: "over limit: crash"` (name `crash`, unverified): every message is recorded, including one that deterministically crashes its worker, and the pool starts a fresh worker for the next (also when the worker died while idle: it is dropped at once, never handed to the next message). An `Error` thrown by the build itself is not a crash: `check()`/`record()` reject exactly as in-process. A worker that fails before it is ready (its file cannot load, its thread cannot start) is not a crash of a job: `check()`/`record()` reject and nothing is recorded, so the same message can be recorded once the cause is fixed. `close()` stops the workers (and, when instances share a pool, the last one to close does): with a worker (`size` 1 or more), a `record()` or `check()` still running at that moment may reject, and if it rejects that message is not recorded, so await in-flight calls before `close()`. A call made after `close()` starts a fresh worker. Only the envelope fields `clientIp`, `clientHelo` and `sender` are read (and passed to the worker; others are ignored). Each of the three is a string or `null`: a value of any other type (a function, a number) is treated as `null`, with a worker and with `size: 0` alike, so the same envelope gives the same result either way. An envelope that is not itself an object (a function, a string) is treated as no envelope, the same way. Needs Node 22.19 or later (`Worker#cpuUsage`).
-- Never the body, never the raw email. No `Subject` outside `signed_headers`.
+- Never the body, never the raw email **in the record or the trail**. No `Subject` outside `signed_headers`. (M3: the raw email and attachments may be kept in the local content store beside the trail, outside git: B7. The record format is unchanged.)
 - Serialisation: fixed key order, 2-space indent, trailing newline (stable bytes, stable OTS stamps).
 - Signed header lines are byte-exact (base64). Names in `h=` with no matching header are oversigned and add nothing.
 - **Identity: one record per distinct copy.** `id` = the first 32 hex of `message.raw_sha256` (the sha256 of the raw bytes; one definition). The same bytes captured again are a no-op (`duplicate: true`, the existing commit); any byte difference (a list footer, an added `Received:`, an ARC seal) is its own record, so a relayed copy never hides the direct one. The capture route (`source`, `direction`, `captured`) is the first capture's; later captures of the same bytes are not logged.
@@ -359,6 +359,7 @@ Owner decisions on the six forks; rationale in [decisions-log](decisions-log.md)
 - **Where it runs.** The gate and the stripper run in the worker pool of the build (same budgets: CPU, busy wall time, memory), or in-process with `worker: { size: 0 }` (no backstop). The commit stays on the main thread under the trail lock. The stripper is linear in the input: no regular expression backtracks over unbounded input.
 - **Proven.** `proven` is true only when the stored record's `body_status` is `matched` and `source` is `text/plain`. `partial` (an `l=` signed prefix) is unproven in v1: mapping the signed canonical byte count onto decoded text is not proven, so it fails closed (PRD §7 M2 limit 1). `mismatch`, `not-checked` (unsigned or over-limit mail, own-side copies) are unproven. `quote`, `trailing` and `proven` are independent flags: none changes another.
 - `verifyRecord`, `get`, `list`, `copies`, `verify`, `matchBody` are unchanged and never see `replies/`.
+- **M3 (B7):** `replyText` also accepts `{ id }` and reads the raw bytes from the content store (`ERR_NO_CONTENT` when there are none); everything above then applies to those bytes unchanged. `matchBody(id)` may omit `raw` for the same reason.
 
 ### B6.2 Reply-text record (`replies/<id>.<stripper slug>.json`)
 
@@ -415,6 +416,72 @@ Given the same bytes and the same stripper version, `text`, `text_sha256`, `text
 ### B6.6 Test plan
 
 Hand-built messages, no real mail. One per client style (Thunderbird attribution with format=flowed; Outlook `-----Original Message-----`, From/Sent and a Dutch Van:/Verzonden: header block; a Gmail attribution wrapped over two lines; a Foxmail From/Date block; a forward marker; a `>` run), `not-found`, `inline`, `trailing` (signature below the quote), html-only; quoted-printable, base64, windows-1252, us-ascii decoding; same input twice gives the same hash, and the extracted text stripped again is unchanged; signed and matched gives `proven: true`, a tampered body (mismatch) `proven: false`, unsigned `proven: false`; `ERR_NOT_RECORDED`, `ERR_OVER_LIMIT` (nothing written), `duplicate`; the record file and the commit message hold none of the text; the trail index ignores `replies/`; a control that fails if the stripper returned the whole body; worker and in-process agree; the built stripper equals the POC on every fixture; linear-time cases (long runs of spaces, a long flowed paragraph) finish at a size where a quadratic path would not.
+
+## B7. Content store (M3 step 1)
+
+The raw email and its attachments, kept locally beside the trail so the read primitives work offline after the mailbox has deleted the mail. Design: PRD §7 M3 "Local content store" and "Retention and forget"; measurements: findings F22. This changes B1's "never the raw email" for **local storage only**: the record file, the commit and the git history are unchanged byte for byte.
+
+### B7.1 Layout and placement
+
+```
+<trailDir>/<trail>.content/            beside the repo, like .<trail>.lock and .<trail>.sync.json; never inside git, never in the SQLite index
+  raw/<id[0:2]>/<id>.eml               the raw bytes; id = first 32 hex of their sha256 (the record id)
+  att/<hex[0:2]>/<hex>                 one attachment; hex = the full sha256 from record.attachments[].sha256 ("sha256:<hex>")
+```
+
+- Files are mode 0600 and the directories mailproof creates 0700 (it is other people's mail).
+- **Write-once.** A file is written to a temp name in its own directory (`<name>.tmp-<pid>-<rand>`), fsynced, then hard-linked to its final name; a link never replaces an existing file, so an existing file is kept and a concurrent writer cannot clobber one. The temp name is removed either way. Stray temp files of a crashed writer are removed by the next `expireContent()`.
+- An attachment is stored once however many emails carry it.
+- **Self-verifying.** The names are hashes. Every read re-hashes: a raw file whose sha256 (first 32 hex) is not its id, or an attachment whose sha256 is not its name, is treated as absent (`rawEmail` / `attachment` return null; `replyText({ id })` rejects `ERR_NO_CONTENT` and `matchBody(id)` reports `stored content failed its hash check`). A corrupt file is never returned and never repaired by mailproof.
+
+### B7.2 Options
+
+Constructor option `content: { store?: boolean, attachments?: boolean, days?: number }`; validated at construction (non-object, unknown key, non-boolean flag, `days` not a positive integer all throw).
+
+| Option | Default | Meaning |
+|---|---|---|
+| `store` | `true` | Keep the raw email of every recorded message. `false` = "proof only": nothing is written and `record()`'s result has no `content` field (today's behaviour exactly). |
+| `attachments` | `true` | Also keep attachment files. `false` keeps the raw email only. |
+| `days` | `730` | Retention, counted from the record's `captured` time (B1). |
+
+### B7.3 Write at capture
+
+In `record()` (so also `sync()` and every path that calls it), on the main thread, under the trail lock, in the same critical section as the commit and **before** the git commit.
+
+- The raw bytes are stored when the message is at most the whole-message limit (25 MiB, `total_bytes`). That includes a message refused by another gate limit or stopped by the worker backstop (its bytes are held), and excludes an over-25 MiB message (which `sync` streams through a hash and never holds). **Attachments are stored only for a message that was parsed** (never for an over-limit or backstopped one). `check()` stores nothing.
+- Attachment bytes come from the parse the build already does (the worker returns them with the record when `store` and `attachments` are on; bounded by the 25 MiB gate).
+- **Duplicate (the id is committed already).** With `store` on and the content missing (a trail recorded earlier with `store: false`, a deleted file, `attachments` turned on since), `record()` writes it now (backfill), unless the record is already past its retention (`captured` older than `days`), in which case it writes nothing.
+- **Failure.** A content write failure (ENOSPC, EACCES, a file where a directory should be) never fails the call and never loses the proof: the record commits and the result carries `content: { stored: false, attachments: 0, error }`. A failed attachment write after a stored raw gives `stored: true` with `error`. If the **commit** fails, the existing rollback also removes the content files this call newly created (only those; files that existed before are untouched), together with the record and key files. A killed process can leave content for a record that was never committed; it is harmless (the next capture of those bytes keeps it) and is not swept.
+- Result: `content?: { stored: boolean, attachments: number, error?: string }` on the `record()` result (never in the record JSON). `stored`: the raw email is in the store after the call; `attachments`: distinct attachment files of the message in the store after the call.
+
+### B7.4 Read primitives
+
+- `rawEmail(id) => Promise<Buffer | null>` and `attachment(sha256) => Promise<Buffer | null>` (`sha256:<hex>` or bare hex). Null for malformed input, absent, expired, forgotten or corrupt. No lock.
+- `replyText({ id })` is accepted beside raw bytes (an object with an `id` is unambiguous; a string or Buffer keeps its meaning). It reads the stored raw and then behaves exactly as `replyText(raw)` (B6): same id, same `ERR_NOT_RECORDED`, same commit. No stored content rejects with `code: 'ERR_NO_CONTENT'`; an `id` that is not 32 hex is a plain Error.
+- `matchBody(recordOrId, raw?)`: with `raw` omitted the stored raw email of the record is used. No usable content gives `{ match: false, full: false, signatures: [], reason }` (`reason`: `no stored content` or `stored content failed its hash check`). With `raw` given, nothing changes.
+
+### B7.5 Retention
+
+`expireContent({ now? }) => Promise<{ removed, attachments }>`. Under the trail lock: every stored raw whose record's `captured` is more than `days` days before `now` (default the instance clock) is deleted; then every attachment file that no remaining stored raw's record lists is deleted. Content only: `records/`, `keys/`, `replies/`, `.ots` files and git are never touched, so every proof still verifies. A record that is missing, unreadable or has an unusable `captured` keeps its content (never delete on doubt). Idempotent. `sync()` calls it once at the end of every run, after the mailbox work and outside the sync's own failure reporting (an expiry error never fails a run). With no content directory it returns zeros and creates nothing.
+
+### B7.6 Forget
+
+`forget(target) => Promise<{ removed, attachments }>`, `target`: a record id, an array of ids, or `{ with: address, before?, after? }`. Content only, same effect as expiry but now. Idempotent (an id with nothing stored, or an unknown id, removes nothing and is not an error); a malformed id or a bad `with`/`before`/`after` throws a TypeError before anything is deleted.
+
+- **Counterparty.** `with` is one exact address, compared case-insensitively against the addresses on the From, To and Cc lines of: the record's signed headers (any signature), the `message.from` of an unsigned record, and the header block of the stored raw email (so an unsigned To/Cc is found while the raw is held). `bob@gmail.com` is not `bob@company.com`; no aliasing. Reply-To is not matched. The trail index carries no participants yet, so this reads the records (one JSON read per stored email, B7.7).
+- `after` is inclusive, `before` exclusive, on `captured`.
+
+### B7.7 Attachment deduplication and its cost
+
+An attachment file is deleted (by expiry or forget) only when no other record whose raw email is **still stored** lists that sha256 in `attachments`. There is no reference-count file: the answer is computed from the records, which are the source of truth, so it cannot drift. One expiry pass reads each stored email's record once (it needs `captured` anyway) and builds the referenced set in the same pass. A forget of ids with no attachments does no scan; with attachments it reads each stored email's record once. Cost is linear in the stored emails: measured in findings F22.
+
+### B7.8 Concurrency
+
+`expireContent` and `forget` take the trail lock (`ERR_TRAIL_LOCKED` after `lockTimeoutMs`, nothing deleted), like every writer. Reads take no lock; a read racing a delete sees the file or null. The content write of `record()` is inside the lock it already holds.
+
+### B7.9 Test plan
+
+`tests/integration/content-store.test.js` (real git trail, real files): default-on layout, modes, not in git, record JSON unchanged; `store: false` identical to before (no field, no directory); `attachments: false`; the worker path returns attachment bytes; write-once and dedup across two records sharing an attachment (same inode kept); self-verify (corrupt raw and attachment give null, `ERR_NO_CONTENT`, `matchBody` reason); `replyText({ id })` equals `replyText(raw)`, `matchBody` without raw, `ERR_NO_CONTENT`; backfill on a duplicate and not past retention; rollback on a failed commit (pre-commit hook) removes only this call's content; a content write failure keeps the proof; over-limit raw stored and attachments not, over 25 MiB not stored; `check()` writes nothing; expiry with a shared attachment surviving until its last user, proofs still verify; a record that cannot be read keeps its content and orphan attachments are swept; forget by id, array, counterparty (exact, case-insensitive, From/To/unsigned Cc, `before`/`after`), idempotence; both take the trail lock and reads do not; no directory creates nothing; the sync end-of-run sweep; option validation.
 
 ---
 
