@@ -1,7 +1,7 @@
 # mailproof v2 — PRD
 
-> **Status:** v2 is released as 2.1.0 (M0 and M1 shipped). 1.x is frozen at tag `v1.4.0` (v1 code archived in `archive/v1/`; no `v1` branch).
-> **Owner:** hamr0 · **Last updated:** 2026-11-07
+> **Status:** v2 is released as 2.2.0 (M0, M1 and M2 shipped). M3 is specified (2026-11-08), not built. 1.x is frozen at tag `v1.4.0` (v1 code archived in `archive/v1/`; no `v1` branch).
+> **Owner:** hamr0 · **Last updated:** 2026-11-08
 >
 > **For future Claude:** this PRD wins on intent and scope. The *why* behind each choice is in
 > [`decisions-log.md`](decisions-log.md). The v1 PRD is archived at
@@ -80,7 +80,7 @@ stores:
 - threading ids: `Message-ID`, `In-Reply-To`, `References`;
 - direction (in/out), capture source, capture time.
 
-**Never** the body, never the raw email.
+**Never** the body, never the raw email, in the record. From M3 (planned) the raw email and attachments are stored locally beside the trail by default, outside git and outside the record (§7 M3); the record format is unchanged.
 
 **What this proves later**
 
@@ -94,8 +94,7 @@ stores:
 **Costs and caveats**
 
 - Signed headers must be stored verbatim. We cannot hash the subject and still re-check.
-- They include other people's addresses and the subject. Privacy wording is an open question (§9);
-  this is not legal advice.
+- They include other people's addresses and the subject. Privacy note: [usage-guide](usage-guide.md#what-mailproof-stores-about-other-people) (§12 Q7; not legal advice).
 - A signature with an `l=` (body length) tag leaves part of the body unsigned. The record flags it.
 - Unsigned mail is still recorded (v1's "commit every message, flag it" idea), with verdict
   `unverified` and minimal metadata.
@@ -187,9 +186,9 @@ It must pass the AGENT_RULES External Dependency Checklist, and it reaches the �
 login method works (Gmail Sent-copy signing is moot, [F3](findings.md)). Already known: msn.com Sent copies are unsigned ([F3](findings.md)); Outlook/Exchange mail
 exported via Thunderbird has altered bodies, so M1 is Gmail-first (F4).
 
-### M2 — Reply text (built, not yet released)
+### M2 — Reply text (shipped)
 
-**Status:** built as `Mailproof#replyText` (stripper `mailproof-quote/1`); wire format [SPEC B6](SPEC.md), evidence [F20](findings.md). Ships with the next release.
+**Status:** shipped in 2.2.0 as `Mailproof#replyText` (stripper `mailproof-quote/1`); wire format [SPEC B6](SPEC.md), evidence [F20](findings.md).
 
 **Re-scoped 2026-11-07** from "Reading replies"; see the [decisions-log](decisions-log.md) entry "M2 is reply text, not reply interpretation".
 
@@ -220,22 +219,102 @@ It stores no text, no body bytes and no subject (the trail stays header-only). I
 
 **POC (done: GO, owner-reviewed 2026-11-07, [F20](findings.md)):** quote stripping on real replies from real clients (Gmail web, the Gmail app, Outlook/msn, iPhone where available), including a short top reply and an inline answer. Real samples stay outside the repo.
 
-### M3 — Two-party coordination (goals only)
+### M3 — Two-party record (specified)
 
-Re-interviewed and simplified when its turn comes.
+**Status:** specified 2026-11-08, not built; sending and the bareguard recipe still open (see Open below). Reasons and options: [decisions-log](decisions-log.md) entry "M3 scope: one trail per owned account, local content store, prune-before-date, CLI + stdlib MCP". No wire formats yet; they go to SPEC Part B when each step is built.
 
-- A transaction = request + reply matched by threading.
-- First user: agent approvals via bareguard.
-- Interfaces: a CLI (plain subcommands such as `verify`/`sync`/`log`/`prove`, plus a simple readline
-  menu when run with no arguments; no TUI framework), an MCP server for agents, and the full
-  `primitives.json`.
-- CLI help, MCP tool descriptions and `primitives.json` all come from the **same JSDoc** (one source
-  of truth).
-- Open: sending from a normal mailbox partly reopens the "no third-party sending provider" rule.
+**Goal.** M3 makes mailproof a two-party record for three use cases on one substrate:
+
+- **(a) Approval channel for agents.** First user: bareguard's `humanChannel` hook.
+- **(b) Request/reply on record.** "I sent you this, you replied."
+- **(c) A record of agreement or communication between two people.** Appointments, document exchange, and agent audit replay: when an agent receives or reads an email in a flow, the email can be verified at $0, locally, and re-verified later.
+
+mailproof records everything, always, in and out. The use cases are read-side primitives and policies over the same record. Multi-party stays in gitdone/signedreply.com.
+
+#### Trail and counterparties
+
+- **One trail (one git) per email account the user owns.** Every counterparty of that account lands in that account's trail.
+- Separate accounts (business, personal) are separate trails, never merged.
+- Addresses that deliver into the same mailbox (a send-as alias, a plus-address) are the same trail.
+- **A counterparty is one exact email address.** `bob@gmail.com` and `bob@company.com` are different counterparties. There is no grouping or aliasing. DKIM proves a domain or an address, not a person.
+- **Organisation inside a trail is unchanged:** one commit per email (each copy), one linear branch, flat `records/<id>.json`. No branch or folder per counterparty (a CC'd mail would need two homes, creating them on receive happens inside the lock, and threads cross structures).
+- **Retrieval goes through the rebuildable SQLite index** ([SPEC B5](SPEC.md)). It gains participants (record, address, role: from/to/cc/reply-to as available) and thread links (Message-ID, In-Reply-To, References). Each record proves itself (signed headers, archived key, verdicts, OTS); git supplies the append-only history of the whole account.
+
+#### Linked emails
+
+Threading is not a core feature. mailproof reports "these emails look linked" with a graded **link strength**, and never asserts "this is definitely the reply chain":
+
+- **signed link:** In-Reply-To/References are inside the DKIM `h=` list;
+- **unsigned link:** present but not signed (for example Microsoft senders, [F11](findings.md));
+- **none.**
+
+Best effort, offered when available.
+
+#### Local content store
+
+- **On by default.** Stores the raw email (keyed by record id, which is already the sha256 of the raw bytes, so reading it back self-verifies) and attachments (keyed by their sha256, already in the record; stored once however often they are sent).
+- **Separate opt-outs per account:** content, and attachments on their own.
+- **Placement:** beside the trail, outside git (so an exported or shared proof never carries content), and not inside the SQLite index. The index is a disposable cache; content is primary data, and after the mailbox deletes the email it is the only copy. Files are write-once.
+- **What it enables:** primitives work offline forever: `replyText(id)` without re-supplying raw bytes, `matchBody`, reading old threads, audit replay.
+- **"Proof only" accounts** (content off) keep today's behaviour: the caller supplies the raw bytes.
+- This changes §4's "never the raw email" for local storage only; the record format is unchanged.
+
+#### Retention and forget
+
+- **Content retention per account in days, default 730 (2 years).** Expired content is deleted automatically.
+- **Proof records are permanent.** Signed headers, from/to/cc, subject, date, verdicts, archived keys and hashes stay. mailproof never deletes proof on its own.
+- **`forget`** is the same content deletion, earlier, for one email (and per counterparty or date range as a convenience).
+- **After content is gone:** the headers still re-verify offline; `body_status` stays a recorded fact but can no longer be re-checked; `replyText` text and attachments are gone, only hashes remain. Anyone who later produces the raw email (sha256 = record id) or the attachment (sha256 match) gets everything re-verified. Caveat: a short reply's text hash is guessable.
+- Privacy note: [usage-guide](usage-guide.md#what-mailproof-stores-about-other-people).
+
+#### Prune before date
+
+Off by default; an explicit command. Only "everything captured before date X". Never a range in the middle (that is tampering), and no rotation by period.
+
+1. Take the trail lock. The cutoff is a prefix of history (commits are made at capture time).
+2. Write a new first commit, the **prune notice**: cutoff date, previous HEAD hash, number of records removed and kept.
+3. Replay each kept commit onto it with its original message, author and date, removing the pruned records' files (record JSON, `.ots`, reply-text records, archived keys used only by pruned records) from every tree.
+4. Re-verify every kept record (DKIM, and OTS if present) during the replay.
+5. Build in a separate directory and swap. The old trail stays as `<trail>.pre-prune-<date>` until the user deletes it (or passes `--delete-backup`). A failure leaves the original untouched.
+6. Delete the pruned records' content from the content store. The index fully rebuilds on the next read (it already detects rewritten history).
+
+Commit ids after the cutoff change. Kept record files, DKIM proofs, keys, OTS stamps and content are byte-identical.
+
+#### Trust profiles and graded proof
+
+- **Trust profile:** a read-side policy primitive. It sets allowed senders or domains (for example only `@gmail.com`), required checks (DKIM aligned, DMARC, SPF, ARC), required body level (proven / partial / any) and required link strength. Agents use it to gate which email they act on. It is local, deterministic and costs nothing, and can be re-evaluated later on the same record (audit replay).
+- **Graded proof per part:** the email and each attachment have separate results ("email valid, attachment is not the one recorded").
+
+#### Interfaces
+
+- **Library** (exists).
+- **One `mailproof` CLI.** Run with no arguments it shows a simple readline menu (stdlib, no TUI framework). The same actions are subcommands for scripts and cron: `sync`, `watch`, `list` (for example `--with <address>`), `show`, `verify`, `export`, `forget`, `prune`, `status`, `mcp`. `export` depends on M6's proof bundle (§7 M6). The existing `mailproof-sync` bin keeps working.
+- **Config:** a JSON file per user (for example `~/.config/mailproof/accounts.json`; JSON so there is no new dependency). Per-account fields such as `user`, `host`, `trailDir`, `trail`, `passCommand`, `contentDays` (730), `storeContent`, `storeAttachments`.
+- **MCP server inside the same package** (`mailproof mcp`): stdio JSON-RPC written with the stdlib, no MCP SDK dependency. Proven first by a POC against a real MCP client (Claude Code). Switch to the SDK only if the protocol work proves larger; that needs the dependency checklist and an owner decision. It starts read-only: verify, show, list, check a record against a trust profile, "did X reply to my request". No forget, export or send through MCP without a human gate.
+- **One source of truth:** CLI help, MCP tool descriptions and `primitives.json` all come from the same JSDoc.
+- **No new runtime dependency for M3.**
+
+#### Build order
+
+1. Content store, retention and `forget`.
+2. Trust profiles, counterparty view and graded thread links.
+3. Prune before date.
+4. `mailproof` CLI, config and menu.
+5. MCP, after its POC.
+
+POC first where the mechanism is unproven: the stdlib MCP server, and the prune replay. Approvals via bareguard become a recipe on top of steps 2 and 5.
+
+#### Open (next interview round, not decided)
+
+- **Sending the request email** (§12 Q6): own-mailbox SMTP, bring-your-own Message-ID, or other. A new dependency would need the checklist, and sending partly reopens the "no third-party sending provider" rule.
+- **The bareguard recipe or adapter:** what reply text counts as "approve", and at which trust bar (for example, proven text required?).
+- **MCP write tools** and their human gate.
+- **`watch` mechanism:** interval vs IMAP IDLE. A mechanism choice, decided at build.
+- **Pair/thread export:** whether a minimal one ships in M3 or waits for M6.
 
 ### M4 — Appointments (highlights)
 
-Calendar replies, propose/accept back-and-forth, reminders. Built on M3.
+Calendar replies, propose/accept back-and-forth, reminders. Built on M3. (M3's CLI `export` waits on M6's proof bundle.)
 
 ### M5 — Hosting your own (highlights)
 
@@ -245,14 +324,13 @@ default is opendkim (key stays in the MTA); in-library signing via mailauth's `d
 
 ### M6 — Proof export, then ZK (highlights)
 
-Export a self-contained proof bundle. Disclosure levels: **full email** / **headers-only** (no ZK) /
+Export a self-contained proof bundle (M3's CLI `export` command depends on it). Disclosure levels: **full email** / **headers-only** (no ZK) /
 **ZK one-bit-out** using ZK Email's circuits in a separate package (`mailproof-zk`), never our own
 circuits. Owner's related projects follow the same rule: proof in, one bit out; the crypto is never
 ours. Unconfirmed: whether google/longfellow-zk (used by the 8een project) can handle RSA DKIM; ZK
 Email targets RSA DKIM.
 
-**Later setting, not in scope now:** whole-inbox recording ("watch everything") is a setting on M1's
-capture code.
+**Recording scope.** M1 capture of INBOX plus Sent already records mail in and out (M3: "record everything, always"). Capturing all folders stays a config option on M1's capture code, not a separate module.
 
 ## 8. Agent menu: `primitives.json`
 
@@ -293,7 +371,8 @@ unproven (M0, M1, M2), not for modules whose mechanism exists and is tested.
 - Mail encryption (S/MIME, PGP).
 - Spam filtering, or anything like a mail client.
 - Any claim of legal admissibility.
-- Whole-inbox recording (a later setting, see M1/M6).
+- Per-record proof erasure, deleting a date range in the middle of a trail, trail rotation by period, and a separate git per counterparty.
+- (In scope since M3: content forget/expiry and prune-before-date.)
 
 ## 11. Process
 
@@ -309,8 +388,8 @@ Node ≥ 22.19 (`Worker#cpuUsage`, see F15).
 3. Gmail login method: OAuth or app password? **Answered for app passwords: `AUTHENTICATE PLAIN` over TLS works on the owner's account; OAuth not tested, see [F17](findings.md).**
 4. Are Gmail's Sent copies DKIM-signed? **Closed (owner, 2026-11-01): moot.** Own sent records are `unverified` regardless ([F3](findings.md)); the proof of sending is the counterparty's signed copy, and Gmail does sign outbound from the owner's gmail.com address (the batch-3 gmail.com-signed message, [F11](findings.md)).
 5. Does Gmail add its own ARC seal / `Authentication-Results` on inbound that could make its SPF verdict portable? **Answered: yes on 8/8 inbound copies (google.com ARC set plus Authentication-Results with spf=); whether to use it is open, see [F17](findings.md).**
-6. Sending from a normal mailbox in M3 vs the no-third-party-provider rule.
-7. Privacy wording for storing other people's addresses and subjects (not legal advice).
+6. Sending from a normal mailbox in M3 vs the no-third-party-provider rule. **Still open**, listed under M3 "Open".
+7. Privacy wording for storing other people's addresses and subjects (not legal advice). **Answered 2026-11-08:** see the note [What mailproof stores about other people](usage-guide.md#what-mailproof-stores-about-other-people).
 8. OTS stamp per sync run vs per email. **Decided (owner, 2026-11-03): per record, as today; advise OTS off for backfills, see [SPEC B4.5](SPEC.md).**
 9. IMAP as an in-core dependency vs a separate package, if the dependency checklist fails. **Decided (owner, 2026-11-03): in core as the third dependency (checklist passed, [F16](findings.md)), see [SPEC B4.6](SPEC.md).**
 10. Portable ARC: an offline re-check of a trusted-sealer ARC chain (archived ARC headers and sealer keys), so `forwarded` could be re-verified later; needs its own spec and POC (findings F7 D1).
