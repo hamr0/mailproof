@@ -1,7 +1,7 @@
 # mailproof v2 — PRD
 
-> **Status:** v2 is released as 2.1.0 (M0 and M1 shipped). 1.x is frozen at tag `v1.4.0` (v1 code archived in `archive/v1/`; no `v1` branch).
-> **Owner:** hamr0 · **Last updated:** 2026-11-07
+> **Status:** v2 is released as 2.2.0 (M0, M1 and M2 shipped). 1.x is frozen at tag `v1.4.0` (v1 code archived in `archive/v1/`; no `v1` branch).
+> **Owner:** hamr0 · **Last updated:** 2026-11-08
 >
 > **For future Claude:** this PRD wins on intent and scope. The *why* behind each choice is in
 > [`decisions-log.md`](decisions-log.md). The v1 PRD is archived at
@@ -187,9 +187,9 @@ It must pass the AGENT_RULES External Dependency Checklist, and it reaches the �
 login method works (Gmail Sent-copy signing is moot, [F3](findings.md)). Already known: msn.com Sent copies are unsigned ([F3](findings.md)); Outlook/Exchange mail
 exported via Thunderbird has altered bodies, so M1 is Gmail-first (F4).
 
-### M2 — Reply text (built, not yet released)
+### M2 — Reply text (shipped)
 
-**Status:** built as `Mailproof#replyText` (stripper `mailproof-quote/1`); wire format [SPEC B6](SPEC.md), evidence [F20](findings.md). Ships with the next release.
+**Status:** shipped in 2.2.0 as `Mailproof#replyText` (stripper `mailproof-quote/1`); wire format [SPEC B6](SPEC.md), evidence [F20](findings.md).
 
 **Re-scoped 2026-11-07** from "Reading replies"; see the [decisions-log](decisions-log.md) entry "M2 is reply text, not reply interpretation".
 
