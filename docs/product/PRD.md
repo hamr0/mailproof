@@ -81,7 +81,7 @@ stores:
 - the **address list** (`addresses`, M3): every From/To/Cc/Reply-To address of the header block, each marked signed or unsigned (SPEC B1); absent on older records and on a refused over-limit message;
 - direction (in/out), capture source, capture time.
 
-**Never** the body, never the raw email, in the record. From M3 (planned) the raw email and attachments are stored locally beside the trail by default, outside git and outside the record (§7 M3); the record format is unchanged.
+**Never** the body, never the raw email, in the record. Since M3 (step 1, built, not yet released) the raw email and attachments are stored locally beside the trail by default, outside git and outside the record (§7 M3); the record format is unchanged.
 
 **What this proves later**
 

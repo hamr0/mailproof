@@ -32,7 +32,7 @@
 
 **Replies, too.** `replyText` returns only what the sender newly wrote (the quoted history is removed), and tells you whether those words are proven. A reply that merely quotes "Approve payment of $5,000?" is not read as an approval.
 
-**What it isn't.** Not a mail client, not a sender, not spam filtering, and not proof of delivery. It never decides what a reply *means*: it gives you the verified text, and acting on it is your call. The body is never stored.
+**What it isn't.** Not a mail client, not a sender, not spam filtering, and not proof of delivery. It never decides what a reply *means*: it gives you the verified text, and acting on it is your call. The body is never in the proof or the trail. By default the raw email and its attachments are kept in a local store beside the trail (outside git, owner-only files, removed after `content.days` or by `forget`); `content: { store: false }` turns that off.
 
 ## Install
 
@@ -57,7 +57,7 @@ const reply = await mp.replyText(rawEmail);            // the sender's new words
 
 ## Four ways to use it
 
-1. **Library**: `check`, `record`, `verify`, `matchBody`, `matchFile`, `list`, `copies`, `replyText`. Use it in your own pipeline, for example a Postfix pipe.
+1. **Library**: `check`, `record`, `verify`, `matchBody`, `matchFile`, `list`, `copies`, `replyText`, `counterparties`, `linked`, `checkProfile`, `proofParts`, `rawEmail`, `attachment`, `expireContent`, `forget`, `prune`. Use it in your own pipeline, for example a Postfix pipe.
 2. **IMAP capture**: `mp.sync({...})` reads a mailbox (Gmail first) read-only and records every message. Run it again to pick up new mail.
 3. **CLI on a timer**: `mailproof-sync` is one sync run for cron or a systemd timer, with the password read from a command, never a flag.
 4. **AI agents**: `primitives.json` is a machine-readable menu of every verb (`when`, `import`, `signature`, `fails`, `example`), generated from source. Also on unpkg: `unpkg.com/mailproof/primitives.json`. Hand your assistant `mailproof.context.md` for the full contract.
