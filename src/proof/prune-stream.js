@@ -4,7 +4,10 @@
 
 import { spawn } from 'node:child_process';
 import { git } from './git.js';
-import { GIT_LISTING_MAX_BYTES } from './limits.js';
+import { GIT_LISTING_MAX_BYTES, PRUNE_GIT_CONFIG } from './limits.js';
+
+/** `git -c` arguments every prune git process starts with. */
+const CFG = PRUNE_GIT_CONFIG.flatMap((c) => ['-c', c]);
 
 /**
  * One commit of a fast-export stream. Header lines are kept as the raw bytes git wrote (decoded as latin1 so they go
@@ -28,7 +31,7 @@ import { GIT_LISTING_MAX_BYTES } from './limits.js';
  *   `done` rejects when git exits non-zero (with its stderr) or cannot start; await it after reading the stream.
  */
 function streamGit(cwd, args) {
-  const p = spawn('git', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+  const p = spawn('git', [...CFG, ...args], { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
   let err = '';
   p.stderr.on('data', (d) => { if (err.length < 4096) err += d; });
   const done = /** @type {Promise<void>} */ (new Promise((resolve, reject) => {
@@ -123,7 +126,7 @@ function exportRange(cwd, range, { data }) {
  * @returns {{ write: (b: Buffer | string) => Promise<void>, end: () => Promise<void>, kill: () => void }}
  */
 function startImport(cwd) {
-  const p = spawn('git', ['fast-import', '--quiet', '--depth=50'], { cwd, stdio: ['pipe', 'ignore', 'pipe'] });
+  const p = spawn('git', [...CFG, 'fast-import', '--quiet', '--depth=50'], { cwd, stdio: ['pipe', 'ignore', 'pipe'] });
   let err = '';
   p.stderr.on('data', (d) => { if (err.length < 4096) err += d; });
   const done = /** @type {Promise<void>} */ (new Promise((resolve, reject) => {
@@ -149,7 +152,7 @@ function startImport(cwd) {
  * @returns {{ get: (spec: string) => Promise<Buffer | null>, close: () => void }}
  */
 function catFile(cwd) {
-  const p = spawn('git', ['cat-file', '--batch'], { cwd, stdio: ['pipe', 'pipe', 'pipe'] });
+  const p = spawn('git', [...CFG, 'cat-file', '--batch'], { cwd, stdio: ['pipe', 'pipe', 'pipe'] });
   let buf = Buffer.alloc(0);
   /** @type {null | ((v?: unknown) => void)} */
   let wake = null;
@@ -188,21 +191,30 @@ function catFile(cwd) {
 }
 
 /**
- * Every file at `rev` as path -> blob id.
+ * Every file at `rev` as (path, blob id), handed to `onEntry` one at a time while git writes the listing, so the whole
+ * listing (about 150 bytes per record, several copies as strings and arrays) is never held (findings F25).
  * @param {string} root
  * @param {string} rev
- * @returns {Promise<Map<string, string>>}
+ * @param {(path: string, sha: string) => void} onEntry
+ * @returns {Promise<void>}
  */
-async function lsTree(root, rev) {
-  const out = await git(root, ['ls-tree', '-r', '-z', '--full-tree', rev], { maxBuffer: GIT_LISTING_MAX_BYTES });
-  /** @type {Map<string, string>} */
-  const m = new Map();
-  for (const e of out.split('\0')) {
-    if (!e) continue;
-    const tab = e.indexOf('\t');
-    m.set(e.slice(tab + 1), e.slice(0, tab).split(' ')[2]);
-  }
-  return m;
+async function lsTree(root, rev, onEntry) {
+  const g = streamGit(root, ['ls-tree', '-r', '-z', '--full-tree', rev]);
+  let rest = Buffer.alloc(0);
+  try {
+    for await (const chunk of g.stdout) {
+      const buf = rest.length ? Buffer.concat([rest, chunk]) : chunk;
+      let from = 0;
+      for (let nul = buf.indexOf(0, from); nul >= 0; nul = buf.indexOf(0, from)) {
+        const e = buf.toString('utf8', from, nul);
+        from = nul + 1;
+        const tab = e.indexOf('\t');
+        onEntry(e.slice(tab + 1), e.slice(0, tab).split(' ')[2]);
+      }
+      rest = buf.subarray(from);
+    }
+  } catch (e) { g.kill(); throw e; }
+  await g.done;
 }
 
 /**
@@ -213,7 +225,7 @@ async function lsTree(root, rev) {
  * @returns {Promise<Map<string, string | null>>}
  */
 async function diffTree(root, a, b) {
-  const out = await git(root, ['diff-tree', '-r', '-z', '--no-renames', '--no-abbrev', a, b], { maxBuffer: GIT_LISTING_MAX_BYTES });
+  const out = await git(root, ['diff-tree', '-r', '-z', '--no-renames', '--no-abbrev', a, b], { maxBuffer: GIT_LISTING_MAX_BYTES, config: PRUNE_GIT_CONFIG });
   const parts = out.split('\0');
   /** @type {Map<string, string | null>} */
   const m = new Map();

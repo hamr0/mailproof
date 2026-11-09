@@ -570,7 +570,7 @@ A second prune replaces the first notice (a pruned commit) and copies its fields
 
 ### B9.3 Mechanism and locking
 
-Engine: POC option B (findings F24), no new dependency: `git fast-export --no-data` -> a stdlib transform -> `git fast-import` into `<trailDir>/<trail>.prune-build`, borrowing the old objects through `objects/info/alternates`; `git repack -a -d`, the alternates are removed, `git fsck --connectivity-only`. Code: `src/proof/prune.js` (plan, filter, build, append), `prune-stream.js` (git plumbing), `prune-swap.js` (journal, swap, recovery); paths are parsed by `layout.js` only.
+Engine: POC option B (findings F24), no new dependency: `git fast-export --no-data` -> a stdlib transform -> `git fast-import` into `<trailDir>/<trail>.prune-build`, borrowing the old objects through `objects/info/alternates`; `git repack -a -d`, the alternates are removed, `git fsck --connectivity-only`. Every git process prune starts runs with `core.deltaBaseCacheLimit=16m` (`PRUNE_GIT_CONFIG`, `limits.js`; git's default is 96 MB per process): the peak anonymous memory of the process tree is 194 MB at 80,000 records (20k: 130 MB, 40k: 149 MB), about 1 MB per 1,000 records of git's own object and commit lists, not quadratic (F25.1). Code: `src/proof/prune.js` (plan, filter, build, append), `prune-stream.js` (git plumbing), `prune-swap.js` (journal, swap, recovery); paths are parsed by `layout.js` only.
 
 1. **Prune lock** `<trailDir>/.<trail>.prune.lock`, fail-fast (the B4.5 mechanism): a second prune gets `ERR_PRUNE_RUNNING` at once. Taken first, held for the whole call.
 2. **Snapshot** (short trail lock): finishes an unfinished earlier swap (B9.4), removes what a crashed build left, reads HEAD.

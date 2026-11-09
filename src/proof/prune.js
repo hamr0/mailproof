@@ -15,7 +15,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { git, GIT_IDENTITY } from './git.js';
-import { PRUNE_SYNC_WAIT_MS } from './limits.js';
+import { PRUNE_SYNC_WAIT_MS, PRUNE_GIT_CONFIG } from './limits.js';
 import {
   withTrailLock, trailLockFile, syncLockFile, pruneLockFile, TRAIL_LOCK, PRUNE_LOCK, SYNC_LOCK_WAIT,
   headOf, isAncestor, idsAt,
@@ -265,9 +265,9 @@ async function buildPruned({ root, snapshot, build, plan, carried, notice, nowSe
     await imp.end();
   } catch (e) { exp.kill(); imp.kill(); throw e; }
   // Self-contained: pack everything reachable (also what came through the alternates), then drop them.
-  await git(build, ['repack', '-a', '-d', '-q']);
+  await git(build, ['repack', '-a', '-d', '-q'], { config: PRUNE_GIT_CONFIG });
   await fs.rm(path.join(build, 'objects', 'info', 'alternates'), { force: true });
-  await git(build, ['fsck', '--connectivity-only', '--no-dangling']);
+  await git(build, ['fsck', '--connectivity-only', '--no-dangling'], { config: PRUNE_GIT_CONFIG });
   return { commits };
 }
 
@@ -286,28 +286,54 @@ async function materialise(root, build, tmp) {
     try { const v = await git(root, ['config', '--local', k]); if (v) await git(tmp, ['config', k, v]); } catch { /* not set */ }
   }
   await git(tmp, ['config', 'core.bare', 'false']);
-  await git(tmp, ['reset', '-q', '--hard', 'HEAD']);
+  await git(tmp, ['reset', '-q', '--hard', 'HEAD'], { config: PRUNE_GIT_CONFIG });
   await fs.mkdir(path.join(tmp, 'records'), { recursive: true });
 }
 
 /**
- * The files the pruned trail must hold given the old trail's files: the old files minus those of removed records,
- * and minus archived keys of the prefix that no kept record names.
- * @param {Map<string, string>} old  path -> blob id
+ * Whether the pruned trail must hold this path of the old trail: everything except the files of removed records and
+ * the archived keys of the prefix that no kept record names.
+ * @param {string} p
  * @param {Plan} plan
  * @param {Set<string>} carried
- * @returns {Map<string, string>}
+ * @returns {boolean}
  */
-function expectedFiles(old, plan, carried) {
+function wanted(p, plan, carried) {
+  const k = classify(p);
+  if (k && k.kind !== 'key' && plan.prunedIds.has(k.id)) return false;
+  if (k && k.kind === 'key' && plan.prefixKeys.has(p) && !carried.has(p)) return false;
+  return true;
+}
+
+/**
+ * @param {string[]} bad
+ * @param {string} what
+ * @returns {Error & { code: 'ERR_PRUNE_VERIFY' }}
+ */
+const verifyError = (bad, what) => Object.assign(new Error(`prune: the pruned trail does not match the old one (${what}): ${bad.length} paths differ, first ${bad[0]}. Nothing was changed.`), { code: /** @type {const} */ ('ERR_PRUNE_VERIFY') });
+
+/**
+ * The pruned trail's files must be the old trail's files minus those of removed records (and minus unneeded prefix
+ * keys), blob ids equal. Both listings are streamed: one map (the wanted files) is held, and emptied as the new
+ * listing matches it.
+ * @param {string} root  The live trail.
+ * @param {string} snapshot
+ * @param {string} tmp  The pruned trail.
+ * @param {string} builtTip
+ * @param {Plan} plan
+ * @param {Set<string>} carried
+ * @returns {Promise<void>}
+ * @throws {Error & { code: 'ERR_PRUNE_VERIFY' }}
+ */
+async function assertSnapshotFiles(root, snapshot, tmp, builtTip, plan, carried) {
   /** @type {Map<string, string>} */
-  const out = new Map();
-  for (const [p, sha] of old) {
-    const k = classify(p);
-    if (k && k.kind !== 'key' && plan.prunedIds.has(k.id)) continue;
-    if (k && k.kind === 'key' && plan.prefixKeys.has(p) && !carried.has(p)) continue;
-    out.set(p, sha);
-  }
-  return out;
+  const want = new Map();
+  await lsTree(root, snapshot, (p, sha) => { if (wanted(p, plan, carried)) want.set(p, sha); });
+  /** @type {string[]} */
+  const bad = [];
+  await lsTree(tmp, builtTip, (p, sha) => { if (want.get(p) === sha) want.delete(p); else bad.push(p); });
+  bad.push(...want.keys());
+  if (bad.length) throw verifyError(bad, 'snapshot');
 }
 
 /**
@@ -321,9 +347,7 @@ function assertSame(want, got, what) {
   const bad = [];
   for (const [p, s] of want) if (got.get(p) !== s) bad.push(p);
   for (const p of got.keys()) if (!want.has(p)) bad.push(p);
-  if (bad.length) {
-    throw Object.assign(new Error(`prune: the pruned trail does not match the old one (${what}): ${bad.length} paths differ, first ${bad[0]}. Nothing was changed.`), { code: 'ERR_PRUNE_VERIFY' });
-  }
+  if (bad.length) throw verifyError(bad, what);
 }
 
 /**
@@ -482,7 +506,7 @@ async function runPrune(ctx, opts) {
       }
       /** @type {Set<string>} */
       const carried = new Set([...plan.prefixKeys.keys()].filter((k) => state.keys.has(k)));
-      const earlier = parseNotice((await git(root, ['log', '--max-parents=0', '--format=%B', snapshot])).replace(/$/, '\n'));
+      const earlier = parseNotice((await git(root, ['log', '--max-parents=0', '--format=%B', snapshot], { config: PRUNE_GIT_CONFIG })).replace(/$/, '\n'));
       const notice = noticeMessage({
         cutoff, 'previous-head': snapshot, removed: String(plan.prunedIds.size), kept: String(state.kept), stragglers: String(state.stragglers.length),
         dropped: String(plan.dropped), 'pruned-at': new Date(nowMs).toISOString(),
@@ -492,8 +516,8 @@ async function runPrune(ctx, opts) {
       await buildPruned({ root, snapshot, build: p.build, plan, carried, notice, nowSec: Math.floor(nowMs / 1000) });
       await materialise(root, p.build, p.tmp);
       const builtTip = await git(p.tmp, ['rev-parse', 'HEAD']);
-      assertSame(expectedFiles(await lsTree(root, snapshot), plan, carried), await lsTree(p.tmp, builtTip), 'snapshot');
-      if ((await git(p.tmp, ['status', '--porcelain'])) !== '') throw Object.assign(new Error('prune: the pruned working tree is not clean. Nothing was changed.'), { code: 'ERR_PRUNE_VERIFY' });
+      await assertSnapshotFiles(root, snapshot, p.tmp, builtTip, plan, carried);
+      if ((await git(p.tmp, ['status', '--porcelain'], { config: PRUNE_GIT_CONFIG })) !== '') throw Object.assign(new Error('prune: the pruned working tree is not clean. Nothing was changed.'), { code: 'ERR_PRUNE_VERIFY' });
       const buildMs = Date.now() - t0 - planMs;
       await hooks.afterBuild?.();
 
@@ -514,7 +538,7 @@ async function runPrune(ctx, opts) {
         previousHead = head;
         if (head !== snapshot) {
           const late = await appendSince({ root, tmp: p.tmp, snapshot, head, plan, carried, state, cutoffMs, cat });
-          await git(p.tmp, ['reset', '-q', '--hard', 'HEAD']);   // reads every new tree: a missing object fails here
+          await git(p.tmp, ['reset', '-q', '--hard', 'HEAD'], { config: PRUNE_GIT_CONFIG });   // reads every new tree: a missing object fails here
           newHead = await git(p.tmp, ['rev-parse', 'HEAD']);
           assertSame(await filteredDiff(root, snapshot, head, plan, carried, late.added), await diffTree(p.tmp, builtTip, newHead), 'commits made during the build');
           droppedLate = late.dropped;
@@ -583,10 +607,7 @@ async function filteredDiff(root, snapshot, head, plan, carried, added) {
   /** @type {Map<string, string | null>} */
   const out = new Map();
   for (const [p, sha] of await diffTree(root, snapshot, head)) {
-    const k = classify(p);
-    if (k && k.kind !== 'key' && plan.prunedIds.has(k.id)) continue;
-    if (k && k.kind === 'key' && plan.prefixKeys.has(p) && !carried.has(p)) continue;
-    out.set(p, sha);
+    if (wanted(p, plan, carried)) out.set(p, sha);
   }
   for (const [p, sha] of added) out.set(p, sha);
   return out;

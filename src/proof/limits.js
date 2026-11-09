@@ -139,6 +139,9 @@ export const LINKED_CHILDREN_DEFAULT = 1000;
 /** Bytes of one git listing (`ls-tree`, `diff-tree`) that prune and the content sweep read whole: about 1,000,000 record paths. Above it they fail instead of growing without bound. */
 export const GIT_LISTING_MAX_BYTES = 256 * 1024 * 1024;
 
+/** Git's delta-base cache for every git process prune starts (`core.deltaBaseCacheLimit`; git's default is 96m per process). Measured at 80,000 records: it takes the peak of the process tree from 375 MB to 268 MB (findings F25) with no change in time beyond noise. */
+export const PRUNE_GIT_CONFIG = ['core.deltaBaseCacheLimit=16m'];
+
 /** How long a prune waits for a running `sync` to finish before it gives up with `ERR_SYNC_LOCKED` (a sync call is capped at SYNC_MAX_MS; the margin covers its cleanup). Nothing is changed when it gives up. */
 export const PRUNE_SYNC_WAIT_MS = SYNC_MAX_MS + 60_000;
 
