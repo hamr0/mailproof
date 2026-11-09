@@ -339,3 +339,24 @@ POC script: [`poc/m0-header-recheck.js`](../../poc/m0-header-recheck.js) (throwa
 - **Decision:** keep one code path (rebuild from the records), the DKIM re-check only for records that have a signed In-Reply-To/References line, and the index built from the record alone (never the content store). No stored precomputed per-address counts: `counterparties()` at 225 ms for 80,000 records is acceptable for a view a human or an agent opens occasionally; revisit if a consumer polls it.
 - **Not measured:** real (non-cloned) trails above a handful of records, a trail where most mail has a signed In-Reply-To (the worst case is the 25% mix times 4: about 3x the schema 1 rebuild), a cold page cache, 100k and above (the 16 MB git output cap of F19 still holds at about 350,000 records).
 - **Affects:** SPEC B5 and B8; `src/proof/index-db.js`, `src/proof/participants.js`, `src/proof/profile.js`; PRD §7 M3 "Trail and counterparties", "Linked emails", "Trust profiles and graded proof".
+
+## F24 — M3: sharding `records/` by id prefix (measured 2026-11-09)
+
+- **Date:** 2026-11-09
+- **Question:** the prune POC (`poc/m3-prune`, README "The quadratic is git's") showed that a flat `records/` makes every commit write a tree object with one entry per record. What does that cost `record()` today, and what does sharding by the first two hex chars of the id (`records/<id[0:2]>/<id>.json`, 256 directories) save?
+- **Method:** synthetic, on the dev box (shared, load average 2 to 5, `nice 10`). Trails of 10,000 and 20,000 records, each record a clone of one of 4 genuine records (about 2.8 KB), one commit each, built with `git fast-import` in both layouts. Then 300 more commits through the real write path (`commitRecord`: lock, leftover cleanup, `git add`, `git commit`; no DKIM build, no OTS, no content store) on the previous code (`git archive 84f0505`, flat) and on the new code (sharded), timing each call and measuring `du -sb .git/objects` growth (loose objects, before any repack). Then a cold index rebuild (`list({limit:1})`, index file deleted), three runs each at 20,000.
+- **Result (the write path, 300 commits on top of N records):**
+
+  | N | layout | `commitRecord` mean / median / p90 | `.git/objects` growth per commit |
+  |---|---|---|---|
+  | 10,000 | flat | 195 / 165 / 293 ms | 449 KB |
+  | 10,000 | sharded | 121 / 109 / 187 ms | 12 KB |
+  | 20,000 | flat | 260 / 247 / 311 ms | 888 KB |
+  | 20,000 | sharded | 162 / 146 / 214 ms | 15.6 KB |
+
+  The flat layout's growth is linear in N (a tree of N entries at about 45 bytes compressed, rewritten every commit: 449 KB at 10k, 888 KB at 20k); the sharded layout writes one shard tree (about N/256 entries) plus the small root trees: about 12-16 KB a commit, 30 to 57 times less. Time per write falls by 38 to 40% at these sizes (and the flat figure keeps growing with N while the sharded one grows about 4x slower). A real `record()` also builds the proof (DKIM verification, about 40 ms, F22), so the visible saving is the difference above, not a ratio of the whole call.
+- **Result (building the trails):** `git fast-import` of 10,000 / 20,000 commits took 5.4 s / 12.2 s sharded and 59.9 s / 263.8 s flat: the flat build is quadratic in git itself (the prune POC saw 7 minutes at 20k on a loaded box), the sharded one is close to linear.
+- **Result (index rebuild at 20,000, cold, `list({limit:1})`, 3 runs):** sharded 2.9 / 3.1 / 3.3 s (CPU 4.1-4.6 s), flat 2.9 / 3.0 / 3.1 s (CPU 4.1-4.3 s), peak RSS about 171 MB in both. No difference: the `git ls-tree -r` listing and the record reads cost the same, the parse is one regex.
+- **Decision:** shard (owner, 2026-11-09, decisions-log). One layout, no flat reader or migration; a flat trail fails with `ERR_TRAIL_LAYOUT`. All paths come from `src/proof/layout.js`.
+- **Not measured:** a filesystem with slow directory creation (the first record in each of 256 shards creates a directory; one-off), a trail over 20,000 records on the real write path including the DKIM build, `git gc`/repack behaviour of the sharded loose objects, and the prune replay on the sharded layout (it should lose the O(commits x tree size) term of the POC's finding 8; to be measured when prune is built).
+- **Affects:** SPEC B3 (layout, cleanup rules), B5, B6, B7; `src/proof/layout.js`, `trail.js`, `index-db.js`, `mailproof.js`; PRD §7 M3 "Organisation inside a trail".

@@ -238,7 +238,7 @@ mailproof records everything, always, in and out. The use cases are read-side pr
 - Separate accounts (business, personal) are separate trails, never merged.
 - Addresses that deliver into the same mailbox (a send-as alias, a plus-address) are the same trail.
 - **A counterparty is one exact email address.** `bob@gmail.com` and `bob@company.com` are different counterparties. There is no grouping or aliasing. DKIM proves a domain or an address, not a person.
-- **Organisation inside a trail is unchanged:** one commit per email (each copy), one linear branch, flat `records/<id>.json`. No branch or folder per counterparty (a CC'd mail would need two homes, creating them on receive happens inside the lock, and threads cross structures).
+- **Organisation inside a trail is unchanged:** one commit per email (each copy), one linear branch, `records/<id[0:2]>/<id>.json`, sharded by the first two hex chars of the id so a commit's git tree write stays small ([SPEC B3](SPEC.md), F24). No branch or folder per counterparty (a CC'd mail would need two homes, creating them on receive happens inside the lock, and threads cross structures).
 - **Retrieval goes through the rebuildable SQLite index** ([SPEC B5](SPEC.md)). It gains participants (record, address, role: from/to/cc/reply-to as available) and thread links (Message-ID, In-Reply-To, References). Each record proves itself (signed headers, archived key, verdicts, OTS); git supplies the append-only history of the whole account.
 
 #### Linked emails

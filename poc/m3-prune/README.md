@@ -5,6 +5,8 @@ author, dates and every kept file byte-identical, fast and memory-bounded at 20k
 dependency (the `git` binary plus Node stdlib only)? Spec under test: PRD §7 M3 "Prune before date" (6 steps), decisions-log
 "M3 scope" item 8, SPEC B3/B5/B6/B7.
 
+> **Update 2026-11-09:** the trail layout this POC was run against (flat `records/<id>.json`, `replies/<id>.<slug>.json`) is gone. The owner decided to shard it (`records/<id[0:2]>/<id>.json`, `replies/<id[0:2]>/...`) because of the O(N)-per-commit tree cost measured below; see SPEC B3 and findings F24. The scripts and results here are unchanged and describe the flat layout; a prune built for the product walks the sharded paths.
+
 ## Options
 
 | | mechanism | file |
