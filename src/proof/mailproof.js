@@ -10,6 +10,7 @@ import { guardResolver, systemResolver } from './resolver-guard.js';
 import { engine } from './verdict.js';
 import { createOts, DEFAULT_OTS_TIMEOUT_MS } from './ots.js';
 import { verifyRecord, matchBodyRecord, matchFileRecord } from './recheck.js';
+import { checkProfile } from './profile.js';
 import { TRAIL_NAME_RE, RECORD_ID_RE, DEFAULT_LOCK_TIMEOUT_MS, commitRecord, commitFiles, readRecord, withTrailLock, trailLockFile } from './trail.js';
 import { parseContentOptions, contentDirOf, storeContent, readRaw, readAttachment, expireStore, forgetIds, idsWith, exists, toMs, DAY_MS } from './content.js';
 import { STRIPPER, replyTextPath, extractReplyText, replyTextRecord } from './reply-text.js';
@@ -92,6 +93,10 @@ class Mailproof {
     this.get = this.get.bind(this);
     this.list = this.list.bind(this);
     this.copies = this.copies.bind(this);
+    this.counterparties = this.counterparties.bind(this);
+    this.linked = this.linked.bind(this);
+    this.checkProfile = this.checkProfile.bind(this);
+    this.proofParts = this.proofParts.bind(this);
     this.sync = this.sync.bind(this);
     this.replyText = this.replyText.bind(this);
     this.rawEmail = this.rawEmail.bind(this);
@@ -551,19 +556,101 @@ class Mailproof {
 
   /**
    * List records, newest capture first.
-   * @param {{ limit?: number, direction?: 'in' | 'out' }} [opts]
+   * @param {{ limit?: number, direction?: 'in' | 'out', with?: string, role?: 'from' | 'to' | 'cc' | 'reply-to', before?: Date | number | string, after?: Date | number | string }} [opts]
    * @returns {Promise<Array<{ id: string, captured: string, direction: string, live: string, portable: string, message_id: string | null }>>}
    * @name Mailproof#list
-   * @when Use to find recorded emails, newest capture first, optionally by direction. It returns summaries; use `get(id)` for the full record.
+   * @when Use to find recorded emails, newest capture first, optionally by direction or by counterparty: `with` is one exact email address (case-insensitive, no grouping: bob@gmail.com is not bob@company.com) seen on the From, To, Cc or Reply-To of the record (`role` narrows it to one of them), `after` (inclusive) and `before` (exclusive) bound the capture time. It returns summaries; use `get(id)` for the full record.
    * @category read
-   * @signature mp.list(opts?: { limit?: number, direction?: 'in'|'out' }) => Promise<Array<{ id, captured, direction, live, portable, message_id }>>
-   * @fails Rejects with `err.code === 'ERR_INDEX_UNAVAILABLE'` when the `better-sqlite3` native addon cannot load on this platform (there is no fallback; `record`, `get` and `verify` do not need it), or `ERR_TRAIL_LOCKED` when bringing the trail index up to date had to wait for a writer longer than `lockTimeoutMs`, or `ERR_INDEX_REBUILD` when a first build (or a rebuild, or a catch-up that falls back to one) finds more than about 350,000 committed records or changes (a 16 MB git output limit; the trail is too large to index). Otherwise never throws. An empty or missing trail returns `[]`. Records captured in the same instant come in ascending id order. Answers come from the trail index (SPEC B5), a cache beside the trail that is opened and closed inside each call (nothing stays open, so `close()` has nothing to wait for): whoever can write that file can change this answer, never `get` or `verify`.
+   * @signature mp.list(opts?: { limit?: number, direction?: 'in'|'out', with?: string, role?: 'from'|'to'|'cc'|'reply-to', before?: Date|number|string, after?: Date|number|string }) => Promise<Array<{ id, captured, direction, live, portable, message_id }>>
+   * @fails Rejects with `err.code === 'ERR_INDEX_UNAVAILABLE'` when the `better-sqlite3` native addon cannot load on this platform (there is no fallback; `record`, `get` and `verify` do not need it), or `ERR_TRAIL_LOCKED` when bringing the trail index up to date had to wait for a writer longer than `lockTimeoutMs`, or `ERR_INDEX_REBUILD` when a first build (or a rebuild, or a catch-up that falls back to one) finds more than about 350,000 committed records or changes (a 16 MB git output limit; the trail is too large to index). A wrong type for `with`, `role` (it needs `with`), `before` or `after` throws a TypeError. Otherwise never throws. An empty or missing trail returns `[]`. Records captured in the same instant come in ascending id order. Only addresses the record itself shows count: a signed record shows the headers its DKIM signatures cover (an unsigned Cc is not visible), an unsigned one only its From (SPEC B8). Answers come from the trail index (SPEC B5), a cache beside the trail that is opened and closed inside each call (nothing stays open, so `close()` has nothing to wait for): whoever can write that file can change this answer, never `get` or `verify`.
    * @example
    * const recent = await mp.list({ limit: 10 });
    */
-  async list({ limit, direction } = {}) {
+  async list({ limit, direction, with: who, role, before, after } = {}) {
     const { listIndex } = await import('./index-db.js');
-    return listIndex(this._indexCfg(), { limit, direction });
+    return listIndex(this._indexCfg(), { limit, direction, with: who, role, before, after });
+  }
+
+  /**
+   * Every exact email address the trail has seen, with how many records name it.
+   * @param {{ limit?: number }} [opts]
+   * @returns {Promise<Array<{ address: string, records: number, first: string, last: string }>>}
+   * @name Mailproof#counterparties
+   * @when Use to see who is in this trail: one row per exact lower-cased address (bob@gmail.com and bob@company.com are two rows; DKIM proves an address or a domain, not a person), most recently seen first. `records` counts the records that name the address on From, To, Cc or Reply-To; `first`/`last` are the earliest and latest `captured`. The trail's own owner appears too, on every record: a record does not say which address is yours. Then `list({ with })` for the emails.
+   * @category read
+   * @signature mp.counterparties(opts?: { limit?: number }) => Promise<Array<{ address, records, first, last }>>
+   * @fails Rejects with `ERR_INDEX_UNAVAILABLE`, `ERR_TRAIL_LOCKED` or `ERR_INDEX_REBUILD` exactly like `list()`, and with a TypeError for a `limit` that is not a positive number. An empty or missing trail returns `[]`. Only addresses a record shows count (SPEC B8). Answers come from the trail index, a cache: not proof.
+   * @example
+   * const people = await mp.counterparties({ limit: 20 });
+   */
+  async counterparties({ limit } = {}) {
+    const { counterpartiesIndex } = await import('./index-db.js');
+    return counterpartiesIndex(this._indexCfg(), { limit });
+  }
+
+  /**
+   * The emails one record looks linked to, with how strongly each link is signed.
+   * @param {string} id  A record id.
+   * @returns {Promise<{ id: string, message_id: string | null, parents: Array<{ id: string | null, message_id: string, via: string, strength: string }>, children: Array<{ id: string, message_id: string | null, via: string, strength: string }> } | null>}
+   * @name Mailproof#linked
+   * @when Use to read a thread around one record without trusting it blindly. `parents` are the Message-IDs this email names in In-Reply-To / References (`id` is the recorded email with that Message-ID, the earliest copy, or null when it is not in the trail); `children` are the recorded emails that name this one's Message-ID. `strength` is `signed` when a DKIM signature that verifies offline covers the header that names it, `unsigned` otherwise (a Microsoft sender signs neither). It reports what looks linked and never asserts "the reply chain"; the other copies of one message are `copies()`.
+   * @category read
+   * @signature mp.linked(id: string) => Promise<{ id, message_id, parents: [{ id, message_id, via, strength }], children: [{ id, message_id, via, strength }] } | null>
+   * @fails Rejects with `ERR_INDEX_UNAVAILABLE`, `ERR_TRAIL_LOCKED` or `ERR_INDEX_REBUILD` exactly like `list()`. Returns null for an unknown or malformed id. A record with no Message-ID has no children. Answers come from the trail index, a cache: the strength is the one found when the record was indexed (re-grade one record with `checkProfile`).
+   * @example
+   * const t = await mp.linked(replyId);   // t.parents[0].strength === 'signed'
+   */
+  async linked(id) {
+    const { linkedIndex } = await import('./index-db.js');
+    return linkedIndex(this._indexCfg(), id);
+  }
+
+  /**
+   * Evaluate a trust profile against a recorded email (or a record object).
+   * @param {MpRecord | string} recordOrId  A record, its JSON text, or a trail id.
+   * @param {import('./profile.js').TrustProfile} profile  See `checkProfile`.
+   * @param {{ at?: Date | number | string, parent?: string }} [opts]
+   * @returns {Promise<{ ok: boolean, failed: Array<{ rule: string, want: unknown, got: unknown }>, record: string | null, rules: string }>}
+   * @name Mailproof#checkProfile
+   * @when Use to gate which recorded email an agent may act on, by id: allowed senders, required checks, required body level, required link strength. Same rules as the pure `checkProfile()`; this one reads the record from the trail first. Local, free, deterministic: re-run it later for the same answer.
+   * @category verify
+   * @signature mp.checkProfile(recordOrId: Record|string, profile: { senders?, checks?, body?, link? }, opts?: { at?, parent? }) => Promise<{ ok, failed: [{ rule, want, got }], record, rules }>
+   * @fails Rejects with `ERR_BAD_PROFILE` for an invalid profile. An id that is not in the trail gives `ok: false` with a failed `record` rule, not a throw.
+   * @example
+   * const r = await mp.checkProfile(id, { senders: ['alice@gmail.com'], checks: { dkimAligned: true }, body: 'proven', link: ['signed'] }, { parent: requestMessageId });
+   */
+  async checkProfile(recordOrId, profile, opts) {
+    const rec = await this._resolve(recordOrId);
+    return checkProfile(rec, profile, opts);
+  }
+
+  /**
+   * Separate results for the email and for each attachment.
+   * @param {MpRecord | string} recordOrId  A record, its JSON text, or a trail id.
+   * @returns {Promise<{ email: { ok: boolean, trust: 'verified' | 'unverified', body_status: import('./types.js').BodyStatus }, attachments: Array<{ index: number, filename: string | null, sha256: string | null, stored: boolean, match: boolean | null }> } | null>}
+   * @name Mailproof#proofParts
+   * @when Use when "the email is valid" and "this attachment is the one recorded" are different questions. `email` is the offline DKIM re-check of the record (`ok`, `trust`) and its recorded `body_status`. Each attachment is re-hashed from the content store: `match: true` is the recorded bytes, `false` a stored file that is NOT the recorded one (damaged or swapped), `null` nothing stored to check (proof-only account, expired, forgotten): then use `matchFile` with a copy you hold.
+   * @category verify
+   * @signature mp.proofParts(recordOrId: Record|string) => Promise<{ email: { ok, trust, body_status }, attachments: [{ index, filename, sha256, stored, match }] } | null>
+   * @fails Never throws. Returns null for an unknown id or an unreadable record.
+   * @example
+   * const p = await mp.proofParts(id);   // p.email.ok, p.attachments[0].match
+   */
+  async proofParts(recordOrId) {
+    const rec = await this._resolve(recordOrId);
+    if (!rec || typeof rec !== 'object') return null;
+    const v = verifyRecord(rec);
+    const list = Array.isArray(rec.attachments) ? rec.attachments : [];
+    const attachments = await Promise.all(Array.from(/** @type {any[]} */ (list), async (a, index) => {
+      const obj = a !== null && typeof a === 'object' && !Array.isArray(a);
+      const sha256 = obj && typeof a.sha256 === 'string' ? a.sha256 : null;
+      const filename = obj && typeof a.filename === 'string' ? a.filename : null;
+      if (!sha256) return { index, filename, sha256, stored: false, match: null };
+      const { status } = await readAttachment(this.contentDir, sha256);
+      // readAttachment re-hashes the file: 'ok' is the recorded bytes, 'corrupt' a file under that name that is not.
+      return { index, filename, sha256, stored: status !== 'absent', match: status === 'absent' ? null : status === 'ok' };
+    }));
+    return { email: { ok: v.ok, trust: v.trust, body_status: rec.body_status ?? 'not-checked' }, attachments };
   }
 
   /**

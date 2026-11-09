@@ -118,3 +118,15 @@ export const SYNC_MAX_RECONNECTS = 3;
 
 /** Wait before the 1st, 2nd and 3rd reconnect. */
 export const SYNC_RECONNECT_BACKOFF_MS = Object.freeze([1000, 4000, 16000]);
+
+// ---- INDEX (SPEC B5): what one record may add to the trail index. A record is trusted local data, but its address and
+// Message-ID lists come from a sender-controlled header (up to 256 KiB), so the rows one record adds are capped. ----
+
+/** Participant rows (From/To/Cc/Reply-To addresses) the index takes from one record; the rest are not indexed. */
+export const INDEX_MAX_PARTICIPANTS = 500;
+
+/** Longest address that is indexed (RFC 5321 path limit); a longer token is not an address. */
+export const INDEX_MAX_ADDRESS = 254;
+
+/** Thread-link rows the index takes from one record: In-Reply-To, then the LAST References ids (the nearest ancestors). */
+export const INDEX_MAX_LINKS = 200;
