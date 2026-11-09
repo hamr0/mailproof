@@ -13,6 +13,7 @@ import path from 'node:path';
 import { git, GIT_IDENTITY } from './git.js';
 import { DKIM_LABEL_RE } from './keys.js';
 import { withMutex } from './mutex.js';
+import { GIT_LISTING_MAX_BYTES } from './limits.js';
 import { recordPath, parseRecordPath, isReplyPath, recordIdsFromPaths, assertTrailLayout } from './layout.js';
 
 /** @typedef {import('./types.js').MpRecord} MpRecord */
@@ -150,11 +151,21 @@ const trailIndexFile = (/** @type {string} */ name) => `.${name}.index.sqlite`;
 /** Lock-file name of the sync lock (SPEC B4.5), beside the repo. */
 const syncLockFile = (/** @type {string} */ name) => `.${name}.sync.lock`;
 
+/** Lock-file name of the prune lock (SPEC B9), beside the repo: one prune at a time. */
+const pruneLockFile = (/** @type {string} */ name) => `.${name}.prune.lock`;
+/** File name of the prune journal (SPEC B9.4), beside the repo and outside git. Present only while a swap is unfinished. */
+const pruneJournalFile = (/** @type {string} */ name) => `.${name}.prune.json`;
+
 /** @typedef {{ code: string, failFast: boolean, what: string }} LockKind */
 /** @type {LockKind} The trail writer lock: waits up to the timeout. */
 const TRAIL_LOCK = Object.freeze({ code: 'ERR_TRAIL_LOCKED', failFast: false, what: 'trail' });
 /** @type {LockKind} The sync lock: same mechanism, but a held lock fails at once (a cron run should skip, not queue). */
 const SYNC_LOCK = Object.freeze({ code: 'ERR_SYNC_LOCKED', failFast: true, what: 'sync of trail' });
+
+/** @type {LockKind} The sync lock taken by a prune: the same file, but it waits (a prune must not be lost to a sync that happens to be running). */
+const SYNC_LOCK_WAIT = Object.freeze({ code: 'ERR_SYNC_LOCKED', failFast: false, what: 'sync of trail' });
+/** @type {LockKind} The prune lock: fail-fast, a second prune on the same trail is refused at once. */
+const PRUNE_LOCK = Object.freeze({ code: 'ERR_PRUNE_RUNNING', failFast: true, what: 'prune of trail' });
 
 /** Fail-fast locks held by this process (they skip the queueing mutex, so a second holder must be refused here). */
 const heldFailFast = new Set();
@@ -198,7 +209,13 @@ async function withTrailLock(root, lockFile, timeoutMs, work, kind = TRAIL_LOCK)
       await sleep(Math.min(delay, Math.max(0, deadline - Date.now())) * (0.5 + Math.random() / 2));
       delay = Math.min(delay * 2, 500);
     }
-    try { return await work(); }
+    try {
+      // An unfinished prune swap (SPEC B9.4) is finished or rolled back here, before `work` can create a trail.
+      if (kind === TRAIL_LOCK && await exists(path.join(path.dirname(root), pruneJournalFile(path.basename(root))))) {
+        await (await import('./prune-swap.js')).recoverPrune(root);
+      }
+      return await work();
+    }
     finally {
       // Read-then-unlink is safe here: this lock is ours and its pid (ours) is alive,
       // so takeOverIfStale never judges it stale and nobody else removes it.
@@ -275,6 +292,16 @@ async function isAncestor(root, a, b) {
 async function recordIdsSince(root, since) {
   const out = await git(root, ['diff', '--name-only', '--no-renames', '-z', since, 'HEAD', '--', 'records']);
   return recordIdsFromPaths(out);
+}
+
+/**
+ * The ids of the records committed at `rev` (one `git ls-tree` over `records/`).
+ * @param {string} root
+ * @param {string} rev
+ * @returns {Promise<Set<string>>}
+ */
+async function idsAt(root, rev) {
+  return new Set(recordIdsFromPaths(await git(root, ['ls-tree', '-r', '--name-only', '-z', rev, '--', 'records'], { maxBuffer: GIT_LISTING_MAX_BYTES })));
 }
 
 /**
@@ -476,4 +503,4 @@ async function commitRecord(root, name, { record, ...rest }) {
   return commitFiles(root, name, { rel: recordPath(record.id), json: record, ...rest });
 }
 
-export { TRAIL_NAME_RE, RECORD_ID_RE, DEFAULT_LOCK_TIMEOUT_MS, TRAIL_LOCK, SYNC_LOCK, trailLockFile, trailIndexFile, syncLockFile, withTrailLock, serialise, ensureTrail, readRecord, listIds, commitRecord, commitFiles, headOf, isAncestor, recordIdsSince };
+export { TRAIL_NAME_RE, RECORD_ID_RE, DEFAULT_LOCK_TIMEOUT_MS, TRAIL_LOCK, SYNC_LOCK, SYNC_LOCK_WAIT, PRUNE_LOCK, trailLockFile, trailIndexFile, syncLockFile, pruneLockFile, pruneJournalFile, pidAlive, withTrailLock, serialise, ensureTrail, readRecord, listIds, commitRecord, commitFiles, headOf, isAncestor, recordIdsSince, idsAt };

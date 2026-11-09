@@ -11,7 +11,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { readRecord, RECORD_ID_RE, headOf, isAncestor, recordIdsSince } from './trail.js';
+import { readRecord, RECORD_ID_RE, headOf, isAncestor, recordIdsSince, idsAt } from './trail.js';
 import { MAX_TOTAL_BYTES, MAX_HEADER_BYTES } from './limits.js';
 import { participantsOf, addressesOf } from './participants.js';
 import { splitMessage } from './signed-headers.js';
@@ -359,6 +359,45 @@ async function forgetIds(root, dir, ids, withLock, hooks = {}) {
 }
 
 /**
+ * Delete the content of every email the trail no longer records (after a prune, SPEC B9.6): each stored raw whose
+ * record is not committed in HEAD, then each attachment file no remaining stored raw's record lists. Needs no list of
+ * ids, so it is idempotent and a crashed prune's recovery can run it. Same two phases as expiry (B7.8): the scan
+ * reads every remaining stored email's record with no lock; the lock is held only to revalidate (`revalidate`:
+ * records committed or content stored since the scan are kept), then unlink. A raw whose record was committed since
+ * the scan is never deleted. If the history was rewritten under the scan nothing is deleted this round.
+ * @param {string} root
+ * @param {string} dir
+ * @param {WithLock} withLock
+ * @returns {Promise<{ removed: number, attachments: number }>}
+ */
+async function sweepOrphans(root, dir, withLock) {
+  const head = await headOf(root);
+  if (head === null || !(await exists(dir))) return { removed: 0, attachments: 0 };
+  const committed = await idsAt(root, head);
+  const stored = new Set(await storedIds(dir));
+  /** @type {Set<string>} */
+  const kept = new Set();
+  /** @type {string[]} */
+  const orphans = [];
+  for (const id of stored) {
+    if (committed.has(id)) for (const h of attachmentHexes(await readRecord(root, id))) kept.add(h);
+    else orphans.push(id);
+  }
+  const candidates = (await attachmentFiles(dir)).filter((h) => !kept.has(h));
+  return withLock(async () => {
+    if (!(await revalidate(root, dir, { head, stored }, kept))) return { removed: 0, attachments: 0 };
+    const now = await headOf(root);
+    const since = now !== null && now !== head ? new Set(await recordIdsSince(root, head)) : new Set();
+    let removed = 0;
+    for (const id of orphans) {
+      if (since.has(id)) continue;   // committed since the scan
+      try { await fs.unlink(rawPathOf(dir, id)); removed++; } catch { /* already gone */ }
+    }
+    return { removed, attachments: await unlinkAttachments(dir, candidates.filter((h) => !kept.has(h))) };
+  });
+}
+
+/**
  * Lower-cased addresses a record names in From/To/Cc/Reply-To: one definition, `participantsOf` (participants.js),
  * which reads the record's `addresses` field. Never throws.
  * @param {MpRecord} rec
@@ -414,14 +453,14 @@ async function idsWith(root, dir, q) {
   return hit;
 }
 
-/** @param {unknown} v @param {string} what @returns {number} */
-function toMs(v, what) {
+/** @param {unknown} v @param {string} what @param {string} [who]  The method named in the error. @returns {number} */
+function toMs(v, what, who = 'forget') {
   const ms = v instanceof Date ? v.getTime() : typeof v === 'number' ? v : typeof v === 'string' ? Date.parse(v) : NaN;
-  if (!Number.isFinite(ms)) throw new TypeError(`forget: ${what} must be a Date, a timestamp or an ISO date string`);
+  if (!Number.isFinite(ms)) throw new TypeError(`${who}: ${what} must be a Date, a timestamp or an ISO date string`);
   return ms;
 }
 
 export {
   DAY_MS, parseContentOptions, contentDirOf, rawPathOf, attPathOf, sha256Of, storeContent, readRaw, readAttachment,
-  storedIds, expireStore, forgetIds, idsWith, toMs, exists,
+  storedIds, expireStore, forgetIds, sweepOrphans, idsWith, toMs, exists,
 };

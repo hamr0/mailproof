@@ -16,6 +16,7 @@ import { parseContentOptions, contentDirOf, storeContent, readRaw, readAttachmen
 import { recordPath, recordOtsPath, assertTrailLayout } from './layout.js';
 import { STRIPPER, replyTextPath, extractReplyText, replyTextRecord } from './reply-text.js';
 import { hashDocument } from './hash.js';
+import { runPrune } from './prune.js';
 
 const OTS_MIN_TIMEOUT_MS = 5000; // floor for the `ots` timeout, however short lockTimeoutMs is
 
@@ -23,6 +24,7 @@ const OTS_MIN_TIMEOUT_MS = 5000; // floor for the `ots` timeout, however short l
 /** @typedef {import('./types.js').Envelope} Envelope */
 /** @typedef {{ id: string, captured: string, direction: string, copy: string, body_status: string, live: string, portable: string }} CopySummary */
 /** @typedef {import('./types.js').MailauthResult} MailauthResult */
+/** @typedef {import('./prune.js').PruneResult} PruneResult */
 /** @typedef {{ id: string, text: string, text_sha256: string, text_bytes: number, quote: 'found' | 'not-found' | 'inline', trailing: boolean, source: 'text/plain' | 'html-only', boundary: string | null, stripper: string, body_status: import('./types.js').BodyStatus, proven: boolean, commit: string, duplicate: boolean }} ReplyText */
 
 /** @typedef {import('./content.js').ContentResult} ContentResult */
@@ -78,6 +80,8 @@ class Mailproof {
     this.contentDir = contentDirOf(this.root);
     /** Internal (tests): called between the unlocked scan and the locked deletions of expiry and forget. @type {import('./content.js').ScanHooks} */
     this._scanHooks = {};
+    /** Internal (tests): the seams of prune. @type {import('./prune.js').PruneHooks} */
+    this._pruneHooks = {};
     this._autoSweep = this._autoSweep.bind(this);
     /** @type {{ run: import('./pool.js').WorkerPool['run'], runReplyText: import('./pool.js').WorkerPool['runReplyText'], release: () => Promise<void> } | null} */
     this._lease = null;
@@ -104,6 +108,7 @@ class Mailproof {
     this.attachment = this.attachment.bind(this);
     this.expireContent = this.expireContent.bind(this);
     this.forget = this.forget.bind(this);
+    this.prune = this.prune.bind(this);
     this.close = this.close.bind(this);
   }
 
@@ -453,6 +458,23 @@ class Mailproof {
     await assertTrailLayout(this.root);
     const list = ids ?? await idsWith(this.root, this.contentDir, /** @type {NonNullable<typeof query>} */ (query));   // the scan holds no lock
     return forgetIds(this.root, this.contentDir, list, (w) => this._lock(w), this._scanHooks);
+  }
+
+  /**
+   * Delete everything captured before a date: a pruned copy of the trail replaces it, and the old one is kept as a backup.
+   * @param {{ before: Date | number | string, deleteBackup?: boolean, now?: Date | number }} opts  `before` (required): records captured strictly before it are removed. `deleteBackup`: remove the backup after a successful swap (default false). `now` overrides the clock (tests).
+   * @returns {Promise<PruneResult>}
+   * @name Mailproof#prune
+   * @when Use to drop old mail from a trail on purpose, for example to honour a retention promise longer than `content.days`, or to shrink a trail that has grown large: every record, reply-text record, OpenTimestamps stamp and stored content captured before `before` goes, and the trail starts with a prune notice that says what was removed. Everything kept is byte-identical and still verifies offline; only the commit ids change. It is an explicit, rare, never-scheduled operation: it rewrites history. The old trail stays as `<trail>.pre-prune-<date>` beside it (still holding everything pruned) until you delete it, or pass `deleteBackup: true`. Writers keep working while the pruned trail is built; they wait only for the short swap.
+   * @category content
+   * @signature mp.prune(opts: { before: Date|number|string, deleteBackup?: boolean, now?: Date|number }) => Promise<{ cutoff, noop, previousHead, head, removed, kept, stragglers: string[], dropped, keysCarried, reverify: { ok, failed: string[] }, backup: string|null, content: { removed, attachments, error? }, timing }>
+   * @fails Throws a TypeError for a missing or bad `before`, `deleteBackup` or `now`, or an unknown option, before anything is read. `ERR_PRUNE_RUNNING` when another prune of this trail is running (at once). `ERR_SYNC_LOCKED` when a `sync` kept running for more than 31 minutes while the swap waited for it, `ERR_TRAIL_LOCKED` when a writer held the trail longer than `lockTimeoutMs` at the swap: in both nothing was changed. `ERR_PRUNE_CUTOFF` when every record is older than `before` (a trail with nothing left is refused). `ERR_PRUNE_REWRITTEN` when the history was rewritten while the pruned trail was built (run it again). `ERR_PRUNE_VERIFY` when the pruned trail did not match the old one (a bug; nothing was changed). `ERR_PRUNE_JOURNAL` when a crashed earlier prune left a state it cannot recognise (nothing is touched; see SPEC B9.4). `ERR_TRAIL_LAYOUT` for a flat pre-M3 trail. A `before` that removes nothing returns `noop: true` and changes nothing (no rewrite, no backup). Records captured before `before` that sit after a later one are kept and listed in `stragglers` (only a prefix of history is ever removed, never a range in the middle); reply-text commits for removed records are `dropped`. The result's `reverify` re-checks every kept record offline; a record that does not verify is listed, never a reason to stop. The time is about quadratic in the trail size on git's side (minutes at 20,000 records); disk needs room for a second copy of the kept trail. After the swap the sync cursor follows the new HEAD (so the next `sync` does not re-record the removed mail), the content of the removed records is deleted, and the trail index rebuilds on the next `list`. A crash at any point leaves either exactly the old trail or exactly the pruned one: the next call that takes the trail lock finishes or undoes the swap. Removing the backup is the only thing that makes the removal final.
+   * @example
+   * const r = await mp.prune({ before: '2025-01-01' });   // r.removed, r.kept, r.backup
+   * await fs.rm(r.backup, { recursive: true });           // when you are sure
+   */
+  async prune(opts) {
+    return runPrune({ root: this.root, trail: this.trail, lockTimeoutMs: this.lockTimeoutMs, now: this.now, hooks: this._pruneHooks }, opts);
   }
 
   /**

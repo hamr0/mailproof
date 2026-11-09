@@ -596,4 +596,4 @@ async function runSync(host, rawOpts, deps) {
   }, SYNC_LOCK);
 }
 
-export { runSync, parseSyncOptions, effectiveCaps, readCursorFile, cursorPath, withDeadline };
+export { runSync, parseSyncOptions, effectiveCaps, readCursorFile, writeCursorFile, cursorPath, withDeadline };

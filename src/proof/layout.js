@@ -26,10 +26,19 @@ function parseRecordPath(rel) {
   return m && m[2].startsWith(m[1]) ? { id: m[2], ots: m[3] !== undefined } : null;
 }
 
-/** @param {string} rel @returns {boolean}  Is it a reply-text path (`replies/<2hex>/<32hex>.<slug>.json`, shard the id's own)? */
-function isReplyPath(rel) {
+/**
+ * Parse a trail-relative reply-text path (`replies/<2hex>/<32hex>.<slug>.json`; the shard must be the id's own).
+ * @param {string} rel
+ * @returns {{ id: string } | null}
+ */
+function parseReplyPath(rel) {
   const m = REPLY_FILE_RE.exec(rel);
-  return m !== null && m[2].startsWith(m[1]);
+  return m && m[2].startsWith(m[1]) ? { id: m[2] } : null;
+}
+
+/** @param {string} rel @returns {boolean}  Is it a reply-text path (see parseReplyPath)? */
+function isReplyPath(rel) {
+  return parseReplyPath(rel) !== null;
 }
 
 /**
@@ -64,4 +73,4 @@ async function assertTrailLayout(root) {
   } finally { await dir.close().catch(() => {}); }
 }
 
-export { recordPath, recordOtsPath, replyPath, parseRecordPath, isReplyPath, recordIdsFromPaths, assertTrailLayout };
+export { recordPath, recordOtsPath, replyPath, parseRecordPath, parseReplyPath, isReplyPath, recordIdsFromPaths, assertTrailLayout };

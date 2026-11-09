@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { Mailproof } from '../../src/proof/mailproof.js';
-import { recordPath, recordOtsPath, replyPath, parseRecordPath, isReplyPath, recordIdsFromPaths, assertTrailLayout } from '../../src/proof/layout.js';
+import { recordPath, recordOtsPath, replyPath, parseRecordPath, parseReplyPath, isReplyPath, recordIdsFromPaths, assertTrailLayout } from '../../src/proof/layout.js';
 import { signedMail } from '../helpers/proof.js';
 import { makeTmpDir } from '../helpers/tmp.js';
 
@@ -27,6 +27,8 @@ test('the parsers accept only the library\'s own paths (shard must be the id\'s 
     assert.equal(parseRecordPath(bad), null, bad);
   }
   assert.equal(isReplyPath(`replies/ab/${ID}.mailproof-quote-1.json`), true);
+  assert.deepEqual(parseReplyPath(`replies/ab/${ID}.mailproof-quote-1.json`), { id: ID });
+  assert.equal(parseReplyPath(`replies/cd/${ID}.mailproof-quote-1.json`), null);
   for (const bad of [`replies/${ID}.q-1.json`, `replies/cd/${ID}.q-1.json`, `replies/ab/${ID}.Q.json`, `replies/ab/${ID}.json`]) assert.equal(isReplyPath(bad), false, bad);
   // ids of record files only: the .ots, a wrong shard and a flat path are not ids
   const list = [`records/ab/${ID}.json`, `records/ab/${ID}.json.ots`, `records/cd/${ID}.json`, `records/${ID}.json`, `replies/ab/${ID}.q-1.json`].join('\0');

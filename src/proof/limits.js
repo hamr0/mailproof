@@ -133,3 +133,14 @@ export const INDEX_MAX_LINKS = 200;
 
 /** Children `linked()` returns by default (a popular Message-ID can be named by any number of records); `{ limit }` overrides. */
 export const LINKED_CHILDREN_DEFAULT = 1000;
+
+// ---- PRUNE (SPEC B9) ----
+
+/** Bytes of one git listing (`ls-tree`, `diff-tree`) that prune and the content sweep read whole: about 1,000,000 record paths. Above it they fail instead of growing without bound. */
+export const GIT_LISTING_MAX_BYTES = 256 * 1024 * 1024;
+
+/** How long a prune waits for a running `sync` to finish before it gives up with `ERR_SYNC_LOCKED` (a sync call is capped at SYNC_MAX_MS; the margin covers its cleanup). Nothing is changed when it gives up. */
+export const PRUNE_SYNC_WAIT_MS = SYNC_MAX_MS + 60_000;
+
+/** A prune journal whose owner pid is alive is left to that process only this long (a reused pid must not block recovery for ever). */
+export const PRUNE_JOURNAL_LIVE_MS = 60 * 60 * 1000;
