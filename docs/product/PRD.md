@@ -222,7 +222,7 @@ It stores no text, no body bytes and no subject (the trail stays header-only). I
 
 ### M3 — Two-party record (specified)
 
-**Status:** specified 2026-11-08, approvals round added 2026-11-09; **build step 1 built 2026-11-09 (not released): the local content store, retention and `forget`** ([SPEC B7](SPEC.md), [F22](findings.md)); **build step 2 built 2026-11-09 (not released): trust profiles, the counterparty view and graded thread links** ([SPEC B5, B8](SPEC.md), [F23](findings.md)); the rest is not built; a few items still open (see Open below). Reasons and options: [decisions-log](decisions-log.md) entry "M3 scope: one trail per owned account, local content store, prune-before-date, CLI + stdlib MCP". Wire formats go to SPEC Part B when each step is built (B7 is the first).
+**Status:** specified 2026-11-08, approvals round added 2026-11-09; **build step 1 built 2026-11-09 (not released): the local content store, retention and `forget`** ([SPEC B7](SPEC.md), [F22](findings.md)); **build step 2 built 2026-11-09 (not released): trust profiles, the counterparty view and graded thread links** ([SPEC B5, B8](SPEC.md), [F23](findings.md)); **build step 3 built 2026-11-09 (not released): prune before date** ([SPEC B9](SPEC.md), [F25](findings.md)); the rest is not built; a few items still open (see Open below). Reasons and options: [decisions-log](decisions-log.md) entry "M3 scope: one trail per owned account, local content store, prune-before-date, CLI + stdlib MCP". Wire formats go to SPEC Part B when each step is built (B7 is the first).
 
 **Goal.** M3 makes mailproof a two-party record for three use cases on one substrate:
 
@@ -270,16 +270,16 @@ Best effort, offered when available.
 
 #### Prune before date
 
-Off by default; an explicit command. Only "everything captured before date X". Never a range in the middle (that is tampering), and no rotation by period.
+Off by default; an explicit command (`Mailproof#prune`, built in step 3; the CLI comes in step 4). Only "everything captured before date X". Never a range in the middle (that is tampering), and no rotation by period. Mechanism and wire format: [SPEC B9](SPEC.md); the POC that corrected the first draft of these steps: [poc/m3-prune](../../poc/m3-prune/README.md), [F24](findings.md).
 
-1. Take the trail lock. The cutoff is a prefix of history (commits are made at capture time).
-2. Write a new first commit, the **prune notice**: cutoff date, previous HEAD hash, number of records removed and kept.
-3. Replay each kept commit onto it with its original message, author and date, removing the pruned records' files (record JSON, `.ots`, reply-text records, archived keys used only by pruned records) from every tree.
-4. Re-verify every kept record (DKIM, and OTS if present) during the replay.
-5. Build in a separate directory and swap. The old trail stays as `<trail>.pre-prune-<date>` until the user deletes it (or passes `--delete-backup`). A failure leaves the original untouched.
-6. Delete the pruned records' content from the content store. The index fully rebuilds on the next read (it already detects rewritten history).
+1. **Plan without blocking writers.** Build the pruned trail from a snapshot of HEAD with no trail lock, so `record()` and `sync()` carry on; take the trail lock (and the sync lock) only to append the commits made since and swap. The cutoff is the longest *prefix* of history in which every record is before the date: a record captured earlier but committed after a later one (a clock step) is **kept** and reported as a straggler.
+2. Write a new first commit, the **prune notice**: cutoff date, previous HEAD hash, records removed, kept, stragglers and dropped commits, and the notices of earlier prunes (cumulative). Its tree is not empty: it holds `trail.json` and the archived keys that kept records still need (a key first committed with a removed record but named by a kept one).
+3. Replay each kept commit onto it with its original message, author and date, removing the pruned records' files (record JSON, `.ots`, reply-text records, archived keys no kept record names) from every tree. A kept commit that then touches nothing (a reply-text commit for a removed record) is **dropped**, not replayed empty.
+4. Re-verify every kept record offline (`verifyRecord`) and **report** the result; a record that does not verify is listed, never a reason to stop (accept-with-flag, and the files are byte-identical so the prune cannot have changed the outcome). OTS stamps are left byte-identical (`ots` is not run).
+5. Build in a separate directory and swap with a **journal**: the swap is two renames with a moment in between when no trail exists, so every trail-lock holder first finishes or undoes an interrupted swap (a writer in that gap would otherwise create a fresh empty trail). A crash at any point leaves exactly the old trail or exactly the pruned one. The old trail stays as `<trail>.pre-prune-<date>` until the user deletes it (or passes `deleteBackup`).
+6. After the swap: **rewrite the sync cursor's `head`** to the new HEAD (otherwise `sync` sees a rewritten trail, rescans every folder and records the removed mail again, undoing the prune); delete the removed records' content from the content store (raw emails with no record in the new HEAD, then attachments no remaining email lists). The index rebuilds on the next read by itself; content expiry's "history was rewritten" abort is unchanged.
 
-Commit ids after the cutoff change. Kept record files, DKIM proofs, keys, OTS stamps and content are byte-identical.
+Commit ids after the cutoff change. Kept record files, DKIM proofs, keys, OTS stamps and content are byte-identical. A cutoff that removes nothing is a no-op (no rewrite, no backup); one that would remove every record is refused. Time is about quadratic in the commit count on git's side; the sharded layout puts it at minutes for tens of thousands of records (F25). "Removed" is only true once the backup is deleted.
 
 #### Trust profiles and graded proof
 

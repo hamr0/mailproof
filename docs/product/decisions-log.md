@@ -274,3 +274,16 @@ the [PRD](PRD.md) / [DESIGN](../../archive/v1/docs/DESIGN.md).
 3. **Automatic content sweep weekly, configurable** (`content.sweepDays`, default 7). Content lives between `days` and `days + sweepDays`. No timer: the next `sync()` after the interval runs it; an explicit `expireContent()` always runs.
 4. **Prune is never scheduled.** It rewrites history, so it stays an explicit command.
 **Consequences**: SPEC B3, B5, B6, B7 updated; M3 prune (step 3) is built on the sharded layout. The pre-M3 flat layout of 2.2.x is not readable by the next release (CHANGELOG at release time).
+
+### Decision: prune mechanism details (M3 step 3), mechanism-level forks
+**Date**: 2026-11-09
+**Status**: Built, not released (mechanism forks decided by the implementer inside the owner's brief: fast-export / fast-import, no lock during the build; the two items marked "product-visible" are for the owner to confirm)
+**Context**: Building prune on the POC's recommendation ([F24](findings.md), [F25](findings.md), SPEC B9) forced a few choices the POC did not need.
+**Decision**:
+1. **The notice describes the snapshot.** The pruned trail is built from a snapshot HEAD without the lock, and the notice is its root commit, so it cannot be written after the commits made during the build are known. Its counts and `previous-head` are the snapshot's; the result and the backup carry the final numbers. Options: build under the lock (rejected by the owner: blocks writers); rewrite the notice at the end (changes every commit id again, the cost the unlocked build avoids).
+2. **Late key rule.** A kept record made during the build may name an archived key first committed before the cutoff that no record kept at the snapshot names, so it is not in the notice. The key is added to that record's commit. Options: abort and rebuild (a rare collision costs the whole build); carry every prefix key (defeats dropping keys).
+3. **The journal is written only under the trail lock**, at the swap, so a build in progress is never mistaken for a crashed one by another process. Recovery is a hook inside `withTrailLock` for the trail lock (a dynamic import, so there is no module cycle).
+4. **The swap waits for a running sync** (up to the 30-minute sync cap plus a minute) instead of failing fast like a sync does: a failed wait would throw away a build that takes minutes. A sync that starts during the wait fails fast as usual. Product-visible: a prune can sit behind a long sync.
+5. **A cutoff that would remove every record is refused** (`ERR_PRUNE_CUTOFF`), a cutoff that removes nothing is a no-op. Options: allow an empty trail. Product-visible: refused because an empty trail with only a notice is more likely a mistyped date than an intent.
+6. **No all-commits checker inside `prune()`.** The POC's checker takes 109 s at 20k; the shipped guard compares the file set (and the net change of late commits) from `ls-tree` / `diff-tree`, and the full checker is a test helper.
+**Consequences**: SPEC B9 documents each; F25 has the measurements.
