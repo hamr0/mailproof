@@ -1,0 +1,177 @@
+[
+ {
+  "crashAt": "none",
+  "stateAfterCrash": "n/a",
+  "naiveOpenInGap": null,
+  "recovery": "n/a (no crash)",
+  "liveIs": "new (pruned)",
+  "commits": 153,
+  "workingTreeClean": true,
+  "backupKept": true,
+  "tmpLeft": false,
+  "journalLeft": false,
+  "oldHeadIsAncestorOfNewHead": false,
+  "cursorHeadIsAncestorOfHead": true,
+  "cursorHeadFollowsNewHead": true
+ },
+ {
+  "crashAt": 0,
+  "stateAfterCrash": {
+   "live": true,
+   "tmp": false,
+   "bak": false,
+   "journal": true
+  },
+  "naiveOpenInGap": null,
+  "recovery": "rolled back: discarded partial build",
+  "liveIs": "old (original)",
+  "commits": 307,
+  "workingTreeClean": true,
+  "backupKept": false,
+  "tmpLeft": false,
+  "journalLeft": false,
+  "oldHeadIsAncestorOfNewHead": true,
+  "cursorHeadIsAncestorOfHead": true,
+  "cursorHeadFollowsNewHead": true
+ },
+ {
+  "crashAt": 1,
+  "stateAfterCrash": {
+   "live": true,
+   "tmp": false,
+   "bak": false,
+   "journal": true
+  },
+  "naiveOpenInGap": null,
+  "recovery": "rolled back: discarded partial build",
+  "liveIs": "old (original)",
+  "commits": 307,
+  "workingTreeClean": true,
+  "backupKept": false,
+  "tmpLeft": false,
+  "journalLeft": false,
+  "oldHeadIsAncestorOfNewHead": true,
+  "cursorHeadIsAncestorOfHead": true,
+  "cursorHeadFollowsNewHead": true
+ },
+ {
+  "crashAt": 2,
+  "stateAfterCrash": {
+   "live": true,
+   "tmp": true,
+   "bak": false,
+   "journal": true
+  },
+  "naiveOpenInGap": null,
+  "recovery": "rolled back: discarded partial build",
+  "liveIs": "old (original)",
+  "commits": 307,
+  "workingTreeClean": true,
+  "backupKept": false,
+  "tmpLeft": false,
+  "journalLeft": false,
+  "oldHeadIsAncestorOfNewHead": true,
+  "cursorHeadIsAncestorOfHead": true,
+  "cursorHeadFollowsNewHead": true
+ },
+ {
+  "crashAt": 3,
+  "stateAfterCrash": {
+   "live": true,
+   "tmp": true,
+   "bak": false,
+   "journal": true
+  },
+  "naiveOpenInGap": null,
+  "recovery": "rolled forward from before step 4",
+  "liveIs": "new (pruned)",
+  "commits": 153,
+  "workingTreeClean": true,
+  "backupKept": true,
+  "tmpLeft": false,
+  "journalLeft": false,
+  "oldHeadIsAncestorOfNewHead": false,
+  "cursorHeadIsAncestorOfHead": true,
+  "cursorHeadFollowsNewHead": true
+ },
+ {
+  "crashAt": 4,
+  "stateAfterCrash": {
+   "live": false,
+   "tmp": true,
+   "bak": true,
+   "journal": true
+  },
+  "naiveOpenInGap": "plain open creates an empty trail (1 commit) at the live path",
+  "recovery": "rolled forward from the gap between step 4 and 5",
+  "liveIs": "new (pruned)",
+  "commits": 153,
+  "workingTreeClean": true,
+  "backupKept": true,
+  "tmpLeft": false,
+  "journalLeft": false,
+  "oldHeadIsAncestorOfNewHead": false,
+  "cursorHeadIsAncestorOfHead": true,
+  "cursorHeadFollowsNewHead": true
+ },
+ {
+  "crashAt": 5,
+  "stateAfterCrash": {
+   "live": true,
+   "tmp": false,
+   "bak": true,
+   "journal": true
+  },
+  "naiveOpenInGap": null,
+  "recovery": "rolled forward: swap was complete",
+  "liveIs": "new (pruned)",
+  "commits": 153,
+  "workingTreeClean": true,
+  "backupKept": true,
+  "tmpLeft": false,
+  "journalLeft": false,
+  "oldHeadIsAncestorOfNewHead": false,
+  "cursorHeadIsAncestorOfHead": true,
+  "cursorHeadFollowsNewHead": true
+ },
+ {
+  "crashAt": 6,
+  "stateAfterCrash": {
+   "live": true,
+   "tmp": false,
+   "bak": true,
+   "journal": true
+  },
+  "naiveOpenInGap": null,
+  "recovery": "finished post steps",
+  "liveIs": "new (pruned)",
+  "commits": 153,
+  "workingTreeClean": true,
+  "backupKept": true,
+  "tmpLeft": false,
+  "journalLeft": false,
+  "oldHeadIsAncestorOfNewHead": false,
+  "cursorHeadIsAncestorOfHead": true,
+  "cursorHeadFollowsNewHead": true
+ },
+ {
+  "crashAt": 7,
+  "stateAfterCrash": {
+   "live": true,
+   "tmp": false,
+   "bak": true,
+   "journal": false
+  },
+  "naiveOpenInGap": null,
+  "recovery": "no journal",
+  "liveIs": "new (pruned)",
+  "commits": 153,
+  "workingTreeClean": true,
+  "backupKept": true,
+  "tmpLeft": false,
+  "journalLeft": false,
+  "oldHeadIsAncestorOfNewHead": false,
+  "cursorHeadIsAncestorOfHead": true,
+  "cursorHeadFollowsNewHead": true
+ }
+]

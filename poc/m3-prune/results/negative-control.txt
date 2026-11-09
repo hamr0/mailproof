@@ -1,0 +1,32 @@
+[
+ {
+  "case": "undamaged (expect exit 0)",
+  "exit": 0
+ },
+ {
+  "case": "message of last commit changed",
+  "exit": 2,
+  "firstProblem": "msg differs at old 7a460c6b68"
+ },
+ {
+  "case": "author date of last commit changed",
+  "exit": 2,
+  "firstProblem": "ad differs at old 7a460c6b68"
+ },
+ {
+  "case": "a pruned record file present in the final tree",
+  "exit": 2,
+  "firstProblem": "tree ops differ at old 7a460c6b68"
+ },
+ {
+  "case": "one blob byte changed in a kept record",
+  "exit": 2,
+  "firstProblem": "tree ops differ at old 7a460c6b68"
+ },
+ {
+  "case": "wrong cutoff passed to the checker (notice mismatch)",
+  "exit": 2,
+  "firstProblem": "notice cutoff 2026-01-02T05:06:10.764Z"
+ }
+]
+NEGATIVE CONTROL OK: every damage was caught
