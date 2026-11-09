@@ -17,11 +17,11 @@ import { participantsOf, addressesOf } from './participants.js';
 import { splitMessage } from './signed-headers.js';
 
 /** @typedef {import('./types.js').MpRecord} MpRecord */
-/** @typedef {{ store: boolean, attachments: boolean, days: number }} ContentConfig */
+/** @typedef {{ store: boolean, attachments: boolean, days: number, sweepDays: number }} ContentConfig */
 /** @typedef {{ stored: boolean, attachments: number, error?: string }} ContentResult */
 
 /** @type {Readonly<ContentConfig>} */
-const DEFAULTS = Object.freeze({ store: true, attachments: true, days: 730 });
+const DEFAULTS = Object.freeze({ store: true, attachments: true, days: 730, sweepDays: 7 });
 const DAY_MS = 86_400_000;
 const SHA_HEX_RE = /^[0-9a-f]{64}$/;
 const TMP_MARK = '.tmp-';
@@ -30,7 +30,7 @@ const TMP_MARK = '.tmp-';
  * Validate the `content` constructor option.
  * @param {unknown} o
  * @returns {ContentConfig}
- * @throws {Error} on a non-object, an unknown key, a non-boolean flag, or `days` that is not a positive integer.
+ * @throws {Error} on a non-object, an unknown key, a non-boolean flag, or `days` / `sweepDays` that is not a positive integer.
  */
 function parseContentOptions(o) {
   if (o === undefined) return { ...DEFAULTS };
@@ -39,9 +39,9 @@ function parseContentOptions(o) {
   for (const [k, v] of Object.entries(o)) {
     if (!(k in DEFAULTS)) throw new Error(`Mailproof: unknown content option "${k}"`);
     if (v === undefined) continue;
-    if (k === 'days') {
-      if (typeof v !== 'number' || !Number.isSafeInteger(v) || v < 1) throw new Error('Mailproof: content.days must be a positive integer');
-      cfg.days = v;
+    if (k === 'days' || k === 'sweepDays') {
+      if (typeof v !== 'number' || !Number.isSafeInteger(v) || v < 1) throw new Error(`Mailproof: content.${k} must be a positive integer`);
+      cfg[k] = v;
     } else {
       if (typeof v !== 'boolean') throw new Error(`Mailproof: content.${k} must be a boolean`);
       cfg[/** @type {'store' | 'attachments'} */ (k)] = v;

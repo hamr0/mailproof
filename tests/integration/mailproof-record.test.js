@@ -7,6 +7,8 @@ import { execFileSync } from 'node:child_process';
 import { Mailproof } from '../../src/proof/mailproof.js';
 import { signedMail } from '../helpers/proof.js';
 import { makeTmpDir } from '../helpers/tmp.js';
+import { recordPath } from '../../src/proof/layout.js';
+import { listIds } from '../../src/proof/trail.js';
 // Sign at the instant the instance clock is pinned to, so t= equals captured whatever the real date.
 const T0 = new Date('2026-11-01T10:00:00Z');
 
@@ -45,7 +47,7 @@ test('record: round trip, one commit per record, nothing but signed headers stor
   assert.ok(rec.signatures[0].key.p && rec.signatures[0].key_file);
 
   // never the body, never the raw email, no plaintext Subject outside signed_headers
-  const onDisk = fs.readFileSync(path.join(root, 'records', `${r.id}.json`), 'utf8');
+  const onDisk = fs.readFileSync(path.join(root, recordPath(r.id)), 'utf8');
   assert.ok(!onDisk.includes('TOPSECRET'));
   assert.ok(!onDisk.includes('Quarterly'), 'Subject only appears base64-encoded in signed_headers');
   assert.ok(onDisk.endsWith('}\n'));
@@ -105,7 +107,7 @@ test('attachments: sha256 + size + filename recorded, content never', async () =
   assert.equal(rec.attachments[0].filename, 'contract.pdf');
   assert.equal(rec.attachments[0].size, bytes.length);
   assert.match(rec.attachments[0].sha256, /^sha256:[0-9a-f]{64}$/);
-  assert.ok(!fs.readFileSync(path.join(dir, 'default', 'records', `${r.id}.json`), 'utf8').includes('ATTACHMENT-CONTENT'));
+  assert.ok(!fs.readFileSync(path.join(dir, 'default', recordPath(r.id)), 'utf8').includes('ATTACHMENT-CONTENT'));
 });
 
 test('a failing commit leaves no files behind and the tree clean', async () => {
@@ -119,6 +121,7 @@ test('a failing commit leaves no files behind and the tree clean', async () => {
   fs.writeFileSync(hook, '#!/bin/sh\nexit 1\n', { mode: 0o755 });
   await assert.rejects(() => mp.record(m2.raw, { direction: 'in' }), /git commit failed/);
   assert.equal(gitOut(root, 'status', '--porcelain'), '');
+  assert.equal((await listIds(root)).length, 1, 'only the committed record; the failed one and its shard dir are gone');
   assert.equal(fs.readdirSync(path.join(root, 'records')).length, 1);
   fs.rmSync(hook);
   assert.equal((await mp.record(m2.raw, { direction: 'in' })).duplicate, false, 'recoverable once the hook is gone');

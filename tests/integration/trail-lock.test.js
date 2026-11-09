@@ -8,7 +8,8 @@ import path from 'node:path';
 import { spawn, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { Mailproof } from '../../src/proof/mailproof.js';
-import { commitRecord } from '../../src/proof/trail.js';
+import { commitRecord, listIds } from '../../src/proof/trail.js';
+import { recordPath, recordOtsPath } from '../../src/proof/layout.js';
 import { signedMail } from '../helpers/proof.js';
 import { makeTmpDir } from '../helpers/tmp.js';
 
@@ -143,9 +144,10 @@ test('a failed commit removes only this call\'s new files; tracked files are unt
     afterWrite: async () => ['trail.json'],
   }), /git commit failed/);
   assert.equal(fs.readFileSync(path.join(root, 'trail.json'), 'utf8'), trackedBefore, 'tracked file survives');
-  assert.equal(fs.existsSync(path.join(root, 'records', `${id}.json`)), false, 'new record removed');
+  assert.equal(fs.existsSync(path.join(root, recordPath(id))), false, 'new record removed');
+  assert.equal(fs.existsSync(path.join(root, 'records', id.slice(0, 2))), false, 'the shard dir it created is removed too');
   assert.equal(fs.existsSync(path.join(root, 'keys/x.example/s/0000.json')), false, 'new key file removed');
-  assert.equal(fs.readdirSync(path.join(root, 'records')).length, 1, 'the earlier committed record is intact');
+  assert.equal((await listIds(root)).length, 1, 'the earlier committed record is intact');
   assert.equal(gitOut(root, 'status', '--porcelain'), '');
   assert.equal(fs.existsSync(path.join(trailDir, '.default.lock')), false, 'lock released after failure');
 });
@@ -186,7 +188,7 @@ test('SIGKILL mid-commit: retrying the same mail commits it, tree clean, dead lo
   const subjects = gitOut(root, 'log', '--format=%s').split('\n');
   assert.equal(subjects.length, 3);
   assert.ok(subjects[0].startsWith(`record ${r.out.id.slice(0, 12)}`));
-  assert.ok(gitOut(root, 'show', '--name-only', '--format=', 'HEAD').split('\n').includes(`records/${r.out.id}.json`));
+  assert.ok(gitOut(root, 'show', '--name-only', '--format=', 'HEAD').split('\n').includes(recordPath(r.out.id)));
   assert.equal(gitOut(root, 'status', '--porcelain'), '');
   assert.equal(fs.existsSync(path.join(trailDir, '.default.lock')), false);
   assert.equal((await run(trailDir, files[1], mapFile)).out.duplicate, true, 'now it really is a duplicate');
@@ -200,18 +202,19 @@ test('leftover record + key from a crashed writer (staged / untracked) are repla
   const id = 'cd'.repeat(16);
   const keyRel = 'keys/leftover.example/s/0000.json';
   fs.mkdirSync(path.join(root, 'keys/leftover.example/s'), { recursive: true });
-  fs.writeFileSync(path.join(root, `records/${id}.json`), 'stale\n');
-  fs.writeFileSync(path.join(root, `records/${id}.json.ots`), 'stale\n');
+  fs.mkdirSync(path.join(root, path.dirname(recordPath(id))), { recursive: true });
+  fs.writeFileSync(path.join(root, recordPath(id)), 'stale\n');
+  fs.writeFileSync(path.join(root, recordOtsPath(id)), 'stale\n');
   fs.writeFileSync(path.join(root, keyRel), 'stale\n');
-  execFileSync('git', ['add', `records/${id}.json`], { cwd: root }); // staged, as after a kill between add and commit
+  execFileSync('git', ['add', recordPath(id)], { cwd: root }); // staged, as after a kill between add and commit
   const res = await commitRecord(root, 'default', {
     record: { v: 2, id }, keyFiles: [{ rel: keyRel, json: { v: 2, k: 'new' } }], message: 'redo', now: () => new Date(),
   });
   assert.equal(res.duplicate, false);
   const committed = gitOut(root, 'show', '--name-only', '--format=', 'HEAD').split('\n');
-  assert.ok(committed.includes(`records/${id}.json`) && committed.includes(keyRel), committed.join(','));
+  assert.ok(committed.includes(recordPath(id)) && committed.includes(keyRel), committed.join(','));
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(root, keyRel), 'utf8')), { v: 2, k: 'new' });
-  assert.equal(fs.existsSync(path.join(root, `records/${id}.json.ots`)), false, 'untracked leftover removed');
+  assert.equal(fs.existsSync(path.join(root, recordOtsPath(id))), false, 'untracked leftover removed');
   assert.equal(gitOut(root, 'status', '--porcelain'), '');
   // a second call is a true duplicate and leaves the committed key untouched
   const again = await commitRecord(root, 'default', { record: { v: 2, id }, keyFiles: [], message: 'x', now: () => new Date() });
@@ -410,36 +413,46 @@ test('user files in records/ and keys/ survive record(); library leftovers are s
   fs.writeFileSync(path.join(root, 'records/notes.txt'), 'mine\n');
   fs.mkdirSync(path.join(root, 'keys/sub'), { recursive: true });
   fs.writeFileSync(path.join(root, 'keys/sub/u.txt'), 'mine\n');
-  // look-alikes that are NOT the library's patterns: uppercase / short id, wrong key-file name, uppercase domain
-  fs.writeFileSync(path.join(root, `records/${'AB'.repeat(16)}.json`), 'mine\n');
-  fs.writeFileSync(path.join(root, 'records/abcd.json'), 'mine\n');
-  fs.mkdirSync(path.join(root, 'keys/Upper.example/s'), { recursive: true });
-  fs.writeFileSync(path.join(root, 'keys/Upper.example/s/0123456789abcdef.json'), 'mine\n');
+  // look-alikes that are NOT the library's patterns: uppercase / short id, the wrong shard, a wrong depth, wrong key-file name, uppercase domain
+  const up = 'AB'.repeat(16);
+  const lookalikes = [`records/ab/${up}.json`, 'records/ab/abcd.json', `records/ab/${'cd'.repeat(16)}.json`, `records/${'cd'.repeat(16)}.json.ots`,
+    `records/cd/x/${'cd'.repeat(16)}.json`, 'records/cd/notes.txt', `replies/ab/${'cd'.repeat(16)}.q-1.json`, 'keys/Upper.example/s/0123456789abcdef.json'];
+  for (const f of lookalikes) { fs.mkdirSync(path.join(root, path.dirname(f)), { recursive: true }); fs.writeFileSync(path.join(root, f), 'mine\n'); }
   // simulated crash leftovers: exactly what the library writes
   const id = 'cd'.repeat(16);
+  const id2 = 'ef'.repeat(16);
   const leftKey = 'keys/left.example/sel/0123456789abcdef.json';
+  const leftReply = `replies/ef/${id2}.mailproof-quote-1.json`;
   fs.mkdirSync(path.join(root, 'keys/left.example/sel'), { recursive: true });
-  fs.writeFileSync(path.join(root, `records/${id}.json`), 'stale\n');
-  fs.writeFileSync(path.join(root, `records/${id}.json.ots`), 'stale\n');
+  fs.mkdirSync(path.join(root, 'replies/ef'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'records/ef'), { recursive: true });
+  fs.writeFileSync(path.join(root, recordPath(id2)), 'stale\n');
+  fs.writeFileSync(path.join(root, recordOtsPath(id2)), 'stale\n');
   fs.writeFileSync(path.join(root, leftKey), 'stale\n');
+  fs.writeFileSync(path.join(root, leftReply), 'stale\n');
 
   const m2 = await signedMail({ body: 'two\r\n', domain: 'two.example' });
   const mp2 = new Mailproof({ trailDir, resolver: m2.resolver });
   const rec = await mp2.record(m2.raw, { direction: 'in' });
   assert.equal(rec.duplicate, false);
 
-  for (const keep of ['records/notes.txt', 'keys/sub/u.txt', `records/${'AB'.repeat(16)}.json`, 'records/abcd.json', 'keys/Upper.example/s/0123456789abcdef.json']) {
+  for (const keep of ['records/notes.txt', 'keys/sub/u.txt', ...lookalikes]) {
     assert.equal(fs.readFileSync(path.join(root, keep), 'utf8'), 'mine\n', `${keep} survives`);
   }
-  assert.equal(fs.existsSync(path.join(root, `records/${id}.json`)), false, 'leftover record cleared');
-  assert.equal(fs.existsSync(path.join(root, `records/${id}.json.ots`)), false, 'leftover proof cleared');
+  assert.equal(fs.existsSync(path.join(root, recordPath(id2))), false, 'leftover record cleared');
+  assert.equal(fs.existsSync(path.join(root, recordOtsPath(id2))), false, 'leftover proof cleared');
+  assert.equal(fs.existsSync(path.join(root, leftReply)), false, 'leftover reply cleared');
+  assert.equal(fs.existsSync(path.join(root, 'replies/ef')), false, 'emptied reply shard dir removed');
+  assert.equal(fs.existsSync(path.join(root, 'records/ef')), false, 'emptied record shard dir removed');
+  assert.equal(fs.existsSync(path.join(root, 'records')), true, 'records/ itself stays');
   assert.equal(fs.existsSync(path.join(root, leftKey)), false, 'leftover key cleared');
   assert.equal(fs.existsSync(path.join(root, 'keys/left.example')), false, 'emptied key dirs removed');
   assert.equal(fs.existsSync(path.join(root, 'keys/sub')), true);
-  assert.equal(gitOut(root, 'show', '--name-only', '--format=', 'HEAD').split('\n').filter((f) => !f.startsWith('keys/')).join(','), `records/${rec.id}.json`);
+  assert.equal(fs.existsSync(path.join(root, 'records/cd')), true, 'a shard dir with a user file stays');
+  assert.equal(gitOut(root, 'show', '--name-only', '--format=', 'HEAD').split('\n').filter((f) => !f.startsWith('keys/')).join(','), recordPath(rec.id));
   // only the user's own files are untracked
   const dirty = gitOut(root, 'status', '--porcelain', '-uall').split('\n').map((l) => l.slice(3)).sort();
-  assert.deepEqual(dirty, ['keys/Upper.example/s/0123456789abcdef.json', 'keys/sub/u.txt', 'records/abcd.json', `records/${'AB'.repeat(16)}.json`, 'records/notes.txt'].sort());
+  assert.deepEqual(dirty, ['keys/sub/u.txt', 'records/notes.txt', ...lookalikes].sort());
 });
 
 test('a trail with only library-written untracked files still ends with a clean tree and a records/ dir', async () => {
@@ -450,9 +463,11 @@ test('a trail with only library-written untracked files still ends with a clean 
   fs.rmSync(path.join(root, 'records'), { recursive: true, force: true });
   execFileSync('git', ['reset', '-q', '--hard'], { cwd: root });
   fs.mkdirSync(path.join(root, 'records'), { recursive: true });
-  fs.writeFileSync(path.join(root, `records/${'ee'.repeat(16)}.json`), 'stale\n');
+  fs.mkdirSync(path.join(root, 'records/ee'), { recursive: true });
+  fs.writeFileSync(path.join(root, recordPath('ee'.repeat(16))), 'stale\n');
   const m2 = await signedMail({ body: 'two\r\n', domain: 'two.example' });
   await new Mailproof({ trailDir, resolver: m2.resolver }).record(m2.raw, { direction: 'in' });
   assert.equal(gitOut(root, 'status', '--porcelain'), '');
-  assert.equal(fs.existsSync(path.join(root, `records/${'ee'.repeat(16)}.json`)), false);
+  assert.equal(fs.existsSync(path.join(root, recordPath('ee'.repeat(16)))), false);
+  assert.equal(fs.existsSync(path.join(root, 'records/ee')), false, 'its emptied shard dir is gone');
 });

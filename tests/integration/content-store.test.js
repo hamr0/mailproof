@@ -12,6 +12,7 @@ import { MAX_TOTAL_BYTES } from '../../src/proof/limits.js';
 import { signedMail } from '../helpers/proof.js';
 import { makeFake } from '../helpers/fake-imap-session.js';
 import { makeTmpDir } from '../helpers/tmp.js';
+import { recordPath } from '../../src/proof/layout.js';
 
 const T0 = new Date('2026-11-01T10:00:00Z');
 const DAY = 86_400_000;
@@ -243,7 +244,7 @@ test('expireContent keeps content whose record cannot be read, and sweeps orphan
   const orphan = Buffer.from('nobody references me');
   fs.mkdirSync(path.join(cdir, 'att', sha(orphan).slice(0, 2)), { recursive: true });
   fs.writeFileSync(attFile(cdir, sha(orphan)), orphan);
-  fs.writeFileSync(path.join(root, 'records', `${r.id}.json`), '{ not json');
+  fs.writeFileSync(path.join(root, recordPath(r.id)), '{ not json');
   const res = await mp.expireContent({ now: new Date(T0.getTime() + 400 * DAY) });
   assert.deepEqual(res, { removed: 0, attachments: 1 });
   assert.ok(fs.existsSync(rawFile(cdir, r.id)));
@@ -338,6 +339,27 @@ test('sync runs the retention sweep once at the end of a run', async () => {
   assert.equal(await mp.rawEmail(r.id), null);
 });
 
+test('the automatic sweep defaults to weekly and honours a custom sweepDays', async () => {
+  const m = await signedMail({ signTime: T0 });
+  const run = async (opts) => {
+    const { mp, clock, dir } = setup(m, { content: opts });
+    await mp.record(m.raw, { direction: 'in' });
+    const marker = path.join(dir, '.default.content-sweep.json');
+    fs.writeFileSync(marker, JSON.stringify({ last: T0.toISOString() }));
+    return { mp, clock };
+  };
+  const d = await run({ days: 1 });                                        // default sweepDays 7
+  d.clock.t = new Date(T0.getTime() + 6 * DAY + 23 * 3_600_000);
+  assert.equal(await d.mp._autoSweep(), null, 'under 7 days: skipped');
+  d.clock.t = new Date(T0.getTime() + 7 * DAY);
+  assert.deepEqual(await d.mp._autoSweep(), { removed: 1, attachments: 0 }, 'at 7 days: runs');
+  const c = await run({ days: 1, sweepDays: 3 });
+  c.clock.t = new Date(T0.getTime() + 2 * DAY + 23 * 3_600_000);
+  assert.equal(await c.mp._autoSweep(), null);
+  c.clock.t = new Date(T0.getTime() + 3 * DAY);
+  assert.notEqual(await c.mp._autoSweep(), null);
+});
+
 test('constructor validates content options', () => {
   const bad = (content, re) => assert.throws(() => new Mailproof({ trailDir: '/x', content }), re);
   bad(null, /content must be an object/);
@@ -348,10 +370,15 @@ test('constructor validates content options', () => {
   bad({ days: 1.5 }, /positive integer/);
   bad({ days: '30' }, /positive integer/);
   bad({ days: -3 }, /positive integer/);
+  bad({ sweepDays: 0 }, /content\.sweepDays must be a positive integer/);
+  bad({ sweepDays: 1.5 }, /content\.sweepDays must be a positive integer/);
+  bad({ sweepDays: '7' }, /content\.sweepDays must be a positive integer/);
+  bad({ sweepDays: -1 }, /content\.sweepDays must be a positive integer/);
   bad({ keep: true }, /unknown content option "keep"/);
   const ok = new Mailproof({ trailDir: '/x', content: { days: 30 } });
-  assert.deepEqual(ok.content, { store: true, attachments: true, days: 30 });
-  assert.deepEqual(new Mailproof({ trailDir: '/x' }).content, { store: true, attachments: true, days: 730 });
+  assert.deepEqual(ok.content, { store: true, attachments: true, days: 30, sweepDays: 7 });
+  assert.equal(new Mailproof({ trailDir: '/x', content: { sweepDays: 3 } }).content.sweepDays, 3);
+  assert.deepEqual(new Mailproof({ trailDir: '/x' }).content, { store: true, attachments: true, days: 730, sweepDays: 7 });
 });
 
 // ---- expiry and forget scan WITHOUT the trail lock; the lock is held for the deletions only ----
@@ -424,10 +451,10 @@ test('forget scans without the lock too, and a record committed mid-scan keeps t
   assert.deepEqual(await mp.forget(rb.id), { removed: 1, attachments: 1 });
 });
 
-test('the automatic sweep (sync) runs at most once a day, by the injected clock; explicit expireContent always runs', async () => {
+test('the automatic sweep (sync) runs at most once per sweepDays, by the injected clock; explicit expireContent always runs', async () => {
   const m = await signedMail({ signTime: T0 });
   const m2 = await signedMail({ signTime: T0, body: 'later\r\n', domain: m.domain, signers: [{ domain: m.domain, selector: 'sel1', key: m.signers[0].key }] });
-  const { mp, clock, dir } = setup(m, { content: { days: 1 } });
+  const { mp, clock, dir } = setup(m, { content: { days: 1, sweepDays: 1 } });
   assert.equal(await mp._autoSweep(), null, 'no content directory: skipped, nothing created');
   assert.equal(fs.readdirSync(dir).length, 0);
   const r = await mp.record(m.raw, { direction: 'in' });
@@ -464,7 +491,7 @@ test('forget by counterparty: an Reply-To is matched; a record of an old trail (
   const r1 = (await mp.record(m1.raw, { direction: 'in' })).record;
   const r2 = (await mp.record(m2.raw, { direction: 'in' })).record;
   // make r2 an old record: drop the field from the working-tree file (the index is not involved in forget)
-  const f = path.join(root, 'records', `${r2.id}.json`);
+  const f = path.join(root, recordPath(r2.id));
   const rec = JSON.parse(fs.readFileSync(f, 'utf8'));
   assert.ok(Array.isArray(rec.addresses));
   delete rec.addresses;

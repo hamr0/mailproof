@@ -25,6 +25,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { git } from './git.js';
+import { recordIdsFromPaths, assertTrailLayout } from './layout.js';
 import { RECORD_ID_RE, readRecord, withTrailLock, trailLockFile, trailIndexFile } from './trail.js';
 import { LINKED_CHILDREN_DEFAULT } from './limits.js';
 import { participantsOf, linksOf, hasSignedThreading, ROLES } from './participants.js';
@@ -38,7 +39,6 @@ import { verifyRecord } from './recheck.js';
 
 /** Bump when the table layout or what a column holds changes: an index of another version is rebuilt. */
 const SCHEMA = 3;
-const RECORD_PATH_RE = /^records\/([0-9a-f]{32})\.json$/;
 const READ_BATCH = 500;
 const BUSY_TIMEOUT_MS = 10000;
 const DEFAULT_GIT_MAX_BUFFER = 16 * 1024 * 1024;
@@ -97,14 +97,6 @@ async function headOf(root) {
     await fs.access(path.join(root, '.git')); // a trail dir inside some other repo must not resolve that repo's HEAD
     return await git(root, ['rev-parse', '--verify', '-q', 'HEAD']);
   } catch { return null; }
-}
-
-/** The ids of the record files named by a NUL-separated git path list. @param {string} out @returns {string[]} */
-function idsFromPaths(out) {
-  /** @type {string[]} */
-  const ids = [];
-  for (const p of out.split('\0')) { const m = RECORD_PATH_RE.exec(p); if (m) ids.push(m[1]); }
-  return ids;
 }
 
 /**
@@ -258,7 +250,7 @@ async function reconcile(s, { root, gitMaxBuffer = DEFAULT_GIT_MAX_BUFFER }, hea
   if (stored && versionOk) {
     try {
       await git(root, ['merge-base', '--is-ancestor', stored, head]);
-      changed = idsFromPaths(await git(root, ['diff', '--name-only', '--no-renames', '-z', stored, head, '--', 'records'], { maxBuffer: gitMaxBuffer }));
+      changed = recordIdsFromPaths(await git(root, ['diff', '--name-only', '--no-renames', '-z', stored, head, '--', 'records'], { maxBuffer: gitMaxBuffer }));
     } catch { changed = null; } // not an ancestor, or a list too big for the cap: rebuild (which rejects if it is too big too)
   }
   if (changed) {
@@ -283,7 +275,7 @@ async function reconcile(s, { root, gitMaxBuffer = DEFAULT_GIT_MAX_BUFFER }, hea
   }
   await atomic(s.d, async () => {
     s.d.exec('DELETE FROM rec; DELETE FROM att; DELETE FROM participants; DELETE FROM links; DELETE FROM meta;');
-    await eachBatch(root, idsFromPaths(listing), (batch) => { for (const [id, r] of batch) { const x = rowOf(id, r); if (x) s.put(x); } });
+    await eachBatch(root, recordIdsFromPaths(listing), (batch) => { for (const [id, r] of batch) { const x = rowOf(id, r); if (x) s.put(x); } });
     s.setMeta('schema', String(SCHEMA));
     s.setMeta('head', head);
   });
@@ -304,6 +296,7 @@ async function query(cfg, fn, empty) {
   const file = path.join(path.dirname(root), trailIndexFile(trail));
   for (let attempt = 0; ; attempt++) {
     if ((await headOf(root)) === null) return empty;
+    await assertTrailLayout(root);
     /** @type {Db | null} */
     let d = null;
     try {

@@ -9,6 +9,7 @@ import { messageKeyOf } from '../../src/proof/copy.js';
 import { splitMessage } from '../../src/proof/signed-headers.js';
 import { signedMail } from '../helpers/proof.js';
 import { makeTmpDir } from '../helpers/tmp.js';
+import { recordPath } from '../../src/proof/layout.js';
 // Sign at the instant the instance clock is pinned to, so t= equals captured whatever the real date.
 const T0 = new Date('2026-11-01T10:00:00Z');
 
@@ -97,7 +98,7 @@ test('forward as attachment: signed original linked by key + verdict, key archiv
   assert.deepEqual(c.copies.map((x) => x.id), [direct.id]);
   assert.deepEqual(c.contained_in.map((x) => x.id), [fwd.id]);
   // nothing of the inner message is stored
-  const onDisk = fs.readFileSync(path.join(dir, 'default', 'records', `${fwd.id}.json`), 'utf8');
+  const onDisk = fs.readFileSync(path.join(dir, 'default', recordPath(fwd.id)), 'utf8');
   assert.ok(!onDisk.includes('The original') && !onDisk.includes('Second line'));
   assert.ok(!Buffer.from(onDisk).includes(Buffer.from('The original').toString('base64').slice(0, 12)));
 });

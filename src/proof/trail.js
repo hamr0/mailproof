@@ -13,6 +13,7 @@ import path from 'node:path';
 import { git, GIT_IDENTITY } from './git.js';
 import { DKIM_LABEL_RE } from './keys.js';
 import { withMutex } from './mutex.js';
+import { recordPath, parseRecordPath, isReplyPath, recordIdsFromPaths, assertTrailLayout } from './layout.js';
 
 /** @typedef {import('./types.js').MpRecord} MpRecord */
 
@@ -273,13 +274,7 @@ async function isAncestor(root, a, b) {
  */
 async function recordIdsSince(root, since) {
   const out = await git(root, ['diff', '--name-only', '--no-renames', '-z', since, 'HEAD', '--', 'records']);
-  /** @type {string[]} */
-  const ids = [];
-  for (const p of out.split('\0')) {
-    const m = /^records\/([0-9a-f]{32})\.json$/.exec(p);
-    if (m) ids.push(m[1]);
-  }
-  return ids;
+  return recordIdsFromPaths(out);
 }
 
 /**
@@ -307,21 +302,17 @@ async function ensureTrail(root, name, createdIso) {
 
 /**
  * Is `rel` (a trail-relative, `/`-separated path) a file mailproof itself writes?
- *   records/<32 lowercase hex>.json         the record
- *   records/<32 lowercase hex>.json.ots     its OpenTimestamps proof
- *   replies/<32 lowercase hex>.<slug>.json  a reply-text record (slug: the stripper version, [a-z0-9-]+)
+ *   records/<2hex>/<32 lowercase hex>.json      the record (the shard is the first two chars of the id)
+ *   records/<2hex>/<32 lowercase hex>.json.ots  its OpenTimestamps proof
+ *   replies/<2hex>/<32 lowercase hex>.<slug>.json  a reply-text record (slug: the stripper version, [a-z0-9-]+)
  *   keys/<domain>/<selector>/<16 hex>.json  an archived DKIM key (domain and selector
  *                                           lowercase, the characters fetchDkimKey allows)
  * @param {string} rel
  * @returns {boolean}
  */
 function isLibraryFile(rel) {
+  if (parseRecordPath(rel) !== null || isReplyPath(rel)) return true;
   const parts = rel.split('/');
-  if (parts[0] === 'records' && parts.length === 2) {
-    const m = /^(.+)\.json(\.ots)?$/.exec(parts[1]);
-    return m !== null && RECORD_ID_RE.test(m[1]);
-  }
-  if (parts[0] === 'replies' && parts.length === 2) return /^[0-9a-f]{32}\.[a-z0-9-]+\.json$/.test(parts[1]);
   if (parts[0] === 'keys' && parts.length === 4) {
     const label = (/** @type {string} */ l) => DKIM_LABEL_RE.test(l) && l === l.toLowerCase() && !l.startsWith('.') && !l.includes('..');
     return label(parts[1]) && label(parts[2]) && /^[0-9a-f]{16}\.json$/.test(parts[3]);
@@ -330,8 +321,27 @@ function isLibraryFile(rel) {
 }
 
 /**
+ * Remove the directories under `records/`, `replies/` and `keys/` that removing `rels` emptied (deepest first, never
+ * the top-level directory itself). `rmdir` refuses a non-empty one, so nothing with a file in it goes.
+ * @param {string} root
+ * @param {string[]} rels  Trail-relative paths that were removed or never written.
+ * @returns {Promise<void>}
+ */
+async function rmEmptyDirs(root, rels) {
+  /** @type {Set<string>} */
+  const dirs = new Set();
+  for (const rel of rels) {
+    for (let d = path.posix.dirname(rel); d.includes('/'); d = path.posix.dirname(d)) dirs.add(d);
+  }
+  for (const d of [...dirs].sort((a, b) => b.length - a.length)) {
+    try { await fs.rmdir(path.join(root, d)); } catch { /* not empty, or gone */ }
+  }
+}
+
+/**
  * Clear what a crashed writer left half-done: staged changes, and the untracked
- * files mailproof itself writes under `records/` and `keys/` (see isLibraryFile).
+ * files mailproof itself writes under `records/`, `replies/` and `keys/` (see isLibraryFile), and the shard and key
+ * directories that empties.
  * Anything else there is left alone. Safe because only the lock holder writes,
  * and tracked files are never touched. Needs a HEAD.
  * @param {string} root
@@ -340,17 +350,14 @@ function isLibraryFile(rel) {
 async function clearLeftovers(root) {
   await git(root, ['reset', '-q']);
   const untracked = (await git(root, ['ls-files', '--others', '--exclude-standard', '-z', '--', 'records', 'keys', 'replies'])).split('\0').filter(Boolean);
-  /** @type {Set<string>} */
-  const dirs = new Set();
+  /** @type {string[]} */
+  const cleared = [];
   for (const rel of untracked) {
     if (!isLibraryFile(rel)) continue;
     await fs.rm(path.join(root, rel), { force: true });
-    if (rel.startsWith('keys/')) { dirs.add(path.dirname(rel)); dirs.add(path.dirname(path.dirname(rel))); }
+    cleared.push(rel);
   }
-  // drop the key directories this pass emptied (deepest first); rmdir refuses a non-empty one
-  for (const d of [...dirs].sort((a, b) => b.length - a.length)) {
-    try { await fs.rmdir(path.join(root, d)); } catch { /* not empty, or gone */ }
-  }
+  await rmEmptyDirs(root, cleared);
   await fs.mkdir(path.join(root, 'records'), { recursive: true });
 }
 
@@ -362,21 +369,28 @@ async function clearLeftovers(root) {
  */
 async function readRecord(root, id) {
   if (typeof id !== 'string' || !RECORD_ID_RE.test(id)) return null;
-  try { return JSON.parse(await fs.readFile(path.join(root, 'records', `${id}.json`), 'utf8')); }
+  try { return JSON.parse(await fs.readFile(path.join(root, recordPath(id)), 'utf8')); }
   catch { return null; }
 }
 
 /**
- * All record ids in the trail's working tree.
+ * All record ids in the trail's working tree (walks the shard directories).
  * @param {string} root
  * @returns {Promise<string[]>}
  */
 async function listIds(root) {
+  /** @type {string[]} */
+  const ids = [];
   try {
-    return (await fs.readdir(path.join(root, 'records')))
-      .filter((f) => f.endsWith('.json') && RECORD_ID_RE.test(f.slice(0, -5)))
-      .map((f) => f.slice(0, -5));
-  } catch { return []; }
+    for (const shard of await fs.readdir(path.join(root, 'records'))) {
+      if (!/^[0-9a-f]{2}$/.test(shard)) continue;
+      for (const f of await fs.readdir(path.join(root, 'records', shard))) {
+        const r = parseRecordPath(`records/${shard}/${f}`);
+        if (r && !r.ots) ids.push(r.id);
+      }
+    }
+  } catch { /* no records directory */ }
+  return ids;
 }
 
 /**
@@ -403,6 +417,7 @@ async function listIds(root) {
 async function commitFiles(root, name, { rel, json, requires, keyFiles = [], message, now, afterWrite, sideFiles, lockTimeoutMs = DEFAULT_LOCK_TIMEOUT_MS }) {
   return withTrailLock(root, trailLockFile(name), lockTimeoutMs, async () => {
     await ensureTrail(root, name, now().toISOString());
+    await assertTrailLayout(root);
     await clearLeftovers(root);
     if (requires !== undefined && !(await inHead(root, requires))) {
       throw Object.assign(new Error(`not recorded: ${requires} is not committed in trail "${name}"`), { code: 'ERR_NOT_RECORDED' });
@@ -440,6 +455,7 @@ async function commitFiles(root, name, { rel, json, requires, keyFiles = [], mes
       for (const r of written) {
         if (!(await isTracked(root, r))) await fs.rm(path.join(root, r), { force: true });
       }
+      await rmEmptyDirs(root, written);
       throw err;
     }
     return res;
@@ -457,7 +473,7 @@ async function commitFiles(root, name, { rel, json, requires, keyFiles = [], mes
  * @returns {Promise<{ duplicate: boolean, commit: string, extra: string[] }>}
  */
 async function commitRecord(root, name, { record, ...rest }) {
-  return commitFiles(root, name, { rel: `records/${record.id}.json`, json: record, ...rest });
+  return commitFiles(root, name, { rel: recordPath(record.id), json: record, ...rest });
 }
 
 export { TRAIL_NAME_RE, RECORD_ID_RE, DEFAULT_LOCK_TIMEOUT_MS, TRAIL_LOCK, SYNC_LOCK, trailLockFile, trailIndexFile, syncLockFile, withTrailLock, serialise, ensureTrail, readRecord, listIds, commitRecord, commitFiles, headOf, isAncestor, recordIdsSince };

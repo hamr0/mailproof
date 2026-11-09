@@ -13,6 +13,7 @@
 
 import { admit } from './admit.js';
 import { hashDocument } from './hash.js';
+import { replyPath } from './layout.js';
 
 /** The stripper version string; its slug names the committed file. */
 const STRIPPER = 'mailproof-quote/1';
@@ -30,8 +31,8 @@ const STRIPPER = 'mailproof-quote/1';
  */
 /** @typedef {{ ok: true, stripped: Stripped } | { ok: false, limit: string }} Extracted */
 
-/** `replies/<id>.<slug>.json` for a stripper version (the `/` of the version string becomes `-`). */
-const replyTextPath = (/** @type {string} */ id, stripper = STRIPPER) => `replies/${id}.${stripper.replace('/', '-')}.json`;
+/** The reply-text path for a stripper version (the `/` of the version string becomes `-`): see `replyPath` in trail.js. */
+const replyTextPath = (/** @type {string} */ id, stripper = STRIPPER) => replyPath(id, stripper.replace('/', '-'));
 
 // ---- minimal header / MIME parsing (the message is a Latin-1 string: one char per byte) ------------------------
 /** @typedef {{ headers: Map<string, string[]>, body: string }} Msg */

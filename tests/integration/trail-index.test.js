@@ -12,6 +12,7 @@ import { listIds, readRecord } from '../../src/proof/trail.js';
 import { RECORD_ID_RE } from '../../src/proof/trail.js';
 import { signedMail, stubResolver } from '../helpers/proof.js';
 import { makeTmpDir } from '../helpers/tmp.js';
+import { recordPath } from '../../src/proof/layout.js';
 
 const Database = createRequire(import.meta.url)('better-sqlite3');
 const T0 = new Date('2026-11-01T10:00:00Z');
@@ -355,10 +356,11 @@ test('catch-up lists both paths of a renamed record file: the old id leaves the 
   plantSentinel(dir);
   // rename a record file (same content: git sees a 100% rename) and commit it
   const NEWID = 'f'.repeat(32);
-  const oldFile = path.join('records', `${out.u1.id}.json`);
+  const oldFile = recordPath(out.u1.id);
   const body = JSON.parse(fs.readFileSync(path.join(root, oldFile), 'utf8'));
   fs.writeFileSync(path.join(root, oldFile), JSON.stringify({ ...body, id: NEWID }));
-  gitOut(root, 'mv', oldFile, path.join('records', `${NEWID}.json`));
+  fs.mkdirSync(path.join(root, path.dirname(recordPath(NEWID))), { recursive: true });
+  gitOut(root, 'mv', oldFile, recordPath(NEWID));
   gitOut(root, '-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'diff.renames=true', 'commit', '-q', '-m', 'rename');
   assert.match(gitOut(root, '-c', 'diff.renames=true', 'diff', '--name-status', 'HEAD~1', 'HEAD'), /^R/, 'git reports a rename');
   assert.equal(await hasSentinel(mp2), true, 'caught up, not rebuilt');

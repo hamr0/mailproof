@@ -13,6 +13,7 @@ import { verifyRecord, matchBodyRecord, matchFileRecord } from './recheck.js';
 import { checkProfile } from './profile.js';
 import { TRAIL_NAME_RE, RECORD_ID_RE, DEFAULT_LOCK_TIMEOUT_MS, commitRecord, commitFiles, readRecord, withTrailLock, trailLockFile } from './trail.js';
 import { parseContentOptions, contentDirOf, storeContent, readRaw, readAttachment, expireStore, forgetIds, idsWith, exists, toMs, DAY_MS } from './content.js';
+import { recordPath, recordOtsPath, assertTrailLayout } from './layout.js';
 import { STRIPPER, replyTextPath, extractReplyText, replyTextRecord } from './reply-text.js';
 import { hashDocument } from './hash.js';
 
@@ -36,7 +37,7 @@ const OTS_MIN_TIMEOUT_MS = 5000; // floor for the `ots` timeout, however short l
  * @property {() => Date} [now]  Clock (tests inject one).
  * @property {string[]} [trustedSealers]  ARC sealer domains whose chains may yield `forwarded` (live only).
  * @property {import('./pool.js').WorkerOptions} [worker]  The deadline backstop (default on): the parsing and verifying half of `check()`/`record()` runs in a warm worker thread that is killed when one message uses more than `cpuMs` (15000) of the thread's CPU, `wallMs` (120000) of busy wall time (DNS waits excluded) or `maxMemoryMb` (1536) of heap plus external memory. The message is then recorded `unverified` as `over limit: time` / `over limit: memory`; a worker that dies for no nameable reason gives `over limit: crash`. `size` is the number of warm workers (default 1); `size: 0` runs everything in-process, with no backstop. Needs Node 22.19 or later.
- * @property {{ store?: boolean, attachments?: boolean, days?: number }} [content]  The local content store (SPEC B7): the raw email and its attachments, kept beside the trail (`<trailDir>/<trail>.content/`), outside git. `store` (default true) keeps the raw email of every recorded message; `store: false` is "proof only" (nothing is written, the caller supplies raw bytes). `attachments` (default true) also keeps attachment files, once per distinct sha256. `days` (default 730) is how long content is kept after the record's `captured` time (`expireContent()`, run at the end of every `sync()`). Records are never deleted.
+ * @property {{ store?: boolean, attachments?: boolean, days?: number, sweepDays?: number }} [content]  The local content store (SPEC B7): the raw email and its attachments, kept beside the trail (`<trailDir>/<trail>.content/`), outside git. `store` (default true) keeps the raw email of every recorded message; `store: false` is "proof only" (nothing is written, the caller supplies raw bytes). `attachments` (default true) also keeps attachment files, once per distinct sha256. `days` (default 730) is how long content is kept after the record's `captured` time. The automatic sweep (`expireContent()`) runs at the end of a `sync()` only when the last sweep is at least `sweepDays` days old (default 7; there is no timer, the first `sync()` after the interval runs it), so content lives between `days` and `days + sweepDays`; an explicit `expireContent()` always runs. Records are never deleted.
  * @property {number} [lockTimeoutMs]  How long `record()` waits for another writer of the same trail (default 30000). On timeout it throws `ERR_TRAIL_LOCKED` and writes nothing. With `otsBin`, the OTS stamp runs inside that lock and is cut off after `clamp(floor(lockTimeoutMs / 3), 5000, 30000)` ms, so a short `lockTimeoutMs` shortens the stamp (5 s floor), and concurrent writers can wait up to that long behind a slow stamp.
  */
 
@@ -52,10 +53,10 @@ function otsTimeoutMs(lockTimeoutMs) {
 class Mailproof {
   /**
    * @param {MailproofOptions} opts
-   * @signature new Mailproof({ trailDir: string, trail?: string, resolver?: Function, otsBin?: string|null, now?: () => Date, trustedSealers?: string[], lockTimeoutMs?: number, worker?: { size?: number, cpuMs?: number, wallMs?: number, maxMemoryMb?: number }, content?: { store?: boolean, attachments?: boolean, days?: number } })
+   * @signature new Mailproof({ trailDir: string, trail?: string, resolver?: Function, otsBin?: string|null, now?: () => Date, trustedSealers?: string[], lockTimeoutMs?: number, worker?: { size?: number, cpuMs?: number, wallMs?: number, maxMemoryMb?: number }, content?: { store?: boolean, attachments?: boolean, days?: number, sweepDays?: number } })
    * @when Start here. Construct one per trail (a git repo of records under `trailDir`), then `record()` each email you want a re-checkable proof of and `verify()` it later, offline. All methods are bound, so `const { verify } = mp` works.
    * @category proof
-   * @fails Throws at construction when `trailDir` is missing, `trail` is not `[a-z0-9][a-z0-9_-]{0,63}`, or `worker` or `content` holds an unknown key or a bad value (`content.store` and `content.attachments` must be booleans, `content.days` a positive integer). Nothing touches the disk until the first `record()`. With `otsBin`, the OTS stamp runs inside the writer lock and is cut off after `clamp(floor(lockTimeoutMs / 3), 5000, 30000)` ms: a short `lockTimeoutMs` shortens the stamp (5 s floor), and concurrent writers can wait up to that long behind a slow stamp.
+   * @fails Throws at construction when `trailDir` is missing, `trail` is not `[a-z0-9][a-z0-9_-]{0,63}`, or `worker` or `content` holds an unknown key or a bad value (`content.store` and `content.attachments` must be booleans, `content.days` and `content.sweepDays` positive integers). Nothing touches the disk until the first `record()`. With `otsBin`, the OTS stamp runs inside the writer lock and is cut off after `clamp(floor(lockTimeoutMs / 3), 5000, 30000)` ms: a short `lockTimeoutMs` shortens the stamp (5 s floor), and concurrent writers can wait up to that long behind a slow stamp.
    * @example
    * import { Mailproof } from 'mailproof';
    * const mp = new Mailproof({ trailDir: './trails' });
@@ -215,7 +216,7 @@ class Mailproof {
    * @when Use to keep a proof of an email (one record per distinct copy, marked `direct` / `relayed` / `forward` / `digest`): it stores the signed headers, the signature, the archived key, both verdicts and the body status (`body_status`: did the body match the signed `bh=`, with hints on what changed) as one git commit, and never the body in the trail. With the content store on (the default) the raw email and its attachments are also kept beside the trail, outside git, for `rawEmail()`, `attachment()`, `replyText({ id })` and `matchBody(id)`. Call it for every email you may need to prove later, including ones that fail verification (they are recorded as `unverified`).
    * @category proof
    * @signature mp.record(raw: Buffer|string, ctx: { direction: 'in'|'out', source?: string, envelope?: Envelope }) => Promise<{ id, duplicate, commit, record?, ots?, content? }>
-   * @fails Throws on an empty message, a `direction` other than 'in'/'out', a git failure (the tree is rolled back: only files this call created are removed), or `err.code === 'ERR_TRAIL_LOCKED'` when another process holds the trail's writer lock for longer than `lockTimeoutMs` (nothing is written; retry later). Never throws because the mail is unsigned or fails verification. A message over an input limit, or one the worker backstop stopped (see `check()`), is still recorded (committed, accept-with-flag) but never parsed or verified, and no DNS is asked: `unverified` with `reason: 'over limit: <name>'` on both verdicts, `signatures: []`, `body_status` `not-checked`, and only the `id`, `raw_sha256` and `size` taken from the bytes (`message_id` null, no attachments, `copy.kind` `unknown`, `message_key` null). This includes a header block over 256 KiB, which used to reject with `EMAXLEN` and record nothing. The id is the hash of the raw bytes: the identical bytes recorded twice return `duplicate: true` and write nothing, while a copy with any byte difference (a list footer, an added header) is its own record, linked by `message_key` (see `copies()`). An OTS failure or timeout is reported in `ots`, not thrown; the stamp runs inside the writer lock, so it is cut off after `clamp(floor(lockTimeoutMs / 3), 5000, 30000)` ms. A content-store write failure (disk full, permissions) never fails the call and never loses the proof: the record commits and `content` is `{ stored: false, attachments: 0, error }`. If the commit fails, the content files this call created are removed with the rest. The raw email of a message over 25 MiB is not stored.
+   * @fails Throws on an empty message, a `direction` other than 'in'/'out', `err.code === 'ERR_TRAIL_LAYOUT'` for a trail still in the pre-M3 flat layout (not converted: re-create it), a git failure (the tree is rolled back: only files this call created are removed), or `err.code === 'ERR_TRAIL_LOCKED'` when another process holds the trail's writer lock for longer than `lockTimeoutMs` (nothing is written; retry later). Never throws because the mail is unsigned or fails verification. A message over an input limit, or one the worker backstop stopped (see `check()`), is still recorded (committed, accept-with-flag) but never parsed or verified, and no DNS is asked: `unverified` with `reason: 'over limit: <name>'` on both verdicts, `signatures: []`, `body_status` `not-checked`, and only the `id`, `raw_sha256` and `size` taken from the bytes (`message_id` null, no attachments, `copy.kind` `unknown`, `message_key` null). This includes a header block over 256 KiB, which used to reject with `EMAXLEN` and record nothing. The id is the hash of the raw bytes: the identical bytes recorded twice return `duplicate: true` and write nothing, while a copy with any byte difference (a list footer, an added header) is its own record, linked by `message_key` (see `copies()`). An OTS failure or timeout is reported in `ots`, not thrown; the stamp runs inside the writer lock, so it is cut off after `clamp(floor(lockTimeoutMs / 3), 5000, 30000)` ms. A content-store write failure (disk full, permissions) never fails the call and never loses the proof: the record commits and `content` is `{ stored: false, attachments: 0, error }`. If the commit fails, the content files this call created are removed with the rest. The raw email of a message over 25 MiB is not stored.
    * @example
    * const { id, duplicate } = await mp.record(fs.readFileSync('mail.eml'), { direction: 'in', source: 'file' });
    */
@@ -246,7 +247,7 @@ class Mailproof {
       const st = await ots.stampFile(recordAbs);
       if ('error' in st) { otsState = { error: st.error }; return []; }
       otsState = 'pending';
-      return [`records/${record.id}.json.ots`];
+      return [recordOtsPath(record.id)];
     } : undefined;
     /** @type {ContentResult | undefined} */
     let contentState;
@@ -289,7 +290,7 @@ class Mailproof {
    * @when Use to read what a person actually wrote in a reply they sent you, without the quoted history (the trap: a reply that quotes "Approve payment of $5,000?" is not an approval). Record the email first (`record()`, or `sync()`), then hand the same raw bytes to this, or just `{ id }` when the content store holds them (the default). `text` is the new text; `proven` is true only when the recorded body matched the signed `bh=` (`body_status` `matched`), so the text really came from that signed email; `quote` says whether a quote boundary was found (`found`), none was (`not-found`: the whole body is returned) or the answer is written inside the quote (`inline`); `trailing` says unquoted text follows the quote and was not returned. The stripper is the versioned, deterministic `mailproof-quote/1`: anyone with the raw email re-runs it and gets the same text byte for byte. Signatures are not stripped. Interpreting the text (approve or decline, in any language) is the consumer's job, not mailproof's.
    * @category proof
    * @signature mp.replyText(raw: Buffer|string|{ id: string }) => Promise<{ id, text, text_sha256, text_bytes, quote, trailing, source, boundary, stripper, body_status, proven, commit, duplicate }>
-   * @fails `{ id }` with no stored content (store off, expired, forgotten, or the file failed its hash check) rejects with `err.code === 'ERR_NO_CONTENT'`; an `id` that is not 32 hex is a plain Error. Rejects with `err.code === 'ERR_NOT_RECORDED'` when the message is not committed in this trail (record it first), `ERR_OVER_LIMIT` with `err.limit` set when the message is over an input limit or the worker backstop stopped it (`total_bytes`, ..., `time`, `memory`, `crash`; nothing is written), `ERR_TRAIL_LOCKED` when another writer holds the trail longer than `lockTimeoutMs`, or a plain Error on an empty message or a git failure (rolled back). A message with no text/plain part is not an error: `source: 'html-only'`, `text` '' and `proven` false. The committed record holds fingerprints and flags only, never the text, the body or the subject; the same message and stripper version again returns the text with `duplicate: true` and writes nothing. `partial` body status (an `l=` signed prefix) is unproven in v1. `proven: false` is normal for mail received at Outlook/msn from outside (Microsoft alters the body): the words are unproven while the signed headers still verify; receive replies whose words matter at Gmail.
+   * @fails `ERR_TRAIL_LAYOUT` for a trail still in the pre-M3 flat layout (not converted: re-create it). `{ id }` with no stored content (store off, expired, forgotten, or the file failed its hash check) rejects with `err.code === 'ERR_NO_CONTENT'`; an `id` that is not 32 hex is a plain Error. Rejects with `err.code === 'ERR_NOT_RECORDED'` when the message is not committed in this trail (record it first), `ERR_OVER_LIMIT` with `err.limit` set when the message is over an input limit or the worker backstop stopped it (`total_bytes`, ..., `time`, `memory`, `crash`; nothing is written), `ERR_TRAIL_LOCKED` when another writer holds the trail longer than `lockTimeoutMs`, or a plain Error on an empty message or a git failure (rolled back). A message with no text/plain part is not an error: `source: 'html-only'`, `text` '' and `proven` false. The committed record holds fingerprints and flags only, never the text, the body or the subject; the same message and stripper version again returns the text with `duplicate: true` and writes nothing. `partial` body status (an `l=` signed prefix) is unproven in v1. `proven: false` is normal for mail received at Outlook/msn from outside (Microsoft alters the body): the words are unproven while the signed headers still verify; receive replies whose words matter at Gmail.
    * @example
    * const { id } = await mp.record(raw, { direction: 'in' });
    * const r = await mp.replyText(raw);   // r.text, r.proven, r.quote, r.trailing
@@ -321,7 +322,7 @@ class Mailproof {
     const body_status = rec.body_status ?? 'not-checked';
     const row = replyTextRecord({ id, stripped: s, body_status, extracted_at: this.now().toISOString() });
     const res = await commitFiles(this.root, this.trail, {
-      rel: replyTextPath(id), json: row, requires: `records/${id}.json`,
+      rel: replyTextPath(id), json: row, requires: recordPath(id),
       message: `reply-text ${id.slice(0, 12)} ${STRIPPER} ${s.quote}`,
       now: this.now, lockTimeoutMs: this.lockTimeoutMs,
     });
@@ -370,16 +371,17 @@ class Mailproof {
    * @param {{ now?: Date | number }} [opts]  `now` overrides the clock (tests).
    * @returns {Promise<Forgotten>}
    * @name Mailproof#expireContent
-   * @when Use to enforce retention on demand; `sync()` already calls it at the end of a run, but at most once every 24 hours. Only content goes (raw emails, and attachment files no remaining stored email references): records, archived keys and git history are never touched, so every proof still verifies.
+   * @when Use to enforce retention on demand; `sync()` already calls it at the end of a run, but only when the last automatic sweep is at least `content.sweepDays` days old (default 7; content therefore lives between `days` and `days + sweepDays`). Only content goes (raw emails, and attachment files no remaining stored email references): records, archived keys and git history are never touched, so every proof still verifies.
    * @category content
    * @signature mp.expireContent(opts?: { now?: Date|number }) => Promise<{ removed: number, attachments: number }>
-   * @fails Rejects with `ERR_TRAIL_LOCKED` when another writer holds the trail longer than `lockTimeoutMs` (nothing is deleted; retry later), or a TypeError for a `now` that is not a Date or finite number. A missing content directory returns zeros without creating anything. A record that cannot be read, or has no usable `captured`, keeps its content. Idempotent. The scan of stored emails runs without the trail lock (writers carry on); the lock is held only for the deletions, so it is short whatever the trail's size. If the trail's history was rewritten during the scan nothing is deleted this round. Cost of the scan grows with the number of stored emails (SPEC B7).
+   * @fails Rejects with `ERR_TRAIL_LOCKED` when another writer holds the trail longer than `lockTimeoutMs` (nothing is deleted; retry later), `ERR_TRAIL_LAYOUT` for a trail still in the pre-M3 flat layout (not converted: re-create it), or a TypeError for a `now` that is not a Date or finite number. A missing content directory returns zeros without creating anything. A record that cannot be read, or has no usable `captured`, keeps its content. Idempotent. The scan of stored emails runs without the trail lock (writers carry on); the lock is held only for the deletions, so it is short whatever the trail's size. If the trail's history was rewritten during the scan nothing is deleted this round. Cost of the scan grows with the number of stored emails (SPEC B7).
    * @example
    * const { removed, attachments } = await mp.expireContent();
    */
   async expireContent({ now } = {}) {
     const nowMs = now === undefined ? this.now().getTime() : toMs(now, 'now');
     if (!(await exists(this.contentDir))) return { removed: 0, attachments: 0 };
+    await assertTrailLayout(this.root);
     const res = await expireStore(this.root, this.contentDir, this.content.days, nowMs, (w) => this._lock(w), this._scanHooks);
     await this._markSwept();
     return res;
@@ -407,7 +409,7 @@ class Mailproof {
   }
 
   /**
-   * The automatic sweep `sync()` runs: `expireContent()` only when the last completed sweep is 24 hours old or more
+   * The automatic sweep `sync()` runs: `expireContent()` only when the last completed sweep is `content.sweepDays` days old or more
    * (or unknown, unreadable, or dated in the future). Uses the instance clock.
    * @returns {Promise<{ removed: number, attachments: number } | null>}  null when it was skipped.
    */
@@ -416,7 +418,7 @@ class Mailproof {
     try {
       const last = Date.parse(JSON.parse(await fs.readFile(this._sweepFile(), 'utf8')).last);
       const now = this.now().getTime();
-      if (Number.isFinite(last) && last <= now && now - last < DAY_MS) return null;
+      if (Number.isFinite(last) && last <= now && now - last < this.content.sweepDays * DAY_MS) return null;
     } catch { /* no usable marker: sweep */ }
     return this.expireContent();
   }
@@ -429,7 +431,7 @@ class Mailproof {
    * @when Use to erase what you hold of other people's mail earlier than retention would: one email, a list, or everything with one correspondent. Only the raw email and attachment files not needed by any remaining stored email are deleted. The proof stays: headers, verdicts, hashes and archived keys still re-verify offline, and anyone who later produces the raw email (sha256 = the record id) or an attachment gets it re-checked.
    * @category content
    * @signature mp.forget(target: string|string[]|{ with: string, before?, after? }) => Promise<{ removed: number, attachments: number }>
-   * @fails Throws a TypeError for a malformed id, an empty or non-string `with`, or a bad `before`/`after`; `ERR_TRAIL_LOCKED` as `expireContent()`. An id with nothing stored is not an error (`removed` counts only what was deleted), so it is idempotent. The counterparty is found from the From/To/Cc lines of the signed headers in the record, of the unsigned record's `from`, and of the stored raw email's header block; the match is exact, `bob@gmail.com` is not `bob@company.com`.
+   * @fails Throws a TypeError for a malformed id, an empty or non-string `with`, or a bad `before`/`after`; `ERR_TRAIL_LOCKED` and `ERR_TRAIL_LAYOUT` as `expireContent()`. An id with nothing stored is not an error (`removed` counts only what was deleted), so it is idempotent. The counterparty is found from the From/To/Cc lines of the signed headers in the record, of the unsigned record's `from`, and of the stored raw email's header block; the match is exact, `bob@gmail.com` is not `bob@company.com`.
    * @example
    * await mp.forget(id);
    * await mp.forget({ with: 'bob@example.com', before: '2026-01-01' });
@@ -448,6 +450,7 @@ class Mailproof {
     } else throw new TypeError('forget: target must be an id, an array of ids, or { with }');
     if (ids) for (const id of ids) if (typeof id !== 'string' || !RECORD_ID_RE.test(id)) throw new TypeError('forget: ids must be 32 hex characters');
     if (!(await exists(this.contentDir))) return { removed: 0, attachments: 0 };
+    await assertTrailLayout(this.root);
     const list = ids ?? await idsWith(this.root, this.contentDir, /** @type {NonNullable<typeof query>} */ (query));   // the scan holds no lock
     return forgetIds(this.root, this.contentDir, list, (w) => this._lock(w), this._scanHooks);
   }
@@ -529,11 +532,12 @@ class Mailproof {
    * @when Use to read one stored record (to export it, or to hand to `verifyRecord`). Use `list()` first if you do not have an id.
    * @category read
    * @signature mp.get(id: string) => Promise<Record|null>
-   * @fails Never throws. Returns null for an unknown id or anything that is not 32 hex characters.
+   * @fails Returns null for an unknown id or anything that is not 32 hex characters. Rejects only for a trail still in the pre-M3 flat layout (`records/<id>.json`): `err.code === 'ERR_TRAIL_LAYOUT'`, the trail must be re-created.
    * @example
    * const rec = await mp.get(id);
    */
   async get(id) {
+    await assertTrailLayout(this.root);
     return readRecord(this.root, id);
   }
 
@@ -545,7 +549,7 @@ class Mailproof {
    * @when Use to see every route one signed message reached you by (direct, via a mailing list, forwarded), given the id of any copy or the shared `message_key`. `copies` share the key; `contained_in` lists other records that carry it as an attached original (forwards and list digests). `original` is the earliest `direct` copy whose body matched, or null. Use `get(id)` for a full record.
    * @category read
    * @signature mp.copies(idOrKey: string) => Promise<{ message_key, original, copies[], contained_in[] }>
-   * @fails Rejects with `err.code === 'ERR_INDEX_UNAVAILABLE'` when the `better-sqlite3` native addon cannot load on this platform (there is no fallback; `record`, `get` and `verify` do not need it), or `ERR_TRAIL_LOCKED` when bringing the trail index up to date had to wait for a writer longer than `lockTimeoutMs`, or `ERR_INDEX_REBUILD` when a first build (or a rebuild, or a catch-up that falls back to one) finds more than about 350,000 committed records or changes (a 16 MB git output limit; the trail is too large to index). Otherwise never throws. An unknown id or key, or a record with no `message_key` (unsigned mail with no Message-ID), returns just that record (or nothing) with empty `contained_in`. Answers come from the trail index (SPEC B5), a cache beside the trail that is opened and closed inside each call (nothing stays open, so `close()` has nothing to wait for): whoever can write that file can change this answer, never `get` or `verify`.
+   * @fails Rejects with `err.code === 'ERR_INDEX_UNAVAILABLE'` when the `better-sqlite3` native addon cannot load on this platform (there is no fallback; `record`, `get` and `verify` do not need it), or `ERR_TRAIL_LOCKED` when bringing the trail index up to date had to wait for a writer longer than `lockTimeoutMs`, or `ERR_INDEX_REBUILD` when a first build (or a rebuild, or a catch-up that falls back to one) finds more than about 350,000 committed records or changes (a 16 MB git output limit; the trail is too large to index), or `ERR_TRAIL_LAYOUT` for a trail still in the pre-M3 flat layout (not converted: re-create it). Otherwise never throws. An unknown id or key, or a record with no `message_key` (unsigned mail with no Message-ID), returns just that record (or nothing) with empty `contained_in`. Answers come from the trail index (SPEC B5), a cache beside the trail that is opened and closed inside each call (nothing stays open, so `close()` has nothing to wait for): whoever can write that file can change this answer, never `get` or `verify`.
    * @example
    * const { copies, contained_in, original } = await mp.copies(id);
    */
@@ -562,7 +566,7 @@ class Mailproof {
    * @when Use to find recorded emails, newest capture first, optionally by direction or by counterparty: `with` is one exact email address (case-insensitive, no grouping: bob@gmail.com is not bob@company.com) seen on the From, To, Cc or Reply-To of the record (`role` narrows it to one of them), `after` (inclusive) and `before` (exclusive) bound the capture time. It returns summaries; use `get(id)` for the full record.
    * @category read
    * @signature mp.list(opts?: { limit?: number, direction?: 'in'|'out', with?: string, role?: 'from'|'to'|'cc'|'reply-to', before?: Date|number|string, after?: Date|number|string }) => Promise<Array<{ id, captured, direction, live, portable, message_id }>>
-   * @fails Rejects with `err.code === 'ERR_INDEX_UNAVAILABLE'` when the `better-sqlite3` native addon cannot load on this platform (there is no fallback; `record`, `get` and `verify` do not need it), or `ERR_TRAIL_LOCKED` when bringing the trail index up to date had to wait for a writer longer than `lockTimeoutMs`, or `ERR_INDEX_REBUILD` when a first build (or a rebuild, or a catch-up that falls back to one) finds more than about 350,000 committed records or changes (a 16 MB git output limit; the trail is too large to index). A wrong type for `with`, `role` (it needs `with`), `before` or `after` throws a TypeError. Otherwise never throws. An empty or missing trail returns `[]`. Records captured in the same instant come in ascending id order. Only addresses the record itself shows count: a signed record shows the headers its DKIM signatures cover (an unsigned Cc is not visible), an unsigned one only its From (SPEC B8). Answers come from the trail index (SPEC B5), a cache beside the trail that is opened and closed inside each call (nothing stays open, so `close()` has nothing to wait for): whoever can write that file can change this answer, never `get` or `verify`.
+   * @fails Rejects with `err.code === 'ERR_INDEX_UNAVAILABLE'` when the `better-sqlite3` native addon cannot load on this platform (there is no fallback; `record`, `get` and `verify` do not need it), or `ERR_TRAIL_LOCKED` when bringing the trail index up to date had to wait for a writer longer than `lockTimeoutMs`, or `ERR_INDEX_REBUILD` when a first build (or a rebuild, or a catch-up that falls back to one) finds more than about 350,000 committed records or changes (a 16 MB git output limit; the trail is too large to index), or `ERR_TRAIL_LAYOUT` for a trail still in the pre-M3 flat layout (not converted: re-create it). A wrong type for `with`, `role` (it needs `with`), `before` or `after` throws a TypeError. Otherwise never throws. An empty or missing trail returns `[]`. Records captured in the same instant come in ascending id order. Only addresses the record itself shows count: a signed record shows the headers its DKIM signatures cover (an unsigned Cc is not visible), an unsigned one only its From (SPEC B8). Answers come from the trail index (SPEC B5), a cache beside the trail that is opened and closed inside each call (nothing stays open, so `close()` has nothing to wait for): whoever can write that file can change this answer, never `get` or `verify`.
    * @example
    * const recent = await mp.list({ limit: 10 });
    */
