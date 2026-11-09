@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 - Post-3.0.0 status sweep: CLAUDE.md, README.md, docs/README.md, the PRD, the usage guide and mailproof.context.md now give 3.0.0 as current, mark M3 steps 1-3 shipped and step 4 onward not built, and say the git proof never holds the body while the raw email lives in the local content store outside git.
+- M3 build order: `replyFacts` moves ahead of the CLI and MCP (now steps 4, 5, 6).
 
 ## [3.0.0] - 2026-11-09
 

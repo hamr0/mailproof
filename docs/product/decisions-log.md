@@ -287,3 +287,10 @@ the [PRD](PRD.md) / [DESIGN](../../archive/v1/docs/DESIGN.md).
 5. **A cutoff that would remove every record is refused** (`ERR_PRUNE_CUTOFF`), a cutoff that removes nothing is a no-op. Options: allow an empty trail. Product-visible: refused because an empty trail with only a notice is more likely a mistyped date than an intent.
 6. **No all-commits checker inside `prune()`.** The POC's checker takes 109 s at 20k; the shipped guard compares the file set (and the net change of late commits) from `ls-tree` / `diff-tree`, and the full checker is a test helper.
 **Consequences**: SPEC B9 documents each; F25 has the measurements.
+
+### Decision: M3 build order: `replyFacts` before the CLI and MCP
+**Date**: 2026-11-09
+**Status**: Accepted (owner: hamr0)
+**Context**: The PRD order was CLI (step 4), MCP (step 5), `replyFacts` (step 6). `replyFacts` depends only on the content store and the read primitives (steps 1-2), both shipped in 3.0.0; nothing in the CLI or MCP blocks it. It unblocks the first planned consumer, bareguard's human-approval channel, whose opt-in `ignoreCase` rubric rule is parked until mailproof delivers `replyFacts` plus a POC on real replies (PRD §7 M3, "Approvals and the fact bundle").
+**Decision**: Build `replyFacts` next: step 4 = `replyFacts` (POC on real replies first), 5 = CLI, config and menu, 6 = MCP after its POC. Options: keep the PRD order (rejected: bareguard would wait behind two unrelated steps). The fix-ledger /refactor still comes first, on this branch.
+**Consequences**: PRD §7 build order and every "step 4 / CLI, MCP, `replyFacts`" reference renumbered; the earlier entry's "`replyFacts` becomes build step 6" is superseded. No code, no new dependency.

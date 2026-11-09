@@ -1,6 +1,6 @@
 # mailproof v2 — PRD
 
-> **Status:** v2 is released as 3.0.0 (2026-11-09; M0-M2 and M3 steps 1-3 shipped). The rest of M3 (CLI, MCP, `replyFacts`) is specified, not built. 1.x is frozen at tag `v1.4.0` (v1 code archived in `archive/v1/`; no `v1` branch).
+> **Status:** v2 is released as 3.0.0 (2026-11-09; M0-M2 and M3 steps 1-3 shipped). The rest of M3 (`replyFacts`, CLI, MCP) is specified, not built. 1.x is frozen at tag `v1.4.0` (v1 code archived in `archive/v1/`; no `v1` branch).
 > **Owner:** hamr0 · **Last updated:** 2026-11-09
 >
 > **For future Claude:** this PRD wins on intent and scope. The *why* behind each choice is in
@@ -222,7 +222,7 @@ It stores no text, no body bytes and no subject (the trail stays header-only). I
 
 ### M3 — Two-party record (specified)
 
-**Status:** specified 2026-11-08, approvals round added 2026-11-09; **build step 1 shipped in 3.0.0: the local content store, retention and `forget`** ([SPEC B7](SPEC.md), [F22](findings.md)); **build step 2 shipped in 3.0.0: trust profiles, the counterparty view and graded thread links** ([SPEC B5, B8](SPEC.md), [F23](findings.md)); **build step 3 shipped in 3.0.0: prune before date** ([SPEC B9](SPEC.md), [F25](findings.md)); the rest (step 4 onward: CLI, MCP, `replyFacts`) is not built; a few items still open (see Open below). Reasons and options: [decisions-log](decisions-log.md) entry "M3 scope: one trail per owned account, local content store, prune-before-date, CLI + stdlib MCP". Wire formats go to SPEC Part B when each step is built (B7 is the first).
+**Status:** specified 2026-11-08, approvals round added 2026-11-09; **build step 1 shipped in 3.0.0: the local content store, retention and `forget`** ([SPEC B7](SPEC.md), [F22](findings.md)); **build step 2 shipped in 3.0.0: trust profiles, the counterparty view and graded thread links** ([SPEC B5, B8](SPEC.md), [F23](findings.md)); **build step 3 shipped in 3.0.0: prune before date** ([SPEC B9](SPEC.md), [F25](findings.md)); the rest (step 4 onward: `replyFacts`, CLI, MCP) is not built; a few items still open (see Open below). Reasons and options: [decisions-log](decisions-log.md) entry "M3 scope: one trail per owned account, local content store, prune-before-date, CLI + stdlib MCP". Wire formats go to SPEC Part B when each step is built (B7 is the first).
 
 **Goal.** M3 makes mailproof a two-party record for three use cases on one substrate:
 
@@ -270,7 +270,7 @@ Best effort, offered when available.
 
 #### Prune before date
 
-Off by default; an explicit command (`Mailproof#prune`, built in step 3; the CLI comes in step 4). Only "everything captured before date X". Never a range in the middle (that is tampering), and no rotation by period. Mechanism and wire format: [SPEC B9](SPEC.md); the POC that corrected the first draft of these steps: [poc/m3-prune](../../poc/m3-prune/README.md), [F24](findings.md).
+Off by default; an explicit command (`Mailproof#prune`, built in step 3; the CLI comes in step 5). Only "everything captured before date X". Never a range in the middle (that is tampering), and no rotation by period. Mechanism and wire format: [SPEC B9](SPEC.md); the POC that corrected the first draft of these steps: [poc/m3-prune](../../poc/m3-prune/README.md), [F24](findings.md).
 
 1. **Plan without blocking writers.** Build the pruned trail from a snapshot of HEAD with no trail lock, so `record()` and `sync()` carry on; take the trail lock (and the sync lock) only to append the commits made since and swap. The cutoff is the longest *prefix* of history in which every record is before the date: a record captured earlier but committed after a later one (a clock step) is **kept** and reported as a straggler.
 2. Write a new first commit, the **prune notice**: cutoff date, previous HEAD hash, records removed, kept, stragglers and dropped commits, and the notices of earlier prunes (cumulative). Its tree is not empty: it holds `trail.json` and the archived keys that kept records still need (a key first committed with a removed record but named by a kept one).
@@ -291,7 +291,7 @@ Commit ids after the cutoff change. Kept record files, DKIM proofs, keys, OTS st
 Owner decisions, 2026-11-09. Reasons and options: [decisions-log](decisions-log.md) entry "M3 approvals: mailproof never sends; supplies a flat fact bundle; bareguard decides".
 
 - **mailproof never sends email.** It silently shadows the mailbox. Whoever starts an exchange (an agent, bareguard's approval recipe) sends the question with its own tools from the user's own account, ideally setting its own Message-ID. mailproof records the request from Sent and the reply from Inbox like any other mail. The "no third-party sending provider" rule stays intact (§12 Q6).
-- **mailproof supplies, consumers decide.** mailproof never interprets or filters on a consumer's behalf. A new read primitive, `replyFacts({ messageId })` (name proposed), returns a fact bundle for the reply to that Message-ID, or null when there is none. It comes later, after the content store and the read primitives exist. The trust profile stays a separate, optional primitive.
+- **mailproof supplies, consumers decide.** mailproof never interprets or filters on a consumer's behalf. A new read primitive, `replyFacts({ messageId })` (name proposed), returns a fact bundle for the reply to that Message-ID, or null when there is none. Both now exist, so it is the next build step (step 4). The trust profile stays a separate, optional primitive.
 - **The bundle is flat JSON with string values only.** Each flag comes from a closed set, and claimed and proven values are sibling keys. This shape was agreed with bareguard's session: its rubric reads only its own top-level keys, compares strings exactly, and no rule reads booleans or nested objects. Field names are indicative; they are final at build.
 
 | Field | Meaning |
@@ -337,11 +337,13 @@ Owner decisions, 2026-11-09. Reasons and options: [decisions-log](decisions-log.
 1. Content store, retention and `forget`.
 2. Trust profiles, counterparty view and graded thread links.
 3. Prune before date.
-4. `mailproof` CLI, config and menu.
-5. MCP, after its POC.
-6. `replyFacts`, after the content store and read primitives (steps 1-2).
+4. `replyFacts`, after the content store and read primitives (steps 1-2); POC on real replies first.
+5. `mailproof` CLI, config and menu.
+6. MCP, after its POC.
 
-POC first where the mechanism is unproven: the stdlib MCP server, and the prune replay. Approvals via bareguard become a recipe on top of steps 2, 5 and 6.
+Reordered 2026-11-09: `replyFacts` moves ahead of the CLI and MCP, because it needs only steps 1-2 and unblocks bareguard's approval channel. Reasons: [decisions-log](decisions-log.md) entry "M3 build order: `replyFacts` before the CLI and MCP".
+
+POC first where the mechanism is unproven: `replyFacts` on real replies, the stdlib MCP server, and the prune replay. Approvals via bareguard become a recipe on top of steps 2, 4 and 6.
 
 #### Open (not decided)
 
