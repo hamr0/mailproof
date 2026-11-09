@@ -130,3 +130,6 @@ export const INDEX_MAX_ADDRESS = 254;
 
 /** Thread-link rows the index takes from one record: In-Reply-To, then the LAST References ids (the nearest ancestors). */
 export const INDEX_MAX_LINKS = 200;
+
+/** Children `linked()` returns by default (a popular Message-ID can be named by any number of records); `{ limit }` overrides. */
+export const LINKED_CHILDREN_DEFAULT = 1000;

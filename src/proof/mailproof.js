@@ -591,18 +591,19 @@ class Mailproof {
   /**
    * The emails one record looks linked to, with how strongly each link is signed.
    * @param {string} id  A record id.
-   * @returns {Promise<{ id: string, message_id: string | null, parents: Array<{ id: string | null, message_id: string, via: string, strength: string }>, children: Array<{ id: string, message_id: string | null, via: string, strength: string }> } | null>}
+   * @param {{ limit?: number }} [opts]  `limit`: most children returned, a positive integer (default 1000).
+   * @returns {Promise<{ id: string, message_id: string | null, parents: Array<{ id: string | null, message_id: string, via: string, strength: string }>, children: Array<{ id: string, message_id: string | null, via: string, strength: string }>, more: boolean } | null>}
    * @name Mailproof#linked
    * @when Use to read a thread around one record without trusting it blindly. `parents` are the Message-IDs this email names in In-Reply-To / References (`id` is the recorded email with that Message-ID, the earliest copy, or null when it is not in the trail); `children` are the recorded emails that name this one's Message-ID. `strength` is `signed` when a DKIM signature that verifies offline covers the header that names it, `unsigned` otherwise (a Microsoft sender signs neither). It reports what looks linked and never asserts "the reply chain"; the other copies of one message are `copies()`.
    * @category read
-   * @signature mp.linked(id: string) => Promise<{ id, message_id, parents: [{ id, message_id, via, strength }], children: [{ id, message_id, via, strength }] } | null>
-   * @fails Rejects with `ERR_INDEX_UNAVAILABLE`, `ERR_TRAIL_LOCKED` or `ERR_INDEX_REBUILD` exactly like `list()`. Returns null for an unknown or malformed id. A record with no Message-ID has no children. Answers come from the trail index, a cache: the strength is the one found when the record was indexed (re-grade one record with `checkProfile`).
+   * @signature mp.linked(id: string, opts?: { limit?: number }) => Promise<{ id, message_id, parents: [{ id, message_id, via, strength }], children: [{ id, message_id, via, strength }], more: boolean } | null>
+   * @fails Rejects with `ERR_INDEX_UNAVAILABLE`, `ERR_TRAIL_LOCKED` or `ERR_INDEX_REBUILD` exactly like `list()`. Returns null for an unknown or malformed id. A record with no Message-ID has no children. At most `limit` children (default 1000, oldest capture first) come back and `more` is true when there were others; a `limit` that is not a positive integer throws a `TypeError`. Answers come from the trail index, a cache: the strength is the one found when the record was indexed (re-grade one record with `checkProfile`).
    * @example
    * const t = await mp.linked(replyId);   // t.parents[0].strength === 'signed'
    */
-  async linked(id) {
+  async linked(id, { limit } = {}) {
     const { linkedIndex } = await import('./index-db.js');
-    return linkedIndex(this._indexCfg(), id);
+    return linkedIndex(this._indexCfg(), id, { limit });
   }
 
   /**

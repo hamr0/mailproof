@@ -82,3 +82,28 @@ test('strongest, with and without a named parent', () => {
   assert.equal(strongest(l, '<zzz>'), 'none');
   assert.equal(strongest([]), 'none');
 });
+
+test('addressesOf: all four roles, signed or not, header order, dedupe, spoof skipped, cap; participantsOf reads the field', async () => {
+  const { addressesOf } = await import('../../src/proof/participants.js');
+  const b64 = (s) => Buffer.from(s, 'binary').toString('base64');
+  const rows = [
+    { name: 'from', raw: 'From: A <A@X.example>' },
+    { name: 'to', raw: 'To: "ceo@bank.example" <Bob@Y.example>,\r\n b@y.example' },
+    { name: 'cc', raw: 'Cc: c@z.example' },
+    { name: 'reply-to', raw: 'Reply-To: r@z.example' },
+    { name: 'subject', raw: 'Subject: x@y.example' },
+    { name: 'to', raw: 'To: bob@y.example' },
+  ];
+  const sigs = [{ signed_headers: [b64('From: A <A@X.example>'), b64('To: bob@y.example')] }];
+  const a = addressesOf(rows, sigs);
+  assert.deepEqual(a.map((x) => `${x.role}:${x.address}:${x.raw}:${x.signed}`), [
+    'from:a@x.example:A@X.example:true', 'to:bob@y.example:Bob@Y.example:true', 'to:b@y.example:b@y.example:false',
+    'cc:c@z.example:c@z.example:false', 'reply-to:r@z.example:r@z.example:false',
+  ]);
+  assert.deepEqual(addressesOf([], null), []);
+  const many = Array.from({ length: 700 }, (_, i) => `u${i}@x.example`).join(', ');
+  assert.equal(addressesOf([{ name: 'to', raw: `To: ${many}` }], []).length, 500);
+  // participantsOf prefers the field; ignores malformed entries
+  const rec = { signatures: [], message: { from: 'ignored@x.example' }, addresses: [...a, null, { role: 'bcc', raw: 'q@q.example' }, { role: 'to', raw: 5 }] };
+  assert.deepEqual(participantsOf(rec).map((p) => p.address), ['a@x.example', 'bob@y.example', 'b@y.example', 'c@z.example', 'r@z.example']);
+});

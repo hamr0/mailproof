@@ -272,7 +272,7 @@ test('forget by counterparty: exact address on From/To/Cc, date range, other peo
   const m1 = await mk({ body: '1\r\n', to: 'Bob <bob@gmail.com>' });
   const m2 = await mk({ body: '2\r\n', to: 'bob@company.com' });
   const m3 = await mk({ body: '3\r\n', from: 'BOB@Gmail.com', to: 'me@signer.example' });
-  const m4 = await mk({ body: '4\r\n', to: 'carol@gmail.com', extraHeaders: ['Cc: bob@gmail.com'], headerList: ['from', 'to', 'subject', 'date', 'message-id'] });  // Cc unsigned: found via the raw header block
+  const m4 = await mk({ body: '4\r\n', to: 'carol@gmail.com', extraHeaders: ['Cc: bob@gmail.com'], headerList: ['from', 'to', 'subject', 'date', 'message-id'] });  // Cc unsigned: found via the record's addresses field
   const { mp, clock } = setup(m1);
   const out = [];
   for (const [i, m] of [m1, m2, m3, m4].entries()) { clock.t = new Date(T0.getTime() + i * DAY); out.push(await mp.record(m.raw, { direction: 'in' })); }
@@ -452,4 +452,25 @@ test('the automatic sweep (sync) runs at most once a day, by the injected clock;
   assert.equal(await mp._autoSweep(), null);
   await mp.expireContent();                                          // explicit: always runs, and refreshes the marker
   assert.ok(fs.readdirSync(dir).every((f) => !f.includes('.tmp-')));
+});
+
+test('forget by counterparty: an Reply-To is matched; a record of an old trail (no addresses field) still finds an unsigned Cc in the stored raw', async () => {
+  const dom = 'signer.example';
+  const key = (await signedMail({ signTime: T0 })).signers[0];
+  const mk = (over) => signedMail({ signTime: T0, domain: dom, signers: [{ domain: dom, selector: 'sel1', key: key.key }], ...over });
+  const m1 = await mk({ body: '1\r\n', extraHeaders: ['Reply-To: rt@rt.example'], headerList: ['from', 'to', 'subject', 'date', 'message-id'] });
+  const m2 = await mk({ body: '2\r\n', to: 'x@x.example', extraHeaders: ['Cc: old@old.example'], headerList: ['from', 'to', 'subject', 'date', 'message-id'] });
+  const { mp, root } = setup(m1);
+  const r1 = (await mp.record(m1.raw, { direction: 'in' })).record;
+  const r2 = (await mp.record(m2.raw, { direction: 'in' })).record;
+  // make r2 an old record: drop the field from the working-tree file (the index is not involved in forget)
+  const f = path.join(root, 'records', `${r2.id}.json`);
+  const rec = JSON.parse(fs.readFileSync(f, 'utf8'));
+  assert.ok(Array.isArray(rec.addresses));
+  delete rec.addresses;
+  fs.writeFileSync(f, JSON.stringify(rec));
+  assert.deepEqual(await mp.forget({ with: 'old@old.example' }), { removed: 1, attachments: 0 });
+  assert.equal(await mp.rawEmail(r2.id), null);
+  assert.notEqual(await mp.rawEmail(r1.id), null);
+  assert.deepEqual(await mp.forget({ with: 'rt@rt.example' }), { removed: 1, attachments: 0 });
 });

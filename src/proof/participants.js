@@ -4,7 +4,8 @@
 //
 // What a record carries of these headers: a signed record holds the exact header lines each DKIM signature covers
 // (`signatures[].signed_headers`), so From/To/Cc/Reply-To/In-Reply-To/References are visible only when some signature
-// lists them in `h=`. An unsigned record holds `message.from` and the parsed `in_reply_to`/`references`, nothing else.
+// lists them in `h=`. A record captured since M3 also carries `addresses` (every From/To/Cc/Reply-To address, signed or
+// not, each marked); an older or unsigned one holds `message.from` and the parsed `in_reply_to`/`references`, nothing else.
 
 import { INDEX_MAX_PARTICIPANTS, INDEX_MAX_ADDRESS, INDEX_MAX_LINKS } from './limits.js';
 
@@ -112,31 +113,88 @@ function signedFromAddresses(rec, only) {
 }
 
 /**
+ * Add `raw` under `role` to `seen` (one row per role and lower-cased address; `signed` is sticky), up to the cap.
+ * @param {Map<string, Participant>} seen
+ * @param {Role} role
+ * @param {string} raw
+ * @param {boolean} signed
+ */
+function put(seen, role, raw, signed) {
+  const address = raw.toLowerCase();
+  const k = `${role}\0${address}`;
+  const p = seen.get(k);
+  if (p) { if (signed) p.signed = true; return; }
+  if (seen.size < INDEX_MAX_PARTICIPANTS) seen.set(k, { address, raw, role, signed });
+}
+
+/**
+ * The `role\0address` keys that some signature of the record covers (the one definition of `signed`).
+ * @param {unknown[]} sigs
+ * @returns {Set<string>}
+ */
+function signedKeys(sigs) {
+  /** @type {Set<string>} */
+  const out = new Set();
+  for (const sig of sigs) {
+    for (const l of linesOf(sig)) {
+      const role = ROLE_OF[l.name];
+      if (role) for (const a of parseAddresses(l.value)) out.add(`${role}\0${a.toLowerCase()}`);
+    }
+  }
+  return out;
+}
+
+/**
+ * The record's `addresses` field (SPEC B1), collected at capture from the parsed header block: every address on a
+ * From, To, Cc or Reply-To line, signed or not, each marked `signed` when some signature of the record covers a
+ * line that names it. Header order; one row per role and address; at most INDEX_MAX_PARTICIPANTS rows. Never throws.
+ * @param {Array<{ name: string, raw: string }>} rows  Header rows (`splitMessage`).
+ * @param {unknown[]} signatures  The record's `signatures`.
+ * @returns {Participant[]}
+ */
+function addressesOf(rows, signatures) {
+  /** @type {Map<string, Participant>} */
+  const seen = new Map();
+  try {
+    const covered = signedKeys(Array.isArray(signatures) ? signatures : []);
+    for (const r of rows) {
+      const role = ROLE_OF[r.name];
+      if (!role) continue;
+      const value = r.raw.slice(r.raw.indexOf(':') + 1).replace(/\r?\n(?=[ \t])/g, '').replace(/\r?\n$/, '');
+      for (const a of parseAddresses(value)) put(seen, role, a, covered.has(`${role}\0${a.toLowerCase()}`));
+    }
+  } catch { /* no addresses */ }
+  return [...seen.values()].map(({ role, address, raw, signed }) => ({ role, address, raw, signed }));
+}
+
+/**
  * Every address a record names, with its role and whether a DKIM signature covers that header. Addresses are
- * lower-cased (`address`) with the form as written kept (`raw`); one row per role and address, `signed` when any
- * signature covers a line that names it. Capped at INDEX_MAX_PARTICIPANTS rows. Never throws.
+ * lower-cased (`address`) with the form as written kept (`raw`); one row per role and address. A record that has the
+ * `addresses` field (captured since M3) is read from it; an older one is derived from the header lines its
+ * signatures cover plus the `message.from` of an unsigned record. Capped at INDEX_MAX_PARTICIPANTS rows. Never throws.
  * @param {MpRecord} rec
  * @returns {Participant[]}
  */
 function participantsOf(rec) {
   /** @type {Map<string, Participant>} */
   const seen = new Map();
-  const add = (/** @type {Role} */ role, /** @type {string} */ raw, /** @type {boolean} */ signed) => {
-    const address = raw.toLowerCase();
-    const k = `${role}\0${address}`;
-    const p = seen.get(k);
-    if (p) { if (signed) p.signed = true; return; }
-    if (seen.size < INDEX_MAX_PARTICIPANTS) seen.set(k, { address, raw, role, signed });
-  };
   try {
+    if (Array.isArray(rec.addresses)) {
+      for (const a of rec.addresses) {
+        if (!a || typeof a.raw !== 'string' || typeof a.role !== 'string' || !ROLES.includes(/** @type {Role} */ (a.role))) continue;
+        if (a.raw.length > INDEX_MAX_ADDRESS) continue;
+        put(seen, /** @type {Role} */ (a.role), a.raw, a.signed === true);
+      }
+      return [...seen.values()];
+    }
     for (const sig of sigsOf(rec)) {
       for (const l of linesOf(sig)) {
         const role = ROLE_OF[l.name];
-        if (role) for (const a of parseAddresses(l.value)) add(role, a, true);
+        if (role) for (const a of parseAddresses(l.value)) put(seen, role, a, true);
       }
     }
     const from = rec?.message?.from;
-    if (typeof from === 'string' && from.length <= INDEX_MAX_ADDRESS && ADDR_RE.test(from)) add('from', from, false);
+    if (typeof from === 'string' && from.length <= INDEX_MAX_ADDRESS && ADDR_RE.test(from)) put(seen, 'from', from, false);
   } catch { /* a malformed record has no participants */ }
   return [...seen.values()];
 }
@@ -207,4 +265,4 @@ function strongest(links, parent) {
   return best;
 }
 
-export { ROLES, parseAddresses, signedFromAddresses, participantsOf, hasSignedThreading, linksOf, strongest };
+export { ROLES, parseAddresses, signedFromAddresses, addressesOf, participantsOf, hasSignedThreading, linksOf, strongest };

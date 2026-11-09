@@ -13,7 +13,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { readRecord, RECORD_ID_RE, headOf, isAncestor, recordIdsSince } from './trail.js';
 import { MAX_TOTAL_BYTES, MAX_HEADER_BYTES } from './limits.js';
-import { extractAddresses } from './recheck.js';
+import { participantsOf, addressesOf } from './participants.js';
 import { splitMessage } from './signed-headers.js';
 
 /** @typedef {import('./types.js').MpRecord} MpRecord */
@@ -359,41 +359,23 @@ async function forgetIds(root, dir, ids, withLock, hooks = {}) {
 }
 
 /**
- * Lower-cased addresses on the From/To/Cc lines of the signed headers of a record (any signature), plus the
- * `message.from` of an unsigned record.
+ * Lower-cased addresses a record names in From/To/Cc/Reply-To: one definition, `participantsOf` (participants.js),
+ * which reads the record's `addresses` field. Never throws.
  * @param {MpRecord} rec
  * @returns {Set<string>}
  */
 function participantsOfRecord(rec) {
-  /** @type {Set<string>} */
-  const out = new Set();
-  try {
-    for (const sig of Array.isArray(rec.signatures) ? rec.signatures : []) {
-      for (const l of Array.isArray(sig.signed_headers) ? sig.signed_headers : []) {
-        const line = Buffer.from(l, 'base64').toString('binary');
-        const m = /^(from|to|cc)[ \t]*:/i.exec(line);
-        if (m) for (const a of extractAddresses(line.slice(m[0].length))) out.add(a.toLowerCase());
-      }
-    }
-    const from = rec.message?.from;
-    if (typeof from === 'string') out.add(from.toLowerCase());
-  } catch { /* a malformed record has no participants */ }
-  return out;
+  return new Set(participantsOf(rec).map((p) => p.address));
 }
 
 /**
- * Lower-cased addresses on the From/To/Cc lines of a raw email's header block (signed or not).
+ * The same addresses from the header block of the stored raw email, for a record that predates the `addresses` field
+ * (its unsigned To/Cc/Reply-To are in no other place).
  * @param {Buffer} head  The start of the raw bytes (the header block is at most MAX_HEADER_BYTES).
  * @returns {Set<string>}
  */
 function participantsOfRaw(head) {
-  /** @type {Set<string>} */
-  const out = new Set();
-  for (const r of splitMessage(head).rows) {
-    if (r.name !== 'from' && r.name !== 'to' && r.name !== 'cc') continue;
-    for (const a of extractAddresses(r.raw.slice(r.raw.indexOf(':') + 1))) out.add(a.toLowerCase());
-  }
-  return out;
+  return new Set(addressesOf(splitMessage(head).rows, []).map((p) => p.address));
 }
 
 /**
@@ -415,7 +397,7 @@ async function idsWith(root, dir, q) {
     const at = Date.parse(rec.captured);
     if (!Number.isFinite(at) || at < after || at >= before) continue;
     let match = participantsOfRecord(rec).has(want);
-    if (!match) {
+    if (!match && !Array.isArray(rec.addresses)) {
       let head = null;
       try {
         const fh = await fs.open(rawPathOf(dir, id), 'r');

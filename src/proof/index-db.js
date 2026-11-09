@@ -26,6 +26,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { git } from './git.js';
 import { RECORD_ID_RE, readRecord, withTrailLock, trailLockFile, trailIndexFile } from './trail.js';
+import { LINKED_CHILDREN_DEFAULT } from './limits.js';
 import { participantsOf, linksOf, hasSignedThreading, ROLES } from './participants.js';
 import { verifyRecord } from './recheck.js';
 
@@ -36,7 +37,7 @@ import { verifyRecord } from './recheck.js';
 /** @typedef {{ id: string, captured: string, direction: string, copy: string, body_status: string, live: string, portable: string }} CopyRow */
 
 /** Bump when the table layout or what a column holds changes: an index of another version is rebuilt. */
-const SCHEMA = 2;
+const SCHEMA = 3;
 const RECORD_PATH_RE = /^records\/([0-9a-f]{32})\.json$/;
 const READ_BATCH = 500;
 const BUSY_TIMEOUT_MS = 10000;
@@ -402,9 +403,12 @@ export async function counterpartiesIndex(cfg, { limit } = {}) {
  * `Mailproof#linked` from the index: the records this one points at (parents) and the records that point at it (children).
  * @param {IndexCfg} cfg
  * @param {string} id
- * @returns {Promise<{ id: string, message_id: string | null, parents: Array<{ id: string | null, message_id: string, via: string, strength: string }>, children: Array<{ id: string, message_id: string | null, via: string, strength: string }> } | null>}
+ * @param {{ limit?: number }} [opts]  `limit`: most children returned (default LINKED_CHILDREN_DEFAULT, a positive integer); `more` says the list was cut.
+ * @returns {Promise<{ id: string, message_id: string | null, parents: Array<{ id: string | null, message_id: string, via: string, strength: string }>, children: Array<{ id: string, message_id: string | null, via: string, strength: string }>, more: boolean } | null>}
  */
-export async function linkedIndex(cfg, id) {
+export async function linkedIndex(cfg, id, { limit } = {}) {
+  if (limit !== undefined && (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1)) throw new TypeError('linked: limit must be a positive integer');
+  const n = limit ?? LINKED_CHILDREN_DEFAULT;
   if (typeof id !== 'string' || !RECORD_ID_RE.test(id)) return null;
   return query(cfg, (d) => {
     const self = d.prepare('SELECT id, message_id FROM rec WHERE id = ?').get(id);
@@ -413,9 +417,10 @@ export async function linkedIndex(cfg, id) {
     const parents = d.prepare('SELECT mid, via, strength FROM links WHERE rec_id = ? ORDER BY pos').all(id)
       .map((l) => ({ id: find.get(l.mid)?.id ?? null, message_id: l.mid, via: l.via, strength: l.strength }));
     const children = self.message_id
-      ? d.prepare('SELECT r.id AS id, r.message_id AS message_id, l.via AS via, l.strength AS strength FROM links l JOIN rec r ON r.id = l.rec_id WHERE l.mid = ? AND r.id != ? ORDER BY r.captured, r.id').all(self.message_id, id)
+      ? d.prepare('SELECT r.id AS id, r.message_id AS message_id, l.via AS via, l.strength AS strength FROM links l JOIN rec r ON r.id = l.rec_id WHERE l.mid = ? AND r.id != ? ORDER BY r.captured, r.id LIMIT ?').all(self.message_id, id, n + 1)
       : [];
-    return { id, message_id: self.message_id ?? null, parents, children };
+    const more = children.length > n;
+    return { id, message_id: self.message_id ?? null, parents, children: more ? children.slice(0, n) : children, more };
   }, null);
 }
 

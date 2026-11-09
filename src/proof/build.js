@@ -8,6 +8,7 @@ import { fetchDkimKey } from './keys.js';
 import { splitMessage, parseTags } from './signed-headers.js';
 import { MAX_INNER } from './limits.js';
 import { admit } from './admit.js';
+import { addressesOf } from './participants.js';
 import { overLimitRecord } from './over-limit.js';
 import { buildSignatureEntry } from './record.js';
 import { summariseBody, newBudget } from './body-status.js';
@@ -87,6 +88,7 @@ async function buildRecord(buf, ctx, env) {
       size: buf.length,
       ...(sigRows.length ? {} : { from: parsed.from.address }),
     },
+    addresses: addressesOf(rows, signatures),
     attachments: parsed.attachments.map((a) => ({ filename: a.filename, size: a.size, sha256: /** @type {string} */ (a.sha256) })),
     signatures,
     body_status: 'not-checked',
