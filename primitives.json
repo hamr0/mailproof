@@ -58,10 +58,10 @@
     {
       "name": "Mailproof#expireContent",
       "category": "content",
-      "when": "Use to enforce retention on demand; `sync()` already calls it once at the end of every run. Only content goes (raw emails, and attachment files no remaining stored email references): records, archived keys and git history are never touched, so every proof still verifies.",
+      "when": "Use to enforce retention on demand; `sync()` already calls it at the end of a run, but at most once every 24 hours. Only content goes (raw emails, and attachment files no remaining stored email references): records, archived keys and git history are never touched, so every proof still verifies.",
       "import": "import { Mailproof } from 'mailproof'",
       "signature": "mp.expireContent(opts?: { now?: Date|number }) => Promise<{ removed: number, attachments: number }>",
-      "fails": "Rejects with `ERR_TRAIL_LOCKED` when another writer holds the trail longer than `lockTimeoutMs` (nothing is deleted; retry later), or a TypeError for a `now` that is not a Date or finite number. A missing content directory returns zeros without creating anything. A record that cannot be read, or has no usable `captured`, keeps its content. Idempotent. Runs under the trail lock; cost grows with the number of stored emails (SPEC B7).",
+      "fails": "Rejects with `ERR_TRAIL_LOCKED` when another writer holds the trail longer than `lockTimeoutMs` (nothing is deleted; retry later), or a TypeError for a `now` that is not a Date or finite number. A missing content directory returns zeros without creating anything. A record that cannot be read, or has no usable `captured`, keeps its content. Idempotent. The scan of stored emails runs without the trail lock (writers carry on); the lock is held only for the deletions, so it is short whatever the trail's size. If the trail's history was rewritten during the scan nothing is deleted this round. Cost of the scan grows with the number of stored emails (SPEC B7).",
       "example": "const { removed, attachments } = await mp.expireContent();"
     },
     {

@@ -353,3 +353,103 @@ test('constructor validates content options', () => {
   assert.deepEqual(ok.content, { store: true, attachments: true, days: 30 });
   assert.deepEqual(new Mailproof({ trailDir: '/x' }).content, { store: true, attachments: true, days: 730 });
 });
+
+// ---- expiry and forget scan WITHOUT the trail lock; the lock is held for the deletions only ----
+
+/** Two mails sharing PDF (same signer), for the mid-scan tests. */
+async function pair() {
+  const a = await signedMail({ signTime: T0, body: 'one\r\n', attachment: { filename: 'c.pdf', bytes: PDF } });
+  const b = await signedMail({ signTime: T0, body: 'two\r\n', domain: a.domain, signers: [{ domain: a.domain, selector: 'sel1', key: a.signers[0].key }], attachment: { filename: 'c2.pdf', bytes: PDF } });
+  return { a, b };
+}
+/** Fail fast instead of hanging when the call under test is blocked behind a lock. */
+const within = (p, ms = 15000) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('blocked: did not finish while the scan was in progress')), ms).unref())]);
+
+test('a record() during the unlocked scan completes at once, and an attachment only it references survives', async () => {
+  const { a, b } = await pair();
+  const { mp, clock } = setup(a, { content: { days: 10 } });
+  const ra = await mp.record(a.raw, { direction: 'in' });
+  clock.t = new Date(T0.getTime() + 11 * DAY);
+  let rb;
+  let ran = 0;
+  mp._scanHooks.afterScan = async () => { ran++; rb = await within(mp.record(b.raw, { direction: 'in' })); };   // would deadlock if expiry held the trail lock here
+  const res = await mp.expireContent();
+  assert.equal(ran, 1);
+  assert.deepEqual(res, { removed: 1, attachments: 0 });
+  assert.equal(await mp.rawEmail(ra.id), null);
+  assert.deepEqual(await mp.rawEmail(rb.id), b.raw);
+  assert.deepEqual(await mp.attachment(sha(PDF)), PDF, 'referenced only by the record committed mid-scan');
+});
+
+test('a raw backfilled mid-scan keeps its attachment', async () => {
+  const { a, b } = await pair();
+  const { mp, dir, clock } = setup(a, { content: { days: 10 } });
+  const ra = await mp.record(a.raw, { direction: 'in' });
+  clock.t = new Date(T0.getTime() + 8 * DAY);
+  const off = new Mailproof({ trailDir: dir, resolver: a.resolver, worker: { size: 0 }, now: () => clock.t, content: { store: false } });
+  const rb = await off.record(b.raw, { direction: 'in' });   // record exists, no raw stored
+  clock.t = new Date(T0.getTime() + 11 * DAY);
+  mp._scanHooks.afterScan = async () => { assert.equal((await within(mp.record(b.raw, { direction: 'in' }))).content.stored, true); };
+  assert.deepEqual(await mp.expireContent(), { removed: 1, attachments: 0 });
+  assert.equal(await mp.rawEmail(ra.id), null);
+  assert.deepEqual(await mp.rawEmail(rb.id), b.raw);
+  assert.deepEqual(await mp.attachment(sha(PDF)), PDF);
+});
+
+test('a trail rewritten during the scan: nothing is deleted this round, the next run deletes', async () => {
+  const m = await signedMail({ signTime: T0, attachment: { filename: 'c.pdf', bytes: PDF } });
+  const { mp, root, clock } = setup(m, { content: { days: 10 } });
+  const r = await mp.record(m.raw, { direction: 'in' });
+  clock.t = new Date(T0.getTime() + 11 * DAY);
+  mp._scanHooks.afterScan = async () => {
+    const { execFileSync } = await import('node:child_process');
+    execFileSync('git', ['commit', '-q', '--amend', '--allow-empty', '-m', 'rewritten'], { cwd: root });
+  };
+  assert.deepEqual(await mp.expireContent(), { removed: 0, attachments: 0 });
+  assert.ok(await mp.rawEmail(r.id));
+  assert.ok(await mp.attachment(sha(PDF)));
+  mp._scanHooks.afterScan = undefined;
+  assert.deepEqual(await mp.expireContent(), { removed: 1, attachments: 1 });
+});
+
+test('forget scans without the lock too, and a record committed mid-scan keeps the shared attachment', async () => {
+  const { a, b } = await pair();
+  const { mp } = setup(a);
+  const ra = await mp.record(a.raw, { direction: 'in' });
+  let rb;
+  mp._scanHooks.afterScan = async () => { rb = await within(mp.record(b.raw, { direction: 'in' })); };
+  assert.deepEqual(await mp.forget(ra.id), { removed: 1, attachments: 0 });
+  assert.deepEqual(await mp.attachment(sha(PDF)), PDF);
+  mp._scanHooks.afterScan = undefined;
+  assert.deepEqual(await mp.forget(rb.id), { removed: 1, attachments: 1 });
+});
+
+test('the automatic sweep (sync) runs at most once a day, by the injected clock; explicit expireContent always runs', async () => {
+  const m = await signedMail({ signTime: T0 });
+  const m2 = await signedMail({ signTime: T0, body: 'later\r\n', domain: m.domain, signers: [{ domain: m.domain, selector: 'sel1', key: m.signers[0].key }] });
+  const { mp, clock, dir } = setup(m, { content: { days: 1 } });
+  assert.equal(await mp._autoSweep(), null, 'no content directory: skipped, nothing created');
+  assert.equal(fs.readdirSync(dir).length, 0);
+  const r = await mp.record(m.raw, { direction: 'in' });
+  const marker = path.join(dir, '.default.content-sweep.json');
+
+  clock.t = new Date(T0.getTime() + 3 * DAY);                       // first ever: runs
+  assert.deepEqual(await mp._autoSweep(), { removed: 1, attachments: 0 });
+  assert.equal(JSON.parse(fs.readFileSync(marker, 'utf8')).last, clock.t.toISOString());
+  const r2 = await mp.record(m2.raw, { direction: 'in' });          // captured at day 3
+  clock.t = new Date(T0.getTime() + 3 * DAY + 3_600_000);            // +1 h: skipped
+  assert.equal(await mp._autoSweep(), null);
+  clock.t = new Date(T0.getTime() + 4 * DAY + 3_600_000);            // +25 h: runs (r2 is 25 h old, past 1 day)
+  assert.deepEqual(await mp._autoSweep(), { removed: 1, attachments: 0 });
+  assert.equal(await mp.rawEmail(r2.id), null);
+  assert.ok(r);
+
+  fs.writeFileSync(marker, JSON.stringify({ last: new Date(clock.t.getTime() + DAY).toISOString() }));   // dated in the future: runs
+  assert.notEqual(await mp._autoSweep(), null);
+  fs.writeFileSync(marker, 'garbage');                              // unreadable: runs
+  assert.notEqual(await mp._autoSweep(), null);
+  fs.writeFileSync(marker, JSON.stringify({ last: clock.t.toISOString() }));
+  assert.equal(await mp._autoSweep(), null);
+  await mp.expireContent();                                          // explicit: always runs, and refreshes the marker
+  assert.ok(fs.readdirSync(dir).every((f) => !f.includes('.tmp-')));
+});

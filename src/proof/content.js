@@ -11,7 +11,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { readRecord, RECORD_ID_RE } from './trail.js';
+import { readRecord, RECORD_ID_RE, headOf, isAncestor, recordIdsSince } from './trail.js';
 import { MAX_TOTAL_BYTES, MAX_HEADER_BYTES } from './limits.js';
 import { extractAddresses } from './recheck.js';
 import { splitMessage } from './signed-headers.js';
@@ -194,49 +194,84 @@ function attachmentHexes(rec) {
   return rec.attachments.map((a) => (a && typeof a.sha256 === 'string' ? a.sha256.replace(/^sha256:/, '') : '')).filter((h) => SHA_HEX_RE.test(h));
 }
 
+/** @typedef {<T>(work: () => Promise<T>) => Promise<T>} WithLock  Runs `work` under the trail lock (mailproof.js supplies it). */
+/** @typedef {{ afterScan?: () => Promise<void> }} ScanHooks  Test seam: called after the unlocked scan, before the lock is taken. */
+
 /**
- * The attachment hexes referenced by records whose raw content is still stored. This is the dedup scan: one record
- * JSON read per stored raw (measured in findings F21).
+ * What the unlocked scan saw: the trail HEAD it started at, and the ids that had a stored raw email then.
+ * @typedef {{ head: string | null, stored: Set<string> }} Scan
+ */
+
+/**
+ * Attachment hexes referenced by the records of the stored emails (minus `exclude`), read WITHOUT the trail lock.
+ * This is the dedup scan: one record JSON read per stored raw (F22). Read-only.
  * @param {string} root
  * @param {string} dir
- * @returns {Promise<Set<string>>}
+ * @param {Set<string>} [exclude]  Ids not to count (the ones about to be forgotten).
+ * @returns {Promise<{ scan: Scan, kept: Set<string> }>}
  */
-async function referencedAttachments(root, dir) {
+async function scanReferenced(root, dir, exclude = new Set()) {
+  const head = await headOf(root);
+  const stored = new Set(await storedIds(dir));
   /** @type {Set<string>} */
-  const ref = new Set();
-  for (const id of await storedIds(dir)) for (const h of attachmentHexes(await readRecord(root, id))) ref.add(h);
-  return ref;
+  const kept = new Set();
+  for (const id of stored) if (!exclude.has(id)) for (const h of attachmentHexes(await readRecord(root, id))) kept.add(h);
+  return { scan: { head, stored }, kept };
 }
 
 /**
- * Delete the attachment files in `only` (or every attachment file) that `ref` does not reference, and drop emptied
- * shard directories.
+ * Under the trail lock, bring an unlocked scan up to date: add to `kept` the attachments of every record whose raw
+ * email is stored now but was not when the scan began (committed since, backfilled since) or that was committed
+ * since the scan's HEAD with a stored raw. Also clears stray temp files. Cost: one directory listing plus a record
+ * read per NEW stored email, not per stored email.
+ * @param {string} root
  * @param {string} dir
- * @param {Set<string>} ref
- * @param {Set<string> | null} only
- * @returns {Promise<number>}  Files deleted.
+ * @param {Scan} scan
+ * @param {Set<string>} kept  Mutated.
+ * @returns {Promise<boolean>}  False when the trail was rewritten under the scan (HEAD is not a descendant of the scan's): the scan means nothing, do not delete.
  */
-async function deleteUnreferenced(dir, ref, only) {
-  let n = 0;
-  const base = path.join(dir, 'att');
-  /** @type {Array<[string, string]>} */
-  const targets = [];
-  if (only) for (const h of only) targets.push([h.slice(0, 2), h]);
-  else {
-    let shards;
-    try { shards = await fs.readdir(base); } catch { return 0; }
-    for (const s of shards) {
-      let files;
-      try { files = await fs.readdir(path.join(base, s)); } catch { continue; }
-      for (const f of files) {
-        if (f.includes(TMP_MARK)) { await fs.rm(path.join(base, s, f), { force: true }); continue; }
-        if (SHA_HEX_RE.test(f)) targets.push([s, f]);
+async function revalidate(root, dir, scan, kept) {
+  const head = await headOf(root);
+  if (scan.head !== head) {
+    if (scan.head === null) { /* the trail was empty at scan time: everything is new, found by the listing below */ }
+    else if (head === null || !(await isAncestor(root, scan.head, head))) return false;
+    else {
+      for (const id of await recordIdsSince(root, scan.head)) {
+        if (await exists(rawPathOf(dir, id))) for (const h of attachmentHexes(await readRecord(root, id))) kept.add(h);
       }
     }
   }
-  for (const [s, h] of targets) {
-    if (ref.has(h)) continue;
-    try { await fs.unlink(path.join(base, s, h)); n++; } catch { /* already gone */ }
+  for (const id of await storedIds(dir, { sweepTemp: true })) {
+    if (!scan.stored.has(id)) for (const h of attachmentHexes(await readRecord(root, id))) kept.add(h);
+  }
+  return true;
+}
+
+/** @param {string} dir @returns {Promise<string[]>} Every attachment hex that has a file (temp files excluded). */
+async function attachmentFiles(dir) {
+  /** @type {string[]} */
+  const out = [];
+  const base = path.join(dir, 'att');
+  let shards;
+  try { shards = await fs.readdir(base); } catch { return out; }
+  for (const s of shards) {
+    let names;
+    try { names = await fs.readdir(path.join(base, s)); } catch { continue; }
+    for (const f of names) if (SHA_HEX_RE.test(f)) out.push(f);
+  }
+  return out;
+}
+
+/**
+ * Delete the attachment files of `hexes`.
+ * @param {string} dir
+ * @param {Iterable<string>} hexes
+ * @returns {Promise<number>}  Files deleted.
+ */
+async function unlinkAttachments(dir, hexes) {
+  let n = 0;
+  for (const h of hexes) {
+    try { await fs.unlink(attPathOf(dir, h)); n++; } catch { /* already gone */ }
   }
   return n;
 }
@@ -244,46 +279,83 @@ async function deleteUnreferenced(dir, ref, only) {
 /**
  * Delete content whose retention has run out: raw emails captured more than `days` days before `nowMs`, then the
  * attachment files no stored raw references any more. Content only; records are never touched. A record that
- * cannot be read or has no usable `captured` is kept (never delete on doubt). Caller holds the trail lock.
+ * cannot be read or has no usable `captured` is kept (never delete on doubt).
+ *
+ * Two phases. (1) A read-only scan with NO lock: record the trail HEAD, read every stored email's record, decide
+ * what is expired and which attachment files are unreferenced. Writers (record, sync) carry on meanwhile. (2) Under
+ * the trail lock, only the deletions: revalidate the scan against what changed since its HEAD (revalidate), re-check
+ * each expired email once more, then unlink. If the trail was rewritten under the scan, nothing is deleted this round.
  * @param {string} root
  * @param {string} dir
  * @param {number} days
  * @param {number} nowMs
+ * @param {WithLock} withLock
+ * @param {ScanHooks} [hooks]
  * @returns {Promise<{ removed: number, attachments: number }>}
  */
-async function expireStore(root, dir, days, nowMs) {
+async function expireStore(root, dir, days, nowMs, withLock, hooks = {}) {
   const cutoff = nowMs - days * DAY_MS;
+  /** @param {MpRecord | null} rec */
+  const isExpired = (rec) => { const at = rec ? Date.parse(rec.captured) : NaN; return rec !== null && Number.isFinite(at) && at < cutoff; };
+  const head = await headOf(root);
+  const stored = new Set(await storedIds(dir));
   /** @type {Set<string>} */
   const kept = new Set();
-  let removed = 0;
-  for (const id of await storedIds(dir, { sweepTemp: true })) {
+  /** @type {string[]} */
+  const expired = [];
+  for (const id of stored) {
     const rec = await readRecord(root, id);
-    const at = rec ? Date.parse(rec.captured) : NaN;
-    if (rec && Number.isFinite(at) && at < cutoff) {
-      try { await fs.unlink(rawPathOf(dir, id)); removed++; } catch { /* already gone */ }
-    } else for (const h of attachmentHexes(rec)) kept.add(h);
+    if (isExpired(rec)) expired.push(id);
+    else for (const h of attachmentHexes(rec)) kept.add(h);
   }
-  return { removed, attachments: await deleteUnreferenced(dir, kept, null) };
+  const candidates = (await attachmentFiles(dir)).filter((h) => !kept.has(h));
+  await hooks.afterScan?.();
+  return withLock(async () => {
+    if (!(await revalidate(root, dir, { head, stored }, kept))) return { removed: 0, attachments: 0 };
+    let removed = 0;
+    for (const id of expired) {
+      const rec = await readRecord(root, id);
+      if (!isExpired(rec)) { for (const h of attachmentHexes(rec)) kept.add(h); continue; }
+      try { await fs.unlink(rawPathOf(dir, id)); removed++; } catch { /* already gone */ }
+    }
+    return { removed, attachments: await unlinkAttachments(dir, candidates.filter((h) => !kept.has(h))) };
+  });
 }
 
 /**
- * Delete the stored raw email of each id, then the attachment files only they referenced. Caller holds the trail lock.
+ * Delete the stored raw email of each id, then the attachment files only they referenced. The dedup scan runs with
+ * no lock; the lock is held for the deletions (see expireStore). If the trail was rewritten under the scan, the scan
+ * is redone under the lock (a forget the caller asked for is never skipped).
  * @param {string} root
  * @param {string} dir
  * @param {Iterable<string>} ids  Record ids (32 hex).
+ * @param {WithLock} withLock
+ * @param {ScanHooks} [hooks]
  * @returns {Promise<{ removed: number, attachments: number }>}
  */
-async function forgetIds(root, dir, ids) {
-  let removed = 0;
+async function forgetIds(root, dir, ids, withLock, hooks = {}) {
+  const want = new Set(ids);
   /** @type {Set<string>} */
   const candidates = new Set();
-  for (const id of ids) {
+  for (const id of want) {
     if (!(await exists(rawPathOf(dir, id)))) continue;
     for (const h of attachmentHexes(await readRecord(root, id))) candidates.add(h);
-    try { await fs.unlink(rawPathOf(dir, id)); removed++; } catch { /* already gone */ }
   }
-  const attachments = candidates.size ? await deleteUnreferenced(dir, await referencedAttachments(root, dir), candidates) : 0;
-  return { removed, attachments };
+  const pre = candidates.size ? await scanReferenced(root, dir, want) : null;
+  await hooks.afterScan?.();
+  return withLock(async () => {
+    /** @type {Set<string>} */
+    let kept = new Set();
+    if (pre) {
+      kept = pre.kept;
+      if (!(await revalidate(root, dir, pre.scan, kept))) kept = (await scanReferenced(root, dir, want)).kept;
+    }
+    let removed = 0;
+    for (const id of want) {
+      try { await fs.unlink(rawPathOf(dir, id)); removed++; } catch { /* not stored, or gone */ }
+    }
+    return { removed, attachments: await unlinkAttachments(dir, [...candidates].filter((h) => !kept.has(h))) };
+  });
 }
 
 /**
@@ -369,5 +441,5 @@ function toMs(v, what) {
 
 export {
   DAY_MS, parseContentOptions, contentDirOf, rawPathOf, attPathOf, sha256Of, storeContent, readRaw, readAttachment,
-  storedIds, expireStore, forgetIds, idsWith, referencedAttachments, toMs, exists,
+  storedIds, expireStore, forgetIds, idsWith, toMs, exists,
 };

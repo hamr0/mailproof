@@ -2,6 +2,7 @@
 // are bound, so `const { verify } = mp` works.
 
 import path from 'node:path';
+import fs from 'node:fs/promises';
 import { overLimitRecord, overLimitRecordFromDigest } from './over-limit.js';
 import { runSync } from './sync.js';
 import { workerConfig, leasePool } from './pool.js';
@@ -73,6 +74,9 @@ class Mailproof {
     this.worker = workerConfig(opts.worker);
     this.content = parseContentOptions(opts.content);
     this.contentDir = contentDirOf(this.root);
+    /** Internal (tests): called between the unlocked scan and the locked deletions of expiry and forget. @type {import('./content.js').ScanHooks} */
+    this._scanHooks = {};
+    this._autoSweep = this._autoSweep.bind(this);
     /** @type {{ run: import('./pool.js').WorkerPool['run'], runReplyText: import('./pool.js').WorkerPool['runReplyText'], release: () => Promise<void> } | null} */
     this._lease = null;
     /** Internal (tests): the git output cap, in bytes, for the index's catch-up and rebuild listings. @type {number | undefined} */
@@ -361,17 +365,55 @@ class Mailproof {
    * @param {{ now?: Date | number }} [opts]  `now` overrides the clock (tests).
    * @returns {Promise<Forgotten>}
    * @name Mailproof#expireContent
-   * @when Use to enforce retention on demand; `sync()` already calls it once at the end of every run. Only content goes (raw emails, and attachment files no remaining stored email references): records, archived keys and git history are never touched, so every proof still verifies.
+   * @when Use to enforce retention on demand; `sync()` already calls it at the end of a run, but at most once every 24 hours. Only content goes (raw emails, and attachment files no remaining stored email references): records, archived keys and git history are never touched, so every proof still verifies.
    * @category content
    * @signature mp.expireContent(opts?: { now?: Date|number }) => Promise<{ removed: number, attachments: number }>
-   * @fails Rejects with `ERR_TRAIL_LOCKED` when another writer holds the trail longer than `lockTimeoutMs` (nothing is deleted; retry later), or a TypeError for a `now` that is not a Date or finite number. A missing content directory returns zeros without creating anything. A record that cannot be read, or has no usable `captured`, keeps its content. Idempotent. Runs under the trail lock; cost grows with the number of stored emails (SPEC B7).
+   * @fails Rejects with `ERR_TRAIL_LOCKED` when another writer holds the trail longer than `lockTimeoutMs` (nothing is deleted; retry later), or a TypeError for a `now` that is not a Date or finite number. A missing content directory returns zeros without creating anything. A record that cannot be read, or has no usable `captured`, keeps its content. Idempotent. The scan of stored emails runs without the trail lock (writers carry on); the lock is held only for the deletions, so it is short whatever the trail's size. If the trail's history was rewritten during the scan nothing is deleted this round. Cost of the scan grows with the number of stored emails (SPEC B7).
    * @example
    * const { removed, attachments } = await mp.expireContent();
    */
   async expireContent({ now } = {}) {
     const nowMs = now === undefined ? this.now().getTime() : toMs(now, 'now');
     if (!(await exists(this.contentDir))) return { removed: 0, attachments: 0 };
-    return withTrailLock(this.root, trailLockFile(this.trail), this.lockTimeoutMs, () => expireStore(this.root, this.contentDir, this.content.days, nowMs));
+    const res = await expireStore(this.root, this.contentDir, this.content.days, nowMs, (w) => this._lock(w), this._scanHooks);
+    await this._markSwept();
+    return res;
+  }
+
+  /**
+   * Run `work` under the trail lock (the deletion phase of expiry and forget).
+   * @template T
+   * @param {() => Promise<T>} work
+   * @returns {Promise<T>}
+   */
+  _lock(work) { return withTrailLock(this.root, trailLockFile(this.trail), this.lockTimeoutMs, work); }
+
+  /** @returns {string} The file that remembers when the last retention sweep completed (beside the trail, not in git). */
+  _sweepFile() { return path.join(path.dirname(this.root), `.${this.trail}.content-sweep.json`); }
+
+  /** Record that a sweep just completed (atomic: temp file, then rename). Best effort: a failure only means the next run sweeps again. @returns {Promise<void>} */
+  async _markSwept() {
+    const file = this._sweepFile();
+    const tmp = `${file}.tmp-${process.pid}`;
+    try {
+      await fs.writeFile(tmp, JSON.stringify({ last: this.now().toISOString() }) + '\n');
+      await fs.rename(tmp, file);
+    } catch { await fs.rm(tmp, { force: true }).catch(() => {}); }
+  }
+
+  /**
+   * The automatic sweep `sync()` runs: `expireContent()` only when the last completed sweep is 24 hours old or more
+   * (or unknown, unreadable, or dated in the future). Uses the instance clock.
+   * @returns {Promise<{ removed: number, attachments: number } | null>}  null when it was skipped.
+   */
+  async _autoSweep() {
+    if (!(await exists(this.contentDir))) return null;
+    try {
+      const last = Date.parse(JSON.parse(await fs.readFile(this._sweepFile(), 'utf8')).last);
+      const now = this.now().getTime();
+      if (Number.isFinite(last) && last <= now && now - last < DAY_MS) return null;
+    } catch { /* no usable marker: sweep */ }
+    return this.expireContent();
   }
 
   /**
@@ -401,10 +443,8 @@ class Mailproof {
     } else throw new TypeError('forget: target must be an id, an array of ids, or { with }');
     if (ids) for (const id of ids) if (typeof id !== 'string' || !RECORD_ID_RE.test(id)) throw new TypeError('forget: ids must be 32 hex characters');
     if (!(await exists(this.contentDir))) return { removed: 0, attachments: 0 };
-    return withTrailLock(this.root, trailLockFile(this.trail), this.lockTimeoutMs, async () => {
-      const list = ids ?? await idsWith(this.root, this.contentDir, /** @type {NonNullable<typeof query>} */ (query));
-      return forgetIds(this.root, this.contentDir, new Set(list));
-    });
+    const list = ids ?? await idsWith(this.root, this.contentDir, /** @type {NonNullable<typeof query>} */ (query));   // the scan holds no lock
+    return forgetIds(this.root, this.contentDir, list, (w) => this._lock(w), this._scanHooks);
   }
 
   /**
@@ -550,7 +590,7 @@ class Mailproof {
    * // res.complete, res.folders[0].recorded; call again until res.complete is true
    */
   async sync(opts) {
-    const host = { root: this.root, trail: this.trail, record: this.record, recordDigest: (/** @type {{ raw_sha256: string, size: number }} */ d, /** @type {{ direction: 'in' | 'out', source: string }} */ c) => this._recordDigest(d, c), expireContent: this.expireContent };
+    const host = { root: this.root, trail: this.trail, record: this.record, recordDigest: (/** @type {{ raw_sha256: string, size: number }} */ d, /** @type {{ direction: 'in' | 'out', source: string }} */ c) => this._recordDigest(d, c), expireContent: this._autoSweep };
     return runSync(host, opts, {
       openSession: async (args) => (await import('./imap.js')).openSession(args),
     });

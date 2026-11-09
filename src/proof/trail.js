@@ -246,6 +246,43 @@ async function inHead(root, rel) {
 }
 
 /**
+ * The trail's HEAD commit, or null when there is no repo or no commit. Never throws.
+ * @param {string} root
+ * @returns {Promise<string | null>}
+ */
+async function headOf(root) {
+  try { return (await git(root, ['rev-parse', '--verify', '-q', 'HEAD'])) || null; } catch { return null; }
+}
+
+/**
+ * Is commit `a` an ancestor of (or equal to) `b`? False on any git failure.
+ * @param {string} root
+ * @param {string} a
+ * @param {string} b
+ * @returns {Promise<boolean>}
+ */
+async function isAncestor(root, a, b) {
+  try { await git(root, ['merge-base', '--is-ancestor', a, b]); return true; } catch { return false; }
+}
+
+/**
+ * Ids of the records added or changed between commit `since` and HEAD (as the index catch-up reads them).
+ * @param {string} root
+ * @param {string} since
+ * @returns {Promise<string[]>}
+ */
+async function recordIdsSince(root, since) {
+  const out = await git(root, ['diff', '--name-only', '--no-renames', '-z', since, 'HEAD', '--', 'records']);
+  /** @type {string[]} */
+  const ids = [];
+  for (const p of out.split('\0')) {
+    const m = /^records\/([0-9a-f]{32})\.json$/.exec(p);
+    if (m) ids.push(m[1]);
+  }
+  return ids;
+}
+
+/**
  * Create the trail's repo on first use. Idempotent and crash-safe: it is done
  * only once the first commit exists, so a repo that was initialised but never
  * committed (or a `trail.json` written but not committed) is finished on the
@@ -423,4 +460,4 @@ async function commitRecord(root, name, { record, ...rest }) {
   return commitFiles(root, name, { rel: `records/${record.id}.json`, json: record, ...rest });
 }
 
-export { TRAIL_NAME_RE, RECORD_ID_RE, DEFAULT_LOCK_TIMEOUT_MS, TRAIL_LOCK, SYNC_LOCK, trailLockFile, trailIndexFile, syncLockFile, withTrailLock, serialise, ensureTrail, readRecord, listIds, commitRecord, commitFiles };
+export { TRAIL_NAME_RE, RECORD_ID_RE, DEFAULT_LOCK_TIMEOUT_MS, TRAIL_LOCK, SYNC_LOCK, trailLockFile, trailIndexFile, syncLockFile, withTrailLock, serialise, ensureTrail, readRecord, listIds, commitRecord, commitFiles, headOf, isAncestor, recordIdsSince };
