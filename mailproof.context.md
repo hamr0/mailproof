@@ -2,7 +2,7 @@
 
 ## What this is
 
-mailproof records a re-checkable proof of each email in a **two-party (A to B) exchange** in a local git trail: the signed headers, never the body. The sender's DKIM public key is archived at capture, so anyone can verify the record offline, years later, after the key has left DNS. Pure ESM, Node >= 22.19, runtime deps `mailauth` + `mailparser` + `imapflow` (only for `sync`) + `better-sqlite3` (only for `list` and `copies`). Wire formats: `docs/product/SPEC.md` Part B (repo only).
+mailproof records a re-checkable proof of each email in a **two-party (A to B) exchange** in a local git trail: the signed headers, never the body (since 3.0.0 the raw email and attachments are also kept in a local content store outside git, on by default and expiring; `forget` removes content only, proofs are permanent). The sender's DKIM public key is archived at capture, so anyone can verify the record offline, years later, after the key has left DNS. Pure ESM, Node >= 22.19, runtime deps `mailauth` + `mailparser` + `imapflow` (only for `sync`) + `better-sqlite3` (only for `list` and `copies`). Wire formats: `docs/product/SPEC.md` Part B (repo only).
 
 ## What mailproof is and is not
 

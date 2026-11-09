@@ -1,7 +1,7 @@
 # mailproof v2 — PRD
 
-> **Status:** v2 is released as 2.2.0 (M0, M1 and M2 shipped). M3 is specified (2026-11-08), not built. 1.x is frozen at tag `v1.4.0` (v1 code archived in `archive/v1/`; no `v1` branch).
-> **Owner:** hamr0 · **Last updated:** 2026-11-08
+> **Status:** v2 is released as 3.0.0 (2026-11-09; M0-M2 and M3 steps 1-3 shipped). The rest of M3 (CLI, MCP, `replyFacts`) is specified, not built. 1.x is frozen at tag `v1.4.0` (v1 code archived in `archive/v1/`; no `v1` branch).
+> **Owner:** hamr0 · **Last updated:** 2026-11-09
 >
 > **For future Claude:** this PRD wins on intent and scope. The *why* behind each choice is in
 > [`decisions-log.md`](decisions-log.md). The v1 PRD is archived at
@@ -15,7 +15,7 @@ People and agents make small agreements over email: "I sent you this", "confirme
 the original email can no longer be re-checked.
 
 **Goal:** mailproof v2 records a re-checkable proof of each email in a **two-party (A↔B) exchange** in
-a local git trail: the signed headers, never the body. Anyone can verify the record offline, at any
+a local git trail: the signed headers, never the body (since 3.0.0 the raw email is also kept in a local content store outside git, expiring; see §7 M3). Anyone can verify the record offline, at any
 time, because the sender's public key is archived at capture.
 
 **Why v2 is smaller than v1.** v1 copied `gitdone` (live as signedreply.com) into a library:
@@ -81,7 +81,7 @@ stores:
 - the **address list** (`addresses`, M3): every From/To/Cc/Reply-To address of the header block, each marked signed or unsigned (SPEC B1); absent on older records and on a refused over-limit message;
 - direction (in/out), capture source, capture time.
 
-**Never** the body, never the raw email, in the record. Since M3 (step 1, built, not yet released) the raw email and attachments are stored locally beside the trail by default, outside git and outside the record (§7 M3); the record format is unchanged.
+**Never** the body, never the raw email, in the record. Since 3.0.0 (M3 step 1) the raw email and attachments are stored locally beside the trail by default, outside git and outside the record (§7 M3); the record format is unchanged.
 
 **What this proves later**
 
@@ -222,7 +222,7 @@ It stores no text, no body bytes and no subject (the trail stays header-only). I
 
 ### M3 — Two-party record (specified)
 
-**Status:** specified 2026-11-08, approvals round added 2026-11-09; **build step 1 built 2026-11-09 (not released): the local content store, retention and `forget`** ([SPEC B7](SPEC.md), [F22](findings.md)); **build step 2 built 2026-11-09 (not released): trust profiles, the counterparty view and graded thread links** ([SPEC B5, B8](SPEC.md), [F23](findings.md)); **build step 3 built 2026-11-09 (not released): prune before date** ([SPEC B9](SPEC.md), [F25](findings.md)); the rest is not built; a few items still open (see Open below). Reasons and options: [decisions-log](decisions-log.md) entry "M3 scope: one trail per owned account, local content store, prune-before-date, CLI + stdlib MCP". Wire formats go to SPEC Part B when each step is built (B7 is the first).
+**Status:** specified 2026-11-08, approvals round added 2026-11-09; **build step 1 shipped in 3.0.0: the local content store, retention and `forget`** ([SPEC B7](SPEC.md), [F22](findings.md)); **build step 2 shipped in 3.0.0: trust profiles, the counterparty view and graded thread links** ([SPEC B5, B8](SPEC.md), [F23](findings.md)); **build step 3 shipped in 3.0.0: prune before date** ([SPEC B9](SPEC.md), [F25](findings.md)); the rest (step 4 onward: CLI, MCP, `replyFacts`) is not built; a few items still open (see Open below). Reasons and options: [decisions-log](decisions-log.md) entry "M3 scope: one trail per owned account, local content store, prune-before-date, CLI + stdlib MCP". Wire formats go to SPEC Part B when each step is built (B7 is the first).
 
 **Goal.** M3 makes mailproof a two-party record for three use cases on one substrate:
 

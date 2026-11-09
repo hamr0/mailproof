@@ -21,6 +21,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > the first free clean minor, `1.3.0`.) See
 > [`archive/v1/docs/DESIGN.md`](archive/v1/docs/DESIGN.md) for the phasing.
 
+## [Unreleased]
+
+### Documentation
+- Post-3.0.0 status sweep: CLAUDE.md, README.md, docs/README.md, the PRD, the usage guide and mailproof.context.md now give 3.0.0 as current, mark M3 steps 1-3 shipped and step 4 onward not built, and say the git proof never holds the body while the raw email lives in the local content store outside git.
+
 ## [3.0.0] - 2026-11-09
 
 M3 is partially delivered: steps 1-3 (content store, participants/links/profiles, prune). The CLI, the MCP server and `replyFacts` are still to come. POC evidence is under `poc/` (`poc/m3-prune/`) and the measurements are findings F22-F25.1 in `docs/product/findings.md`.

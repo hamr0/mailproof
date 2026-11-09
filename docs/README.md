@@ -1,11 +1,11 @@
 # mailproof documentation
 
 **mailproof v2** is a two-party (A<->B) email proof library: it records a
-re-checkable proof of each email (signed headers, never the body) in a local git
+re-checkable proof of each email (signed headers in git, never the body; the raw email is kept in a local content store outside git) in a local git
 trail, so anyone can verify it offline later. Multi-party workflows stay in
 `gitdone` / signedreply.com. See the [v2 PRD](product/PRD.md).
 
-> **Status:** v2 is released as 2.2.0 (M0, M1 and M2 shipped). 1.x (a multi-party coordination kernel lifted from
+> **Status:** v2 is released as 3.0.0 (M0-M2 and M3 steps 1-3 shipped; the CLI, MCP and `replyFacts` are not built). 1.x (a multi-party coordination kernel lifted from
 > gitdone) is frozen at tag `v1.4.0`; the v1 code and docs are archived in
 > [`../archive/v1/`](../archive/v1/) (no `v1` branch). The v1 PRD is at [`../archive/v1/docs/PRD.md`](../archive/v1/docs/PRD.md). `DESIGN.md` and
 > `SPEC.md` still describe v1 and are superseded module by module as v2 lands.

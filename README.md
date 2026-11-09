@@ -14,7 +14,7 @@
 ```
 
 > Prove an email really came from the address it says, and keep that proof checkable offline, years later.
-> Signed headers only, never the body. A git repo you own. Optional OpenTimestamps.
+> Signed headers only in the git proof, never the body (raw email kept locally, outside git, expiring). A git repo you own. Optional OpenTimestamps.
 
 <p align="center">
   <a href="https://github.com/hamr0/mailproof/actions/workflows/ci.yml"><img src="https://github.com/hamr0/mailproof/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
