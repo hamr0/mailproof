@@ -78,6 +78,7 @@ stores:
 - both verdicts (§3);
 - **attachment hashes** (sha256 of each attachment, computed at capture);
 - threading ids: `Message-ID`, `In-Reply-To`, `References`;
+- the **address list** (`addresses`, M3): every From/To/Cc/Reply-To address of the header block, each marked signed or unsigned (SPEC B1); absent on older records and on a refused over-limit message;
 - direction (in/out), capture source, capture time.
 
 **Never** the body, never the raw email, in the record. From M3 (planned) the raw email and attachments are stored locally beside the trail by default, outside git and outside the record (§7 M3); the record format is unchanged.
@@ -262,7 +263,7 @@ Best effort, offered when available.
 #### Retention and forget
 
 - **Content retention per account in days, default 730 (2 years).** Expired content is deleted automatically.
-- **Proof records are permanent.** Signed headers, from/to/cc, subject, date, verdicts, archived keys and hashes stay. mailproof never deletes proof on its own.
+- **Proof records are permanent.** Signed headers, the from/to/cc/reply-to address list (every address, signed or not, each marked; absent on an over-limit record), subject, date, verdicts, archived keys and hashes stay. mailproof never deletes proof on its own.
 - **`forget`** is the same content deletion, earlier, for one email (and per counterparty or date range as a convenience).
 - **After content is gone:** the headers still re-verify offline; `body_status` stays a recorded fact but can no longer be re-checked; `replyText` text and attachments are gone, only hashes remain. Anyone who later produces the raw email (sha256 = record id) or the attachment (sha256 match) gets everything re-verified. Caveat: a short reply's text hash is guessable.
 - Privacy note: [usage-guide](usage-guide.md#what-mailproof-stores-about-other-people).

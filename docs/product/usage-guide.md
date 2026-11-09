@@ -23,7 +23,7 @@ What it does not: proof of delivery, legal admissibility, or what a message mean
 
 Not legal advice.
 
-Proof records contain personal data even without a body: email addresses, display names, CC lists, dates and subject lines. The subject is the riskiest, because it can carry sensitive content. It is usually inside the DKIM-signed headers, so it cannot be dropped without breaking offline verification.
+Proof records contain personal data even without a body: email addresses, display names, CC lists, dates and subject lines. Since M3 every record also lists the addresses on its From, To, Cc and Reply-To lines (`addresses`), including the ones no signature covers (marked `signed: false`), so a person who was only copied on an email is in your permanent record. `forget` removes stored content, never this list. The subject is the riskiest, because it can carry sensitive content. It is usually inside the DKIM-signed headers, so it cannot be dropped without breaking offline verification.
 
 **Today (2.2.0)** mailproof stores proofs only: signed headers, verdicts, archived keys and hashes. Never the body.
 
