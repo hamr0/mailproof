@@ -228,7 +228,7 @@ test('extractReplyText: the gate runs first; an over-limit message is refused, n
 
 test('replyTextPath: the version string with / replaced by -', () => {
   assert.equal(STRIPPER, 'mailproof-quote/1');
-  assert.equal(replyTextPath('a'.repeat(32)), `replies/${'a'.repeat(32)}.mailproof-quote-1.json`);
+  assert.equal(replyTextPath('a'.repeat(32)), `replies/aa/${'a'.repeat(32)}.mailproof-quote-1.json`);
 });
 
 test('parity with the POC stripper (poc/m2-quotes/strip.mjs): text, hash and flags on every fixture', () => {

@@ -118,3 +118,32 @@ export const SYNC_MAX_RECONNECTS = 3;
 
 /** Wait before the 1st, 2nd and 3rd reconnect. */
 export const SYNC_RECONNECT_BACKOFF_MS = Object.freeze([1000, 4000, 16000]);
+
+// ---- INDEX (SPEC B5): what one record may add to the trail index. A record is trusted local data, but its address and
+// Message-ID lists come from a sender-controlled header (up to 256 KiB), so the rows one record adds are capped. ----
+
+/** Participant rows (From/To/Cc/Reply-To addresses) the index takes from one record; the rest are not indexed. */
+export const INDEX_MAX_PARTICIPANTS = 500;
+
+/** Longest address that is indexed (RFC 5321 path limit); a longer token is not an address. */
+export const INDEX_MAX_ADDRESS = 254;
+
+/** Thread-link rows the index takes from one record: In-Reply-To, then the LAST References ids (the nearest ancestors). */
+export const INDEX_MAX_LINKS = 200;
+
+/** Children `linked()` returns by default (a popular Message-ID can be named by any number of records); `{ limit }` overrides. */
+export const LINKED_CHILDREN_DEFAULT = 1000;
+
+// ---- PRUNE (SPEC B9) ----
+
+/** Bytes of one git listing (`ls-tree`, `diff-tree`) that prune and the content sweep read whole: about 1,000,000 record paths. Above it they fail instead of growing without bound. */
+export const GIT_LISTING_MAX_BYTES = 256 * 1024 * 1024;
+
+/** Git's delta-base cache for every git process prune starts (`core.deltaBaseCacheLimit`; git's default is 96m per process). Measured at 80,000 records: it takes the peak of the process tree from 375 MB to 268 MB (findings F25) with no change in time beyond noise. */
+export const PRUNE_GIT_CONFIG = ['core.deltaBaseCacheLimit=16m'];
+
+/** How long a prune waits for a running `sync` to finish before it gives up with `ERR_SYNC_LOCKED` (a sync call is capped at SYNC_MAX_MS; the margin covers its cleanup). Nothing is changed when it gives up. */
+export const PRUNE_SYNC_WAIT_MS = SYNC_MAX_MS + 60_000;
+
+/** A prune journal whose owner pid is alive is left to that process only this long (a reused pid must not block recovery for ever). */
+export const PRUNE_JOURNAL_LIVE_MS = 60 * 60 * 1000;

@@ -21,6 +21,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > the first free clean minor, `1.3.0`.) See
 > [`archive/v1/docs/DESIGN.md`](archive/v1/docs/DESIGN.md) for the phasing.
 
+## [3.0.0] - 2026-11-09
+
+M3 is partially delivered: steps 1-3 (content store, participants/links/profiles, prune). The CLI, the MCP server and `replyFacts` are still to come. POC evidence is under `poc/` (`poc/m3-prune/`) and the measurements are findings F22-F25.1 in `docs/product/findings.md`.
+
+### Breaking
+- **The trail layout changed and 2.2 trails are not readable.** `records/` and `replies/` are now sharded by id prefix (`records/<id[0:2]>/<id>.json`, `.ots` beside it; `replies/<id[0:2]>/<id>.<slug>.json`), so a commit writes a small shard tree instead of one entry per record. A trail in the old flat layout fails with `ERR_TRAIL_LAYOUT` on `record()` and every other call that opens it. There is no reader and no converter. **Upgrade path: create a new trail with 3.0.0 and re-record the mail** (for example with `sync()` or `record()` from the raw emails). Every path is built and parsed in `src/proof/layout.js`.
+- **The content store is on by default.** `record()` now keeps the raw email (and its attachment files, once per distinct sha256) beside the trail in `<trailDir>/<trail>.content/`, outside git, write-once, hash-named and re-hashed on every read. The proof in the trail is unchanged (signed headers, never the body), but the raw email now sits on local disk, kept 730 days after capture. To keep the old "proof only" behaviour, construct with `content: { store: false }`: nothing is written and callers supply raw bytes as before. A content write failure never loses the proof; a failed commit removes the content files the call created. The raw email of a message over 25 MiB is not stored.
+- **Records gain an `addresses` field** (signed and unsigned From, To, Cc and Reply-To addresses). Records written by 2.2 do not have it; they are not readable in the new layout anyway.
+- **The trail index schema is 3** (participants and links, built from `addresses` when present). The SQLite index is a disposable cache rebuilt from the records, so there is nothing to migrate.
+
+### Added
+- Constructor option `content: { store, attachments, days, sweepDays }`. `store` and `attachments` default to true, `days` to 730 (retention counted from the record's `captured` time), `sweepDays` to 7 (the automatic sweep at the end of `sync()` runs only when the last one is at least `sweepDays` days old; an explicit `expireContent()` always runs). Bad values throw at construction.
+- `Mailproof#rawEmail(id)` and `Mailproof#attachment(sha256)`: read back the stored raw email and attachment bytes, re-hashed on every read.
+- `Mailproof#expireContent({ now })`: deletes content older than `days`. The record scan runs without the trail lock; the lock is taken only for the deletions, after revalidating against commits since the scan's HEAD (rewritten history aborts that round). Records are never deleted.
+- `Mailproof#forget(target)`: removes stored raw email and attachment files on demand, for one id, a list of ids, or everything with one correspondent (`{ with, before?, after? }`). The proof stays and still re-verifies offline. Idempotent; the address definition is shared with the record's `addresses` field.
+- `Mailproof#replyText({ id })`: extract the reply text of a recorded message from the content store, without passing the raw bytes. `matchBody(id)` likewise works without `raw` when the message is stored.
+- Trail index (SPEC B5): participants and graded thread links, built from the record alone. `list()` gains `with`, `role`, `before` and `after` filters.
+- `Mailproof#counterparties()`: who the trail's mail is exchanged with.
+- `Mailproof#linked(id, { limit })`: the messages linked to one by threading ids, graded by link strength; children are bounded.
+- `Mailproof#checkProfile(recordOrId, profile, opts)` and the exported pure `checkProfile` function: gate a recorded email by allowed senders, required checks, body level and link strength; returns `{ ok, failed, record, rules }`. The method reads the record from the trail first; an invalid profile rejects with `ERR_BAD_PROFILE`.
+- `Mailproof#proofParts(recordOrId)`: separate results for the email (offline DKIM re-check, `body_status`) and for each attachment (re-hashed from the content store).
+- `Mailproof#prune({ before, deleteBackup?, now? })` (SPEC B9): rebuild the trail without everything captured before a cutoff, using `git fast-export`, a stdlib filter and `git fast-import` into `<trail>.prune-build` (no new dependency). The pruned trail is built from a snapshot HEAD without the trail lock; the trail and sync locks are held only to append the commits made since and swap. A journal and two renames make the swap crash-recoverable (recovery runs inside the trail lock before any writer can create a trail); the sync cursor is repointed and the content of removed ids is swept. Stragglers are kept and reported, reply-only commits dropped, late keys follow the late-key rule, and re-verification is reported. Bounded memory: git's delta-base cache is capped at 16 MB and the file-set check is streamed (80,000 records peak about 194 MB, F25.1).
+- The `addresses` record field and the sharded layout described above; the sync() retention sweep.
+
+### Changed
+- `sync()` runs the content retention sweep at the end of a run (at most once per `sweepDays`).
+- Timing tests are load-robust (wall-clock bounds widened; the signature-cap test proves the cap by the empty lookups list). The index no longer issues a redundant explicit ROLLBACK.
+- README, usage guide, PRD (section 4 and M3 status), SPEC (B1, B3, B5-B9), the agent context guide and the docs map describe the content store, the new methods and the layout.
+
 ## [2.2.0] - 2026-11-08
 
 ### Added

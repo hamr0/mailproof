@@ -9,7 +9,7 @@ mailproof has two goals.
 1. **Verify that an email really came from the sending address, now.** DKIM is always checked; DMARC, SPF and ARC are checked too when the sender publishes them. The result is the **live verdict**, decided at capture.
 2. **Keep that verifiable later, offline, even after the sender's key leaves DNS.** At capture mailproof archives the sender's public key and stores a record of the signed headers in a git repo you own (the **trail**, one commit per record). Anyone can re-check the record years later from the record alone: that is the **portable verdict**. Optionally an OpenTimestamps stamp (`otsBin`) makes "captured no later than T" provable, because `captured` is otherwise mailproof's own clock.
 
-A record never holds the body or the raw email. It holds the exact headers each DKIM signature covers, the signature, the archived key, both verdicts, attachment hashes and threading ids. If the body turns up later, `matchBody` checks it against the signed body hash (`bh=`).
+A record never holds the body or the raw email (the optional local content store keeps the raw email beside the trail, outside the record: see "What mailproof stores about other people"). It holds the exact headers each DKIM signature covers, the signature, the archived key, both verdicts, attachment hashes and threading ids. If the body turns up later, `matchBody` checks it against the signed body hash (`bh=`).
 
 What a record proves:
 
@@ -23,11 +23,11 @@ What it does not: proof of delivery, legal admissibility, or what a message mean
 
 Not legal advice.
 
-Proof records contain personal data even without a body: email addresses, display names, CC lists, dates and subject lines. The subject is the riskiest, because it can carry sensitive content. It is usually inside the DKIM-signed headers, so it cannot be dropped without breaking offline verification.
+Proof records contain personal data even without a body: email addresses, display names, CC lists, dates and subject lines. Since M3 every record also lists the addresses on its From, To, Cc and Reply-To lines (`addresses`), including the ones no signature covers (marked `signed: false`), so a person who was only copied on an email is in your permanent record. `forget` removes stored content, never this list. The subject is the riskiest, because it can carry sensitive content. It is usually inside the DKIM-signed headers, so it cannot be dropped without breaking offline verification.
 
 **Today (2.2.0)** mailproof stores proofs only: signed headers, verdicts, archived keys and hashes. Never the body.
 
-**Planned (M3, not built):** content (the raw email and attachments) is also stored locally by default and deleted after 730 days unless you configure otherwise. Proofs are permanent. Prune-before-date is the tool for a proof retention policy.
+**M3 (built, not yet released):** content (the raw email and attachments) is also stored locally by default, beside the trail and outside git (`<trail>.content/`, owner-only files), and deleted 730 days after the record's `captured` time unless you configure `content.days` (`sync()` checks at most every `content.sweepDays` days, default 7, so content lives between `days` and `days + sweepDays`; `expireContent()` runs it on demand). `forget` deletes the stored content of one email, a list, or everything with one correspondent, now. Proofs stay permanent unless you prune: `prune({ before })` removes every record captured before a date, with its stored content (it rewrites history; the old trail is kept as `<trail>.pre-prune-<date>` until you delete it, or pass `deleteBackup: true`). `content: { store: false }` turns the store off.
 
 Whoever runs mailproof keeps that data and is responsible for it. An individual using it for personal purposes is generally outside GDPR-style rules. A business keeps records as evidence, which is a recognised lawful purpose (the right to erasure has an exception for data needed to establish or defend legal claims). It still needs a stated purpose and a retention policy.
 

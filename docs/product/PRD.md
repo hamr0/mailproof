@@ -78,9 +78,10 @@ stores:
 - both verdicts (§3);
 - **attachment hashes** (sha256 of each attachment, computed at capture);
 - threading ids: `Message-ID`, `In-Reply-To`, `References`;
+- the **address list** (`addresses`, M3): every From/To/Cc/Reply-To address of the header block, each marked signed or unsigned (SPEC B1); absent on older records and on a refused over-limit message;
 - direction (in/out), capture source, capture time.
 
-**Never** the body, never the raw email, in the record. From M3 (planned) the raw email and attachments are stored locally beside the trail by default, outside git and outside the record (§7 M3); the record format is unchanged.
+**Never** the body, never the raw email, in the record. Since M3 (step 1, built, not yet released) the raw email and attachments are stored locally beside the trail by default, outside git and outside the record (§7 M3); the record format is unchanged.
 
 **What this proves later**
 
@@ -221,7 +222,7 @@ It stores no text, no body bytes and no subject (the trail stays header-only). I
 
 ### M3 — Two-party record (specified)
 
-**Status:** specified 2026-11-08, approvals round added 2026-11-09, not built; a few items still open (see Open below). Reasons and options: [decisions-log](decisions-log.md) entry "M3 scope: one trail per owned account, local content store, prune-before-date, CLI + stdlib MCP". No wire formats yet; they go to SPEC Part B when each step is built.
+**Status:** specified 2026-11-08, approvals round added 2026-11-09; **build step 1 built 2026-11-09 (not released): the local content store, retention and `forget`** ([SPEC B7](SPEC.md), [F22](findings.md)); **build step 2 built 2026-11-09 (not released): trust profiles, the counterparty view and graded thread links** ([SPEC B5, B8](SPEC.md), [F23](findings.md)); **build step 3 built 2026-11-09 (not released): prune before date** ([SPEC B9](SPEC.md), [F25](findings.md)); the rest is not built; a few items still open (see Open below). Reasons and options: [decisions-log](decisions-log.md) entry "M3 scope: one trail per owned account, local content store, prune-before-date, CLI + stdlib MCP". Wire formats go to SPEC Part B when each step is built (B7 is the first).
 
 **Goal.** M3 makes mailproof a two-party record for three use cases on one substrate:
 
@@ -237,7 +238,7 @@ mailproof records everything, always, in and out. The use cases are read-side pr
 - Separate accounts (business, personal) are separate trails, never merged.
 - Addresses that deliver into the same mailbox (a send-as alias, a plus-address) are the same trail.
 - **A counterparty is one exact email address.** `bob@gmail.com` and `bob@company.com` are different counterparties. There is no grouping or aliasing. DKIM proves a domain or an address, not a person.
-- **Organisation inside a trail is unchanged:** one commit per email (each copy), one linear branch, flat `records/<id>.json`. No branch or folder per counterparty (a CC'd mail would need two homes, creating them on receive happens inside the lock, and threads cross structures).
+- **Organisation inside a trail is unchanged:** one commit per email (each copy), one linear branch, `records/<id[0:2]>/<id>.json`, sharded by the first two hex chars of the id so a commit's git tree write stays small ([SPEC B3](SPEC.md), F24). No branch or folder per counterparty (a CC'd mail would need two homes, creating them on receive happens inside the lock, and threads cross structures).
 - **Retrieval goes through the rebuildable SQLite index** ([SPEC B5](SPEC.md)). It gains participants (record, address, role: from/to/cc/reply-to as available) and thread links (Message-ID, In-Reply-To, References). Each record proves itself (signed headers, archived key, verdicts, OTS); git supplies the append-only history of the whole account.
 
 #### Linked emails
@@ -262,23 +263,23 @@ Best effort, offered when available.
 #### Retention and forget
 
 - **Content retention per account in days, default 730 (2 years).** Expired content is deleted automatically.
-- **Proof records are permanent.** Signed headers, from/to/cc, subject, date, verdicts, archived keys and hashes stay. mailproof never deletes proof on its own.
+- **Proof records are permanent.** Signed headers, the from/to/cc/reply-to address list (every address, signed or not, each marked; absent on an over-limit record), subject, date, verdicts, archived keys and hashes stay. mailproof never deletes proof on its own.
 - **`forget`** is the same content deletion, earlier, for one email (and per counterparty or date range as a convenience).
 - **After content is gone:** the headers still re-verify offline; `body_status` stays a recorded fact but can no longer be re-checked; `replyText` text and attachments are gone, only hashes remain. Anyone who later produces the raw email (sha256 = record id) or the attachment (sha256 match) gets everything re-verified. Caveat: a short reply's text hash is guessable.
 - Privacy note: [usage-guide](usage-guide.md#what-mailproof-stores-about-other-people).
 
 #### Prune before date
 
-Off by default; an explicit command. Only "everything captured before date X". Never a range in the middle (that is tampering), and no rotation by period.
+Off by default; an explicit command (`Mailproof#prune`, built in step 3; the CLI comes in step 4). Only "everything captured before date X". Never a range in the middle (that is tampering), and no rotation by period. Mechanism and wire format: [SPEC B9](SPEC.md); the POC that corrected the first draft of these steps: [poc/m3-prune](../../poc/m3-prune/README.md), [F24](findings.md).
 
-1. Take the trail lock. The cutoff is a prefix of history (commits are made at capture time).
-2. Write a new first commit, the **prune notice**: cutoff date, previous HEAD hash, number of records removed and kept.
-3. Replay each kept commit onto it with its original message, author and date, removing the pruned records' files (record JSON, `.ots`, reply-text records, archived keys used only by pruned records) from every tree.
-4. Re-verify every kept record (DKIM, and OTS if present) during the replay.
-5. Build in a separate directory and swap. The old trail stays as `<trail>.pre-prune-<date>` until the user deletes it (or passes `--delete-backup`). A failure leaves the original untouched.
-6. Delete the pruned records' content from the content store. The index fully rebuilds on the next read (it already detects rewritten history).
+1. **Plan without blocking writers.** Build the pruned trail from a snapshot of HEAD with no trail lock, so `record()` and `sync()` carry on; take the trail lock (and the sync lock) only to append the commits made since and swap. The cutoff is the longest *prefix* of history in which every record is before the date: a record captured earlier but committed after a later one (a clock step) is **kept** and reported as a straggler.
+2. Write a new first commit, the **prune notice**: cutoff date, previous HEAD hash, records removed, kept, stragglers and dropped commits, and the notices of earlier prunes (cumulative). Its tree is not empty: it holds `trail.json` and the archived keys that kept records still need (a key first committed with a removed record but named by a kept one).
+3. Replay each kept commit onto it with its original message, author and date, removing the pruned records' files (record JSON, `.ots`, reply-text records, archived keys no kept record names) from every tree. A kept commit that then touches nothing (a reply-text commit for a removed record) is **dropped**, not replayed empty.
+4. Re-verify every kept record offline (`verifyRecord`) and **report** the result; a record that does not verify is listed, never a reason to stop (accept-with-flag, and the files are byte-identical so the prune cannot have changed the outcome). OTS stamps are left byte-identical (`ots` is not run).
+5. Build in a separate directory and swap with a **journal**: the swap is two renames with a moment in between when no trail exists, so every trail-lock holder first finishes or undoes an interrupted swap (a writer in that gap would otherwise create a fresh empty trail). A crash at any point leaves exactly the old trail or exactly the pruned one. The old trail stays as `<trail>.pre-prune-<date>` until the user deletes it (or passes `deleteBackup`).
+6. After the swap: **rewrite the sync cursor's `head`** to the new HEAD (otherwise `sync` sees a rewritten trail, rescans every folder and records the removed mail again, undoing the prune); delete the removed records' content from the content store (raw emails with no record in the new HEAD, then attachments no remaining email lists). The index rebuilds on the next read by itself; content expiry's "history was rewritten" abort is unchanged.
 
-Commit ids after the cutoff change. Kept record files, DKIM proofs, keys, OTS stamps and content are byte-identical.
+Commit ids after the cutoff change. Kept record files, DKIM proofs, keys, OTS stamps and content are byte-identical. A cutoff that removes nothing is a no-op (no rewrite, no backup); one that would remove every record is refused. Time is about quadratic in the commit count on git's side; the sharded layout puts it at minutes for tens of thousands of records (F25). "Removed" is only true once the backup is deleted.
 
 #### Trust profiles and graded proof
 

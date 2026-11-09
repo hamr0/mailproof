@@ -33,7 +33,7 @@ port.on('message', async (m) => {
     const buf = Buffer.from(m.buf.buffer, m.buf.byteOffset, m.buf.byteLength);
     const out = m.kind === 'reply-text'   // the reply-text job (reply-text.js): gate and strip, nothing else
       ? extractReplyText(buf)
-      : await buildRecord(buf, m.ctx, { captured: m.captured, hasEnvelope: m.hasEnvelope, trustedSealers: m.trustedSealers, resolver });
+      : await buildRecord(buf, m.ctx, { captured: m.captured, hasEnvelope: m.hasEnvelope, trustedSealers: m.trustedSealers, keepAttachments: m.keepAttachments === true, resolver });
     port.postMessage({ type: 'done', job: m.job, out });
   } catch (e) {
     const err = /** @type {any} */ (e);

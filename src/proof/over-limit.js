@@ -8,7 +8,7 @@ import { buildLive, buildPortable } from './verdict.js';
 
 /** @typedef {import('./types.js').MpRecord} MpRecord */
 /** @typedef {import('./types.js').MailauthResult} MailauthResult */
-/** @typedef {{ record: MpRecord, keyFiles: Array<{ rel: string, json: unknown }>, overLimit: string | null }} Built */
+/** @typedef {{ record: MpRecord, keyFiles: Array<{ rel: string, json: unknown }>, overLimit: string | null, attachmentBytes?: Array<{ sha256: string, bytes: Buffer }> }} Built */
 
 /**
  * The record of a message that was refused (accept-with-flag): committed like any other, but nothing

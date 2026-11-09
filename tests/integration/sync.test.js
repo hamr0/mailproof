@@ -12,6 +12,7 @@ import { MAX_TOTAL_BYTES, SYNC_MAX_MESSAGES, SYNC_MAX_BYTES } from '../../src/pr
 import { signedMail } from '../helpers/proof.js';
 import { makeFake, drop } from '../helpers/fake-imap-session.js';
 import { makeTmpDir } from '../helpers/tmp.js';
+import { recordPath } from '../../src/proof/layout.js';
 
 const SECRET = 'Sup3r-Secret-App-Pass-7f3a';
 const base = { host: 'imap.account.test', user: 'acct.owner@account.test', auth: { pass: SECRET }, sent: false };
@@ -261,7 +262,7 @@ test('9. direction, source, Sent, NO_SENT; the account is in no record', async (
   assert.equal(srec.source, 'imap:[Gmail]/Sent Mail');
   assert.deepEqual([srec.signatures.length, srec.verdicts.live.trust, srec.verdicts.portable.trust], [0, 'unverified', 'unverified']);
   for (const id of [...inbox, ...out].map((x) => x.id)) {
-    const text = fs.readFileSync(path.join(mp.root, 'records', `${id}.json`), 'utf8');
+    const text = fs.readFileSync(path.join(mp.root, recordPath(id)), 'utf8');
     assert.ok(!text.includes('imap.account.test') && !text.includes('acct.owner'), 'no account in the record');
   }
   // no \Sent folder: ERR_IMAP_NO_SENT on its own entry while INBOX still succeeds

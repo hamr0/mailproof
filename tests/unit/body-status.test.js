@@ -12,6 +12,7 @@ import { signedMail, makeKey } from '../helpers/proof.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { makeTmpDir } from '../helpers/tmp.js';
+import { recordPath } from '../../src/proof/layout.js';
 // Sign at the instant the instance clock is pinned to, so t= equals captured whatever the real date.
 const T0 = new Date('2026-11-01T10:00:00Z');
 
@@ -166,7 +167,7 @@ test('record()/check(): body_status stored per record, trust verdicts untouched,
   const bad = await new Mailproof({ trailDir: dir, trail: 'alt', resolver: m.resolver, now: () => new Date('2026-11-01T10:00:00Z') }).record(altered, { direction: 'in' });
   assert.equal(bad.record.body_status, 'mismatch');
   assert.equal(bad.record.verdicts.portable.trust, 'verified');
-  const onDisk = fs.readFileSync(path.join(dir, 'alt', 'records', `${bad.id}.json`), 'utf8');
+  const onDisk = fs.readFileSync(path.join(dir, 'alt', recordPath(bad.id)), 'utf8');
   assert.ok(!onDisk.includes('LEAKY-FOOTER'));
   const unsigned = await mp.check(Buffer.from('From: a@x.example\r\n\r\nhi\r\n'));
   assert.equal(unsigned.body_status, 'not-checked');

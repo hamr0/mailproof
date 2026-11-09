@@ -6,6 +6,7 @@ import path from 'node:path';
 import { Mailproof } from '../../src/proof/mailproof.js';
 import { signedMail, stubResolver } from '../helpers/proof.js';
 import { makeTmpDir } from '../helpers/tmp.js';
+import { recordPath } from '../../src/proof/layout.js';
 // Sign at the instant the instance clock is pinned to, so t= equals captured whatever the real date.
 const T0 = new Date('2026-11-01T10:00:00Z');
 
@@ -36,7 +37,7 @@ test('verify fails when the record file on disk is tampered', async () => {
   const m = await signedMail({ signTime: T0, signTime: T0 });
   const mp = new Mailproof({ trailDir: dir, resolver: m.resolver, now: clock() });
   const { id } = await mp.record(m.raw, { direction: 'in' });
-  const f = path.join(dir, 'default', 'records', `${id}.json`);
+  const f = path.join(dir, 'default', recordPath(id));
   const rec = JSON.parse(fs.readFileSync(f, 'utf8'));
   rec.signatures[0].signed_headers.shift();
   fs.writeFileSync(f, JSON.stringify(rec));

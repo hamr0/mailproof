@@ -53,6 +53,7 @@ function workerConfig(opts) {
  * @property {string} captured
  * @property {boolean} hasEnvelope
  * @property {string[]} trustedSealers
+ * @property {boolean} [keepAttachments]  Send the attachment bytes back with the record (content store).
  */
 
 /** @typedef {import('./build.js').Built} Built */

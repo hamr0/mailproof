@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { Mailproof, otsTimeoutMs } from '../../src/proof/mailproof.js';
 import { signedMail } from '../helpers/proof.js';
 import { makeTmpDir } from '../helpers/tmp.js';
+import { recordPath, recordOtsPath } from '../../src/proof/layout.js';
 
 const tmp = () => makeTmpDir('mp-ots-');
 function fakeOts(body) {
@@ -23,7 +24,7 @@ test('OTS is off by default: no stamp, no .ots file', async () => {
   const mp = new Mailproof({ trailDir: dir, resolver: m.resolver });
   const r = await mp.record(m.raw, { direction: 'in' });
   assert.equal(r.ots, 'off');
-  assert.deepEqual(fs.readdirSync(path.join(dir, 'default', 'records')), [`${r.id}.json`]);
+  assert.deepEqual(fs.readdirSync(path.join(dir, 'default', path.dirname(recordPath(r.id)))), [`${r.id}.json`]);
 });
 
 test('OTS on: the stamp is made over the record file and committed in the same commit', async () => {
@@ -34,10 +35,11 @@ test('OTS on: the stamp is made over the record file and committed in the same c
   const r = await mp.record(m.raw, { direction: 'in' });
   assert.equal(r.ots, 'pending');
   const root = path.join(dir, 'default');
-  assert.ok(files(root).includes(`records/${r.id}.json.ots`));
-  assert.ok(files(root).includes(`records/${r.id}.json`));
+  assert.ok(files(root).includes(recordOtsPath(r.id)));
+  assert.ok(files(root).includes(`records/${r.id.slice(0, 2)}/${r.id}.json.ots`), 'literal sharded .ots path');
+  assert.ok(files(root).includes(recordPath(r.id)));
   // the "proof" (our fake copies its input) is the exact record bytes that were committed
-  assert.equal(fs.readFileSync(path.join(root, 'records', `${r.id}.json.ots`), 'utf8'), fs.readFileSync(path.join(root, 'records', `${r.id}.json`), 'utf8'));
+  assert.equal(fs.readFileSync(path.join(root, recordOtsPath(r.id)), 'utf8'), fs.readFileSync(path.join(root, recordPath(r.id)), 'utf8'));
   assert.equal(execFileSync('git', ['status', '--porcelain'], { cwd: root, encoding: 'utf8' }), '');
 });
 
@@ -50,7 +52,7 @@ test('OTS failure never blocks the commit: missing binary and failing binary bot
     assert.equal(r.duplicate, false);
     assert.ok(typeof r.ots === 'object' && r.ots.error, JSON.stringify(r.ots));
     assert.ok(await mp.get(r.id));
-    assert.ok(!fs.existsSync(path.join(dir, 'default', 'records', `${r.id}.json.ots`)));
+    assert.ok(!fs.existsSync(path.join(dir, 'default', recordOtsPath(r.id))));
   }
 });
 

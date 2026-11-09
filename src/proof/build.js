@@ -8,6 +8,7 @@ import { fetchDkimKey } from './keys.js';
 import { splitMessage, parseTags } from './signed-headers.js';
 import { MAX_INNER } from './limits.js';
 import { admit } from './admit.js';
+import { addressesOf } from './participants.js';
 import { overLimitRecord } from './over-limit.js';
 import { buildSignatureEntry } from './record.js';
 import { summariseBody, newBudget } from './body-status.js';
@@ -24,6 +25,7 @@ import { verifyRecord } from './recheck.js';
  * @typedef {Object} BuildEnv
  * @property {string} captured  ISO time of capture.
  * @property {boolean} hasEnvelope
+ * @property {boolean} [keepAttachments]  Return the attachment bytes with the record (the content store wants them).
  * @property {string[]} trustedSealers
  * @property {((name: string, type?: string) => Promise<any>) | undefined} resolver  Absent: the system resolver.
  */
@@ -43,13 +45,13 @@ const sha256hex = (raw) => crypto.createHash('sha256').update(raw).digest('hex')
  *   `overLimit`: the name of the limit the message exceeded, else null.
  */
 async function buildRecord(buf, ctx, env) {
-  const { captured, hasEnvelope, trustedSealers, resolver } = env;
+  const { captured, hasEnvelope, trustedSealers, resolver, keepAttachments = false } = env;
   const gate = admit(buf);
   if (!gate.ok) return overLimitRecord(buf, ctx, env, /** @type {string} */ (gate.limit));
   const { rows, body } = splitMessage(buf);
   // Decode first, then authenticate: a message the decoder rejects must not have started any DNS
   // work, which running the two side by side would do.
-  const parsed = await parseMessage(buf);
+  const parsed = await parseMessage(buf, { keepAttachments });
   const auth = await authenticateMessage(buf, ctx.envelope || {}, { resolver }).catch(() => /** @type {MailauthResult} */ ({}));
 
   const sigRows = rows.filter((r) => r.name === 'dkim-signature');
@@ -86,6 +88,7 @@ async function buildRecord(buf, ctx, env) {
       size: buf.length,
       ...(sigRows.length ? {} : { from: parsed.from.address }),
     },
+    addresses: addressesOf(rows, signatures),
     attachments: parsed.attachments.map((a) => ({ filename: a.filename, size: a.size, sha256: /** @type {string} */ (a.sha256) })),
     signatures,
     body_status: 'not-checked',
@@ -98,7 +101,7 @@ async function buildRecord(buf, ctx, env) {
     live: buildLive(auth, { trustedSealers, hasEnvelope }),
     portable: buildPortable(record),
   };
-  return { record, keyFiles, overLimit: null };
+  return { record, keyFiles, overLimit: null, ...(parsed.attachmentBytes ? { attachmentBytes: parsed.attachmentBytes } : {}) };
 }
 
 /**

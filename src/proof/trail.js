@@ -13,6 +13,8 @@ import path from 'node:path';
 import { git, GIT_IDENTITY } from './git.js';
 import { DKIM_LABEL_RE } from './keys.js';
 import { withMutex } from './mutex.js';
+import { GIT_LISTING_MAX_BYTES } from './limits.js';
+import { recordPath, parseRecordPath, isReplyPath, recordIdsFromPaths, assertTrailLayout } from './layout.js';
 
 /** @typedef {import('./types.js').MpRecord} MpRecord */
 
@@ -149,11 +151,21 @@ const trailIndexFile = (/** @type {string} */ name) => `.${name}.index.sqlite`;
 /** Lock-file name of the sync lock (SPEC B4.5), beside the repo. */
 const syncLockFile = (/** @type {string} */ name) => `.${name}.sync.lock`;
 
+/** Lock-file name of the prune lock (SPEC B9), beside the repo: one prune at a time. */
+const pruneLockFile = (/** @type {string} */ name) => `.${name}.prune.lock`;
+/** File name of the prune journal (SPEC B9.4), beside the repo and outside git. Present only while a swap is unfinished. */
+const pruneJournalFile = (/** @type {string} */ name) => `.${name}.prune.json`;
+
 /** @typedef {{ code: string, failFast: boolean, what: string }} LockKind */
 /** @type {LockKind} The trail writer lock: waits up to the timeout. */
 const TRAIL_LOCK = Object.freeze({ code: 'ERR_TRAIL_LOCKED', failFast: false, what: 'trail' });
 /** @type {LockKind} The sync lock: same mechanism, but a held lock fails at once (a cron run should skip, not queue). */
 const SYNC_LOCK = Object.freeze({ code: 'ERR_SYNC_LOCKED', failFast: true, what: 'sync of trail' });
+
+/** @type {LockKind} The sync lock taken by a prune: the same file, but it waits (a prune must not be lost to a sync that happens to be running). */
+const SYNC_LOCK_WAIT = Object.freeze({ code: 'ERR_SYNC_LOCKED', failFast: false, what: 'sync of trail' });
+/** @type {LockKind} The prune lock: fail-fast, a second prune on the same trail is refused at once. */
+const PRUNE_LOCK = Object.freeze({ code: 'ERR_PRUNE_RUNNING', failFast: true, what: 'prune of trail' });
 
 /** Fail-fast locks held by this process (they skip the queueing mutex, so a second holder must be refused here). */
 const heldFailFast = new Set();
@@ -197,7 +209,13 @@ async function withTrailLock(root, lockFile, timeoutMs, work, kind = TRAIL_LOCK)
       await sleep(Math.min(delay, Math.max(0, deadline - Date.now())) * (0.5 + Math.random() / 2));
       delay = Math.min(delay * 2, 500);
     }
-    try { return await work(); }
+    try {
+      // An unfinished prune swap (SPEC B9.4) is finished or rolled back here, before `work` can create a trail.
+      if (kind === TRAIL_LOCK && await exists(path.join(path.dirname(root), pruneJournalFile(path.basename(root))))) {
+        await (await import('./prune-swap.js')).recoverPrune(root);
+      }
+      return await work();
+    }
     finally {
       // Read-then-unlink is safe here: this lock is ours and its pid (ours) is alive,
       // so takeOverIfStale never judges it stale and nobody else removes it.
@@ -246,6 +264,47 @@ async function inHead(root, rel) {
 }
 
 /**
+ * The trail's HEAD commit, or null when there is no repo or no commit. Never throws.
+ * @param {string} root
+ * @returns {Promise<string | null>}
+ */
+async function headOf(root) {
+  try { return (await git(root, ['rev-parse', '--verify', '-q', 'HEAD'])) || null; } catch { return null; }
+}
+
+/**
+ * Is commit `a` an ancestor of (or equal to) `b`? False on any git failure.
+ * @param {string} root
+ * @param {string} a
+ * @param {string} b
+ * @returns {Promise<boolean>}
+ */
+async function isAncestor(root, a, b) {
+  try { await git(root, ['merge-base', '--is-ancestor', a, b]); return true; } catch { return false; }
+}
+
+/**
+ * Ids of the records added or changed between commit `since` and HEAD (as the index catch-up reads them).
+ * @param {string} root
+ * @param {string} since
+ * @returns {Promise<string[]>}
+ */
+async function recordIdsSince(root, since) {
+  const out = await git(root, ['diff', '--name-only', '--no-renames', '-z', since, 'HEAD', '--', 'records']);
+  return recordIdsFromPaths(out);
+}
+
+/**
+ * The ids of the records committed at `rev` (one `git ls-tree` over `records/`).
+ * @param {string} root
+ * @param {string} rev
+ * @returns {Promise<Set<string>>}
+ */
+async function idsAt(root, rev) {
+  return new Set(recordIdsFromPaths(await git(root, ['ls-tree', '-r', '--name-only', '-z', rev, '--', 'records'], { maxBuffer: GIT_LISTING_MAX_BYTES })));
+}
+
+/**
  * Create the trail's repo on first use. Idempotent and crash-safe: it is done
  * only once the first commit exists, so a repo that was initialised but never
  * committed (or a `trail.json` written but not committed) is finished on the
@@ -270,21 +329,17 @@ async function ensureTrail(root, name, createdIso) {
 
 /**
  * Is `rel` (a trail-relative, `/`-separated path) a file mailproof itself writes?
- *   records/<32 lowercase hex>.json         the record
- *   records/<32 lowercase hex>.json.ots     its OpenTimestamps proof
- *   replies/<32 lowercase hex>.<slug>.json  a reply-text record (slug: the stripper version, [a-z0-9-]+)
+ *   records/<2hex>/<32 lowercase hex>.json      the record (the shard is the first two chars of the id)
+ *   records/<2hex>/<32 lowercase hex>.json.ots  its OpenTimestamps proof
+ *   replies/<2hex>/<32 lowercase hex>.<slug>.json  a reply-text record (slug: the stripper version, [a-z0-9-]+)
  *   keys/<domain>/<selector>/<16 hex>.json  an archived DKIM key (domain and selector
  *                                           lowercase, the characters fetchDkimKey allows)
  * @param {string} rel
  * @returns {boolean}
  */
 function isLibraryFile(rel) {
+  if (parseRecordPath(rel) !== null || isReplyPath(rel)) return true;
   const parts = rel.split('/');
-  if (parts[0] === 'records' && parts.length === 2) {
-    const m = /^(.+)\.json(\.ots)?$/.exec(parts[1]);
-    return m !== null && RECORD_ID_RE.test(m[1]);
-  }
-  if (parts[0] === 'replies' && parts.length === 2) return /^[0-9a-f]{32}\.[a-z0-9-]+\.json$/.test(parts[1]);
   if (parts[0] === 'keys' && parts.length === 4) {
     const label = (/** @type {string} */ l) => DKIM_LABEL_RE.test(l) && l === l.toLowerCase() && !l.startsWith('.') && !l.includes('..');
     return label(parts[1]) && label(parts[2]) && /^[0-9a-f]{16}\.json$/.test(parts[3]);
@@ -293,8 +348,27 @@ function isLibraryFile(rel) {
 }
 
 /**
+ * Remove the directories under `records/`, `replies/` and `keys/` that removing `rels` emptied (deepest first, never
+ * the top-level directory itself). `rmdir` refuses a non-empty one, so nothing with a file in it goes.
+ * @param {string} root
+ * @param {string[]} rels  Trail-relative paths that were removed or never written.
+ * @returns {Promise<void>}
+ */
+async function rmEmptyDirs(root, rels) {
+  /** @type {Set<string>} */
+  const dirs = new Set();
+  for (const rel of rels) {
+    for (let d = path.posix.dirname(rel); d.includes('/'); d = path.posix.dirname(d)) dirs.add(d);
+  }
+  for (const d of [...dirs].sort((a, b) => b.length - a.length)) {
+    try { await fs.rmdir(path.join(root, d)); } catch { /* not empty, or gone */ }
+  }
+}
+
+/**
  * Clear what a crashed writer left half-done: staged changes, and the untracked
- * files mailproof itself writes under `records/` and `keys/` (see isLibraryFile).
+ * files mailproof itself writes under `records/`, `replies/` and `keys/` (see isLibraryFile), and the shard and key
+ * directories that empties.
  * Anything else there is left alone. Safe because only the lock holder writes,
  * and tracked files are never touched. Needs a HEAD.
  * @param {string} root
@@ -303,17 +377,14 @@ function isLibraryFile(rel) {
 async function clearLeftovers(root) {
   await git(root, ['reset', '-q']);
   const untracked = (await git(root, ['ls-files', '--others', '--exclude-standard', '-z', '--', 'records', 'keys', 'replies'])).split('\0').filter(Boolean);
-  /** @type {Set<string>} */
-  const dirs = new Set();
+  /** @type {string[]} */
+  const cleared = [];
   for (const rel of untracked) {
     if (!isLibraryFile(rel)) continue;
     await fs.rm(path.join(root, rel), { force: true });
-    if (rel.startsWith('keys/')) { dirs.add(path.dirname(rel)); dirs.add(path.dirname(path.dirname(rel))); }
+    cleared.push(rel);
   }
-  // drop the key directories this pass emptied (deepest first); rmdir refuses a non-empty one
-  for (const d of [...dirs].sort((a, b) => b.length - a.length)) {
-    try { await fs.rmdir(path.join(root, d)); } catch { /* not empty, or gone */ }
-  }
+  await rmEmptyDirs(root, cleared);
   await fs.mkdir(path.join(root, 'records'), { recursive: true });
 }
 
@@ -325,21 +396,28 @@ async function clearLeftovers(root) {
  */
 async function readRecord(root, id) {
   if (typeof id !== 'string' || !RECORD_ID_RE.test(id)) return null;
-  try { return JSON.parse(await fs.readFile(path.join(root, 'records', `${id}.json`), 'utf8')); }
+  try { return JSON.parse(await fs.readFile(path.join(root, recordPath(id)), 'utf8')); }
   catch { return null; }
 }
 
 /**
- * All record ids in the trail's working tree.
+ * All record ids in the trail's working tree (walks the shard directories).
  * @param {string} root
  * @returns {Promise<string[]>}
  */
 async function listIds(root) {
+  /** @type {string[]} */
+  const ids = [];
   try {
-    return (await fs.readdir(path.join(root, 'records')))
-      .filter((f) => f.endsWith('.json') && RECORD_ID_RE.test(f.slice(0, -5)))
-      .map((f) => f.slice(0, -5));
-  } catch { return []; }
+    for (const shard of await fs.readdir(path.join(root, 'records'))) {
+      if (!/^[0-9a-f]{2}$/.test(shard)) continue;
+      for (const f of await fs.readdir(path.join(root, 'records', shard))) {
+        const r = parseRecordPath(`records/${shard}/${f}`);
+        if (r && !r.ots) ids.push(r.id);
+      }
+    }
+  } catch { /* no records directory */ }
+  return ids;
 }
 
 /**
@@ -352,26 +430,35 @@ async function listIds(root) {
  * @param {string} name
  * @param {{ rel: string, json: unknown, requires?: string, keyFiles?: Array<{ rel: string, json: unknown }>, message: string, now: () => Date,
  *           afterWrite?: (fileAbs: string) => Promise<string[]>,
+ *           sideFiles?: (duplicate: boolean) => Promise<string[]>,
  *           lockTimeoutMs?: number }} job
+ *   `sideFiles` writes files outside git (the content store, SPEC B7), under the same lock: it is called with `true`
+ *   when the file is already committed (a backfill) and with `false` just before the git commit. It must not throw
+ *   (a side-file problem never loses the proof); it returns the absolute paths it newly created, which are removed
+ *   if the commit fails.
  *   `rel` is the trail-relative path of the file and `json` its content. `requires`: a trail-relative path that must
  *   be committed in HEAD (checked under the lock), else `ERR_NOT_RECORDED`. `afterWrite` may add files next to the
  *   file (the OTS proof); it returns their trail-relative paths.
  * @returns {Promise<{ duplicate: boolean, commit: string, extra: string[] }>}
  */
-async function commitFiles(root, name, { rel, json, requires, keyFiles = [], message, now, afterWrite, lockTimeoutMs = DEFAULT_LOCK_TIMEOUT_MS }) {
+async function commitFiles(root, name, { rel, json, requires, keyFiles = [], message, now, afterWrite, sideFiles, lockTimeoutMs = DEFAULT_LOCK_TIMEOUT_MS }) {
   return withTrailLock(root, trailLockFile(name), lockTimeoutMs, async () => {
     await ensureTrail(root, name, now().toISOString());
+    await assertTrailLayout(root);
     await clearLeftovers(root);
     if (requires !== undefined && !(await inHead(root, requires))) {
       throw Object.assign(new Error(`not recorded: ${requires} is not committed in trail "${name}"`), { code: 'ERR_NOT_RECORDED' });
     }
     if (await inHead(root, rel)) {
+      if (sideFiles) await sideFiles(true);
       return { duplicate: true, commit: await git(root, ['rev-parse', 'HEAD']), extra: [] };
     }
     /** @type {string[]} */
     const written = []; // only paths that did not exist before this call wrote them
     /** @type {{ duplicate: boolean, commit: string, extra: string[] }} */
     let res;
+    /** @type {string[]} */
+    let sideCreated = [];
     try {
       for (const k of keyFiles) {
         const abs = path.join(root, k.rel);
@@ -385,14 +472,17 @@ async function commitFiles(root, name, { rel, json, requires, keyFiles = [], mes
       await fs.writeFile(path.join(root, rel), serialise(json));
       const extra = afterWrite ? await afterWrite(path.join(root, rel)) : [];
       written.push(...extra);
+      if (sideFiles) sideCreated = await sideFiles(false);
       await git(root, ['add', '--', ...written]);
       await git(root, ['commit', '-m', message]);
       res = { duplicate: false, commit: await git(root, ['rev-parse', 'HEAD']), extra };
     } catch (err) {
       try { await git(root, ['reset', '-q']); } catch { /* nothing staged */ }
+      for (const f of sideCreated) await fs.rm(f, { force: true });
       for (const r of written) {
         if (!(await isTracked(root, r))) await fs.rm(path.join(root, r), { force: true });
       }
+      await rmEmptyDirs(root, written);
       throw err;
     }
     return res;
@@ -405,11 +495,12 @@ async function commitFiles(root, name, { rel, json, requires, keyFiles = [], mes
  * @param {string} name
  * @param {{ record: MpRecord, keyFiles: Array<{ rel: string, json: unknown }>, message: string, now: () => Date,
  *           afterWrite?: (recordAbs: string) => Promise<string[]>,
+ *           sideFiles?: (duplicate: boolean) => Promise<string[]>,
  *           lockTimeoutMs?: number }} job
  * @returns {Promise<{ duplicate: boolean, commit: string, extra: string[] }>}
  */
 async function commitRecord(root, name, { record, ...rest }) {
-  return commitFiles(root, name, { rel: `records/${record.id}.json`, json: record, ...rest });
+  return commitFiles(root, name, { rel: recordPath(record.id), json: record, ...rest });
 }
 
-export { TRAIL_NAME_RE, RECORD_ID_RE, DEFAULT_LOCK_TIMEOUT_MS, TRAIL_LOCK, SYNC_LOCK, trailLockFile, trailIndexFile, syncLockFile, withTrailLock, serialise, ensureTrail, readRecord, listIds, commitRecord, commitFiles };
+export { TRAIL_NAME_RE, RECORD_ID_RE, DEFAULT_LOCK_TIMEOUT_MS, TRAIL_LOCK, SYNC_LOCK, SYNC_LOCK_WAIT, PRUNE_LOCK, trailLockFile, trailIndexFile, syncLockFile, pruneLockFile, pruneJournalFile, pidAlive, withTrailLock, serialise, ensureTrail, readRecord, listIds, commitRecord, commitFiles, headOf, isAncestor, recordIdsSince, idsAt };

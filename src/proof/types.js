@@ -42,6 +42,7 @@
  * @property {string} rawSha256  `sha256:`-prefixed hex of the raw bytes.
  * @property {string | null} [subject]  Decoded Subject (transient; never stored outside signed_headers).
  * @property {Buffer[]} [rfc822]  Raw bytes of each `message/rfc822` part (transient).
+ * @property {Array<{ sha256: string, bytes: Buffer }>} [attachmentBytes]  Each distinct attachment with its bytes; only when `keepAttachments` was asked (transient: the content store).
  */
 
 /**
@@ -111,6 +112,7 @@
  * @property {'in' | 'out'} direction
  * @property {string} source
  * @property {Record<string, any>} message
+ * @property {Array<{ address: string, raw: string, role: 'from' | 'to' | 'cc' | 'reply-to', signed: boolean }>} [addresses]  Every From/To/Cc/Reply-To address of the header block, signed or not (SPEC B1); absent on records captured before M3 and on an over-limit record (never parsed).
  * @property {Array<{ filename: string | null, size: number, sha256: string }>} attachments
  * @property {RecordSignature[]} signatures  Every DKIM-Signature header, in header order (at most `MAX_SIGNATURES`: a message with more is over limit and has none); `[]` when unsigned or over a limit.
  * @property {BodyStatus} body_status  Best body status over the signatures that verify (see BodyStatus).

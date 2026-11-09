@@ -12,6 +12,7 @@ import { WorkerPool, workerConfig } from '../../src/proof/pool.js';
 import { signedMail } from '../helpers/proof.js';
 import { makeTmpDir } from '../helpers/tmp.js';
 import { FIXTURES, QUOTED } from '../helpers/reply-fixtures.js';
+import { replyPath } from '../../src/proof/layout.js';
 
 const Database = createRequire(import.meta.url)('better-sqlite3');
 const T0 = new Date('2026-11-01T10:00:00Z');
@@ -45,10 +46,10 @@ test('signed and matched: the new text, proven, trailing flagged; one commit wit
   assert.equal(r.commit, gitOut(root, 'rev-parse', 'HEAD'));
   assert.equal(commits(root), '3', 'trail created, the record, the reply text');
   assert.equal(gitOut(root, 'log', '-1', '--format=%s'), `reply-text ${rec.id.slice(0, 12)} mailproof-quote/1 found`);
-  assert.equal(gitOut(root, 'show', '--name-only', '--format=', 'HEAD'), `replies/${rec.id}.mailproof-quote-1.json`);
+  assert.equal(gitOut(root, 'show', '--name-only', '--format=', 'HEAD'), replyPath(rec.id, 'mailproof-quote-1'));
   assert.equal(gitOut(root, 'status', '--porcelain'), '');
 
-  const file = fs.readFileSync(path.join(root, 'replies', `${rec.id}.mailproof-quote-1.json`), 'utf8');
+  const file = fs.readFileSync(path.join(root, replyPath(rec.id, 'mailproof-quote-1')), 'utf8');
   assert.deepEqual(JSON.parse(file), {
     v: 2, kind: 'reply-text', record_id: rec.id, text_sha256: hashOf(NEW_TEXT), text_bytes: NEW_TEXT.length,
     stripper: 'mailproof-quote/1', quote: 'found', trailing: true, source: 'text/plain', boundary: 'attribution',
@@ -148,7 +149,7 @@ test('duplicate: the same message again returns the text, writes nothing; a late
   const first = await mp.replyText(m.raw);
   const root = path.join(dir, 'default');
   const n = commits(root);
-  const file = path.join(root, 'replies', `${first.id}.mailproof-quote-1.json`);
+  const file = path.join(root, replyPath(first.id, 'mailproof-quote-1'));
   const bytes = fs.readFileSync(file);
   const later = mk(dir, m, { now: clock('2027-01-01T00:00:00Z') });
   const again = await later.replyText(m.raw);
@@ -181,7 +182,7 @@ test('html-only: nothing extracted, flagged, unproven; the record says so', asyn
     id: undefined, text: '', text_sha256: hashOf(''), text_bytes: 0, quote: 'not-found', trailing: false, source: 'html-only', boundary: null,
     stripper: 'mailproof-quote/1', body_status: 'not-checked', proven: false, commit: undefined, duplicate: false,
   });
-  const file = JSON.parse(fs.readFileSync(path.join(dir, 'default', 'replies', `${r.id}.mailproof-quote-1.json`), 'utf8'));
+  const file = JSON.parse(fs.readFileSync(path.join(dir, 'default', replyPath(r.id, 'mailproof-quote-1')), 'utf8'));
   assert.equal(file.source, 'html-only');
   assert.equal(file.text_bytes, 0);
 });
@@ -196,7 +197,7 @@ test('the worker and in-process agree on every fixture: result, record file and 
         await mps[k].record(f.raw, { direction: 'in' });
         const r = await mps[k].replyText(f.raw);
         out[k] = { ...r, commit: undefined };
-        out[k].file = fs.readFileSync(path.join(dirs[k], 'default', 'replies', `${r.id}.mailproof-quote-1.json`), 'utf8');
+        out[k].file = fs.readFileSync(path.join(dirs[k], 'default', replyPath(r.id, 'mailproof-quote-1')), 'utf8');
         out[k].msg = gitOut(path.join(dirs[k], 'default'), 'log', '-1', '--format=%s');
       }
       assert.deepEqual(out.worker, out.inproc, f.name);
@@ -245,8 +246,8 @@ test('a crashed writer\'s leftover reply file is cleared; a failing commit rolls
   const mp = mk(dir, m);
   const rec = await mp.record(m.raw, { direction: 'in' });
   const root = path.join(dir, 'default');
-  fs.mkdirSync(path.join(root, 'replies'), { recursive: true });
-  const leftover = path.join(root, 'replies', `${rec.id}.mailproof-quote-1.json`);
+  const leftover = path.join(root, replyPath(rec.id, 'mailproof-quote-1'));
+  fs.mkdirSync(path.dirname(leftover), { recursive: true });
   fs.writeFileSync(leftover, '{"half":"written"}');
   fs.writeFileSync(path.join(root, 'replies', 'notes.txt'), 'mine');
   const hook = path.join(root, '.git', 'hooks', 'pre-commit');

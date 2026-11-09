@@ -1,5 +1,6 @@
 // The only module that imports better-sqlite3 (SPEC B5, F19). The trail index: one SQLite file beside the trail's
-// lock file, outside the git repo, never committed. A CACHE of the records for `list()` and `copies()`: the JSON
+// lock file, outside the git repo, never committed. A CACHE of the records for `list()`, `copies()`, `counterparties()`
+// and `linked()` (participants and thread links, M3 step 2, SPEC B8): the JSON
 // records in the trail stay the single source of truth, deleting the file loses nothing, and no proof path (`record`,
 // `check`, `get`, `verify`, `matchBody`, `matchFile`, `sync` capture) ever loads this module or the addon.
 //
@@ -24,7 +25,11 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { git } from './git.js';
+import { recordIdsFromPaths, assertTrailLayout } from './layout.js';
 import { RECORD_ID_RE, readRecord, withTrailLock, trailLockFile, trailIndexFile } from './trail.js';
+import { LINKED_CHILDREN_DEFAULT } from './limits.js';
+import { participantsOf, linksOf, hasSignedThreading, ROLES } from './participants.js';
+import { verifyRecord } from './recheck.js';
 
 /** @typedef {import('./types.js').MpRecord} MpRecord */
 /** @typedef {{ run: (...p: any[]) => any, get: (...p: any[]) => any, all: (...p: any[]) => any[] }} Stmt */
@@ -33,8 +38,7 @@ import { RECORD_ID_RE, readRecord, withTrailLock, trailLockFile, trailIndexFile 
 /** @typedef {{ id: string, captured: string, direction: string, copy: string, body_status: string, live: string, portable: string }} CopyRow */
 
 /** Bump when the table layout or what a column holds changes: an index of another version is rebuilt. */
-const SCHEMA = 1;
-const RECORD_PATH_RE = /^records\/([0-9a-f]{32})\.json$/;
+const SCHEMA = 3;
 const READ_BATCH = 500;
 const BUSY_TIMEOUT_MS = 10000;
 const DEFAULT_GIT_MAX_BUFFER = 16 * 1024 * 1024;
@@ -45,6 +49,14 @@ CREATE TABLE IF NOT EXISTS rec(
   id TEXT PRIMARY KEY, captured TEXT NOT NULL, direction TEXT, live TEXT, portable TEXT,
   message_id TEXT, message_key TEXT, copy_kind TEXT, body_status TEXT) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS att(att_key TEXT NOT NULL, rec_id TEXT NOT NULL, PRIMARY KEY(att_key, rec_id)) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS participants(
+  rec_id TEXT NOT NULL, address TEXT NOT NULL, raw TEXT NOT NULL, role TEXT NOT NULL, signed INTEGER NOT NULL,
+  PRIMARY KEY(rec_id, role, address)) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS links(
+  rec_id TEXT NOT NULL, mid TEXT NOT NULL, via TEXT NOT NULL, strength TEXT NOT NULL, pos INTEGER NOT NULL,
+  PRIMARY KEY(rec_id, mid)) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS part_addr ON participants(address, rec_id);
+CREATE INDEX IF NOT EXISTS links_mid ON links(mid, rec_id);
 CREATE INDEX IF NOT EXISTS rec_cap ON rec(captured);
 CREATE INDEX IF NOT EXISTS rec_dir_cap ON rec(direction, captured);
 CREATE INDEX IF NOT EXISTS rec_key ON rec(message_key, captured);
@@ -87,20 +99,12 @@ async function headOf(root) {
   } catch { return null; }
 }
 
-/** The ids of the record files named by a NUL-separated git path list. @param {string} out @returns {string[]} */
-function idsFromPaths(out) {
-  /** @type {string[]} */
-  const ids = [];
-  for (const p of out.split('\0')) { const m = RECORD_PATH_RE.exec(p); if (m) ids.push(m[1]); }
-  return ids;
-}
-
 /**
  * Index row for a record, or null when it is not a usable record (not an object, or its `id` is not its file name).
  * Every column is a string or null, so one odd record can never make a bind fail and sink a rebuild.
  * @param {string} id  The record's file name.
  * @param {MpRecord | null} r
- * @returns {{ row: Array<string | null>, att: string[] } | null}
+ * @returns {{ row: Array<string | null>, att: string[], parts: Array<Array<string | number>>, links: Array<Array<string | number>> } | null}
  */
 function rowOf(id, r) {
   if (!r || typeof r !== 'object' || r.id !== id) return null;
@@ -108,10 +112,15 @@ function rowOf(id, r) {
   /** @type {string[]} */
   const att = [];
   if (Array.isArray(evidence)) for (const o of evidence) { const k = o && typeof o === 'object' ? str(o.message_key) : null; if (k) att.push(k); }
+  // The DKIM re-check (which signatures verify and align) is paid only by a record that has a signed In-Reply-To or
+  // References line to grade; the other records never run it.
+  const passing = hasSignedThreading(r) ? verifyRecord(r).passing : [];
   return {
     row: [id, str(r.captured) ?? '', str(r.direction), str(r.verdicts?.live?.trust), str(r.verdicts?.portable?.trust),
       str(r.message?.message_id), str(r.message_key), str(r.copy?.kind), str(r.body_status)],
     att,
+    parts: participantsOf(r).map((p) => [id, p.address, p.raw, p.role, p.signed ? 1 : 0]),
+    links: linksOf(r, passing).map((l, i) => [id, l.mid, l.via, l.strength, i]),
   };
 }
 
@@ -132,15 +141,15 @@ async function eachBatch(root, ids, fn) {
 /**
  * Run `fn` inside one write transaction that stays open across its awaits (the connection is ours alone and the
  * caller holds the trail lock; better-sqlite3 statements are synchronous, so nothing interleaves). Commits when `fn`
- * returns, rolls back on any throw: a failed rebuild or catch-up leaves the previous rows and the previous head.
+ * returns. On a throw the transaction is left open and the error propagates; `query()` always closes the connection
+ * in its `finally`, and SQLite rolls an open transaction back on close, so a failed rebuild or catch-up leaves the
+ * previous rows and the previous head.
  * @param {Db} d @param {() => Promise<void>} fn @returns {Promise<void>}
  */
 async function atomic(d, fn) {
   d.exec('BEGIN IMMEDIATE');
-  try { await fn(); d.exec('COMMIT'); } catch (e) {
-    try { d.exec('ROLLBACK'); } catch { /* the connection is already unusable; the open transaction dies with it */ }
-    throw e;
-  }
+  await fn();
+  d.exec('COMMIT');
 }
 
 /**
@@ -180,6 +189,10 @@ function session(d) {
     delRec: d.prepare('DELETE FROM rec WHERE id = ?'),
     delAtt: d.prepare('DELETE FROM att WHERE rec_id = ?'),
     putAtt: d.prepare('INSERT OR IGNORE INTO att VALUES (?,?)'),
+    delPart: d.prepare('DELETE FROM participants WHERE rec_id = ?'),
+    putPart: d.prepare('INSERT OR IGNORE INTO participants VALUES (?,?,?,?,?)'),
+    delLink: d.prepare('DELETE FROM links WHERE rec_id = ?'),
+    putLink: d.prepare('INSERT OR IGNORE INTO links VALUES (?,?,?,?,?)'),
   };
   return {
     d,
@@ -188,12 +201,14 @@ function session(d) {
     /** @param {string} k @param {string} v */
     setMeta: (k, v) => { st.setMeta.run(k, v); },
     /** @param {string} id */
-    del: (id) => { st.delRec.run(id); st.delAtt.run(id); },
-    /** @param {{ row: Array<string | null>, att: string[] }} x */
+    del: (id) => { st.delRec.run(id); st.delAtt.run(id); st.delPart.run(id); st.delLink.run(id); },
+    /** @param {NonNullable<ReturnType<typeof rowOf>>} x */
     put: (x) => {
       st.putRec.run(...x.row);
-      st.delAtt.run(x.row[0]);
+      st.delAtt.run(x.row[0]); st.delPart.run(x.row[0]); st.delLink.run(x.row[0]);
       for (const k of x.att) st.putAtt.run(k, x.row[0]);
+      for (const p of x.parts) st.putPart.run(...p);
+      for (const l of x.links) st.putLink.run(...l);
     },
   };
 }
@@ -235,7 +250,7 @@ async function reconcile(s, { root, gitMaxBuffer = DEFAULT_GIT_MAX_BUFFER }, hea
   if (stored && versionOk) {
     try {
       await git(root, ['merge-base', '--is-ancestor', stored, head]);
-      changed = idsFromPaths(await git(root, ['diff', '--name-only', '--no-renames', '-z', stored, head, '--', 'records'], { maxBuffer: gitMaxBuffer }));
+      changed = recordIdsFromPaths(await git(root, ['diff', '--name-only', '--no-renames', '-z', stored, head, '--', 'records'], { maxBuffer: gitMaxBuffer }));
     } catch { changed = null; } // not an ancestor, or a list too big for the cap: rebuild (which rejects if it is too big too)
   }
   if (changed) {
@@ -259,8 +274,8 @@ async function reconcile(s, { root, gitMaxBuffer = DEFAULT_GIT_MAX_BUFFER }, hea
     throw c?.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' ? rebuildTooLarge(e, gitMaxBuffer) : e;
   }
   await atomic(s.d, async () => {
-    s.d.exec('DELETE FROM rec; DELETE FROM att; DELETE FROM meta;');
-    await eachBatch(root, idsFromPaths(listing), (batch) => { for (const [id, r] of batch) { const x = rowOf(id, r); if (x) s.put(x); } });
+    s.d.exec('DELETE FROM rec; DELETE FROM att; DELETE FROM participants; DELETE FROM links; DELETE FROM meta;');
+    await eachBatch(root, recordIdsFromPaths(listing), (batch) => { for (const [id, r] of batch) { const x = rowOf(id, r); if (x) s.put(x); } });
     s.setMeta('schema', String(SCHEMA));
     s.setMeta('head', head);
   });
@@ -281,6 +296,7 @@ async function query(cfg, fn, empty) {
   const file = path.join(path.dirname(root), trailIndexFile(trail));
   for (let attempt = 0; ; attempt++) {
     if ((await headOf(root)) === null) return empty;
+    await assertTrailLayout(root);
     /** @type {Db | null} */
     let d = null;
     try {
@@ -309,28 +325,96 @@ const sum = (r) => ({
   body_status: r.body_status ?? undefined, live: r.live ?? undefined, portable: r.portable ?? undefined,
 });
 
+/** @param {unknown} v @param {string} what @returns {string} An ISO time, for comparing with `captured`. */
+function isoOf(v, what) {
+  const ms = v instanceof Date ? v.getTime() : typeof v === 'number' ? v : typeof v === 'string' ? Date.parse(v) : NaN;
+  if (!Number.isFinite(ms)) throw new TypeError(`list: ${what} must be a Date, a timestamp or an ISO date string`);
+  return new Date(ms).toISOString();
+}
+
 /**
  * `Mailproof#list` from the index (opened and closed inside this call).
  * @param {IndexCfg} cfg
- * @param {{ limit?: number, direction?: 'in' | 'out' }} [opts]
+ * @param {{ limit?: number, direction?: 'in' | 'out', with?: string, role?: 'from' | 'to' | 'cc' | 'reply-to', before?: Date | number | string, after?: Date | number | string }} [opts]
  * @returns {Promise<ListRow[]>}
  */
-export async function listIndex(cfg, { limit, direction } = {}) {
+export async function listIndex(cfg, { limit, direction, with: who, role, before, after } = {}) {
+  // The counterparty options are strict (a wrong type throws); `direction` keeps its old lenient meaning.
+  if (who !== undefined && (typeof who !== 'string' || !who.trim())) throw new TypeError('list: with must be an address string');
+  if (role !== undefined && (typeof role !== 'string' || !ROLES.includes(/** @type {any} */ (role)))) throw new TypeError(`list: role must be one of ${ROLES.join(', ')}`);
+  if (role !== undefined && who === undefined) throw new TypeError('list: role needs with');
+  const hi = before === undefined ? null : isoOf(before, 'before');
+  const lo = after === undefined ? null : isoOf(after, 'after');
   if (direction && typeof direction !== 'string') return [];
   // A positive number is a SQL LIMIT; any other truthy value keeps Array#slice's meaning on the full ordered list.
   const sql = typeof limit === 'number' && limit > 0;
   const n = sql ? (Number.isFinite(limit) ? Math.floor(/** @type {number} */ (limit)) : -1) : -1;
+  /** @type {string[]} */
+  const where = [];
+  /** @type {Array<string | number>} */
+  const args = [];
+  if (direction) { where.push('direction = ?'); args.push(direction); }
+  // The counterparty's record ids drive the query (a DISTINCT subquery is not flattened), so an address seen on a few
+  // records costs those records, not a scan of the whole trail.
+  let from = 'rec';
+  /** @type {Array<string | number>} */
+  const pre = [];
+  if (who !== undefined) {
+    from = `(SELECT DISTINCT rec_id FROM participants WHERE address = ?${role ? ' AND role = ?' : ''}) AS p JOIN rec ON rec.id = p.rec_id`;
+    pre.push(who.trim().toLowerCase());
+    if (role) pre.push(role);
+  }
+  if (lo !== null) { where.push('captured >= ?'); args.push(lo); }
+  if (hi !== null) { where.push('captured < ?'); args.push(hi); }
   return query(cfg, (d) => {
-    const cols = 'id, captured, direction, live, portable, message_id';
+    const cols = 'rec.id AS id, captured, direction, live, portable, message_id';
     // newest capture first; equal captures in ascending id order (the old full read left that to the file system)
-    const rows = direction
-      ? d.prepare(`SELECT ${cols} FROM rec WHERE direction = ? ORDER BY captured DESC, id LIMIT ?`).all(direction, n)
-      : d.prepare(`SELECT ${cols} FROM rec ORDER BY captured DESC, id LIMIT ?`).all(n);
+    const rows = d.prepare(`SELECT ${cols} FROM ${from} ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY captured DESC, rec.id LIMIT ?`).all(...pre, ...args, n);
     return (limit && !sql ? rows.slice(0, /** @type {any} */ (limit)) : rows).map((r) => ({
       id: r.id, captured: r.captured, direction: r.direction,
       live: r.live ?? undefined, portable: r.portable ?? undefined, message_id: r.message_id ?? null,
     }));
   }, []);
+}
+
+/**
+ * `Mailproof#counterparties` from the index: one row per exact address.
+ * @param {IndexCfg} cfg
+ * @param {{ limit?: number }} [opts]
+ * @returns {Promise<Array<{ address: string, records: number, first: string, last: string }>>}
+ */
+export async function counterpartiesIndex(cfg, { limit } = {}) {
+  if (limit !== undefined && (typeof limit !== 'number' || !Number.isFinite(limit) || limit < 1)) throw new TypeError('counterparties: limit must be a positive number');
+  const n = limit === undefined ? -1 : Math.floor(limit);
+  return query(cfg, (d) => d.prepare(
+    `SELECT p.address AS address, COUNT(DISTINCT p.rec_id) AS records, MIN(r.captured) AS first, MAX(r.captured) AS last
+       FROM participants p JOIN rec r ON r.id = p.rec_id GROUP BY p.address ORDER BY last DESC, address LIMIT ?`,
+  ).all(n).map((r) => ({ address: r.address, records: r.records, first: r.first, last: r.last })), []);
+}
+
+/**
+ * `Mailproof#linked` from the index: the records this one points at (parents) and the records that point at it (children).
+ * @param {IndexCfg} cfg
+ * @param {string} id
+ * @param {{ limit?: number }} [opts]  `limit`: most children returned (default LINKED_CHILDREN_DEFAULT, a positive integer); `more` says the list was cut.
+ * @returns {Promise<{ id: string, message_id: string | null, parents: Array<{ id: string | null, message_id: string, via: string, strength: string }>, children: Array<{ id: string, message_id: string | null, via: string, strength: string }>, more: boolean } | null>}
+ */
+export async function linkedIndex(cfg, id, { limit } = {}) {
+  if (limit !== undefined && (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1)) throw new TypeError('linked: limit must be a positive integer');
+  const n = limit ?? LINKED_CHILDREN_DEFAULT;
+  if (typeof id !== 'string' || !RECORD_ID_RE.test(id)) return null;
+  return query(cfg, (d) => {
+    const self = d.prepare('SELECT id, message_id FROM rec WHERE id = ?').get(id);
+    if (!self) return null;
+    const find = d.prepare('SELECT id FROM rec WHERE message_id = ? ORDER BY captured, id LIMIT 1'); // the earliest copy; `copies()` has the rest
+    const parents = d.prepare('SELECT mid, via, strength FROM links WHERE rec_id = ? ORDER BY pos').all(id)
+      .map((l) => ({ id: find.get(l.mid)?.id ?? null, message_id: l.mid, via: l.via, strength: l.strength }));
+    const children = self.message_id
+      ? d.prepare('SELECT r.id AS id, r.message_id AS message_id, l.via AS via, l.strength AS strength FROM links l JOIN rec r ON r.id = l.rec_id WHERE l.mid = ? AND r.id != ? ORDER BY r.captured, r.id LIMIT ?').all(self.message_id, id, n + 1)
+      : [];
+    const more = children.length > n;
+    return { id, message_id: self.message_id ?? null, parents, children: more ? children.slice(0, n) : children, more };
+  }, null);
 }
 
 /**
