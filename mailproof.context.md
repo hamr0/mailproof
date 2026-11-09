@@ -6,7 +6,7 @@ mailproof records a re-checkable proof of each email in a **two-party (A to B) e
 
 ## What mailproof is and is not
 
-- It is a recorder and an offline verifier: `record`, `verify`, `matchBody`, `matchFile`, `check`, `list`, `get`, `replyText`, `rawEmail`, `attachment`, `expireContent`, `forget`, and a read-only IMAP fetcher in front of `record`: `sync`.
+- It is a recorder and an offline verifier: `record`, `verify`, `matchBody`, `matchFile`, `check`, `list`, `counterparties`, `linked`, `checkProfile`, `proofParts`, `get`, `replyText`, `rawEmail`, `attachment`, `expireContent`, `forget`, and a read-only IMAP fetcher in front of `record`: `sync`.
 - It is not a mail client, a sender, a web UI or a multi-party workflow engine (those are gitdone/signedreply.com), not proof of delivery, and not a claim of legal admissibility.
 - It produces a verdict; acting on it is the consumer's job.
 
@@ -55,7 +55,13 @@ All methods are bound: `const { verify } = mp` works. `await mp.close()` stops t
 - `verify(recordOrId, { at? })` -> `{ ok, trust, basis, at, engine, signatures[] }`. Offline, from the record alone. `at` defaults to the record's `captured`; a missing or garbled `captured` fails closed. `trust` is recomputed now.
 - `matchBody(recordOrId, raw?)` -> `{ match, full, signatures[], reason? }`. `full` = body matches `bh=` AND the signature verifies at capture time. Omit `raw` to use the stored raw email (content store); no usable content gives `match: false` and a `reason`.
 - `matchFile(recordOrId, bytes)` -> `{ match, attachment }`.
-- `list({ limit?, direction? })`, `get(id)`.
+- `list({ limit?, direction?, with?, role?, before?, after? })`, `get(id)`. `with` is one exact address (trimmed, case-insensitive; `bob@gmail.com` is not `bob@company.com`, `@domain` is not an address), `role` (`from|to|cc|reply-to`, needs `with`) narrows it, `after` inclusive / `before` exclusive on `captured`. A wrong type throws a TypeError.
+- **Counterparties, links, profiles (M3 step 2, SPEC B8).** All read the record alone (never the content store) through the trail index.
+  - `counterparties({ limit? })` -> `[{ address, records, first, last }]`: one row per exact lower-cased address, most recently seen first. The trail owner is in it (a record does not say which address is yours).
+  - `linked(id)` -> `{ id, message_id, parents: [{ id|null, message_id, via, strength }], children: [{ id, message_id, via, strength }] } | null`. `via` is `in-reply-to` or `references`; `strength` is `signed` (a verifying, From-aligned DKIM signature covers the header that names the id) or `unsigned` (present only unsigned, or under a failing signature; Microsoft does not sign threading, F11). It reports what looks linked, never "the chain"; other copies of one message are `copies()`.
+  - `checkProfile(record, profile, { at?, parent? })` (pure, exported like `verifyRecord`) and `mp.checkProfile(recordOrId, profile, opts?)` -> `{ ok, failed: [{ rule, want, got }], record, rules }`. Profile keys, all optional, unknown keys throw `ERR_BAD_PROFILE`: `senders: ['bob@x.com', '@gmail.com']` (matches the DKIM-aligned signed From only; an unsigned From never satisfies it; `@domain` is that exact domain), `checks: { dkimAligned?, dmarc?, spf?, arc? }` (`true` = must pass; DKIM re-checked offline, the rest are the live facts recorded at capture, missing counts as `none`), `body: 'proven'|'partial'|'any'` (recorded `body_status`), `link: ['signed', ...]` (strength of the link to the parent; `opts.parent` = the request's Message-ID to look at that link only). No DNS, no clock: the same record, profile and `at` give the same answer later.
+  - `proofParts(recordOrId)` -> `{ email: { ok, trust, body_status }, attachments: [{ index, filename, sha256, stored, match }] } | null`. `match` re-hashes the stored attachment: `true` the recorded bytes, `false` a stored file that is not them, `null` nothing stored (then use `matchFile` with your copy).
+  - Gaps: only headers a signature covers (or an unsigned record's From) are visible; an unsigned Cc/To/Reply-To is not in the record.
 - **Content store (on by default, M3).** The constructor option `content: { store?: true, attachments?: true, days?: 730 }` keeps the raw email and attachments of every recorded message beside the trail (`<trailDir>/<trail>.content/`, outside git, 0600), each file named by its sha256 and re-hashed on every read. `store: false` is proof-only (you supply raw bytes, as before).
   - `rawEmail(id)` -> `Buffer | null`; `attachment(sha256)` -> `Buffer | null` (`sha256:<hex>` from `record.attachments[]`). Null when absent, expired, forgotten or failing the hash check.
   - `replyText({ id })` reads the stored raw; no content rejects `code: 'ERR_NO_CONTENT'`.
