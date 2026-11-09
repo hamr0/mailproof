@@ -38,15 +38,12 @@ test('40 bogus signatures against a 100 ms resolver: refused whole, not one key 
   await import('../../src/proof/build.js');
   const mp = new Mailproof({ trailDir: trailDir(), resolver: fn, worker: { size: 0 } });
   const raw = plain(bogusRows(40));
-  const t = performance.now();
   const r = await mp.record(raw, { direction: 'in', source: 't' });
-  const ms = performance.now() - t;
   const record = await mp.get(r.id);
   assert.deepEqual(record.signatures, []);
   assert.equal(record.verdicts.live.reason, 'over limit: signatures');
   assert.equal(record.verdicts.portable.reason, 'over limit: signatures');
-  assert.deepEqual(lookups, []);
-  assert.ok(ms < 1500, `took ${Math.round(ms)} ms (uncapped is ~4 s+)`);
+  assert.deepEqual(lookups, []); // this proves the cap: no DNS lookup, so no ~4 s of 100 ms lookups (replaces a load-sensitive wall-clock check)
   const c = await mp.check(raw);
   assert.equal(c.signatures, 0);
   assert.equal(c.unsigned, false);

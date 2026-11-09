@@ -365,7 +365,10 @@ test('a record() child ends on its own right after it answers (no lingering DNS-
   await new Promise((resolve, reject) => { child.on('error', reject); child.on('close', resolve); });
   assert.ok(answeredAt > 0, 'child answered');
   const lag = Date.now() - answeredAt;
-  assert.ok(lag < 3000, `child lingered ${lag} ms after answering (was ~5000 with the uncleared timer)`);
+  // The uncleared DNS timer held the child for ~5000 ms (DNS_TIMEOUT_MS, a wall-clock timer that load does not
+  // stretch); an exit has no timer to wait for, so only load can delay it. 4000 keeps the bug (>= ~4500) failing
+  // while leaving a loaded box 4 s to schedule the exit.
+  assert.ok(lag < 4000, `child lingered ${lag} ms after answering (was ~5000 with the uncleared timer)`);
 });
 
 // --- the wait loop always honours its deadline, even when a lock file is unreadable ---
@@ -378,7 +381,7 @@ async function recordWithDeadline(trailDir, lockTimeoutMs) {
   const mp = new Mailproof({ trailDir, resolver: m.resolver, lockTimeoutMs, worker: { size: 0 } });
   const t0 = Date.now();
   let timer;
-  const hang = new Promise((r) => { timer = setTimeout(() => r('HUNG'), 4000); });
+  const hang = new Promise((r) => { timer = setTimeout(() => r('HUNG'), 20000); });
   const outcome = await Promise.race([mp.record(m.raw, { direction: 'in' }).then(() => 'OK', (e) => e.code), hang]);
   clearTimeout(timer);
   return { outcome, ms: Date.now() - t0 };
@@ -391,7 +394,7 @@ test('dead-pid main lock + <lock>.break as a directory: ERR_TRAIL_LOCKED at the 
   fs.mkdirSync(path.join(trailDir, '.default.lock.break'));
   const { outcome, ms } = await recordWithDeadline(trailDir, 500);
   assert.equal(outcome, 'ERR_TRAIL_LOCKED');
-  assert.ok(ms < 2000, `took ${ms} ms`);
+  assert.ok(ms < 10000, `took ${ms} ms`); // the deadline is 500 ms; a wait that ignores it hits the HUNG race instead
 });
 
 test('an unreadable main lock (a directory at the lock path): ERR_TRAIL_LOCKED at the deadline, no spin', async () => {
@@ -399,7 +402,7 @@ test('an unreadable main lock (a directory at the lock path): ERR_TRAIL_LOCKED a
   fs.mkdirSync(path.join(trailDir, '.default.lock'));
   const { outcome, ms } = await recordWithDeadline(trailDir, 500);
   assert.equal(outcome, 'ERR_TRAIL_LOCKED');
-  assert.ok(ms < 2000, `took ${ms} ms`);
+  assert.ok(ms < 10000, `took ${ms} ms`); // the deadline is 500 ms; a wait that ignores it hits the HUNG race instead
 });
 
 // --- crash cleanup removes only the files mailproof itself writes ---

@@ -141,15 +141,15 @@ async function eachBatch(root, ids, fn) {
 /**
  * Run `fn` inside one write transaction that stays open across its awaits (the connection is ours alone and the
  * caller holds the trail lock; better-sqlite3 statements are synchronous, so nothing interleaves). Commits when `fn`
- * returns, rolls back on any throw: a failed rebuild or catch-up leaves the previous rows and the previous head.
+ * returns. On a throw the transaction is left open and the error propagates; `query()` always closes the connection
+ * in its `finally`, and SQLite rolls an open transaction back on close, so a failed rebuild or catch-up leaves the
+ * previous rows and the previous head.
  * @param {Db} d @param {() => Promise<void>} fn @returns {Promise<void>}
  */
 async function atomic(d, fn) {
   d.exec('BEGIN IMMEDIATE');
-  try { await fn(); d.exec('COMMIT'); } catch (e) {
-    try { d.exec('ROLLBACK'); } catch { /* the connection is already unusable; the open transaction dies with it */ }
-    throw e;
-  }
+  await fn();
+  d.exec('COMMIT');
 }
 
 /**
