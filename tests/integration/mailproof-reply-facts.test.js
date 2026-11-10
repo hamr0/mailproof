@@ -15,7 +15,7 @@ const git = (cwd, ...a) => execFileSync('git', a, { cwd, encoding: 'utf8' }).tri
 const ids = (bundles) => bundles.map((b) => b.recordId);
 const man = (headers, body = 'APPROVE\r\n') => Buffer.from([...headers, 'MIME-Version: 1.0', 'Content-Type: text/plain; charset=utf-8', '', body].join('\r\n'));
 
-const FIELDS = ['messageId', 'messageKey', 'recordId', 'commit', 'trail', 'captured', 'from', 'fromRaw', 'fromDkimAligned', 'to', 'toRaw', 'cc', 'ccRaw',
+const FIELDS = ['messageId', 'messageKey', 'recordId', 'commit', 'trail', 'captured', 'from', 'fromRaw', 'fromDomain', 'fromDkimAligned', 'to', 'toRaw', 'cc', 'ccRaw',
   'date', 'dateSource', 'subject', 'subjectSource', 'dkim', 'dmarc', 'spf', 'arc', 'live', 'portable', 'link', 'text', 'firstLine', 'textSource',
   'bodyProven', 'quote', 'trailing', 'attachments'];
 const CLOSED = {
@@ -52,7 +52,7 @@ test('the direct replies, earliest capture first; a grandchild and unrelated mai
   b.forEach(assertShape);
   const [s, u, f] = b;
   assert.equal(s.messageId, '<r1@beta.example>');
-  assert.equal(s.from, 'bob@beta.example'); assert.equal(s.fromRaw, 'Bob@Beta.Example');
+  assert.equal(s.from, 'bob@beta.example'); assert.equal(s.fromRaw, 'Bob@Beta.Example'); assert.equal(s.fromDomain, 'beta.example');
   assert.equal(s.to, 'me@owner.example'); assert.equal(s.cc, '');
   assert.equal(s.fromDkimAligned, 'pass'); assert.equal(s.link, 'signed');
   assert.equal(s.dkim, 'pass'); assert.equal(s.dmarc, 'pass'); assert.equal(s.spf, 'none'); assert.equal(s.arc, 'none');

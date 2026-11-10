@@ -1,7 +1,7 @@
 // Pure parts of replyFacts (SPEC B10): the closed-set mappings, firstLine, RFC 2047 words, direct parents.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { firstLineOf, resultOf, dkimOf, replyBundle } from '../../src/proof/reply-facts.js';
+import { firstLineOf, resultOf, dkimOf, replyBundle, domainOf } from '../../src/proof/reply-facts.js';
 import { decodeWords, headerText, claimedHeader } from '../../src/proof/header-text.js';
 import { directParents } from '../../src/proof/participants.js';
 
@@ -57,4 +57,27 @@ test('replyBundle on a bare unsigned record: all strings, safe defaults', () => 
   for (const v of Object.values(b)) assert.equal(typeof v, 'string');
   assert.equal(b.fromDkimAligned, 'none'); assert.equal(b.live, 'unverified'); assert.equal(b.link, 'none'); assert.equal(b.dateSource, 'none');
   assert.equal(b.dkim, 'none'); assert.equal(b.messageKey, '');
+});
+
+test('fromDomain: after the last @, lower-case, exact (no folding, no IDN), one trailing dot stripped, "" when none', () => {
+  const rec = (raw) => ({ v: 2, id: 'a'.repeat(32), captured: '2026-11-01T00:00:00.000Z', message: {}, signatures: [], attachments: [], verdicts: {}, body_status: 'not-checked', message_key: null,
+    addresses: raw === null ? [] : [{ role: 'from', raw, signed: false }] });
+  const dom = (raw) => replyBundle({ rec: rec(raw), parent: '<p@x>', commit: '', trail: 't', raw: null, text: { source: 'none' } });
+  const normal = dom('bob@company.example');
+  assert.equal(normal.fromDomain, 'company.example'); assert.equal(typeof normal.fromDomain, 'string');
+  const upper = dom('Bob@Company.EXAMPLE');
+  assert.equal(upper.fromRaw, 'Bob@Company.EXAMPLE'); assert.equal(upper.from, 'bob@company.example'); assert.equal(upper.fromDomain, 'company.example');
+  assert.equal(dom('bob@company.example.').fromDomain, 'company.example', 'ADDR_RE admits one trailing dot: stripped');
+  assert.equal(dom('bob@company.example..').fromDomain, 'company.example.', 'exactly one dot');
+  // look-alikes are the full domain, so an exact whole-value `in ["company.example"]` does not match
+  for (const raw of ['bob@company.example.evil.example', 'bob@eu.company.example', 'bob@evilcompany.example']) {
+    const d = dom(raw).fromDomain;
+    assert.ok(!['company.example'].includes(d), raw); assert.equal(d, raw.slice(4));
+  }
+  assert.equal(dom(null).fromDomain, ''); assert.equal(dom(null).from, '');
+  assert.equal(dom('bob@').fromDomain, '');
+  assert.equal(replyBundle({ rec: { ...rec(null), addresses: undefined }, parent: '<p@x>', commit: '', trail: 't', raw: null, text: { source: 'none' } }).fromDomain, '');
+  // the helper itself
+  assert.equal(domainOf('a@b@c.example'), 'c.example'); assert.equal(domainOf('nobody'), ''); assert.equal(domainOf(''), '');
+  assert.equal(domainOf('x@'), ''); assert.equal(domainOf('x@.'), ''); assert.equal(domainOf('x@xn--bcher-kva.example'), 'xn--bcher-kva.example');
 });

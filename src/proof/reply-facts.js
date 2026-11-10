@@ -58,6 +58,19 @@ function headerFact(rec, passing, raw, name) {
 }
 
 /**
+ * The domain of the bundle's `from`: what follows the LAST `@`, with exactly one trailing `.` removed. `from` is already
+ * lower-cased, so this is too; no IDN/punycode conversion, no normalisation. `ADDR_RE` (participants.js) admits a trailing
+ * `.` in the domain (`bob@company.example.`), so the strip is real. `""` when `from` is empty or has no domain. A claimed
+ * value, like `from`: only `fromDkimAligned` = `pass` makes it proven. Subdomains are not folded.
+ * @param {string} from  The bundle's `from` value.
+ * @returns {string}
+ */
+function domainOf(from) {
+  const d = from.slice(from.lastIndexOf('@') + 1);
+  return from.includes('@') ? (d.endsWith('.') ? d.slice(0, -1) : d) : '';
+}
+
+/**
  * The first line of the reply text that is non-empty after ECMAScript `trim()`; the line breaks are `\r\n`, `\n`, `\r`.
  * No case folding, no normalisation.
  * @param {string} text
@@ -101,6 +114,7 @@ function replyBundle({ rec, parent, commit, trail, raw, text }) {
     captured: str(rec.captured),
     from: from ? from.address : '',
     fromRaw: from ? from.raw : '',
+    fromDomain: domainOf(from ? from.address : ''),
     fromDkimAligned: aligned ? 'pass' : sigs.length ? 'fail' : 'none',
     to: role('to').map((p) => p.address).join(SEP),
     toRaw: role('to').map((p) => p.raw).join(SEP),
@@ -127,4 +141,4 @@ function replyBundle({ rec, parent, commit, trail, raw, text }) {
   };
 }
 
-export { SEP, replyBundle, firstLineOf, resultOf, dkimOf };
+export { SEP, replyBundle, domainOf, firstLineOf, resultOf, dkimOf };

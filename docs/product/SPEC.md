@@ -644,6 +644,7 @@ A flat object, every value a string, keys in this order. Multi-value fields (`to
 | `recordId`, `commit`, `trail` | where the reply is recorded: the record id, the commit that added its file (from the index, B5; `""` only if unknown), the trail name |
 | `captured` | when mailproof captured the record (ISO 8601, UTC) |
 | `from`, `fromRaw` | the first From address, lower-cased / as written; `""` when none |
+| `fromDomain` | the domain of `from` (after the last `@`, lower-case, one trailing `.` removed; `""` when none): a claim, see the note below |
 | `fromDkimAligned` | `pass`: a signature that verifies offline (portable re-check) AND aligns with the From domain, and covers the From header, exists. `fail`: the record has signatures but none qualifies. `none`: the record has no DKIM signature |
 | `to`, `toRaw`, `cc`, `ccRaw` | claimed To/Cc addresses, lower-cased / as written (multi-value) |
 | `date`, `subject` | the header value: when a PASSING signature covers the header, that signed value (`dateSource` / `subjectSource` `signed`); else the header of the stored raw email (`claimed`); else `""` (`none`: the content store does not hold the email, or the header is absent). Date is as written, unfolded; Subject has RFC 2047 encoded words decoded |
@@ -658,6 +659,8 @@ A flat object, every value a string, keys in this order. Multi-value fields (`to
 | `quote` | `found`, `not-found`, `inline` (B6.4); `not-found` when `textSource` is not `content` |
 | `trailing` | `yes`: unquoted text was written BELOW the quoted part and is not in `text`; `no` otherwise (and when there is no content) |
 | `attachments` | the attachment hashes `sha256:<hex>` (multi-value) |
+
+**`fromDomain`.** `fromDomain` is the part of `from` after the last `@` (so lower-case), with one trailing `.` removed (the address parser admits `bob@company.example.`); no IDN/punycode conversion and no Unicode normalisation: the domain as written, lower-cased. It is `""` when `from` is empty or has no domain. Subdomains are not folded: `eu.company.example` is not `company.example`, so a rubric lists each domain it trusts. Always set, and a CLAIM, exactly like `from`: only `fromDkimAligned` = `pass` makes it proven, so a rubric pairs `fromDomain` in `["company.example"]` with `fromDkimAligned` in `["pass"]`. It is for bareguard's whole-value `in` rule: a substring rule (`@company.example`) would also match `bob@company.example.evil.example`.
 
 ### B10.4 `text` and `firstLine`
 
