@@ -1,6 +1,6 @@
 # mailproof v2 — PRD
 
-> **Status:** v2 is released as 3.0.0 (2026-11-09; M0-M2 and M3 steps 1-3 shipped). M3 step 4 (`replyFacts`) is built on `feat/m3-reply-facts`, not released; the rest of M3 (CLI, MCP) is specified, not built. 1.x is frozen at tag `v1.4.0` (v1 code archived in `archive/v1/`; no `v1` branch).
+> **Status:** v2 is released as 3.0.0 (2026-11-09; M0-M2 and M3 steps 1-3 shipped). M3 steps 4 (`replyFacts`) and 5 (the `mailproof` CLI) are built on `feat/m3-reply-facts`, not released; the rest of M3 (MCP) is specified, not built. 1.x is frozen at tag `v1.4.0` (v1 code archived in `archive/v1/`; no `v1` branch).
 > **Owner:** hamr0 · **Last updated:** 2026-11-09
 >
 > **For future Claude:** this PRD wins on intent and scope. The *why* behind each choice is in
@@ -222,7 +222,7 @@ It stores no text, no body bytes and no subject (the trail stays header-only). I
 
 ### M3 — Two-party record (specified)
 
-**Status:** specified 2026-11-08, approvals round added 2026-11-09; **build step 1 shipped in 3.0.0: the local content store, retention and `forget`** ([SPEC B7](SPEC.md), [F22](findings.md)); **build step 2 shipped in 3.0.0: trust profiles, the counterparty view and graded thread links** ([SPEC B5, B8](SPEC.md), [F23](findings.md)); **build step 3 shipped in 3.0.0: prune before date** ([SPEC B9](SPEC.md), [F25](findings.md)); **build step 4 built, not released: `replyFacts`** ([SPEC B10](SPEC.md), [F26](findings.md), [F27](findings.md)); the rest (CLI, MCP) is not built; a few items still open (see Open below). Reasons and options: [decisions-log](decisions-log.md) entry "M3 scope: one trail per owned account, local content store, prune-before-date, CLI + stdlib MCP". Wire formats go to SPEC Part B when each step is built (B7 is the first).
+**Status:** specified 2026-11-08, approvals round added 2026-11-09; **build step 1 shipped in 3.0.0: the local content store, retention and `forget`** ([SPEC B7](SPEC.md), [F22](findings.md)); **build step 2 shipped in 3.0.0: trust profiles, the counterparty view and graded thread links** ([SPEC B5, B8](SPEC.md), [F23](findings.md)); **build step 3 shipped in 3.0.0: prune before date** ([SPEC B9](SPEC.md), [F25](findings.md)); **build step 4 built, not released: `replyFacts`** ([SPEC B10](SPEC.md), [F26](findings.md), [F27](findings.md)); **build step 5 built, not released: the `mailproof` CLI, with `Mailproof#upgradeStamps()` and `prune({ dryRun })`** ([SPEC B11](SPEC.md)); the rest (MCP) is not built; a few items still open (see Open below). Reasons and options: [decisions-log](decisions-log.md) entry "M3 scope: one trail per owned account, local content store, prune-before-date, CLI + stdlib MCP". Wire formats go to SPEC Part B when each step is built (B7 is the first).
 
 **Goal.** M3 makes mailproof a two-party record for three use cases on one substrate:
 
@@ -338,7 +338,7 @@ The final field list and the closed sets are in [SPEC B10.3](SPEC.md). In short:
 2. Trust profiles, counterparty view and graded thread links.
 3. Prune before date.
 4. `replyFacts`, after the content store and read primitives (steps 1-2); POC on real replies first (F26). **Built, not released** ([SPEC B10](SPEC.md), F27).
-5. `mailproof` CLI, config and menu.
+5. `mailproof` CLI, config and menu (built, not released; SPEC B11).
 6. MCP, after its POC.
 
 Reordered 2026-11-09: `replyFacts` moves ahead of the CLI and MCP, because it needs only steps 1-2 and unblocks bareguard's approval channel. Reasons: [decisions-log](decisions-log.md) entry "M3 build order: `replyFacts` before the CLI and MCP".

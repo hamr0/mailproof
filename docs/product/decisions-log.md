@@ -304,7 +304,7 @@ the [PRD](PRD.md) / [DESIGN](../../archive/v1/docs/DESIGN.md).
 
 ### Decision: M3 CLI: menu + subcommands, one config file, explicit account, no daemon
 **Date**: 2026-11-10
-**Status**: Accepted (owner: hamr0); specified (SPEC B11), not built
+**Status**: Accepted (owner: hamr0); built on `feat/m3-reply-facts` (SPEC B11), not released
 **Context**: M3 step 5 (decisions-log "M3 scope" item 10 fixed only "one CLI, menu, config, MCP"). The owner decided the shape of the CLI and config; the spec author listed what was left to decide in SPEC B11.12.
 **Decision**:
 1. **Menu and subcommands share one code path.** `mailproof` with no arguments is a stdlib readline menu; each item prompts for its parameters with hints, defaults and re-prompt on bad input, then runs the same command function as the subcommand (`mailproof prune --account work --before 2026-08-19`). No second implementation, no TUI framework; the menu has Quit.
@@ -319,3 +319,5 @@ the [PRD](PRD.md) / [DESIGN](../../archive/v1/docs/DESIGN.md).
 10. **`update` prints `npm install -g mailproof@latest`; `--run` executes it.** A global install may need root or come from another package manager.
 11. **No new runtime dependency.**
 **Consequences**: SPEC B11 (with an "Owner review" list); PRD §7 M3 Interfaces aligned (`config.json` with `accounts`). Step 5 would add two small library pieces, `upgradeStamps()` and `prune({ dryRun })`, if the owner confirms B11.12 items 4 and 5. Build order after this: MCP (step 6) reads the same help table.
+
+**Owner resolutions of the review list (2026-11-10)**, final (SPEC B11.12): (1) the `update` subcommand prints the command and runs it only with `--run`; the menu item asks `y/N` and then runs `npm install -g mailproof@latest`. (2) The content backup is a separate unencrypted file made by the `tar` binary. (3) `backup --push` never forces; the remote keeps the history from before a prune as an archive, and a rejected push is explained and exits non-zero. (4) A small public `Mailproof#upgradeStamps()` is added (the library gains one method so "Sync now" and `status` can upgrade OpenTimestamps stamps). (5) `prune({ dryRun: true })` is added so the dry-run summary is the library's own computation. (6) `config add-account` is an interactive wizard that writes the config (0600, atomic, other accounts kept, never a plaintext password) after an explicit confirmation, not a print-only helper. (7-13) as the defaults in B11.12. What the build decided beyond the spec is in SPEC B11.14.

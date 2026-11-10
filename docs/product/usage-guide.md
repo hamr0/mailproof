@@ -200,6 +200,44 @@ For a system unit add `User=mailproof`. `ProtectHome=read-only` keeps the `pass`
 */15 * * * * mailproof-sync --trail-dir $HOME/mailproof-trails --user you@gmail.com --pass-command "pass show mailproof/gmail_pass" >> $HOME/mailproof-sync.log 2>&1
 ```
 
+## The `mailproof` command
+
+`mailproof` (`bin/mailproof.js`, on `PATH` after `npm i -g mailproof`) is the whole library from a terminal. With no arguments on a terminal it shows a menu; every menu item is also a subcommand, and both run the same code. `mailproof help` lists the commands, `mailproof help <command>` describes one (the text is the library's own JSDoc). SPEC B11 is the contract.
+
+**1. Describe your mailbox once.** `mailproof config add-account` asks for the account name, IMAP user and host, folders, where the trail lives, and where the password comes from, with a hint and a default for each (`?` shows the hint). It shows the account JSON and writes `~/.config/mailproof/config.json` (mode 0600) only after you answer yes; other accounts in the file are kept, and an existing name is replaced only after a confirmation. It never asks for the password: you name a command that prints it (`pass show mailproof/personal`), a file whose first line is it, or a command that prints an OAuth2 token. `mailproof config template` prints an example; `mailproof config validate` checks the file without reading any secret. The file must be owned by you and mode 0600 or no command runs (exit 77); unknown keys and a plaintext `password` key are refused (exit 64).
+
+**2. Capture.** `mailproof sync --account personal` reads the mailbox read-only, records every message, runs the content sweep and, with `"ots": true`, upgrades pending OpenTimestamps stamps. With one account `--account` is optional; with several it is always required (nothing runs on "all accounts"; only `status` lists them all). `mailproof watch` repeats that every `--interval` (default 5 minutes, minimum 30 s) in the foreground: transient errors back off (doubling, up to 1 hour), a refused login stops it (exit 77), Ctrl-C or SIGTERM finishes the sync in progress and exits 0. There is no daemon; let your init system run it.
+
+systemd (`~/.config/systemd/user/mailproof-watch@.service`; then `systemctl --user enable --now mailproof-watch@personal`, and `loginctl enable-linger $USER` to keep it running when you are logged out):
+
+```ini
+[Unit]
+Description=mailproof watch %i
+
+[Service]
+ExecStart=/usr/bin/env mailproof watch --account %i
+Restart=on-failure
+RestartPreventExitStatus=77 64
+```
+
+cron instead of a loop (exit 75 on a held lock is normal; the next run continues from the cursor):
+
+```cron
+*/5 * * * * mailproof sync --account personal --json >> $HOME/.local/state/mailproof/personal/cron.log 2>&1
+```
+
+**3. Look.** `mailproof list [--with <address>] [--role from|to|cc|reply-to] [--direction in|out] [--before <date>] [--after <date>] [--limit n]` (newest first; dates are `YYYY-MM-DD` in UTC or a full ISO time), `mailproof show <id>` (`--raw` prints the stored email), `mailproof replies <messageId>`, `mailproof status` (records, last sync, content size, index, pending stamps, last backup, whether a watch runs). An id is 32 hex characters or a unique prefix of at least 8.
+
+**4. Check.** `mailproof verify <id> [--at <date>]` re-checks offline: exit 0 when it verifies, **2** when it does not. `mailproof check <id> --profile <file|name> [--parent <messageId>]` runs a trust profile (a JSON file, or a name looked up in `~/.config/mailproof/profiles/<name>.json`): exit 0 pass, 2 fail with the failed rules. Exit 2 means "the check ran and the answer is no", so a script can branch on it.
+
+**5. Delete on purpose.** `mailproof forget <id>... | --with <address> [--before d] [--after d]` deletes stored mail content only; the proofs stay. `mailproof prune --before <date>` rewrites the trail without everything older. Both print a dry-run summary first and refuse to act without `--yes` (exit 64); `--dry-run` prints the summary and stops. In the menu you type the account name instead. A prune keeps the old trail as `<trail>.pre-prune-<date>` beside it until you delete it (or pass `--delete-backup`).
+
+**6. Back up, and restore.** `mailproof backup` writes a git bundle of the whole trail (records, keys, replies, stamps; never message bodies) to `~/.local/state/mailproof/backups/<account>/<account>-<UTC time>.bundle` and prints the path; `--out <path>` chooses it (never overwrites). `--with-content` adds `<file>.content.tar` made by the `tar` binary: that is other people's mail and it is **not encrypted**, so encrypt the file or the disk. Restore the proofs with `git clone <file>.bundle <trailDir>/<trail>` and point the account at it; the next `sync` rescans the mailbox from the start and skips what it already has. Restore the content with `tar -C <trailDir>/<trail>.content -xf <file>.content.tar`. `--push` also pushes the trail to the account's `backupRemote` (needs `--yes`, prints a warning that proof records hold sender and recipient addresses, subjects and dates). It **never forces**: after a `prune` the history is rewritten, the remote refuses the push and keeps the pre-prune history as an archive; push to a new remote or force it yourself outside mailproof if you mean to replace it.
+
+**7. Update.** `mailproof update` prints `npm install -g mailproof@latest`; `mailproof update --run` runs it. In the menu, Update asks `Run it now? [y/N]`.
+
+**Scripting.** `--json` prints exactly one JSON document on stdout (`watch` prints one line per tick); errors go to stderr and stdout stays empty, so check the exit code first. Exit codes: 0 done (a partial sync is still 0), 2 a check ran and the answer is no, 64 bad usage, 75 try again later (lock held, server unreachable, throttled, secret command failed), 77 permission (config mode) or a refused login, 1 anything else. `mailproof-sync` stays available for a single run from flags and the environment; it shares the secret handling and exit codes.
+
 ## Worker thread and deadline
 
 `check()` and `record()` parse and verify in a warm worker thread; the commit, the lock and git stay on your thread. The thread is killed, and the message recorded `unverified` as `over limit: time` or `over limit: memory`, when one message uses more than 15 s of the thread's CPU, 120 s of busy wall time (DNS waits excluded) or 1,536 MB of memory. It backs up the input limits, which stay the first line. Waiting in the queue behind other messages does not count. If the thread dies for any other reason, the message is recorded `over limit: crash` and the next one gets a fresh worker. A worker that cannot start at all (before it is ready) rejects the call instead, and nothing is recorded.
