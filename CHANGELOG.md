@@ -23,8 +23,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `Mailproof#replyFacts({ messageId })` (M3 step 4, SPEC B10, findings F26-F27): one flat bundle of strings (closed sets for every flag) per recorded inbound DIRECT reply to a Message-ID (In-Reply-To names it, or it is the last References entry; deeper thread members are not included), earliest capture first; `[]` when there is none. Read-only: the text comes from the stored raw email through the pure stripper (nothing is committed); with no stored email `text`/`firstLine` are `""` and `textSource` says so. Fields include `fromDkimAligned`, `link`, `bodyProven`, `quote`, `trailing`, `firstLine`, `dkim`/`dmarc`/`spf`/`arc`, `live`/`portable` (trust levels), `commit`, `messageKey` (groups copies), and `date`/`subject` with `dateSource`/`subjectSource` (signed or claimed, RFC 2047-decoded). More than 200 direct replies rejects with `ERR_TOO_MANY_REPLIES`.
+
+### Changed
+- The trail index schema is 4: `rec.commit_id` (the commit that added each record, from one `git log` at rebuild or catch-up) and `links.direct`. An older index file is rebuilt on first use; nothing to migrate.
+
 ### Documentation
 - Post-3.0.0 status sweep: CLAUDE.md, README.md, docs/README.md, the PRD, the usage guide and mailproof.context.md now give 3.0.0 as current, mark M3 steps 1-3 shipped and step 4 onward not built, and say the git proof never holds the body while the raw email lives in the local content store outside git.
+- M3 step 4 documented: SPEC B10, PRD recipe (consumer rule: allow only when at least one distinct reply is green and none is red), decisions-log, F27.
 - M3 build order: `replyFacts` moves ahead of the CLI and MCP (now steps 4, 5, 6).
 
 ## [3.0.0] - 2026-11-09

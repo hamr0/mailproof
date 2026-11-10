@@ -6,7 +6,7 @@ mailproof records a re-checkable proof of each email in a **two-party (A to B) e
 
 ## What mailproof is and is not
 
-- It is a recorder and an offline verifier: `record`, `verify`, `matchBody`, `matchFile`, `check`, `list`, `counterparties`, `linked`, `checkProfile`, `proofParts`, `get`, `replyText`, `rawEmail`, `attachment`, `expireContent`, `forget`, and a read-only IMAP fetcher in front of `record`: `sync`.
+- It is a recorder and an offline verifier: `record`, `verify`, `matchBody`, `matchFile`, `check`, `list`, `counterparties`, `linked`, `checkProfile`, `proofParts`, `get`, `replyText`, `replyFacts`, `rawEmail`, `attachment`, `expireContent`, `forget`, and a read-only IMAP fetcher in front of `record`: `sync`.
 - It is not a mail client, a sender, a web UI or a multi-party workflow engine (those are gitdone/signedreply.com), not proof of delivery, and not a claim of legal admissibility.
 - It produces a verdict; acting on it is the consumer's job.
 
@@ -17,7 +17,8 @@ mailproof records a re-checkable proof of each email in a **two-party (A to B) e
 - Capture a mailbox over IMAP -> `sync(...)`, or the `mailproof-sync` CLI under cron or a systemd timer.
 - Re-check later or elsewhere, offline -> `verify(id)`, or `verifyRecord(record)` with no trail.
 - Read what a sender newly wrote in a recorded reply -> `replyText(raw)`, then apply the decision rule in "Reading a reply" below.
-- Build an agent tool menu -> `primitives.json` (14 primitives) plus this file.
+- Learn what the people you wrote to answered (an approval, an acknowledgement) -> `replyFacts({ messageId })` (the Message-ID of your request), then apply the rule in "Approvals" below.
+- Build an agent tool menu -> `primitives.json` (25 primitives) plus this file.
 
 ## Minimal usage
 
@@ -84,6 +85,14 @@ Portable `verified` covers the signed headers; read `body_status` for the body. 
 - The stripper is versioned and deterministic (`mailproof-quote/1`): anyone with the raw email re-runs it and gets the same text and `text_sha256` (over its UTF-8 bytes). One small `reply-text` record (hash, byte count, flags, `body_status`, time; never the text, body or subject) is committed to `replies/<id>.mailproof-quote-1.json`; the same message again is `duplicate: true` and writes nothing. Show the text you acted on; its hash matches `text_sha256` in a commit dated before the action.
 - Privacy: `text_sha256` of a short reply ("yes", "approve") is guessable by hashing candidates; the trail is as private as the people who can read it, and they can confirm a guessed short answer.
 - Errors: `ERR_NOT_RECORDED` (record the message first), `ERR_OVER_LIMIT` with `err.limit` (nothing written), `ERR_TRAIL_LOCKED`. It runs in the worker pool like `record`. Known limits of `/1`: tested on English-style attributions and Outlook/Foxmail header blocks; the name after the verb (`... schreef Amr <a@x>:`) and, above a `>` run, any language's attribution line (ends in `:` with a year, hh:mm or `@`) are cut; a quote WITHOUT `>` marks in a language whose verb is not listed falls through to `not-found`. Wire format: `docs/product/SPEC.md` B6.
+
+## Approvals and reply facts (`replyFacts`)
+
+`replyFacts({ messageId })` -> an array of flat bundles (every value a string; SPEC B10.3 has the full table and closed sets), one per recorded inbound DIRECT reply to that Message-ID (its In-Reply-To names it, or it is the last entry of its References; later thread members are not included), earliest `captured` first; `[]` means no reply yet. Read-only (no trail write); text comes from the content store, so with no stored email `text`/`firstLine` are `""` and `textSource` is `none` (`content` | `none` | `over-limit`). mailproof sends nothing and decides nothing: you send the question from your own account (ideally with your own Message-ID), then poll `replyFacts` for it.
+- Fields: `messageId`, `messageKey`, `recordId`, `commit`, `trail`, `captured`, `from`/`fromRaw` (lower-case / as written), `fromDkimAligned` (`pass` = an aligned, offline-verifying DKIM signature covers From; `fail`; `none` = unsigned), `to`/`toRaw`/`cc`/`ccRaw` and `attachments` (joined with `,`, no space), `date`/`dateSource`, `subject`/`subjectSource` (`signed` = a verifying signature covers it, `claimed` = the raw email's header, `none`), `dkim` (`pass`/`fail`/`none`), `dmarc`/`spf`/`arc` (`pass`/`fail`/`none`/`other`), `live`/`portable` (TRUST LEVELS: `verified`, `forwarded`, `authorized`, `unverified`), `link` (`signed`/`unsigned`/`none`: is YOUR Message-ID in a signed In-Reply-To/References; Microsoft does not sign these), `text`, `firstLine` (first non-empty line after ECMAScript `trim`, no case folding), `textSource`, `bodyProven` (`proven`/`unproven`), `quote` (`found`/`not-found`/`inline`), `trailing` (`yes`/`no`: text written below the quote, not in `text`).
+- Copies of one signed message (relayed, list-forwarded) are separate bundles with the same `messageKey`. Several different replies are several bundles; mailproof never picks.
+- **Consumer rule (agreed with bareguard's session, 2026-11-10; yours to implement, not mailproof's):** group bundles by `messageKey` (an empty key is its own group), run your rubric on each distinct reply (for bareguard, `checkStep`; green = for example `firstLine` in your approval words, `from` in your allowed addresses, `fromDkimAligned` `pass`, `bodyProven` `proven`, `link` `signed`), and ALLOW only when at least one distinct reply is green AND none is red. Zero replies, all red, or mixed is DENY. A second contradictory reply can deny an approval, never grant one. Audit reference: `mailproof:<recordId>@<commit>`.
+- Errors: `TypeError` for a bad `messageId`; `ERR_TOO_MANY_REPLIES` past 200 direct replies; `ERR_INDEX_UNAVAILABLE` / `ERR_TRAIL_LOCKED` / `ERR_INDEX_REBUILD` / `ERR_TRAIL_LAYOUT` as `list()`.
 
 ## Reading a reply: what each outcome means
 
