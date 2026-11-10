@@ -1,4 +1,4 @@
-// `status` (SPEC B11.5): what a trail holds and how it is kept. Read-only, never opens IMAP. The one command that may
+// `status` (SPEC B11.5): what a trail holds and how it is kept. Read-only: never opens IMAP, never takes the trail lock, never builds or catches up the index. The one command that may
 // run on every account at once (B11.3).
 
 import fs from 'node:fs/promises';
@@ -10,7 +10,7 @@ import { print, printJson, loadCtxConfig } from './session.js';
 import { readState, stateDir } from './state.js';
 import { pidAlive, headOf, trailIndexFile } from '../proof/trail.js';
 import { countPendingStamps } from '../proof/ots-upgrade.js';
-import { indexState } from '../proof/index-db.js';
+import { indexOverview } from '../proof/index-db.js';
 
 /** @param {string} dir @returns {Promise<{ files: number, bytes: number }>} */
 async function sizeOf(dir) {
@@ -36,20 +36,20 @@ async function statusOf(account, ctx) {
     const head = await headOf(mp.root).catch(() => null);
     /** @type {Record<string, unknown>} */
     const out = { user: account.user, trail: path.join(account.trailDir, account.trail) };
-    if (head === null) out.records = null;
-    else {
-      try {
-        const rows = await mp.list();
-        const times = rows.map((r) => r.captured).sort();
-        out.records = { total: rows.length, in: rows.filter((r) => r.direction === 'in').length, out: rows.filter((r) => r.direction === 'out').length, oldest: times[0] ?? null, newest: times[times.length - 1] ?? null };
-      } catch (e) { out.records = { error: /** @type {any} */ (e)?.code ?? 'error' }; }
+    /** @type {import('../proof/index-db.js').IndexOverview | null} */
+    let ov = null;
+    if (head !== null) {
+      try { ov = await indexOverview({ root: mp.root, trail: mp.trail, lockTimeoutMs: mp.lockTimeoutMs }, path.join(account.trailDir, trailIndexFile(account.trail))); } catch (e) { out.records = { error: /** @type {any} */ (e)?.code ?? 'error' }; }
     }
+    // in/out/oldest/newest are null while the index is not current: counting then needs a read that rebuilds it (`list`).
+    if (head === null) out.records = null;
+    else if (ov) out.records = { total: ov.total, in: ov.in, out: ov.out, oldest: ov.oldest, newest: ov.newest };
     out.lastSync = st.lastSync;
     if (account.content.store === false) out.content = 'off';
     else {
       try { out.content = await sizeOf(mp.contentDir); } catch { out.content = { files: 0, bytes: 0 }; }
     }
-    out.index = head === null ? 'absent' : await indexState({ root: mp.root, trail: mp.trail, lockTimeoutMs: mp.lockTimeoutMs }, path.join(account.trailDir, trailIndexFile(account.trail))).catch(() => 'unknown');
+    out.index = ov ? ov.state : head === null ? 'absent' : 'unknown';
     out.pendingStamps = account.otsBin && head !== null ? await countPendingStamps(mp.root, mp.trail) : null;
     out.lastBackup = st.lastBackup;
     out.watch = st.lastWatch && st.lastWatch.state === 'running' && pidAlive(st.lastWatch.pid) ? { running: true, pid: st.lastWatch.pid } : { running: false };
@@ -60,7 +60,7 @@ async function statusOf(account, ctx) {
 /** @param {Record<string, any>} s @returns {string} */
 function statusText(s) {
   const r = s.records;
-  const rec = r === null ? 'no trail yet' : r.error ? `unavailable (${r.error})` : `${r.total} (${r.in} in, ${r.out} out), oldest ${r.oldest?.slice(0, 10) ?? '-'}, newest ${r.newest?.slice(0, 10) ?? '-'}`;
+  const rec = r === null ? 'no trail yet' : r.error ? `unavailable (${r.error})` : `${r.total}${r.in === null ? ' (in/out and dates unknown until the index is current: run `mailproof list`)' : ` (${r.in} in, ${r.out} out), oldest ${r.oldest?.slice(0, 10) ?? '-'}, newest ${r.newest?.slice(0, 10) ?? '-'}`}`;
   const c = s.content === 'off' ? 'off' : `${s.content.files} files, ${(s.content.bytes / 1048576).toFixed(1)} MiB`;
   return [
     `  trail         ${s.trail}`,

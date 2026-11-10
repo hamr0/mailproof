@@ -379,26 +379,42 @@ function isoOf(v, what) {
   return new Date(ms).toISOString();
 }
 
+/** @typedef {{ state: 'absent' | 'present' | 'stale' | 'unknown', total: number, in: number | null, out: number | null, oldest: string | null, newest: string | null }} IndexOverview */
+
 /**
- * Whether the index file exists and reflects the trail's HEAD. Read-only: opens the file read-only, never creates,
- * migrates or rebuilds it, takes no lock (the CLI `status` uses it).
+ * The index state and the record counts, read-only (the CLI `status`): never creates, migrates, rebuilds or catches up
+ * the index and takes no lock. `present` (the file reflects HEAD, at the current schema) answers the counts and the
+ * oldest/newest capture time with one aggregate query. `absent`, `stale` or `unknown` (the addon cannot load) count
+ * the records of the HEAD commit through `git ls-tree` instead (a read of a commit, no lock), and `in`, `out`, `oldest`
+ * and `newest` are null: the next `list` rebuilds or catches up the index.
  * @param {IndexCfg} cfg
  * @param {string} file  The index file (`trailIndexFile`).
- * @returns {Promise<'absent' | 'present' | 'stale'>}  `present`: it reflects HEAD; `stale`: the next `list` will bring it up to date.
+ * @returns {Promise<IndexOverview>}
  */
-export async function indexState(cfg, file) {
-  try { await fs.access(file); } catch { return 'absent'; }
-  const Database = await loadDriver();
-  /** @type {Db | null} */
-  let d = null;
-  try {
-    const opened = /** @type {Db} */ (new Database(file, { readonly: true, fileMustExist: true }));
-    d = opened;
-    const row = /** @type {{ v?: string } | undefined} */ (opened.prepare('SELECT v FROM meta WHERE k = ?').get('head'));
-    const schema = /** @type {{ v?: string } | undefined} */ (opened.prepare('SELECT v FROM meta WHERE k = ?').get('schema'));
-    return row?.v && row.v === (await headOf(cfg.root)) && schema?.v === String(SCHEMA) ? 'present' : 'stale';
-  } catch { return 'stale'; }
-  finally { try { d?.close(); } catch { /* already closed */ } }
+export async function indexOverview(cfg, file) {
+  const head = await headOf(cfg.root);
+  /** @type {IndexOverview['state']} */
+  let state = 'absent';
+  try { await fs.access(file); state = 'stale'; } catch { /* absent */ }
+  if (state === 'stale' && head !== null) {
+    /** @type {Db | null} */
+    let d = null;
+    try {
+      const Database = await loadDriver();
+      const opened = /** @type {Db} */ (new Database(file, { readonly: true, fileMustExist: true }));
+      d = opened;
+      const meta = (/** @type {string} */ k) => /** @type {{ v?: string } | undefined} */ (opened.prepare('SELECT v FROM meta WHERE k = ?').get(k))?.v;
+      if (meta('head') === head && meta('schema') === String(SCHEMA)) {
+        const r = /** @type {{ n: number, i: number | null, o: number | null, lo: string | null, hi: string | null }} */ (opened.prepare(
+          "SELECT COUNT(*) AS n, SUM(direction = 'in') AS i, SUM(direction = 'out') AS o, MIN(captured) AS lo, MAX(captured) AS hi FROM rec").get());
+        return { state: 'present', total: r.n, in: r.i ?? 0, out: r.o ?? 0, oldest: r.lo, newest: r.hi };
+      }
+    } catch (e) { if (/** @type {any} */ (e)?.code === 'ERR_INDEX_UNAVAILABLE') state = 'unknown'; }
+    finally { try { d?.close(); } catch { /* already closed */ } }
+  }
+  let total = 0;
+  if (head !== null) await gitLines(cfg.root, ['ls-tree', '-r', '--name-only', '-z', head, '--', 'records'], (p) => { const r = parseRecordPath(p); if (r && !r.ots) total++; }, { sep: '\0' });
+  return { state, total, in: null, out: null, oldest: null, newest: null };
 }
 
 /**
