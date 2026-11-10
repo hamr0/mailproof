@@ -15,6 +15,8 @@ import { TRAIL_NAME_RE, RECORD_ID_RE, DEFAULT_LOCK_TIMEOUT_MS, commitRecord, com
 import { parseContentOptions, contentDirOf, storeContent, readRaw, readAttachment, expireStore, forgetIds, idsWith, exists, toMs, DAY_MS } from './content.js';
 import { recordPath, recordOtsPath, assertTrailLayout } from './layout.js';
 import { STRIPPER, replyTextPath, extractReplyText, replyTextRecord } from './reply-text.js';
+import { replyBundle } from './reply-facts.js';
+import { REPLY_FACTS_MAX } from './limits.js';
 import { hashDocument } from './hash.js';
 import { runPrune } from './prune.js';
 
@@ -104,6 +106,7 @@ class Mailproof {
     this.proofParts = this.proofParts.bind(this);
     this.sync = this.sync.bind(this);
     this.replyText = this.replyText.bind(this);
+    this.replyFacts = this.replyFacts.bind(this);
     this.rawEmail = this.rawEmail.bind(this);
     this.attachment = this.attachment.bind(this);
     this.expireContent = this.expireContent.bind(this);
@@ -314,14 +317,7 @@ class Mailproof {
     const id = hashDocument(buf).replace(/^sha256:/, '').slice(0, 32);   // the id record() gives these bytes
     const rec = await this.get(id);
     if (!rec) throw Object.assign(new Error(`replyText: message ${id} is not recorded in trail "${this.trail}"`), { code: 'ERR_NOT_RECORDED' });
-    /** @type {import('./reply-text.js').Extracted} */
-    let ex;
-    if (this.worker.size === 0) ex = extractReplyText(buf);
-    else {
-      this._lease ??= leasePool(this.worker);
-      const r = await this._lease.runReplyText(buf);
-      ex = 'out' in r ? r.out : { ok: false, limit: r.limit };
-    }
+    const ex = await this._extract(buf);
     if (!ex.ok) throw Object.assign(new Error(`replyText: over limit: ${ex.limit}`), { code: 'ERR_OVER_LIMIT', limit: ex.limit });
     const s = ex.stripped;
     const body_status = rec.body_status ?? 'not-checked';
@@ -336,6 +332,57 @@ class Mailproof {
       source: s.source, boundary: s.boundary, stripper: STRIPPER, body_status,
       proven: s.source === 'text/plain' && body_status === 'matched', commit: res.commit, duplicate: res.duplicate,
     };
+  }
+
+  /**
+   * Strip the quoted history from raw bytes: in the worker under the deadline backstop, or in-process with `worker.size` 0.
+   * @param {Buffer} buf
+   * @returns {Promise<import('./reply-text.js').Extracted>}
+   */
+  async _extract(buf) {
+    if (this.worker.size === 0) return extractReplyText(buf);
+    this._lease ??= leasePool(this.worker);
+    const r = await this._lease.runReplyText(buf);
+    return 'out' in r ? r.out : { ok: false, limit: r.limit };
+  }
+
+  /**
+   * The facts about every direct reply to one email, as flat string-only bundles: who sent it and whether DKIM proves
+   * it, the verdicts, how the reply links to the request, and the new text with its first line. Read-only.
+   * @param {{ messageId: string }} opts  `messageId`: the Message-ID of the request, as in its header (`<id@host>`; the angle brackets are added when missing).
+   * @returns {Promise<Array<Record<string, string>>>}
+   * @name Mailproof#replyFacts
+   * @when Use to learn what the people you wrote to answered, without interpreting it: pass the Message-ID of the email you sent (the request) and get one bundle per recorded inbound DIRECT reply (its In-Reply-To names the request, or the request is the last entry of its References; later messages deeper in the thread are not included), earliest capture first. `[]` means no reply yet. Every value is a string from a closed set or free text, so a rule engine can compare them exactly: `from` (lower-case), `fromDkimAligned` (pass: an aligned DKIM signature that verifies offline covers From), `link` (signed/unsigned/none: is the request in a signed In-Reply-To/References), `bodyProven`, `quote`, `trailing`, `firstLine`, `text`, `dkim`/`dmarc`/`spf`/`arc`, `live`/`portable` (trust levels), `commit`, `recordId`, `messageKey` and more (SPEC B10). Copies of one signed message are separate bundles with the same `messageKey`; mailproof never picks or filters, the consumer groups and decides (an approval rule: allow only when at least one distinct reply is green and none is red). Nothing is written to the trail; the text comes from the local content store, so an expired, forgotten or disabled store gives `text` and `firstLine` of "" with `textSource` "none".
+   * @category read
+   * @signature mp.replyFacts(opts: { messageId: string }) => Promise<Array<{ messageId, messageKey, recordId, commit, trail, captured, from, fromRaw, fromDkimAligned, to, toRaw, cc, ccRaw, date, dateSource, subject, subjectSource, dkim, dmarc, spf, arc, live, portable, link, text, firstLine, textSource, bodyProven, quote, trailing, attachments }>>
+   * @fails Rejects with a TypeError when `messageId` is not a non-empty string, `ERR_TOO_MANY_REPLIES` when more than 200 direct replies exist (a flood; nothing is cut silently), and with `ERR_INDEX_UNAVAILABLE`, `ERR_TRAIL_LOCKED` or `ERR_INDEX_REBUILD` exactly like `list()` (the lookup uses the trail index). An unrecorded request, an empty trail or no reply gives `[]`. A reply with no Message-ID has `messageId` "".
+   * @example
+   * const replies = await mp.replyFacts({ messageId: '<q-123@mail.example>' });
+   * for (const r of replies) console.log(r.from, r.fromDkimAligned, r.link, r.firstLine);
+   */
+  async replyFacts(opts) {
+    const raw = opts && typeof opts === 'object' ? opts.messageId : undefined;
+    if (typeof raw !== 'string' || !raw.trim()) throw new TypeError('replyFacts: messageId must be a non-empty string');
+    const t = raw.trim();
+    const messageId = t.startsWith('<') ? t : `<${t}>`;
+    const { repliesIndex } = await import('./index-db.js');
+    const rows = await repliesIndex(this._indexCfg(), messageId);
+    if (rows.length > REPLY_FACTS_MAX) throw Object.assign(new Error(`replyFacts: more than ${REPLY_FACTS_MAX} direct replies to ${messageId}`), { code: 'ERR_TOO_MANY_REPLIES' });
+    /** @type {Array<Record<string, string>>} */
+    const out = [];
+    for (const row of rows) {
+      const rec = await readRecord(this.root, row.id);
+      if (!rec) continue;
+      const got = await readRaw(this.contentDir, row.id);
+      /** @type {import('./reply-facts.js').TextFacts} */
+      let text = { source: 'none' };
+      if (got.buf) {
+        const ex = await this._extract(got.buf);
+        text = ex.ok ? { source: 'content', text: ex.stripped.text, quote: ex.stripped.quote, trailing: ex.stripped.trailing, textPlain: ex.stripped.source === 'text/plain' } : { source: 'over-limit' };
+      }
+      out.push(replyBundle({ rec, parent: messageId, commit: row.commit, trail: this.trail, raw: text.source === 'content' ? got.buf : null, text }));
+    }
+    return out;
   }
 
   /**

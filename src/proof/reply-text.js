@@ -426,4 +426,4 @@ function replyTextRecord({ id, stripped: s, body_status, extracted_at }) {
   };
 }
 
-export { STRIPPER, replyTextPath, stripReplyText, extractReplyText, replyTextRecord };
+export { STRIPPER, replyTextPath, stripReplyText, extractReplyText, replyTextRecord, decodeWindows1252 };

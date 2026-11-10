@@ -147,3 +147,6 @@ export const PRUNE_SYNC_WAIT_MS = SYNC_MAX_MS + 60_000;
 
 /** A prune journal whose owner pid is alive is left to that process only this long (a reused pid must not block recovery for ever). */
 export const PRUNE_JOURNAL_LIVE_MS = 60 * 60 * 1000;
+
+/** The most direct replies `replyFacts` returns for one Message-ID; more rejects with `ERR_TOO_MANY_REPLIES` (never a silent cut). */
+export const REPLY_FACTS_MAX = 200;
