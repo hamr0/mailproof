@@ -19,6 +19,7 @@ import { replyBundle } from './reply-facts.js';
 import { REPLY_FACTS_MAX } from './limits.js';
 import { hashDocument } from './hash.js';
 import { runPrune } from './prune.js';
+import { runUpgradeStamps } from './ots-upgrade.js';
 
 const OTS_MIN_TIMEOUT_MS = 5000; // floor for the `ots` timeout, however short lockTimeoutMs is
 
@@ -110,6 +111,7 @@ class Mailproof {
     this.expireContent = this.expireContent.bind(this);
     this.forget = this.forget.bind(this);
     this.prune = this.prune.bind(this);
+    this.upgradeStamps = this.upgradeStamps.bind(this);
     this.close = this.close.bind(this);
   }
 
@@ -507,19 +509,35 @@ class Mailproof {
 
   /**
    * Delete everything captured before a date: a pruned copy of the trail replaces it, and the old one is kept as a backup.
-   * @param {{ before: Date | number | string, deleteBackup?: boolean, now?: Date | number }} opts  `before` (required): records captured strictly before it are removed. `deleteBackup`: remove the backup after a successful swap (default false). `now` overrides the clock (tests).
+   * @param {{ before: Date | number | string, deleteBackup?: boolean, dryRun?: boolean, now?: Date | number }} opts  `before` (required): records captured strictly before it are removed. `deleteBackup`: remove the backup after a successful swap (default false). `dryRun`: compute and return what a prune would do, change nothing (default false). `now` overrides the clock (tests).
    * @returns {Promise<PruneResult>}
    * @name Mailproof#prune
    * @when Use to drop old mail from a trail on purpose, for example to honour a retention promise longer than `content.days`, or to shrink a trail that has grown large: every record, reply-text record, OpenTimestamps stamp and stored content captured before `before` goes, and the trail starts with a prune notice that says what was removed. Everything kept is byte-identical and still verifies offline; only the commit ids change. It is an explicit, rare, never-scheduled operation: it rewrites history. The old trail stays as `<trail>.pre-prune-<date>` beside it (still holding everything pruned) until you delete it, or pass `deleteBackup: true`. Writers keep working while the pruned trail is built; they wait only for the short swap.
    * @category content
-   * @signature mp.prune(opts: { before: Date|number|string, deleteBackup?: boolean, now?: Date|number }) => Promise<{ cutoff, noop, previousHead, head, removed, kept, stragglers: string[], dropped, keysCarried, reverify: { ok, failed: string[] }, backup: string|null, content: { removed, attachments, error? }, timing }>
-   * @fails Throws a TypeError for a missing or bad `before`, `deleteBackup` or `now`, or an unknown option, before anything is read. `ERR_PRUNE_RUNNING` when another prune of this trail is running (at once). `ERR_SYNC_LOCKED` when a `sync` kept running for more than 31 minutes while the swap waited for it, `ERR_TRAIL_LOCKED` when a writer held the trail longer than `lockTimeoutMs` at the swap: in both nothing was changed. `ERR_PRUNE_CUTOFF` when every record is older than `before` (a trail with nothing left is refused). `ERR_PRUNE_REWRITTEN` when the history was rewritten while the pruned trail was built (run it again). `ERR_PRUNE_VERIFY` when the pruned trail did not match the old one (a bug; nothing was changed). `ERR_PRUNE_JOURNAL` when a crashed earlier prune left a state it cannot recognise (nothing is touched; see SPEC B9.4). `ERR_TRAIL_LAYOUT` for a flat pre-M3 trail. A `before` that removes nothing returns `noop: true` and changes nothing (no rewrite, no backup). Records captured before `before` that sit after a later one are kept and listed in `stragglers` (only a prefix of history is ever removed, never a range in the middle); reply-text commits for removed records are `dropped`. The result's `reverify` re-checks every kept record offline; a record that does not verify is listed, never a reason to stop. The time is about quadratic in the trail size on git's side (minutes at 20,000 records); disk needs room for a second copy of the kept trail. After the swap the sync cursor follows the new HEAD (so the next `sync` does not re-record the removed mail), the content of the removed records is deleted, and the trail index rebuilds on the next `list`. A crash at any point leaves either exactly the old trail or exactly the pruned one: the next call that takes the trail lock finishes or undoes the swap. Removing the backup is the only thing that makes the removal final.
+   * @signature mp.prune(opts: { before: Date|number|string, deleteBackup?: boolean, dryRun?: boolean, now?: Date|number }) => Promise<{ cutoff, noop, dryRun, previousHead, head, removed, kept, stragglers: string[], dropped, keysCarried, reverify: { ok, failed: string[] }, backup: string|null, content: { removed, attachments, error? }, timing }>
+   * @fails Throws a TypeError for a missing or bad `before`, `deleteBackup`, `dryRun` or `now`, or an unknown option, before anything is read. `ERR_PRUNE_RUNNING` when another prune of this trail is running (at once). `ERR_SYNC_LOCKED` when a `sync` kept running for more than 31 minutes while the swap waited for it, `ERR_TRAIL_LOCKED` when a writer held the trail longer than `lockTimeoutMs` at the swap: in both nothing was changed. `ERR_PRUNE_CUTOFF` when every record is older than `before` (a trail with nothing left is refused). `ERR_PRUNE_REWRITTEN` when the history was rewritten while the pruned trail was built (run it again). `ERR_PRUNE_VERIFY` when the pruned trail did not match the old one (a bug; nothing was changed). `ERR_PRUNE_JOURNAL` when a crashed earlier prune left a state it cannot recognise (nothing is touched; see SPEC B9.4). `ERR_TRAIL_LAYOUT` for a flat pre-M3 trail. A `before` that removes nothing returns `noop: true` and changes nothing (no rewrite, no backup). Records captured before `before` that sit after a later one are kept and listed in `stragglers` (only a prefix of history is ever removed, never a range in the middle); reply-text commits for removed records are `dropped`. The result's `reverify` re-checks every kept record offline; a record that does not verify is listed, never a reason to stop. The time is about quadratic in the trail size on git's side (minutes at 20,000 records); disk needs room for a second copy of the kept trail. After the swap the sync cursor follows the new HEAD (so the next `sync` does not re-record the removed mail), the content of the removed records is deleted, and the trail index rebuilds on the next `list`. A crash at any point leaves either exactly the old trail or exactly the pruned one: the next call that takes the trail lock finishes or undoes the swap. Removing the backup is the only thing that makes the removal final. With `dryRun: true` it runs the same plan and the same re-check of the kept records and returns the same summary (`dryRun: true`, `head: null`, `content` zero, `backup` the path it would use) without building, swapping or writing anything: HEAD, the working tree, the content store and the sync cursor stay as they were; it still takes the prune lock (so it fails at once with `ERR_PRUNE_RUNNING` while another prune runs) and finishes an unfinished earlier swap like any trail-lock holder.
    * @example
+   * const plan = await mp.prune({ before: '2025-01-01', dryRun: true });   // plan.removed, plan.kept: nothing changed
    * const r = await mp.prune({ before: '2025-01-01' });   // r.removed, r.kept, r.backup
    * await fs.rm(r.backup, { recursive: true });           // when you are sure
    */
   async prune(opts) {
     return runPrune({ root: this.root, trail: this.trail, lockTimeoutMs: this.lockTimeoutMs, now: this.now, hooks: this._pruneHooks }, opts);
+  }
+
+  /**
+   * Fold the Bitcoin attestation into the OpenTimestamps stamps that are still calendar-pending.
+   * @returns {Promise<import('./ots-upgrade.js').StampUpgrade>}
+   * @name Mailproof#upgradeStamps
+   * @when Use on a trail created with `otsBin`, some hours after the records were captured: a fresh stamp only says "submitted to the calendars", and `ots upgrade` merges the Bitcoin attestation once it exists, so the proof then holds offline. Each stamp that gained it is committed as its own small commit; `sync` consumers call this at the end of a run, a `record()`-only consumer calls it from its own schedule. It asks only about stamps not yet known to be anchored (remembered in a sidecar file beside the trail, a cache), so the cost follows the pending ones.
+   * @category verify
+   * @signature mp.upgradeStamps() => Promise<{ enabled: boolean, upgraded: number, pending: number, error?: string }>
+   * @fails With no `otsBin` it does nothing and returns `{ enabled: false, upgraded: 0, pending: 0 }`. A missing or hanging `ots` binary does not throw: the pass stops and the result carries `error` (`ots not found`, `ots timeout`, ...), with `pending` counting every stamp still not anchored. `ots upgrade` exiting non-zero for a stamp the calendars have not finished is normal (it stays pending). Rejects with `ERR_TRAIL_LOCKED` when a writer held the trail longer than `lockTimeoutMs` (retry later), `ERR_TRAIL_LAYOUT` for a flat pre-M3 trail, or a git error if a changed proof cannot be committed (the file is restored). One trail-lock window per stamp, at most `clamp(floor(lockTimeoutMs / 3), 5000, 30000)` ms each (the `ots` timeout). Idempotent.
+   * @example
+   * const { upgraded, pending } = await mp.upgradeStamps();
+   */
+  async upgradeStamps() {
+    return runUpgradeStamps({ root: this.root, trail: this.trail, ots: this.ots, lockTimeoutMs: this.lockTimeoutMs });
   }
 
   /**

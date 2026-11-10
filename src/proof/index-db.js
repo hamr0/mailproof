@@ -380,6 +380,28 @@ function isoOf(v, what) {
 }
 
 /**
+ * Whether the index file exists and reflects the trail's HEAD. Read-only: opens the file read-only, never creates,
+ * migrates or rebuilds it, takes no lock (the CLI `status` uses it).
+ * @param {IndexCfg} cfg
+ * @param {string} file  The index file (`trailIndexFile`).
+ * @returns {Promise<'absent' | 'present' | 'stale'>}  `present`: it reflects HEAD; `stale`: the next `list` will bring it up to date.
+ */
+export async function indexState(cfg, file) {
+  try { await fs.access(file); } catch { return 'absent'; }
+  const Database = await loadDriver();
+  /** @type {Db | null} */
+  let d = null;
+  try {
+    const opened = /** @type {Db} */ (new Database(file, { readonly: true, fileMustExist: true }));
+    d = opened;
+    const row = /** @type {{ v?: string } | undefined} */ (opened.prepare('SELECT v FROM meta WHERE k = ?').get('head'));
+    const schema = /** @type {{ v?: string } | undefined} */ (opened.prepare('SELECT v FROM meta WHERE k = ?').get('schema'));
+    return row?.v && row.v === (await headOf(cfg.root)) && schema?.v === String(SCHEMA) ? 'present' : 'stale';
+  } catch { return 'stale'; }
+  finally { try { d?.close(); } catch { /* already closed */ } }
+}
+
+/**
  * `Mailproof#list` from the index (opened and closed inside this call).
  * @param {IndexCfg} cfg
  * @param {{ limit?: number, direction?: 'in' | 'out', with?: string, role?: 'from' | 'to' | 'cc' | 'reply-to', before?: Date | number | string, after?: Date | number | string }} [opts]
