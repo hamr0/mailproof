@@ -6,6 +6,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { UsageError, EX_OK, EX_USAGE } from './errors.js';
 import { createPrompter, askValue, confirm, Cancel, isTerminal } from './prompt.js';
+import { printable } from './printable.js';
 import { ACCOUNT_NAME_RE, readTrustedFile, validateConfig, writeConfigAtomic, expandHome } from './config.js';
 import { parseFolders, parseSent } from './parse.js';
 import { print, warn } from './session.js';
@@ -100,8 +101,8 @@ export async function addAccountWizard(a, ctx, file) {
 
     const next = { ...base, v: 1, accounts: { ...base.accounts, [name]: acct } };
     const { problems } = validateConfig(next, ctx.env);
-    if (problems.length) { warn(ctx, `mailproof: the account is not valid, nothing was written:\n${problems.join('\n')}`); return EX_USAGE; }
-    print(ctx, `\nThis account would be added to ${file}:\n${JSON.stringify({ [name]: acct }, null, 2)}\n`);
+    if (problems.length) { warn(ctx, `mailproof: the account is not valid, nothing was written:\n${printable(problems.join('\n'), { keepNewline: true })}`); return EX_USAGE; }
+    print(ctx, `\nThis account would be added to ${file}:\n${printable(JSON.stringify({ [name]: acct }, null, 2), { keepNewline: true })}\n`);
     if (!(await confirm(p, `Write it to ${file}?`))) { print(ctx, 'nothing written'); return EX_OK; }
     await writeConfigAtomic(file, next);
     print(ctx, `written: ${file} (mode 0600)\nNext: mailproof status --account ${name}   then   mailproof sync --account ${name}`);

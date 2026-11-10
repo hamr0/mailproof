@@ -8,6 +8,7 @@ import { openAccount, print, warn, printJson } from './session.js';
 import { syncOnce, syncText } from './sync-op.js';
 import { configPath, TEMPLATE, loadConfig, ConfigError } from './config.js';
 import { addAccountWizard } from './wizard.js';
+import { printable as p } from './printable.js';
 
 /** @typedef {import('./session.js').Ctx} Ctx */
 /** @typedef {import('./session.js').Args} Args */
@@ -23,10 +24,10 @@ export async function syncCmd(a, ctx) {
   };
   const s = await openAccount(a, ctx);
   try {
-    if (ctx.stderr.isTTY) warn(ctx, `syncing ${s.account.name} ...`);
+    if (ctx.stderr.isTTY) warn(ctx, `syncing ${p(s.account.name)} ...`);
     const r = await syncOnce(s, ctx, over);
     if (a.values.json) printJson(ctx, { ...r.result, ots: r.ots }); else print(ctx, syncText(r));
-    if (r.folderError) warn(ctx, `mailproof: ${r.folderError.folder}: ${r.folderError.code}: ${r.folderError.message}`);
+    if (r.folderError) warn(ctx, `mailproof: ${p(r.folderError.folder)}: ${p(r.folderError.code)}: ${p(r.folderError.message)}`);
     return r.exit;
   } finally { await s.close(); }
 }
@@ -65,7 +66,7 @@ export async function configCmd(a, ctx) {
   const file = configPath(a.values.config, ctx.env);
   switch (action) {
     case 'path':
-      if (a.values.json) printJson(ctx, { path: file }); else print(ctx, file);
+      if (a.values.json) printJson(ctx, { path: file }); else print(ctx, p(file));
       return EX_OK;
     case 'template':
       ctx.stdout.write(JSON.stringify(TEMPLATE, null, 2) + '\n');

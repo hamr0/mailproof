@@ -8,6 +8,7 @@ import { promisify } from 'node:util';
 import { UsageError, EX_OK, EX_ERR, EX_USAGE, EX_TEMPFAIL } from './errors.js';
 import { withAccount, print, warn, printJson, stamp } from './session.js';
 import { updateState } from './state.js';
+import { printable as p } from './printable.js';
 import { withTrailLock, trailLockFile, headOf } from '../proof/trail.js';
 
 const run = promisify(execFile);
@@ -74,19 +75,19 @@ export async function backupCmd(a, ctx) {
   return withAccount(a, ctx, async ({ mp, account, state }) => {
     const now = (ctx.deps.now ?? (() => new Date()))();
     if (v.push) {
-      if (!account.backupRemote) throw new UsageError(`account ${account.name} has no backupRemote in the config; --push needs one`);
+      if (!account.backupRemote) throw new UsageError(`account ${p(account.name)} has no backupRemote in the config; --push needs one`);
     }
-    if ((await headOf(mp.root).catch(() => null)) === null) { warn(ctx, `mailproof: the trail ${account.name} has no records yet: nothing to back up`); return EX_ERR; }
+    if ((await headOf(mp.root).catch(() => null)) === null) { warn(ctx, `mailproof: the trail ${p(account.name)} has no records yet: nothing to back up`); return EX_ERR; }
     const commits = Number(String((await run('git', ['rev-list', '--count', 'HEAD'], { cwd: mp.root })).stdout).trim());
     if (v.push && !v.yes) {
-      warn(ctx, `backup --push to ${redactUrl(/** @type {string} */ (account.backupRemote))}: ${commits} commit(s) would be pushed.\n${PUSH_WARNING}\nadd --yes to proceed`);
+      warn(ctx, `backup --push to ${p(redactUrl(/** @type {string} */ (account.backupRemote)))}: ${commits} commit(s) would be pushed.\n${PUSH_WARNING}\nadd --yes to proceed`);
       return EX_USAGE;
     }
     const out = v.out ? path.resolve(v.out) : defaultBundlePath(state, account.name, now);
     if (v.out) {
-      if (!(await exists(path.dirname(out)))) throw new UsageError(`--out: the directory ${path.dirname(out)} does not exist`);
+      if (!(await exists(path.dirname(out)))) throw new UsageError(`--out: the directory ${p(path.dirname(out))} does not exist`);
     } else await fs.mkdir(path.dirname(out), { recursive: true, mode: 0o700 });
-    if (await exists(out)) throw new UsageError(`--out: ${out} already exists; a backup is never overwritten`);
+    if (await exists(out)) throw new UsageError(`--out: ${p(out)} already exists; a backup is never overwritten`);
 
     // under the trail lock, so it cannot run during a prune swap
     await withTrailLock(mp.root, trailLockFile(mp.trail), mp.lockTimeoutMs, async () => {
@@ -96,7 +97,7 @@ export async function backupCmd(a, ctx) {
     try { await run('git', ['bundle', 'verify', out], { cwd: mp.root }); }
     catch (e) {
       await fs.rm(out, { force: true });
-      warn(ctx, `mailproof: the bundle did not verify and was removed: ${String(/** @type {any} */ (e).stderr ?? e).trim().slice(0, 300)}`);
+      warn(ctx, `mailproof: the bundle did not verify and was removed: ${p(String(/** @type {any} */ (e).stderr ?? e).trim().slice(0, 300), { keepNewline: true })}`);
       return EX_ERR;
     }
     const bundleBytes = (await fs.stat(out)).size;
@@ -118,7 +119,7 @@ export async function backupCmd(a, ctx) {
           content = { path: tarPath, bytes: (await fs.stat(tarPath)).size };
         } catch (e) {
           await fs.rm(tarPath, { force: true }).catch(() => {});
-          warn(ctx, /** @type {any} */ (e)?.code === 'ENOENT' ? `mailproof: tar not found: install tar or run backup without --with-content (the bundle ${out} was kept)` : `mailproof: tar failed: ${String(/** @type {any} */ (e)?.stderr ?? e).trim().slice(0, 300)} (the bundle ${out} was kept)`);
+          warn(ctx, /** @type {any} */ (e)?.code === 'ENOENT' ? `mailproof: tar not found: install tar or run backup without --with-content (the bundle ${p(out)} was kept)` : `mailproof: tar failed: ${p(String(/** @type {any} */ (e)?.stderr ?? e).trim().slice(0, 300), { keepNewline: true })} (the bundle ${p(out)} was kept)`);
           code = EX_ERR;
         }
       }
@@ -139,22 +140,22 @@ export async function backupCmd(a, ctx) {
       } catch (e) {
         const err = String(/** @type {any} */ (e).stderr ?? /** @type {any} */ (e).message ?? e).trim();
         const kind = classifyPush(err);
-        warn(ctx, `${err.replace(/(https?:\/\/)[^/@\s]*@/gi, '$1***@')}`);
+        warn(ctx, p(err.replace(/(https?:\/\/)[^/@\s]*@/gi, '$1***@'), { keepNewline: true }));
         if (kind === 'rejected') {
-          warn(ctx, `mailproof: the remote refused the push (it holds history this trail no longer has, for example from before a prune). mailproof never forces a push. The remote keeps its history as an archive; push to a new remote, or force it yourself outside mailproof if you mean to replace it. The bundle ${out} was written.`);
+          warn(ctx, `mailproof: the remote refused the push (it holds history this trail no longer has, for example from before a prune). mailproof never forces a push. The remote keeps its history as an archive; push to a new remote, or force it yourself outside mailproof if you mean to replace it. The bundle ${p(out)} was written.`);
           code = EX_ERR;
-        } else { code = kind === 'network' ? EX_TEMPFAIL : EX_ERR; warn(ctx, `mailproof: the push failed; the bundle ${out} was written.`); }
+        } else { code = kind === 'network' ? EX_TEMPFAIL : EX_ERR; warn(ctx, `mailproof: the push failed; the bundle ${p(out)} was written.`); }
       }
     }
 
     if (code !== EX_OK) { /* a failure: the message above is the output, stdout stays empty */ }
     else if (v.json) printJson(ctx, { bundle: out, bytes: bundleBytes, commits, content, pushed });
     else {
-      print(ctx, `bundle   ${out}  (${bundleBytes} bytes, ${commits} commits)`);
-      if (content) print(ctx, `content  ${content.path}  (${content.bytes} bytes; not encrypted: it holds other people's mail)`);
+      print(ctx, `bundle   ${p(out)}  (${bundleBytes} bytes, ${commits} commits)`);
+      if (content) print(ctx, `content  ${p(content.path)}  (${content.bytes} bytes; not encrypted: it holds other people's mail)`);
       if (contentNote) print(ctx, contentNote);
-      if (pushed) print(ctx, `pushed   ${pushed.remote}  (${pushed.refs.length} ref(s))`);
-      print(ctx, `restore: git clone ${out} <dir>`);
+      if (pushed) print(ctx, `pushed   ${p(pushed.remote)}  (${pushed.refs.length} ref(s))`);
+      print(ctx, `restore: git clone ${p(out)} <dir>`);
     }
     return code;
   });

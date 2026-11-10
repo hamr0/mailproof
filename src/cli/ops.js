@@ -6,15 +6,16 @@ import { UsageError, EX_OK, EX_ERR, EX_NO, EX_USAGE } from './errors.js';
 import { parseDate, parseAddress, parseLimit, parseChoice, resolveId, messageIdOf } from './parse.js';
 import { loadProfile } from './config.js';
 import { withAccount, print, warn, printJson } from './session.js';
+import { printable as p } from './printable.js';
 
 /** @typedef {import('./session.js').Ctx} Ctx */
 /** @typedef {import('./session.js').Args} Args */
 
 /** @param {string} s @returns {string} */
-const short = (s) => s.slice(0, 12);
+const short = (s) => p(s.slice(0, 12));
 
-/** @param {string} s @param {number} n @returns {string} */
-const cut = (s, n) => (s.length > n ? `${s.slice(0, n - 1)}~` : s);
+/** One-line mail field cut to n code points and made terminal-safe (F28). @param {string} s @param {number} n @returns {string} */
+const cut = (s, n) => p(s, { max: n });
 
 /**
  * @param {Args} a
@@ -43,7 +44,7 @@ export async function listCmd(a, ctx) {
     const rows = await mp.list({ ...f, ...(limit > 0 ? { limit } : {}) });
     if (a.values.json) { printJson(ctx, rows); return EX_OK; }
     if (!rows.length) { print(ctx, 'no emails recorded'); return EX_OK; }
-    for (const r of rows) print(ctx, `${short(r.id)}  ${r.captured.replace(/\.\d+Z$/, 'Z')}  ${r.direction.padEnd(3)}  ${r.live}/${r.portable}  ${r.message_id ?? '-'}`);
+    for (const r of rows) print(ctx, `${short(r.id)}  ${p(r.captured.replace(/\.\d+Z$/, 'Z'))}  ${p(r.direction).padEnd(3)}  ${p(r.live)}/${p(r.portable)}  ${p(r.message_id ?? '-')}`);
     return EX_OK;
   });
 }
@@ -67,17 +68,17 @@ export async function showCmd(a, ctx) {
     const m = rec.message ?? {};
     /** @type {Array<[string, string]>} */
     const rows = [
-      ['id', rec.id], ['captured', rec.captured], ['direction', `${rec.direction} (${rec.source})`], ['message-id', m.message_id ?? '-'],
-      ['from', m.from ?? rec.addresses?.find((x) => x.role === 'from')?.address ?? '-'],
-      ['copy', rec.copy?.kind ?? '-'], ['live', rec.verdicts?.live?.trust ?? '-'], ['portable', rec.verdicts?.portable?.trust ?? '-'],
-      ['re-check', parts ? `${parts.email.ok ? 'ok' : 'not ok'} (${parts.email.trust})` : '-'], ['body', rec.body_status ?? '-'],
+      ['id', p(rec.id)], ['captured', p(rec.captured)], ['direction', p(`${rec.direction} (${rec.source})`)], ['message-id', p(m.message_id ?? '-')],
+      ['from', p(m.from ?? rec.addresses?.find((x) => x.role === 'from')?.address ?? '-')],
+      ['copy', p(rec.copy?.kind ?? '-')], ['live', p(rec.verdicts?.live?.trust ?? '-')], ['portable', p(rec.verdicts?.portable?.trust ?? '-')],
+      ['re-check', parts ? `${parts.email.ok ? 'ok' : 'not ok'} (${p(parts.email.trust)})` : '-'], ['body', p(rec.body_status ?? '-')],
       ['signatures', String(rec.signatures?.length ?? 0)],
     ];
     for (const r of rows) print(ctx, `${r[0].padEnd(11)} ${r[1]}`);
-    for (const x of parts?.attachments ?? []) print(ctx, `attachment   ${x.filename ?? '(no name)'}  stored ${x.stored ? 'yes' : 'no'}${x.match === null ? '' : x.match ? '  matches' : '  DIFFERS'}`);
+    for (const x of parts?.attachments ?? []) print(ctx, `attachment   ${p(x.filename ?? '(no name)')}  stored ${x.stored ? 'yes' : 'no'}${x.match === null ? '' : x.match ? '  matches' : '  DIFFERS'}`);
     if (links) {
-      for (const p of links.parents) print(ctx, `parent       ${p.message_id}  ${p.strength}${p.id ? `  ${short(p.id)}` : '  (not recorded)'}`);
-      for (const c of links.children) print(ctx, `child        ${c.message_id ?? '-'}  ${c.strength}  ${short(c.id)}`);
+      for (const par of links.parents) print(ctx, `parent       ${p(par.message_id)}  ${p(par.strength)}${par.id ? `  ${short(par.id)}` : '  (not recorded)'}`);
+      for (const c of links.children) print(ctx, `child        ${p(c.message_id ?? '-')}  ${p(c.strength)}  ${short(c.id)}`);
       if (links.more) print(ctx, 'child        ... more');
     }
     return EX_OK;
@@ -93,9 +94,9 @@ export async function verifyCmd(a, ctx) {
     if (!rec) { warn(ctx, `mailproof: no record ${short(id)}`); return EX_ERR; }
     const v = await mp.verify(rec, at ? { at } : undefined);
     if (a.values.json) { printJson(ctx, { id, ...v }); return v.ok ? EX_OK : EX_NO; }
-    print(ctx, `${v.ok ? 'ok' : 'NOT OK'}  ${v.trust}  basis ${v.basis}  at ${v.at ?? '-'}  rules ${v.engine.rules}`);
-    for (const s of v.signatures) print(ctx, `  ${String(s.d ?? '-')}  ${String(s.s ?? '')}  ${s.ok ? 'verifies' : `fails: ${String(s.why ?? s.reason ?? 'unknown')}`}`);
-    if (v.error) print(ctx, `  ${v.error}`);
+    print(ctx, `${v.ok ? 'ok' : 'NOT OK'}  ${p(v.trust)}  basis ${p(v.basis)}  at ${p(v.at ?? '-')}  rules ${p(v.engine.rules)}`);
+    for (const s of v.signatures) print(ctx, `  ${p(s.d ?? '-')}  ${p(s.s ?? '')}  ${s.ok ? 'verifies' : `fails: ${p(s.why ?? s.reason ?? 'unknown')}`}`);
+    if (v.error) print(ctx, `  ${p(v.error)}`);
     return v.ok ? EX_OK : EX_NO;
   });
 }
@@ -108,7 +109,7 @@ export async function repliesCmd(a, ctx) {
     if (a.values.json) { printJson(ctx, rows); return EX_OK; }
     if (!rows.length) { print(ctx, 'no replies recorded'); return EX_OK; }
     for (const r of rows) {
-      print(ctx, `${r.captured}  ${r.from}  dkim-aligned ${r.fromDkimAligned}  link ${r.link}  ${r.live}/${r.portable}  body ${r.bodyProven}`);
+      print(ctx, `${p(r.captured)}  ${p(r.from)}  dkim-aligned ${p(r.fromDkimAligned)}  link ${p(r.link)}  ${p(r.live)}/${p(r.portable)}  body ${p(r.bodyProven)}`);
       print(ctx, `  ${r.firstLine ? cut(r.firstLine, 100) : '(no text stored)'}  [${short(r.recordId)}]`);
     }
     return EX_OK;
@@ -125,7 +126,7 @@ export async function checkCmd(a, ctx) {
     const r = await mp.checkProfile(id, /** @type {any} */ (profile), parent ? { parent } : undefined);
     if (a.values.json) { printJson(ctx, { id, ...r }); return r.ok ? EX_OK : EX_NO; }
     print(ctx, r.ok ? 'pass' : 'FAIL');
-    for (const f of r.failed) print(ctx, `  ${f.rule}: wanted ${JSON.stringify(f.want)}, got ${JSON.stringify(f.got)}`);
+    for (const f of r.failed) print(ctx, `  ${p(f.rule)}: wanted ${p(JSON.stringify(f.want))}, got ${p(JSON.stringify(f.got))}`);
     return r.ok ? EX_OK : EX_NO;
   });
 }
@@ -158,7 +159,7 @@ export async function forgetCmd(a, ctx) {
     const ids = a.positionals.length ? await Promise.all(a.positionals.map((p) => resolveId(p, mp.root))) : null;
     const sum = await forgetSummary(ctx, mp, ids, f);
     const lines = [
-      `forget on account ${account.name}: ${sum.ids.length} record(s), ${sum.stored} with a stored raw email (attachment files no other stored email needs go too). Proofs stay.`,
+      `forget on account ${p(account.name)}: ${sum.ids.length} record(s), ${sum.stored} with a stored raw email (attachment files no other stored email needs go too). Proofs stay.`,
       ...sum.ids.slice(0, 20).map((i) => `  ${short(i)}`),
       ...(sum.ids.length > 20 ? [`  ${MORE(sum.ids.length - 20)}`] : []),
     ];
@@ -179,12 +180,12 @@ export async function forgetCmd(a, ctx) {
  * @returns {string}
  */
 function pruneLines(r) {
-  if (r.noop) return `nothing is captured before ${r.cutoff}: nothing to prune`;
+  if (r.noop) return `nothing is captured before ${p(r.cutoff)}: nothing to prune`;
   return [
-    `${r.dryRun ? 'prune would' : 'prune did'} remove everything captured before ${r.cutoff}`,
+    `${r.dryRun ? 'prune would' : 'prune did'} remove everything captured before ${p(r.cutoff)}`,
     `  records removed ${r.removed}, kept ${r.kept}; reply rows dropped ${r.dropped}`,
     `  stragglers kept although older (${r.stragglers.length}): ${r.stragglers.slice(0, 5).map(short).join(', ') || '-'}${r.stragglers.length > 5 ? ', ...' : ''}`,
-    `  the old trail stays as ${r.backup ?? '(deleted)'} until you delete it`,
+    `  the old trail stays as ${p(r.backup ?? '(deleted)')} until you delete it`,
   ].join('\n');
 }
 
@@ -203,7 +204,7 @@ export async function pruneCmd(a, ctx) {
     if (!v.json) print(ctx, pruneLines(plan));
     const res = await mp.prune({ before, ...(v['delete-backup'] ? { deleteBackup: true } : {}) });
     if (v.json) printJson(ctx, res);
-    else print(ctx, `pruned: removed ${res.removed}, kept ${res.kept}; new head ${res.head ? short(res.head) : '-'}; content removed ${res.content.removed}${res.backup ? `; backup ${res.backup}` : ''}`);
+    else print(ctx, `pruned: removed ${res.removed}, kept ${res.kept}; new head ${res.head ? short(res.head) : '-'}; content removed ${res.content.removed}${res.backup ? `; backup ${p(res.backup)}` : ''}`);
     return EX_OK;
   });
 }

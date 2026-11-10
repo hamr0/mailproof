@@ -3,6 +3,10 @@
 
 import readline from 'node:readline';
 import { UsageError } from './errors.js';
+import { printable } from './printable.js';
+
+/** Output backstop for what a prompt writes (typed input is echoed back, validators quote it): F28. @param {string} s @returns {string} */
+const safe = (s) => printable(s, { keepNewline: true, keepBackslash: true });
 
 /** Raised when the person cannot be asked any more: the input ended, Ctrl-C at a prompt, or three bad answers. */
 export class Cancel extends Error {
@@ -52,9 +56,9 @@ export function createPrompter(input, output, terminal) {
         return new Promise((resolve) => { waiter = resolve; });
       }
       // not a terminal: nothing echoes the typed line, so it is echoed here and a transcript reads like a session
-      output.write(label);
+      output.write(safe(label));
       /** @param {string | null} l */
-      const echo = (l) => { output.write(`${l ?? ''}\n`); return l; };
+      const echo = (l) => { output.write(`${safe(l ?? '')}\n`); return l; };
       if (queue.length) return Promise.resolve(echo(/** @type {string} */ (queue.shift())));
       if (closed) return Promise.resolve(echo(null));
       return new Promise((resolve) => { waiter = (l) => resolve(echo(l)); });
@@ -89,7 +93,7 @@ export async function askValue(p, out, spec) {
     const ans = await p.ask(label);
     if (ans === null) throw new Cancel('eof');
     const t = ans.trim();
-    if (t === '?') { out.write(`${spec.hint ?? spec.example ?? 'no further help'}\n`); continue; }
+    if (t === '?') { out.write(`${safe(spec.hint ?? spec.example ?? 'no further help')}\n`); continue; }
     if (t === '') {
       if (spec.def !== undefined) return spec.def;
       if (spec.optional) return '';
@@ -100,7 +104,7 @@ export async function askValue(p, out, spec) {
     try { return spec.validate ? spec.validate(t) : t; }
     catch (e) {
       if (!(e instanceof UsageError)) throw e;
-      out.write(`${e.message}\n`);
+      out.write(`${safe(e.message)}\n`);
       tries++;
     }
   }

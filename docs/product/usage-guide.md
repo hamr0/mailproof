@@ -236,6 +236,8 @@ cron instead of a loop (exit 75 on a held lock is normal; the next run continues
 
 **7. Update.** `mailproof update` prints `npm install -g mailproof@latest`; `mailproof update --run` runs it. In the menu, Update asks `Run it now? [y/N]`.
 
+**Safe to print.** Text output is terminal-safe: control characters, bidi overrides and zero-width characters in a sender's headers are shown as escapes like `\x1b` or `\u202e` (a backslash is `\\`), so a mail cannot move your cursor or retitle your terminal. `--json` is data as received: treat its strings as untrusted. `show --raw` prints the stored bytes unchanged.
+
 **Scripting.** `--json` prints exactly one JSON document on stdout (`watch` prints one line per tick); errors go to stderr and stdout stays empty, so check the exit code first. Exit codes: 0 done (a partial sync is still 0), 2 a check ran and the answer is no, 64 bad usage, 75 try again later (lock held, server unreachable, throttled, secret command failed), 77 permission (config mode) or a refused login, 1 anything else. `mailproof-sync` stays available for a single run from flags and the environment; it shares the secret handling and exit codes.
 
 ## Worker thread and deadline

@@ -30,6 +30,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Mailproof#upgradeStamps()` (SPEC B3): folds the Bitcoin attestation into OpenTimestamps stamps that are still calendar-pending, one trail-lock window per stamp, each upgraded proof committed on its own; `{ enabled, upgraded, pending, error? }`; a no-op result when OTS is off, a reported (not thrown) error when the `ots` binary is missing.
 - `Mailproof#prune({ dryRun: true })` (SPEC B9.7): the same plan and re-check of the kept records, the same result shape (`dryRun: true`, `head: null`, `backup` the path a real prune would use), nothing built, swapped or written. The result gains `dryRun` (false for a real prune).
 
+### Security
+- **CLI text output is terminal-safe** (branch-review H1, SPEC B11.7, F28). A sender could put cursor moves, an OSC title or a C1 CSI in a header and have `list`, `show`, `replies`, `check` and the error lines print them raw. Every mail- or server-derived string in text mode now goes through `printable()` (`src/cli/printable.js`: control, C1, bidi, zero-width, line-separator, tag and lone-surrogate code points, and the backslash, are shown as escapes; linear, no copy when clean), per field and again in the `print`/`warn` backstop, and the `watch.log` lines are escaped too. `--json` is unchanged (data as received; treat strings as untrusted) and `show --raw` stays raw bytes.
+
 ### Changed
 - The trail index rebuild and catch-up stream git's listings (`ls-tree`, `diff`, `log`) instead of buffering them, so there is no 16 MB output limit: `ERR_INDEX_REBUILD` (about 350,000 records) no longer exists, and the `log` listing added by `commit_id` would have lowered that ceiling to about 170,000 (findings F27).
 - The trail index schema is 4: `rec.commit_id` (the commit that added each record, from one `git log` at rebuild or catch-up) and `links.direct`. An older index file is rebuilt on first use; nothing to migrate.

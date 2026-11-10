@@ -469,3 +469,13 @@ POC script: [`poc/m0-header-recheck.js`](../../poc/m0-header-recheck.js) (throwa
 - **`--json`:** JSON.stringify escapes C0 and lone surrogates only; DEL, all 32 C1, bidi, zero-width, U+2028/2029 and tag characters are emitted raw. It is safe against ESC but not against 8-bit C1 sequences or bidi when a person `cat`s it: consumers must treat strings as untrusted.
 - **Cost:** 2.1 us per field (10,000 typical fields, 63 chars), 2.6 us with 10% dirty, 13.5 ms for a 1 MiB field.
 - **Where:** README lists every sink with file:line; recommended: per-field at mail-field sinks plus `print`/`warn` in `session.js` as the single backstop.
+- **Addendum (built 2026-11-10; owner decisions: backslash escaped as `\\`, ZWJ/ZWNJ kept only between two non-ASCII characters, `--json` unchanged with a documented untrusted-string note, `show --raw` raw, backstop on ALL text output).** `src/cli/printable.js` is one linear pass over UTF-16 units, no regular expression, and returns the same string (no allocation) when clean; it is applied per field at every sink in the list above and again in `print`/`warn` (and the menu and prompt writes, and the `watch.log` lines). Two refinements to the POC: the backstop passes `keepBackslash` (it sees text a field call already escaped; escaping twice would double every backslash), and a ZWJ/ZWNJ next to another joiner is escaped (a run of joiners was hidden text). Tests: `tests/unit/cli-printable.test.js` (corpus, round-trip, identity, linear time), `tests/integration/cli-terminal-safe.test.js` (real dispatcher: list/show/replies/check/errors, `--json` exact, `show --raw` byte-identical; 6 of 10 fail on the pre-fix source), plus a `watch.log` test.
+- **Measured cost (20,000-record trail, spawned `bin/mailproof.js`, 7 interleaved runs each, before = `git archive HEAD`, load average 2-3, a small other job running; `/usr/bin/time`):**
+
+  | command | wall before / after (mean, sd) | max RSS before / after |
+  |---|---|---|
+  | `list --limit 0` (20,000 lines) | 0.687 s (0.031) / 0.683 s (0.019) | 82.5 / 83.1 MB |
+  | `replies <req>` | 0.631 s (0.038) / 0.670 s (0.041) | 83.8 / 81.7 MB |
+  | `show <id>` | 0.571 s (0.076) / 0.597 s (0.075) | 82.4 / 82.2 MB |
+
+  Differences are inside run-to-run noise (sd 20-75 ms; RSS spread 4-8 MB). Micro: 243 ns per clean field, about 1 us for a dirty one, 30 ms for 1 MiB of clean non-ASCII; 20,000 rows x 5 fields is about 25 ms of pure work, below the noise. No streaming change: each line is sanitised as it is printed.

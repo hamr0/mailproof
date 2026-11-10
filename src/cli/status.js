@@ -7,6 +7,7 @@ import { Mailproof } from '../index.js';
 import { EX_OK } from './errors.js';
 import { selectAccount, mailproofOptions } from './config.js';
 import { print, printJson, loadCtxConfig } from './session.js';
+import { printable as p } from './printable.js';
 import { readState, stateDir } from './state.js';
 import { pidAlive, headOf, trailIndexFile } from '../proof/trail.js';
 import { countPendingStamps } from '../proof/ots-upgrade.js';
@@ -61,18 +62,18 @@ async function statusOf(account, ctx) {
 function statusText(s) {
   const r = s.records;
   const hint = s.index === 'unreadable' ? 'the index cannot be opened: check permissions on the trail directory; if it is writable, `mailproof list` rebuilds it' : 'index stale; run `mailproof list` for in/out and dates';
-  const rec = r === null ? 'no trail yet' : r.error ? `unavailable (${r.error})`
+  const rec = r === null ? 'no trail yet' : r.error ? `unavailable (${p(r.error)})`
     : r.totalSource === 'git' ? `${r.total} files at HEAD (${s.index === 'absent' ? 'no index yet; run `mailproof list` for in/out and dates' : hint})`
       : `${r.total} (${r.in} in, ${r.out} out), oldest ${r.oldest?.slice(0, 10) ?? '-'}, newest ${r.newest?.slice(0, 10) ?? '-'}`;
   const c = s.content === 'off' ? 'off' : `${s.content.files} files, ${(s.content.bytes / 1048576).toFixed(1)} MiB`;
   return [
-    `  trail         ${s.trail}`,
+    `  trail         ${p(s.trail)}`,
     `  records       ${rec}`,
-    `  last sync     ${s.lastSync ? `${s.lastSync.at}${s.lastSync.complete ? '' : ' (not complete)'}${s.lastSync.error ? ` error ${s.lastSync.error}` : ''}` : 'never'}`,
+    `  last sync     ${s.lastSync ? `${p(s.lastSync.at)}${s.lastSync.complete ? '' : ' (not complete)'}${s.lastSync.error ? ` error ${p(s.lastSync.error)}` : ''}` : 'never'}`,
     `  content       ${c}`,
     `  index         ${s.index}`,
     `  ots pending   ${s.pendingStamps === null ? '-' : s.pendingStamps}`,
-    `  last backup   ${s.lastBackup ? `${s.lastBackup.at}  ${s.lastBackup.path}` : 'never'}`,
+    `  last backup   ${s.lastBackup ? `${p(s.lastBackup.at)}  ${p(s.lastBackup.path)}` : 'never'}`,
     `  watch         ${s.watch.running ? `running (pid ${s.watch.pid})` : 'not running'}`,
   ].join('\n');
 }
@@ -85,6 +86,6 @@ export async function statusCmd(a, ctx) {
   const all = {};
   for (const n of names) all[n] = await statusOf(config.accounts[n], ctx);
   if (a.values.json) { printJson(ctx, all); return EX_OK; }
-  for (const n of names) print(ctx, `${n}\n${statusText(all[n])}`);
+  for (const n of names) print(ctx, `${p(n)}\n${statusText(all[n])}`);
   return EX_OK;
 }

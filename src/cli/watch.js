@@ -4,6 +4,7 @@ import { EX_OK, EX_ERR, EX_NOPERM, exitFor, EX_TEMPFAIL } from './errors.js';
 import { parseDuration, MIN_INTERVAL_MS } from './parse.js';
 import { openAccount, print, warn, printJson, stamp } from './session.js';
 import { syncOnce } from './sync-op.js';
+import { printable as p } from './printable.js';
 import { updateState, appendWatchLog, truncateWatchLog } from './state.js';
 
 const MAX_BACKOFF_MS = 3_600_000;
@@ -59,8 +60,8 @@ export async function watchCmd(a, ctx) {
           const c = exitFor(r.folderError.code);
           tick = { status: 'error', result: r.result, ots: r.ots, error: { code: r.folderError.code, message: r.folderError.message } };
           if (r.folderError.code === 'ERR_SYNC_LOCKED' || r.folderError.code === 'ERR_TRAIL_LOCKED') { tick.status = 'locked'; line = `${at} skipped (locked)`; }
-          else if (c === EX_TEMPFAIL) { failures++; wait = nextWait(intervalMs, failures); line = `${at} error ${r.folderError.code}: ${r.folderError.message}; next in ${Math.round(wait / 1000)}s`; }
-          else { stop = true; code = c; line = `${at} error ${r.folderError.code}: ${r.folderError.message}; stopping`; }
+          else if (c === EX_TEMPFAIL) { failures++; wait = nextWait(intervalMs, failures); line = `${at} error ${p(r.folderError.code)}: ${p(r.folderError.message)}; next in ${Math.round(wait / 1000)}s`; }
+          else { stop = true; code = c; line = `${at} error ${p(r.folderError.code)}: ${p(r.folderError.message)}; stopping`; }
         } else {
           failures = 0;
           tick = { status: 'ok', result: r.result, ots: r.ots };
@@ -72,13 +73,13 @@ export async function watchCmd(a, ctx) {
         tick = { status: 'error', error: { code: ec ?? 'error', message } };
         if (ec === 'ERR_SYNC_LOCKED' || ec === 'ERR_TRAIL_LOCKED') { tick.status = 'locked'; line = `${at} skipped (locked)`; }
         else if (ec === 'ERR_IMAP_AUTH') { stop = true; code = EX_NOPERM; line = `${at} login refused (ERR_IMAP_AUTH); stopping: retrying a refused login can lock the account`; }
-        else if (exitFor(ec) === EX_TEMPFAIL) { failures++; wait = nextWait(intervalMs, failures); line = `${at} error ${ec}: ${message}; next in ${Math.round(wait / 1000)}s`; }
-        else { stop = true; code = EX_ERR; line = `${at} error ${ec ?? 'error'}: ${message}; stopping`; }
+        else if (exitFor(ec) === EX_TEMPFAIL) { failures++; wait = nextWait(intervalMs, failures); line = `${at} error ${p(ec)}: ${p(message)}; next in ${Math.round(wait / 1000)}s`; }
+        else { stop = true; code = EX_ERR; line = `${at} error ${p(ec ?? 'error')}: ${p(message)}; stopping`; }
       }
-      await appendWatchLog(s.state, name, line);
+      await appendWatchLog(s.state, name, p(line, { keepBackslash: true }));   // the log is a file people `tail`: nothing raw in it either
       if (json) printJson(ctx, { at, ...tick, nextInMs: stop ? null : wait });
       else print(ctx, line);   // a tick is one line; the detail is in --json and in `sync`
-      if (stop) { if (tick.status === 'error') warn(ctx, `mailproof: ${tick.error?.code}: ${tick.error?.message}`); break; }
+      if (stop) { if (tick.status === 'error') warn(ctx, `mailproof: ${p(tick.error?.code)}: ${p(tick.error?.message)}`); break; }
       if (ctx.signal.aborted) break;   // a signal during the sync: it finished, now stop
       await sleep(wait, ctx.signal);
     }

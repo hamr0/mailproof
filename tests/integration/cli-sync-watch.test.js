@@ -9,6 +9,7 @@ import { Mailproof } from '../../src/proof/mailproof.js';
 import { signedMail } from '../helpers/proof.js';
 import { makeWorld, account, BIN } from '../helpers/cli.js';
 import { makeTmpDir } from '../helpers/tmp.js';
+import { hasForbidden } from '../helpers/forbidden.js';
 
 const SECRET = 'Sup3r-Secret-Pw-91c';
 const scripts = makeTmpDir('mp-cli-scripts-');
@@ -246,4 +247,14 @@ test('a real watch process stops on SIGTERM with exit 0 and state "stopped"; a s
   const end = await closed;
   assert.deepEqual(end, { code: 0, signal: null });
   assert.equal(readState(w, 'acme').lastWatch.state, 'stopped');
+});
+
+test('watch: a hostile server error message is escaped on stdout, stderr and in watch.log (F28)', async () => {
+  const w = mk();
+  const evil = 'bad\u001b[1A\u001b]0;pwned\u0007\u009b2J\u202e';
+  const r = await watch(w, [async () => { throw failing('ERR_WEIRD', evil); }], { stopAfter: 99 });
+  assert.equal(r.code, 1);
+  const log = readLog(w, 'acme');
+  for (const [what, text] of [['stdout', r.stdout], ['stderr', r.stderr], ['watch.log', log]]) assert.ok(!hasForbidden(text), `${what}: ${JSON.stringify(text)}`);
+  assert.ok(log.includes('bad\\x1b[1A\\x1b]0;pwned\\x07\\x9b2J\\u202e'), log);
 });

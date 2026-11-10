@@ -5,7 +5,7 @@
 import { UsageError, EX_USAGE } from './errors.js';
 import { createPrompter, askValue, confirm, Cancel, isTerminal } from './prompt.js';
 import { parseDate, parseAddress, parseDuration, parseSent, parseFolders, parseChoice, MIN_INTERVAL_MS, FULL_ID_RE, messageIdOf } from './parse.js';
-import { loadCtxConfig } from './session.js';
+import { loadCtxConfig, print, warn } from './session.js';
 import { summaryOf } from './help.js';
 import { defaultBundlePath, PUSH_WARNING, redactUrl } from './backup.js';
 import { version } from './misc.js';
@@ -36,8 +36,8 @@ const idArg = (s) => {
 export async function runMenu(ctx, exec, opts = {}) {
   if (!ctx.stdin) return EX_USAGE;
   const p = createPrompter(ctx.stdin, ctx.stdout, isTerminal(ctx));
-  const out = (/** @type {string} */ s) => { ctx.stdout.write(s.endsWith('\n') ? s : `${s}\n`); };
-  const err = (/** @type {string} */ s) => { ctx.stderr.write(s.endsWith('\n') ? s : `${s}\n`); };
+  const out = (/** @type {string} */ s) => print(ctx, s);   // through the output backstop (F28)
+  const err = (/** @type {string} */ s) => warn(ctx, s);
   /** @type {Ctx} */
   const base = { ...ctx, prompter: p };
   /** @param {import('./prompt.js').ValueSpec} spec */

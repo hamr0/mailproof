@@ -5,6 +5,7 @@ import { resolveAuth } from './secrets.js';
 import { exitFor } from './errors.js';
 import { updateState } from './state.js';
 import { stamp } from './session.js';
+import { printable as p } from './printable.js';
 
 /**
  * @typedef {Object} SyncOnce
@@ -53,10 +54,10 @@ export async function syncOnce(s, ctx, over = {}) {
  */
 export function syncText(r) {
   const lines = r.result.folders.map((f) => {
-    const tail = f.error ? `  error ${f.error.code}` : !f.attempted ? '  not attempted' : f.complete ? '' : '  partial (run again)';
-    return `${f.folder.padEnd(24)} ${f.direction === 'out' ? 'sent' : 'in  '}  seen ${f.seen}  recorded ${f.recorded}  duplicate ${f.duplicate}${f.over_limit ? `  over-limit ${f.over_limit}` : ''}${tail}`;
+    const tail = f.error ? `  error ${p(f.error.code)}` : !f.attempted ? '  not attempted' : f.complete ? '' : '  partial (run again)';
+    return `${p(f.folder).padEnd(24)} ${f.direction === 'out' ? 'sent' : 'in  '}  seen ${f.seen}  recorded ${f.recorded}  duplicate ${f.duplicate}${f.over_limit ? `  over-limit ${f.over_limit}` : ''}${tail}`;
   });
   lines.push(r.result.complete ? 'complete' : 'not complete: the next run continues from the saved cursor');
-  if (r.ots) lines.push(`ots: ${r.ots.upgraded} upgraded, ${r.ots.pending} pending${r.ots.error ? ` (${r.ots.error})` : ''}`);
+  if (r.ots) lines.push(`ots: ${r.ots.upgraded} upgraded, ${r.ots.pending} pending${r.ots.error ? ` (${p(r.ots.error)})` : ''}`);
   return lines.join('\n');
 }

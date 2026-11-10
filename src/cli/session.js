@@ -5,6 +5,7 @@
 import { Mailproof } from '../index.js';
 import { loadConfig, configPath, selectAccount, mailproofOptions } from './config.js';
 import { stateDir } from './state.js';
+import { printable } from './printable.js';
 
 /**
  * Seams a test (or an embedding program) can replace.
@@ -37,10 +38,19 @@ import { stateDir } from './state.js';
  * @property {string[]} positionals
  */
 
+/**
+ * The output backstop (SPEC B11, F28): every line of text output passes through here, so a field a sink forgot to wrap
+ * still cannot reach the terminal as a control sequence. Fields are wrapped per field where they are built (that escapes
+ * the backslash too); this pass keeps backslashes, so an escape a field already made is not escaped a second time.
+ * @param {string} s
+ * @returns {string}
+ */
+export const safe = (s) => printable(s, { keepNewline: true, keepBackslash: true });
+
 /** @param {Ctx} ctx @param {string} s */
-export const print = (ctx, s) => { ctx.stdout.write(s.endsWith('\n') ? s : `${s}\n`); };
+export const print = (ctx, s) => { const t = safe(s); ctx.stdout.write(t.endsWith('\n') ? t : `${t}\n`); };
 /** @param {Ctx} ctx @param {string} s */
-export const warn = (ctx, s) => { ctx.stderr.write(s.endsWith('\n') ? s : `${s}\n`); };
+export const warn = (ctx, s) => { const t = safe(s); ctx.stderr.write(t.endsWith('\n') ? t : `${t}\n`); };
 /** @param {Ctx} ctx @param {unknown} v One JSON document. */
 export const printJson = (ctx, v) => { ctx.stdout.write(JSON.stringify(v) + '\n'); };
 

@@ -6,6 +6,7 @@ import { UsageError, EX_OK, EX_USAGE, exitForError } from './errors.js';
 import { COMMANDS, GLOBAL_FLAGS } from './commands.js';
 import { renderList, renderCommand } from './help.js';
 import { print, warn } from './session.js';
+import { printable as p } from './printable.js';
 import { listCmd, showCmd, verifyCmd, repliesCmd, checkCmd, forgetCmd, pruneCmd } from './ops.js';
 import { syncCmd, updateCmd, configCmd, exportCmd, mcpCmd, version } from './misc.js';
 import { watchCmd } from './watch.js';
@@ -98,7 +99,7 @@ export async function run(argv, ctx) {
  */
 function report(e, cmd, ctx) {
   const err = /** @type {{ code?: string, message?: string }} */ (e);
-  if (e instanceof UsageError) warn(ctx, `mailproof: ${e.message}\nsee: mailproof help${cmd && Object.hasOwn(COMMANDS, cmd) ? ` ${cmd}` : ''}`);
-  else warn(ctx, `mailproof: ${err?.code && !/^ERR_|^EX_/.test(String(err.message)) ? `${err.code}: ` : ''}${err?.message ?? e}`);
+  if (e instanceof UsageError) warn(ctx, `mailproof: ${p(e.message, { keepNewline: true })}\nsee: mailproof help${cmd && Object.hasOwn(COMMANDS, cmd) ? ` ${cmd}` : ''}`);
+  else warn(ctx, `mailproof: ${err?.code && !/^ERR_|^EX_/.test(String(err.message)) ? `${p(err.code)}: ` : ''}${p(err?.message ?? e, { keepNewline: true })}`);
   return exitForError(e);
 }
