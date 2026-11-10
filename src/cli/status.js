@@ -43,7 +43,7 @@ async function statusOf(account, ctx) {
     }
     // in/out/oldest/newest are null while the index is not current: counting then needs a read that rebuilds it (`list`).
     if (head === null) out.records = null;
-    else if (ov) out.records = { total: ov.total, in: ov.in, out: ov.out, oldest: ov.oldest, newest: ov.newest };
+    else if (ov) out.records = { total: ov.total, totalSource: ov.totalSource, in: ov.in, out: ov.out, oldest: ov.oldest, newest: ov.newest };
     out.lastSync = st.lastSync;
     if (account.content.store === false) out.content = 'off';
     else {
@@ -60,7 +60,10 @@ async function statusOf(account, ctx) {
 /** @param {Record<string, any>} s @returns {string} */
 function statusText(s) {
   const r = s.records;
-  const rec = r === null ? 'no trail yet' : r.error ? `unavailable (${r.error})` : `${r.total}${r.in === null ? ' (in/out and dates unknown until the index is current: run `mailproof list`)' : ` (${r.in} in, ${r.out} out), oldest ${r.oldest?.slice(0, 10) ?? '-'}, newest ${r.newest?.slice(0, 10) ?? '-'}`}`;
+  const hint = s.index === 'unreadable' ? 'the index cannot be opened: check permissions on the trail directory; if it is writable, `mailproof list` rebuilds it' : 'index stale; run `mailproof list` for in/out and dates';
+  const rec = r === null ? 'no trail yet' : r.error ? `unavailable (${r.error})`
+    : r.totalSource === 'git' ? `${r.total} files at HEAD (${s.index === 'absent' ? 'no index yet; run `mailproof list` for in/out and dates' : hint})`
+      : `${r.total} (${r.in} in, ${r.out} out), oldest ${r.oldest?.slice(0, 10) ?? '-'}, newest ${r.newest?.slice(0, 10) ?? '-'}`;
   const c = s.content === 'off' ? 'off' : `${s.content.files} files, ${(s.content.bytes / 1048576).toFixed(1)} MiB`;
   return [
     `  trail         ${s.trail}`,

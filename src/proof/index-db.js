@@ -379,14 +379,22 @@ function isoOf(v, what) {
   return new Date(ms).toISOString();
 }
 
-/** @typedef {{ state: 'absent' | 'present' | 'stale' | 'unknown', total: number, in: number | null, out: number | null, oldest: string | null, newest: string | null }} IndexOverview */
+/**
+ * `totalSource` says what `total` counts: `index` = the readable records the index holds; `git` = the record files at
+ * HEAD, which also counts a committed record that cannot be read (the index build drops those), so it can be larger.
+ * @typedef {{ state: 'absent' | 'present' | 'stale' | 'unreadable' | 'unknown', total: number, totalSource: 'index' | 'git', in: number | null, out: number | null, oldest: string | null, newest: string | null }} IndexOverview
+ */
 
 /**
- * The index state and the record counts, read-only (the CLI `status`): never creates, migrates, rebuilds or catches up
- * the index and takes no lock. `present` (the file reflects HEAD, at the current schema) answers the counts and the
- * oldest/newest capture time with one aggregate query. `absent`, `stale` or `unknown` (the addon cannot load) count
- * the records of the HEAD commit through `git ls-tree` instead (a read of a commit, no lock), and `in`, `out`, `oldest`
- * and `newest` are null: the next `list` rebuilds or catches up the index.
+ * The index state and the record counts, for the CLI `status`: never writes the index or the trail, never migrates,
+ * rebuilds or catches up the index, and takes no trail lock. Opening the index file may still create SQLite's own
+ * `-wal`/`-shm` side files next to it (a WAL database needs them even to be read), and needs a directory SQLite can
+ * write for that. `present` (the file reflects HEAD, at the current schema) answers the counts and the oldest/newest
+ * capture time with one aggregate query (`totalSource: 'index'`). The other states count the record files of the HEAD
+ * commit through `git ls-tree` (a read of a commit, no lock; `totalSource: 'git'`), and `in`, `out`, `oldest` and
+ * `newest` are null: `absent` (no file), `stale` (opened fine, behind HEAD or an older schema; the next `list`
+ * catches it up), `unreadable` (the file exists but cannot be opened or queried: a trail directory the caller cannot
+ * write, or a corrupt file; `list` rebuilds it only when the directory is writable) and `unknown` (the addon cannot load).
  * @param {IndexCfg} cfg
  * @param {string} file  The index file (`trailIndexFile`).
  * @returns {Promise<IndexOverview>}
@@ -407,14 +415,14 @@ export async function indexOverview(cfg, file) {
       if (meta('head') === head && meta('schema') === String(SCHEMA)) {
         const r = /** @type {{ n: number, i: number | null, o: number | null, lo: string | null, hi: string | null }} */ (opened.prepare(
           "SELECT COUNT(*) AS n, SUM(direction = 'in') AS i, SUM(direction = 'out') AS o, MIN(captured) AS lo, MAX(captured) AS hi FROM rec").get());
-        return { state: 'present', total: r.n, in: r.i ?? 0, out: r.o ?? 0, oldest: r.lo, newest: r.hi };
+        return { state: 'present', total: r.n, totalSource: 'index', in: r.i ?? 0, out: r.o ?? 0, oldest: r.lo, newest: r.hi };
       }
-    } catch (e) { if (/** @type {any} */ (e)?.code === 'ERR_INDEX_UNAVAILABLE') state = 'unknown'; }
+    } catch (e) { state = /** @type {any} */ (e)?.code === 'ERR_INDEX_UNAVAILABLE' ? 'unknown' : 'unreadable'; }
     finally { try { d?.close(); } catch { /* already closed */ } }
   }
   let total = 0;
   if (head !== null) await gitLines(cfg.root, ['ls-tree', '-r', '--name-only', '-z', head, '--', 'records'], (p) => { const r = parseRecordPath(p); if (r && !r.ots) total++; }, { sep: '\0' });
-  return { state, total, in: null, out: null, oldest: null, newest: null };
+  return { state, total, totalSource: 'git', in: null, out: null, oldest: null, newest: null };
 }
 
 /**
