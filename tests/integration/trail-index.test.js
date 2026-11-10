@@ -310,7 +310,8 @@ async function capTrail() {
   await mp.record(a.raw, { direction: 'in', source: 'test' });
   return { dir, mp, cfg: { root: path.join(dir, 'default'), trail: 'default', lockTimeoutMs: 5000 } };
 }
-test('a rebuild and a catch-up stream git listings: no output cap, same rows', async () => {
+// The "no output cap" proof is tests/unit/git-lines.test.js (a listing past 16 MB); this pins the rows of both paths.
+test('a rebuild and a catch-up read through the streamed git listings and give the same rows', async () => {
   const { dir, mp, cfg } = await capTrail();
   const { listIndex } = await import('../../src/proof/index-db.js');
   assert.equal((await listIndex(cfg)).length, 1);

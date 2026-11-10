@@ -16,6 +16,8 @@ test('parseAddresses: plain, display names, quoted, comments, groups, route, jun
   assert.deepEqual(parseAddresses('<@r1.example,@r2.example:user@host.example>'), ['user@host.example']);
   assert.deepEqual(parseAddresses('undisclosed-recipients:;'), []);
   assert.deepEqual(parseAddresses('not an address, @x.example, a@, "a"@x.example'), []);
+  // a quoted string hides its `<`: only the real angle address counts
+  assert.deepEqual(parseAddresses('"a<" <b@c.example>'), ['b@c.example']);
   assert.deepEqual(parseAddresses(''), []);
   assert.deepEqual(parseAddresses('a@b@c.example'), []);
   assert.deepEqual(parseAddresses(`<${'a'.repeat(300)}@x.example>`), []);

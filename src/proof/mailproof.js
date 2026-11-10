@@ -477,13 +477,13 @@ class Mailproof {
 
   /**
    * Delete the stored content of chosen emails now, keeping their proofs.
-   * @param {string | string[] | { with: string, before?: Date | number | string, after?: Date | number | string }} target  A record id, an array of ids, or every stored email with a counterparty: `with` is one exact address on the From, To or Cc line (case-insensitive), `after` (inclusive) and `before` (exclusive) bound the capture time.
+   * @param {string | string[] | { with: string, before?: Date | number | string, after?: Date | number | string }} target  A record id, an array of ids, or every stored email with a counterparty: `with` is one exact address on the From, To, Cc or Reply-To line (case-insensitive), `after` (inclusive) and `before` (exclusive) bound the capture time.
    * @returns {Promise<Forgotten>}
    * @name Mailproof#forget
    * @when Use to erase what you hold of other people's mail earlier than retention would: one email, a list, or everything with one correspondent. Only the raw email and attachment files not needed by any remaining stored email are deleted. The proof stays: headers, verdicts, hashes and archived keys still re-verify offline, and anyone who later produces the raw email (sha256 = the record id) or an attachment gets it re-checked.
    * @category content
    * @signature mp.forget(target: string|string[]|{ with: string, before?, after? }) => Promise<{ removed: number, attachments: number }>
-   * @fails Throws a TypeError for a malformed id, an empty or non-string `with`, or a bad `before`/`after`; `ERR_TRAIL_LOCKED` and `ERR_TRAIL_LAYOUT` as `expireContent()`. An id with nothing stored is not an error (`removed` counts only what was deleted), so it is idempotent. The counterparty is found from the From/To/Cc lines of the signed headers in the record, of the unsigned record's `from`, and of the stored raw email's header block; the match is exact, `bob@gmail.com` is not `bob@company.com`.
+   * @fails Throws a TypeError for a malformed id, an empty or non-string `with`, or a bad `before`/`after`; `ERR_TRAIL_LOCKED` and `ERR_TRAIL_LAYOUT` as `expireContent()`. An id with nothing stored is not an error (`removed` counts only what was deleted), so it is idempotent. The counterparty is found from the From/To/Cc/Reply-To lines of the signed headers in the record, of the unsigned record's `from`, and of the stored raw email's header block; the match is exact, `bob@gmail.com` is not `bob@company.com`.
    * @example
    * await mp.forget(id);
    * await mp.forget({ with: 'bob@example.com', before: '2026-01-01' });

@@ -235,12 +235,15 @@ export async function readTrustedFile(file, { euid } = {}) {
   let real;
   try { real = await fs.realpath(file); }
   catch { throw new UsageError(`no config file at ${file}; create one with "mailproof config add-account" or see "mailproof config template"`); }
-  const st = await fs.stat(real);
-  const me = euid === undefined ? (typeof process.geteuid === 'function' ? process.geteuid() : null) : euid;
-  if ((me !== null && st.uid !== me) || (st.mode & 0o077) !== 0) {
-    throw new PermError(`config ${file} must be owned by you and mode 0600 (chmod 600 ${file})`);
-  }
-  return fs.readFile(real, 'utf8');
+  const fh = await fs.open(real, 'r');   // check and read the same open file: a swap between the two cannot slip past
+  try {
+    const st = await fh.stat();
+    const me = euid === undefined ? (typeof process.geteuid === 'function' ? process.geteuid() : null) : euid;
+    if ((me !== null && st.uid !== me) || (st.mode & 0o077) !== 0) {
+      throw new PermError(`config ${file} must be owned by you and mode 0600 (chmod 600 ${file})`);
+    }
+    return await fh.readFile('utf8');
+  } finally { await fh.close(); }
 }
 
 /**

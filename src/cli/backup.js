@@ -140,7 +140,7 @@ export async function backupCmd(a, ctx) {
       } catch (e) {
         const err = String(/** @type {any} */ (e).stderr ?? /** @type {any} */ (e).message ?? e).trim();
         const kind = classifyPush(err);
-        warn(ctx, p(err.replace(/(https?:\/\/)[^/@\s]*@/gi, '$1***@'), { keepNewline: true }));
+        warn(ctx, p(err.replace(/([a-z][a-z0-9+.-]*:\/\/)[^/@\s]*@/gi, '$1***@'), { keepNewline: true }));
         if (kind === 'rejected') {
           warn(ctx, `mailproof: the remote refused the push (it holds history this trail no longer has, for example from before a prune). mailproof never forces a push. The remote keeps its history as an archive; push to a new remote, or force it yourself outside mailproof if you mean to replace it. The bundle ${p(out)} was written.`);
           code = EX_ERR;
