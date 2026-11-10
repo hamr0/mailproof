@@ -1,0 +1,168 @@
+// `backup` (SPEC B11.6): a git bundle that verifies and clones, the content archive through tar, and a push that never
+// forces (proved against a local bare repository after a prune rewrote the history).
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { buildThread } from '../helpers/thread-trail.js';
+import { makeWorld, account } from '../helpers/cli.js';
+import { makeTmpDir } from '../helpers/tmp.js';
+
+const git = (cwd, ...a) => execFileSync('git', a, { cwd, encoding: 'utf8' }).trim();
+const json = (r) => JSON.parse(r.stdout);
+
+test('the bundle: default path under the state dir, verifies, clones to the same history; --json shape; mode 0600', async () => {
+  const T = await buildThread();
+  const w = makeWorld({ accounts: { acme: account(T.dir) } });
+  const root = path.join(T.dir, 'default');
+  const r = await w.run(['backup', '--json'], { deps: { now: () => new Date('2026-11-10T10:15:30Z') } });
+  assert.equal(r.code, 0, r.stderr);
+  const j = json(r);
+  assert.deepEqual(Object.keys(j).sort(), ['bytes', 'bundle', 'commits', 'content', 'pushed'].sort());
+  assert.equal(j.bundle, path.join(w.stateDir, 'backups', 'acme', 'acme-20261110T101530Z.bundle'));
+  assert.equal(j.content, null);
+  assert.equal(j.pushed, null);
+  assert.equal(j.bytes, fs.statSync(j.bundle).size);
+  assert.equal(fs.statSync(j.bundle).mode & 0o777, 0o600);
+  assert.equal(j.commits, Number(git(root, 'rev-list', '--count', 'HEAD')));
+  git(root, 'bundle', 'verify', j.bundle);
+  // restore: a clone of the bundle is the trail
+  const clone = path.join(makeTmpDir('mp-cli-restore-'), 'default');
+  git(path.dirname(clone), 'clone', '-q', j.bundle, clone);
+  assert.equal(git(clone, 'rev-parse', 'HEAD'), git(root, 'rev-parse', 'HEAD'));
+  const w2 = makeWorld({ accounts: { acme: account(path.dirname(clone)) } });
+  const list = json(await w2.run(['list', '--json']));
+  assert.equal(list.length, 6);
+  assert.equal(json(await w2.run(['verify', T.r.signed.id, '--json'])).ok, true, 'the restored records verify offline');
+  // the text output names the path and how to restore
+  const t = await w.run(['backup'], { deps: { now: () => new Date('2026-11-10T11:00:00Z') } });
+  assert.match(t.stdout, /^bundle +.*acme-20261110T110000Z\.bundle  \(\d+ bytes, \d+ commits\)$/m);
+  assert.match(t.stdout, /restore: git clone /);
+  // last backup is remembered for status
+  assert.match(json(await w.run(['status', '--json'])).acme.lastBackup.path, /acme-20261110T110000Z\.bundle$/);
+});
+
+test('--out: the directory must exist, an existing file is never overwritten, a bad trail is 1', async () => {
+  const T = await buildThread();
+  const w = makeWorld({ accounts: { acme: account(T.dir) } });
+  const dir = makeTmpDir('mp-cli-out-');
+  const out = path.join(dir, 'mine.bundle');
+  assert.equal((await w.run(['backup', '--out', path.join(dir, 'nope', 'x.bundle')])).code, 64);
+  const ok = await w.run(['backup', '--out', out, '--json']);
+  assert.equal(ok.code, 0, ok.stderr);
+  assert.equal(json(ok).bundle, out);
+  const again = await w.run(['backup', '--out', out]);
+  assert.equal(again.code, 64);
+  assert.match(again.stderr, /already exists; a backup is never overwritten/);
+  const w2 = makeWorld({ accounts: { empty: account(makeTmpDir('mp-cli-emptytrail-')) } });
+  const e = await w2.run(['backup']);
+  assert.equal(e.code, 1);
+  assert.match(e.stderr, /no records yet/);
+});
+
+test('--with-content: a second file made by tar; restoring it with tar gives back the raw emails; the bundle never holds content', async () => {
+  const T = await buildThread();
+  const w = makeWorld({ accounts: { acme: account(T.dir) } });
+  const out = path.join(makeTmpDir('mp-cli-content-'), 'b.bundle');
+  const r = await w.run(['backup', '--out', out, '--with-content', '--json']);
+  assert.equal(r.code, 0, r.stderr);
+  const j = json(r);
+  assert.equal(j.content.path, out.replace(/\.bundle$/, '.content.tar'));
+  assert.equal(j.content.bytes, fs.statSync(j.content.path).size);
+  assert.equal(fs.statSync(j.content.path).mode & 0o777, 0o600);
+  const listing = execFileSync('tar', ['-tf', j.content.path], { encoding: 'utf8' });
+  assert.match(listing, /raw\/[0-9a-f]{2}\/[0-9a-f]{32}\.eml/);
+  const dest = makeTmpDir('mp-cli-untar-');
+  execFileSync('tar', ['-C', dest, '-xf', j.content.path]);
+  const id = T.r.signed.id;
+  assert.deepEqual(fs.readFileSync(path.join(dest, 'raw', id.slice(0, 2), `${id}.eml`)), T.mails.signed.raw, 'the raw email, byte for byte');
+  assert.ok(!execFileSync('git', ['bundle', 'list-heads', out], { cwd: path.join(T.dir, 'default'), encoding: 'utf8' }).includes('.eml'));
+  // the content store off: a note, no archive, still exit 0
+  const off = await buildThread({ content: { store: false } });
+  const w2 = makeWorld({ accounts: { acme: account(off.dir, { content: { store: false } }) } });
+  const n = await w2.run(['backup', '--out', path.join(makeTmpDir('mp-cli-off-'), 'b.bundle'), '--with-content']);
+  assert.equal(n.code, 0, n.stderr);
+  assert.match(n.stdout, /the content store is off or empty: no content archive written/);
+  assert.ok(!/^content /m.test(n.stdout));
+});
+
+test('--with-content with no tar on PATH: exit 1 with the message, the bundle is kept', async () => {
+  const T = await buildThread();
+  const w = makeWorld({ accounts: { acme: account(T.dir) } });
+  const bin = makeTmpDir('mp-cli-gitonly-');
+  fs.symlinkSync(execFileSync('which', ['git'], { encoding: 'utf8' }).trim(), path.join(bin, 'git'));
+  const out = path.join(makeTmpDir('mp-cli-notar-'), 'b.bundle');
+  const r = await w.spawn(['backup', '--out', out, '--with-content'], { env: { PATH: bin } });
+  assert.equal(r.code, 1);
+  assert.match(r.stderr, /tar not found: install tar or run backup without --with-content/);
+  assert.ok(fs.existsSync(out), 'the bundle was kept');
+  assert.ok(!fs.existsSync(out.replace(/\.bundle$/, '.content.tar')));
+});
+
+test('--push: needs backupRemote (64), needs --yes (64, nothing pushed), pushes everything with no force; the content store is never pushed', async () => {
+  const T = await buildThread();
+  const remote = path.join(makeTmpDir('mp-cli-remote-'), 'remote.git');
+  execFileSync('git', ['init', '-q', '--bare', '--initial-branch=main', remote]);
+  const w = makeWorld({ accounts: { acme: account(T.dir, { backupRemote: remote }), plain: account(makeTmpDir('mp-cli-plain-')) } });
+  const root = path.join(T.dir, 'default');
+  const none = await w.run(['backup', '--push', '--yes', '--account', 'plain']);
+  assert.equal(none.code, 64);
+  assert.match(none.stderr, /no backupRemote/);
+  const outs = () => path.join(makeTmpDir('mp-cli-pushout-'), 'b.bundle');
+  const no = await w.run(['backup', '--push', '--account', 'acme', '--out', outs()]);
+  assert.equal(no.code, 64);
+  assert.match(no.stderr, /Proof records contain the signed headers of your mail/);
+  assert.match(no.stderr, /commit\(s\) would be pushed/);
+  assert.match(no.stderr, /add --yes to proceed/);
+  assert.equal(git(remote, 'branch', '--list'), '', 'nothing was pushed');
+  const yes = await w.run(['backup', '--push', '--yes', '--account', 'acme', '--out', outs(), '--json']);
+  assert.equal(yes.code, 0, yes.stderr);
+  const j = json(yes);
+  assert.equal(j.pushed.remote, remote);
+  assert.ok(j.pushed.refs.some((r) => /refs\/heads\/main/.test(r)));
+  assert.equal(git(remote, 'rev-parse', 'main'), git(root, 'rev-parse', 'HEAD'));
+  assert.ok(!git(remote, 'ls-tree', '-r', '--name-only', 'main').includes('.eml'), 'no content went to the remote');
+  const text = await w.run(['backup', '--push', '--yes', '--account', 'acme', '--out', outs()]);
+  assert.match(text.stdout, /^Proof records contain the signed headers/m, 'the warning is printed before a push');
+  assert.match(text.stdout, /^pushed +/m);
+});
+
+test('after a prune the push is rejected, mailproof never forces, the remote keeps its history and the user is told why', async () => {
+  const T = await buildThread();
+  const remote = path.join(makeTmpDir('mp-cli-remote2-'), 'remote.git');
+  execFileSync('git', ['init', '-q', '--bare', '--initial-branch=main', remote]);
+  const w = makeWorld({ accounts: { acme: account(T.dir, { backupRemote: remote }) } });
+  const root = path.join(T.dir, 'default');
+  const outDir = makeTmpDir('mp-cli-rej-');
+  assert.equal((await w.run(['backup', '--push', '--yes', '--out', path.join(outDir, '1.bundle')])).code, 0);
+  const remoteHead = git(remote, 'rev-parse', 'main');
+  assert.equal(remoteHead, git(root, 'rev-parse', 'HEAD'));
+  const pruned = await w.run(['prune', '--before', '2026-11-01T10:04:00Z', '--yes']);
+  assert.equal(pruned.code, 0, pruned.stderr);
+  assert.notEqual(git(root, 'rev-parse', 'HEAD'), remoteHead, 'the history was rewritten');
+  const r = await w.run(['backup', '--push', '--yes', '--out', path.join(outDir, '2.bundle')]);
+  assert.equal(r.code, 1);
+  assert.match(r.stderr, /rejected/);
+  assert.match(r.stderr, /mailproof never forces a push/);
+  assert.match(r.stderr, /remote keeps its history as an archive/);
+  assert.ok(fs.existsSync(path.join(outDir, '2.bundle')), 'the local bundle was still written');
+  assert.equal(git(remote, 'rev-parse', 'main'), remoteHead, 'the remote still holds the pre-prune history');
+  assert.ok(git(remote, 'ls-tree', '-r', '--name-only', 'main').includes(`records/${T.r.req.id.slice(0, 2)}/${T.r.req.id}.json`), 'pruned records are still in the remote');
+  // and the JSON mode keeps stdout empty on the failure
+  const jr = await w.run(['backup', '--push', '--yes', '--json', '--out', path.join(outDir, '3.bundle')]);
+  assert.equal(jr.code, 1);
+  assert.equal(jr.stdout, '');
+});
+
+test('a push to an unreachable remote is 75; a credential in the URL never reaches the output', async () => {
+  const T = await buildThread();
+  const w = makeWorld({ accounts: { acme: account(T.dir, { backupRemote: 'https://ana:tok3n-secret@127.0.0.1:1/nope.git' }) } });
+  const no = await w.run(['backup', '--push', '--out', path.join(makeTmpDir('mp-cli-net-'), '1.bundle')]);
+  assert.equal(no.code, 64);
+  assert.ok(!no.stderr.includes('tok3n-secret'));
+  assert.match(no.stderr, /https:\/\/\*\*\*@127\.0\.0\.1:1\/nope\.git/);
+  const r = await w.run(['backup', '--push', '--yes', '--out', path.join(makeTmpDir('mp-cli-net-'), '2.bundle')]);
+  assert.equal(r.code, 75, r.stderr);
+  for (const out of [r.stdout, r.stderr]) assert.ok(!out.includes('tok3n-secret'), 'no credential in the output');
+});

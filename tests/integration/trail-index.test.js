@@ -398,7 +398,8 @@ test('better-sqlite3 is imported by src/proof/index-db.js and by nothing else in
   const hits = [];
   const walk = (d) => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, e.name); if (e.isDirectory()) walk(p); else if (e.name.endsWith('.js') && /better-sqlite3/.test(fs.readFileSync(p, 'utf8'))) hits.push(path.relative(src, p)); } };
   walk(src);
-  assert.deepEqual(hits.filter((h) => h !== path.join('proof', 'index-db.js') && h !== path.join('proof', 'mailproof.js')), []);
+  // mailproof.js and the generated CLI help only quote the name in documentation text (the JSDoc `@fails` of list())
+  assert.deepEqual(hits.filter((h) => h !== path.join('proof', 'index-db.js') && h !== path.join('proof', 'mailproof.js') && h !== path.join('cli', 'help.generated.js')), []);
   const importing = hits.filter((h) => /(?:from\s+|import\()\s*['"]better-sqlite3['"]/.test(fs.readFileSync(path.join(src, h), 'utf8')));
   assert.deepEqual(importing, [path.join('proof', 'index-db.js')]);
 });
