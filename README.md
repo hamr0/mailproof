@@ -57,7 +57,7 @@ const reply = await mp.replyText(rawEmail);            // the sender's new words
 
 ## Four ways to use it
 
-1. **Library**: `check`, `record`, `verify`, `matchBody`, `matchFile`, `list`, `copies`, `replyText`, `counterparties`, `linked`, `checkProfile`, `proofParts`, `rawEmail`, `attachment`, `expireContent`, `forget`, `prune`. Use it in your own pipeline, for example a Postfix pipe.
+1. **Library**: `check`, `record`, `verify`, `matchBody`, `matchFile`, `list`, `copies`, `replyText`, `replyFacts`, `counterparties`, `linked`, `checkProfile`, `proofParts`, `rawEmail`, `attachment`, `expireContent`, `forget`, `prune`, `upgradeStamps`. Use it in your own pipeline, for example a Postfix pipe.
 2. **IMAP capture**: `mp.sync({...})` reads a mailbox (Gmail first) read-only and records every message. Run it again to pick up new mail.
 3. **The `mailproof` command**: run it for a menu, or use its subcommands (`sync`, `watch`, `list`, `show`, `verify`, `replies`, `check`, `forget`, `prune`, `backup`, `status`, ...) in scripts. Your mailboxes live in one config file and the password is always read from a command or a file you name, never typed or stored. `mailproof-sync` stays for one sync run under cron or a systemd timer.
 4. **AI agents**: `primitives.json` is a machine-readable menu of every verb (`when`, `import`, `signature`, `fails`, `example`), generated from source. Also on unpkg: `unpkg.com/mailproof/primitives.json`. Hand your assistant `mailproof.context.md` for the full contract.

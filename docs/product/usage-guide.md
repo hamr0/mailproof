@@ -40,9 +40,11 @@ Whoever runs mailproof keeps that data and is responsible for it. An individual 
 | Re-check a record later, offline, or verify an exported record with no trail | `mp.verify(id)` / `verifyRecord(record)` |
 | Check a body or an attachment you produce later | `mp.matchBody(id, raw)` / `mp.matchFile(id, bytes)` |
 | Read what the sender newly wrote in a recorded reply | `mp.replyText(raw)` |
+| Read the facts of every signed reply to a request you sent (who, whether it is aligned and signed, the first line) | `mp.replyFacts({ messageId })` |
+| Fold pending OpenTimestamps stamps into their Bitcoin attestation | `mp.upgradeStamps()` |
 | Capture a mailbox over IMAP, read-only | `mp.sync({ host, user, auth, ... })` |
 | Capture a mailbox on a schedule | the `mailproof-sync` CLI under cron or a systemd timer |
-| Let an AI agent discover and call the library | `primitives.json` (a machine-readable menu of the 14 primitives, also at `unpkg.com/mailproof/primitives.json`) plus `mailproof.context.md` |
+| Let an AI agent discover and call the library | `primitives.json` (a machine-readable menu of every primitive, also at `unpkg.com/mailproof/primitives.json`) plus `mailproof.context.md` |
 
 ```js
 import { Mailproof } from 'mailproof';
