@@ -18,14 +18,13 @@
 // loaded addon (the driver class) is cached, never a connection.
 //
 // One code path: if better-sqlite3 cannot load there is no fallback to a full read, `list`/`copies` reject with
-// `ERR_INDEX_UNAVAILABLE`. A rebuild lists every committed record id through one `git ls-tree` call whose output is
-// capped at 16 MB (about 350,000 records); a trail past that rejects with `ERR_INDEX_REBUILD`. Catch-up lists only the
-// changed paths under the same cap; if that overflows it falls back to the rebuild, which then rejects the same way.
+// `ERR_INDEX_UNAVAILABLE`. Every git listing (`ls-tree`, `diff`, `log`) is streamed line by line through `gitLines`, so
+// the rebuild has no output-size ceiling; memory holds one READ_BATCH of records plus the id -> adding-commit map.
 
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { git } from './git.js';
-import { recordIdsFromPaths, parseRecordPath, assertTrailLayout } from './layout.js';
+import { git, gitLines } from './git.js';
+import { parseRecordPath, assertTrailLayout } from './layout.js';
 import { RECORD_ID_RE, readRecord, withTrailLock, trailLockFile, trailIndexFile } from './trail.js';
 import { LINKED_CHILDREN_DEFAULT, REPLY_FACTS_MAX } from './limits.js';
 import { participantsOf, linksOf, directParents, hasSignedThreading, ROLES } from './participants.js';
@@ -41,7 +40,6 @@ import { verifyRecord } from './recheck.js';
 const SCHEMA = 4;
 const READ_BATCH = 500;
 const BUSY_TIMEOUT_MS = 10000;
-const DEFAULT_GIT_MAX_BUFFER = 16 * 1024 * 1024;
 
 const DDL = `
 CREATE TABLE IF NOT EXISTS meta(k TEXT PRIMARY KEY, v TEXT) WITHOUT ROWID;
@@ -73,15 +71,6 @@ const str = (v) => (typeof v === 'string' ? v : null);
 function unavailable(cause) {
   const why = cause && typeof cause === 'object' && 'code' in cause && typeof cause.code === 'string' ? ` (${cause.code})` : '';
   return Object.assign(new Error(`trail index unavailable: the better-sqlite3 native addon could not be loaded${why}`), { code: 'ERR_INDEX_UNAVAILABLE', cause });
-}
-
-/**
- * @param {unknown} cause
- * @param {number} limit  The output cap that was hit, in bytes.
- * @returns {Error & { code: string }}
- */
-function rebuildTooLarge(cause, limit) {
-  return Object.assign(new Error(`trail index rebuild failed: the list of committed records exceeds the ${limit}-byte git output limit (about ${Math.floor(limit / 47).toLocaleString('en-US')} records); the trail is too large to index`), { code: 'ERR_INDEX_REBUILD', cause });
 }
 
 /** @param {unknown} e @returns {boolean} A damaged index file (rebuilt from the records), as opposed to any other failure. */
@@ -127,22 +116,39 @@ function rowOf(id, r, commit) {
 }
 
 /**
- * The commit that ADDED each record file (one commit per record, SPEC B3), from one `git log` over `range` (default:
- * the whole history). Paths are plain hex names, so the unquoted `--name-only` listing is safe to parse line by line.
- * @param {string} root @param {string | null} range  `<stored>..<head>` or null. @param {number} maxBuffer
+ * The commit that ADDED each record file (one commit per record, SPEC B3), from one streamed `git log` over `range`
+ * (default: the whole history). Paths are plain hex names, so the unquoted `--name-only` listing is safe to parse line by line.
+ * @param {string} root @param {string | null} range  `<stored>..<head>` or null.
  * @returns {Promise<Map<string, string>>}  record id -> commit
  */
-async function addedCommits(root, range, maxBuffer) {
-  const out = await git(root, ['log', '--diff-filter=A', '--name-only', '--no-renames', '--format=%H', ...(range ? [range] : []), '--', 'records'], { maxBuffer });
+async function addedCommits(root, range) {
   /** @type {Map<string, string>} */
   const map = new Map();
   let commit = '';
-  for (const line of out.split('\n')) {
-    if (/^[0-9a-f]{40,64}$/.test(line)) { commit = line; continue; }
+  await gitLines(root, ['log', '--diff-filter=A', '--name-only', '--no-renames', '--format=%H', ...(range ? [range] : []), '--', 'records'], (line) => {
+    if (/^[0-9a-f]{40,64}$/.test(line)) { commit = line; return; }
     const r = parseRecordPath(line);
     if (r && !r.ots && commit) map.set(r.id, commit); // log is newest first: the oldest add wins
-  }
+  });
   return map;
+}
+
+/**
+ * Stream the record ids git lists for `args` (a NUL-separated `-z` path listing) to `onIds` in chunks of at most
+ * READ_BATCH, awaiting each chunk before the next is read.
+ * @param {string} root @param {string[]} args @param {(ids: string[]) => Promise<void> | void} onIds
+ * @returns {Promise<void>}
+ */
+async function eachListedBatch(root, args, onIds) {
+  /** @type {string[]} */
+  let ids = [];
+  await gitLines(root, args, async (p) => {
+    const r = parseRecordPath(p);
+    if (!r || r.ots) return;
+    ids.push(r.id);
+    if (ids.length >= READ_BATCH) { const b = ids; ids = []; await onIds(b); }
+  }, { sep: '\0' });
+  if (ids.length) await onIds(ids);
 }
 
 /**
@@ -154,9 +160,12 @@ async function addedCommits(root, range, maxBuffer) {
  * @returns {Promise<void>}
  */
 async function eachBatch(root, ids, fn) {
-  for (let i = 0; i < ids.length; i += READ_BATCH) {
-    fn(await Promise.all(ids.slice(i, i + READ_BATCH).map(async (id) => /** @type {[string, MpRecord | null]} */ ([id, await readRecord(root, id)]))));
-  }
+  for (let i = 0; i < ids.length; i += READ_BATCH) fn(await readBatch(root, ids.slice(i, i + READ_BATCH)));
+}
+
+/** @param {string} root @param {string[]} ids @returns {Promise<Array<[string, MpRecord | null]>>} */
+function readBatch(root, ids) {
+  return Promise.all(ids.map(async (id) => /** @type {[string, MpRecord | null]} */ ([id, await readRecord(root, id)])));
 }
 
 /**
@@ -178,7 +187,6 @@ async function atomic(d, fn) {
  * @property {string} root  The trail repo directory.
  * @property {string} trail  The trail name.
  * @property {number} lockTimeoutMs
- * @property {number} [gitMaxBuffer]  Internal (tests): the output cap, in bytes, for the git listings of a catch-up or rebuild.
  */
 
 /** The loaded driver class: cached after the first successful load. A class, not a handle. @type {any} */
@@ -279,7 +287,7 @@ async function openFile({ root, trail, lockTimeoutMs }, file) {
  * Bring the index to `head`. Caller holds the trail lock.
  * @param {ReturnType<typeof session>} s @param {IndexCfg} cfg @param {string} head
  */
-async function reconcile(s, { root, gitMaxBuffer = DEFAULT_GIT_MAX_BUFFER }, head) {
+async function reconcile(s, { root }, head) {
   const stored = s.meta('head');
   const versionOk = s.meta('schema') === String(SCHEMA);
   if (stored === head && versionOk) return;
@@ -290,9 +298,12 @@ async function reconcile(s, { root, gitMaxBuffer = DEFAULT_GIT_MAX_BUFFER }, hea
   if (stored && versionOk) {
     try {
       await git(root, ['merge-base', '--is-ancestor', stored, head]);
-      changed = recordIdsFromPaths(await git(root, ['diff', '--name-only', '--no-renames', '-z', stored, head, '--', 'records'], { maxBuffer: gitMaxBuffer }));
-      added = await addedCommits(root, `${stored}..${head}`, gitMaxBuffer);
-    } catch { changed = null; } // not an ancestor, or a list too big for the cap: rebuild (which rejects if it is too big too)
+      /** @type {string[]} */
+      const ids = [];
+      await eachListedBatch(root, ['diff', '--name-only', '--no-renames', '-z', stored, head, '--', 'records'], (b) => { for (const id of b) ids.push(id); });
+      added = await addedCommits(root, `${stored}..${head}`);
+      changed = ids;
+    } catch { changed = null; } // not an ancestor (or git failed): rebuild
   }
   if (changed) {
     await atomic(s.d, async () => {
@@ -306,20 +317,12 @@ async function reconcile(s, { root, gitMaxBuffer = DEFAULT_GIT_MAX_BUFFER }, hea
     });
     return;
   }
-  /** @type {string} */
-  let listing;
-  /** @type {Map<string, string>} */
-  let commits;
-  try {
-    listing = await git(root, ['ls-tree', '-r', '--name-only', '-z', head, '--', 'records'], { maxBuffer: gitMaxBuffer });
-    commits = await addedCommits(root, head, gitMaxBuffer);
-  } catch (e) {
-    const c = e instanceof Error ? /** @type {{ code?: string }} */ (e.cause) : null;
-    throw c?.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' ? rebuildTooLarge(e, gitMaxBuffer) : e;
-  }
+  const commits = await addedCommits(root, head);
   await atomic(s.d, async () => {
     s.d.exec('DELETE FROM rec; DELETE FROM att; DELETE FROM participants; DELETE FROM links; DELETE FROM meta;');
-    await eachBatch(root, recordIdsFromPaths(listing), (batch) => { for (const [id, r] of batch) { const x = rowOf(id, r, commits.get(id) ?? null); if (x) s.put(x); } });
+    await eachListedBatch(root, ['ls-tree', '-r', '--name-only', '-z', head, '--', 'records'], async (ids) => {
+      for (const [id, r] of await readBatch(root, ids)) { const x = rowOf(id, r, commits.get(id) ?? null); if (x) s.put(x); }
+    });
     s.setMeta('schema', String(SCHEMA));
     s.setMeta('head', head);
   });
