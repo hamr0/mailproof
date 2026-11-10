@@ -1,11 +1,12 @@
 {
   "name": "mailproof",
-  "version": "3.0.0",
+  "version": "3.1.0",
   "description": "Re-checkable proof of an email: the signed headers, never the body, recorded in a local git trail and verifiable offline forever. Two verdicts (live, portable), DKIM key archive, optional OpenTimestamps.",
   "type": "module",
   "main": "src/index.js",
   "types": "./types/index.d.ts",
   "bin": {
+    "mailproof": "./bin/mailproof.js",
     "mailproof-sync": "./bin/mailproof-sync.js"
   },
   "exports": {
@@ -21,11 +22,13 @@
     "test": "node --test 'tests/unit/**/*.test.js' 'tests/integration/**/*.test.js' tests/primitives-core.test.mjs tests/primitives-completeness.test.js",
     "typecheck": "tsc --noEmit",
     "build:types": "node -e \"require('node:fs').rmSync('types',{recursive:true,force:true})\" && tsc -p tsconfig.build.json",
-    "prepack": "npm run build:primitives && npm run build:types",
+    "prepack": "npm run build:primitives && npm run build:cli-help && npm run build:types",
     "check:lockfile": "node scripts/check-lockfile.mjs",
     "check:types": "node scripts/check-types.mjs",
     "build:primitives": "node scripts/gen-primitives.mjs",
-    "check:primitives": "node scripts/gen-primitives.mjs --check"
+    "check:primitives": "node scripts/gen-primitives.mjs --check",
+    "build:cli-help": "node scripts/gen-cli-help.mjs",
+    "check:cli-help": "node scripts/gen-cli-help.mjs --check"
   },
   "keywords": [
     "email",
@@ -61,6 +64,7 @@
     "src/index.js",
     "bin/",
     "src/proof/",
+    "src/cli/",
     "primitives.json",
     "types/",
     "README.md",

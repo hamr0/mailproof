@@ -1,0 +1,222 @@
+// The menu (SPEC B11.4), driven in-process through scripted stdin with the interactive flag on: prompts with defaults,
+// re-prompt on bad input, quit, typed-name confirmation for the destructive items, and "the menu runs the same code".
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { buildThread } from '../helpers/thread-trail.js';
+import { makeWorld, account } from '../helpers/cli.js';
+import { PassThrough } from 'node:stream';
+import { run } from '../../src/cli/run.js';
+import { makeTmpDir } from '../helpers/tmp.js';
+
+const T = await buildThread();
+const idOf = (n) => T.r[n].id;
+const world = () => makeWorld({ accounts: { test: account(T.dir) } });
+const keys = (...l) => `${l.join('\n')}\n`;
+const menu = (w, input, opts = {}) => w.run([], { interactive: true, input, ...opts });
+
+test('the menu lists the 14 items with their descriptions and quits on q; no terminal means no menu', async () => {
+  const w = world();
+  const r = await menu(w, keys('q'));
+  assert.equal(r.code, 0);
+  assert.match(r.stdout, /^\nmailproof \d+\.\d+\.\d+   account: test\n/);
+  for (const [n, label] of [[1, 'Sync now'], [2, 'Watch'], [3, 'List emails'], [8, 'Forget'], [9, 'Prune'], [10, 'Backup'], [12, 'Update mailproof'], [14, 'Export']]) assert.match(r.stdout, new RegExp(`^ ?${n}\\) ${label}`, 'm'));
+  assert.match(r.stdout, /14\) Export +needs M6/);
+  assert.match(r.stdout, / h\) Help      q\) Quit/);
+  assert.ok(!r.stdout.includes('[b: change]'), 'one account: nothing to change');
+  const noTty = await w.run([], { interactive: false, input: keys('q') });
+  assert.equal(noTty.code, 64);
+  assert.match(noTty.stdout, /^Usage: mailproof/);
+  assert.ok(!noTty.stdout.includes('Sync now'));
+  const eof = await menu(w, '');
+  assert.equal(eof.code, 0, 'a closed stdin quits');
+  const eof2 = await menu(w, keys('3'));
+  assert.equal(eof2.code, 0, 'the input ending in a prompt quits');
+});
+
+test('List: each prompt shows label, example and default; the output is the subcommand\'s; Press Enter, then the menu again', async () => {
+  const w = world();
+  const direct = await w.run(['list']);
+  const r = await menu(w, keys('3', '', '', '', '', '', '', 'q'));
+  assert.equal(r.code, 0, r.stderr);
+  for (const p of ['With (email address, e.g. bob@example.org, empty = everyone): ', 'Direction (in, out, empty = both): ', 'Before (date, e.g. 2026-08-19, empty = no limit): ', 'Limit (a number, 0 = all) [50]: ', 'Press Enter ']) assert.ok(r.stdout.includes(p), p);
+  assert.ok(r.stdout.includes(direct.stdout), 'the same text the subcommand prints');
+  assert.equal(r.stdout.split('Sync now').length, 3, 'the menu was shown again after the command');
+  // answers become the subcommand's flags
+  const f = await menu(w, keys('3', 'bob@beta.example', 'from', 'in', '', '2026-11-02', '1', '', 'q'));
+  assert.equal(f.stdout.split('\n').filter((l) => /^[0-9a-f]{12}  /.test(l)).length, 0, '--after 2026-11-02 leaves none');
+  const g = await menu(w, keys('3', 'bob@beta.example', 'from', 'in', '', '', '1', '', 'q'));
+  assert.equal(g.stdout.split('\n').filter((l) => /^[0-9a-f]{12}  /.test(l)).length, 1, '--limit 1');
+  assert.ok(g.stdout.includes('Role (from, to, cc, reply-to, empty = any): '), 'Role is asked only after a With');
+});
+
+test('a bad value prints the reason and re-prompts; ? prints the hint; three bad answers go back to the menu; an empty required value re-prompts', async () => {
+  const w = world();
+  const r = await menu(w, keys('3', 'not-an-address', '', 'sideways', 'both', 'in', '', '', '1', '', 'q'));
+  assert.match(r.stdout, /--with: "not-an-address" is not an email address|With: "not-an-address" is not an email address/);
+  assert.match(r.stdout, /Direction: use in, out/);
+  const s = await menu(w, keys('4', 'zz', '?', 'zz', 'zz', 'q'));
+  assert.equal((s.stdout.match(/give 32 hex characters, or a unique prefix of at least 8/g) ?? []).length, 3, 'three tries');
+  assert.match(s.stdout, /32 hex characters, or a unique prefix of 8 or more\n/, '? prints the example');
+  assert.match(s.stdout, /cancelled/);
+  assert.equal(s.stdout.split('Sync now').length, 3, 'back at the menu, which then took the q');
+  const e = await menu(w, keys('4', '', '', '', 'q'));
+  assert.equal((e.stdout.match(/a value is needed/g) ?? []).length, 3);
+  const x = await menu(w, keys('99', '', 'x', 'q'));
+  assert.match(x.stdout, /not a menu item: 99/);
+  assert.match(x.stdout, /not a menu item: x/);
+});
+
+test('Show, Verify, Replies, Check, Status run the subcommand code (same output, same exit mapping)', async () => {
+  const w = world();
+  const id = idOf('signed');
+  const show = await menu(w, keys('4', id.slice(0, 10), '', 'q'));
+  assert.ok(show.stdout.includes((await w.run(['show', id])).stdout));
+  const ver = await menu(w, keys('5', idOf('failing'), '', '', 'q'));
+  assert.match(ver.stdout, /NOT OK/);
+  const rep = await menu(w, keys('6', 'req@owner.example', '', 'q'));
+  assert.match(rep.stdout, /bob@beta.example/);
+  const prof = path.join(makeTmpDir('mp-cli-menu-'), 'p.json');
+  fs.writeFileSync(prof, JSON.stringify({ senders: ['@beta.example'] }));
+  const chk = await menu(w, keys('7', id, prof, '', '', 'q'));
+  assert.match(chk.stdout, /^pass$/m);
+  const st = await menu(w, keys('11', '', 'q'));
+  assert.match(st.stdout, /^test\n  trail /m);
+  const ex = await menu(w, keys('14', '', 'q'));
+  assert.match(ex.stderr, /export needs M6/);
+  const h = await menu(w, keys('h', 'q'));
+  assert.match(h.stdout, /^Usage: mailproof \[command\]/m);
+});
+
+test('two accounts: the first screen asks which, b asks again, and the choice goes to the command as --account', async () => {
+  const w = makeWorld({ accounts: { one: account(T.dir), two: account(makeTmpDir('mp-cli-menu2-')) } });
+  const r = await menu(w, keys('two', '3', '', '', '', '', '', '', 'b', 'one', '3', '', '', '', '', '', '', 'q'));
+  assert.equal(r.code, 0, r.stderr);
+  assert.match(r.stdout, /Account \(one\/two\): /);
+  assert.match(r.stdout, /account: two  \[b: change\]/);
+  assert.match(r.stdout, /no emails recorded/, 'account two is empty');
+  assert.match(r.stdout, /account: one  \[b: change\]/);
+  assert.match(r.stdout, /^[0-9a-f]{12}  /m, 'account one lists its emails');
+  const bad = await menu(w, keys('nine', 'nine', 'nine'));
+  assert.equal(bad.code, 0);
+  assert.match(bad.stdout, /choose one of one, two/);
+});
+
+test('Forget is destructive: the summary first, then the account name must be typed; anything else changes nothing', async () => {
+  const w = world();
+  const id = idOf('unsigned');
+  const raw = async () => (await w.run(['show', id, '--raw'])).code;
+  assert.equal(await raw(), 0);
+  const wrong = await menu(w, keys('8', id, 'nope', '', 'q'));
+  assert.match(wrong.stdout, /forget on account test: 1 record\(s\), 1 with a stored raw email/);
+  assert.ok(wrong.stdout.includes('Type the account name (test) to proceed'));
+  assert.match(wrong.stdout, /nothing changed/);
+  assert.equal(await raw(), 0, 'still stored');
+  const eofAtConfirm = await menu(w, keys('8', id));
+  assert.equal(eofAtConfirm.code, 0);
+  assert.equal(await raw(), 0);
+  const ok = await menu(w, keys('8', id, 'test', '', 'q'));
+  assert.match(ok.stdout, /forgot 1 stored email\(s\)/);
+  assert.equal(await raw(), 1, 'the content is gone');
+  assert.equal((await w.run(['show', id, '--json'])).code, 0, 'the proof stays');
+});
+
+test('Forget by person asks with/before/after; Prune asks the cutoff, shows the summary, needs the typed name', async () => {
+  const w = world();
+  const wrong = await menu(w, keys('8', '', 'bob@beta.example', '', '', 'test', '', 'q'));
+  assert.match(wrong.stdout, /forgot \d+ stored email/);
+  const p = await menu(w, keys('9', '2026-11-01T10:04:00Z', 'n', 'no', '', 'q'));
+  assert.match(p.stdout, /records removed 3, kept 3/);
+  assert.match(p.stdout, /nothing changed/);
+  assert.equal(JSON.parse((await w.run(['list', '--json'])).stdout).length, 6, 'nothing was pruned');
+  const bad = await menu(w, keys('9', 'tomorrow-ish', '2026-11-01T10:04:00Z', 'n', 'test', '', 'q'));
+  assert.match(bad.stdout, /--before: "tomorrow-ish" is not a date/);
+  assert.match(bad.stdout, /pruned: removed 3, kept 3/);
+  assert.equal(JSON.parse((await w.run(['list', '--json'])).stdout).length, 3);
+});
+
+test('Update shows the command and runs npm only after a yes; the subcommand never does without --run', async () => {
+  const w = world();
+  const calls = [];
+  const deps = { runNpm: async (args) => { calls.push(args); return 0; } };
+  const no = await menu(w, keys('12', 'n', '', 'q'), { deps });
+  assert.match(no.stdout, /To upgrade: npm install -g mailproof@latest/);
+  assert.ok(no.stdout.includes('Run it now? [y/N] '));
+  assert.deepEqual(calls, []);
+  const dflt = await menu(w, keys('12', '', '', 'q'), { deps });
+  assert.equal(dflt.code, 0);
+  assert.deepEqual(calls, [], 'the default is no');
+  await menu(w, keys('12', 'y', '', 'q'), { deps });
+  assert.deepEqual(calls, [['install', '-g', 'mailproof@latest']]);
+  await w.run(['update'], { deps });
+  assert.equal(calls.length, 1, 'the subcommand without --run runs nothing');
+  await w.run(['update', '--run'], { deps });
+  assert.equal(calls.length, 2);
+});
+
+test('Backup prompts for the path with the state-dir default, and the content archive', async () => {
+  const w = world();
+  const out = path.join(makeTmpDir('mp-cli-menu-bak-'), 'b.bundle');
+  const r = await menu(w, keys('10', out, 'y', '', 'q'));
+  assert.equal(r.code, 0, r.stderr);
+  assert.ok(r.stdout.includes(`Write the bundle to (a path) [${path.join(w.stateDir, 'backups', 'test')}${path.sep}test-`), 'the default is under the state dir');
+  assert.ok(fs.existsSync(out) && fs.existsSync(out.replace(/\.bundle$/, '.content.tar')));
+  const dflt = await menu(w, keys('10', '', 'n', '', 'q'), { deps: { now: () => new Date('2026-11-10T10:15:30Z') } });
+  assert.ok(fs.existsSync(path.join(w.stateDir, 'backups', 'test', 'test-20261110T101530Z.bundle')), 'the default path is used');
+  assert.match(dflt.stdout, /restore: git clone /);
+});
+
+test('Config: validate and path run the subcommands; a missing config offers the wizard', async () => {
+  const w = world();
+  const v = await menu(w, keys('13', '', '', 'q'));
+  assert.match(v.stdout, /^ok$/m);
+  const p = await menu(w, keys('13', 'path', '', 'q'));
+  assert.ok(p.stdout.includes(w.configFile));
+  const none = makeWorld({ config: null });
+  const wiz = await menu(none, keys('y', 'personal', 'ana@example.com', '', '', '', '', '', '', '', 'pass show x', '', '', '', '', '', 'y', 'q'));
+  assert.equal(wiz.code, 0, wiz.stderr);
+  assert.match(wiz.stderr, /no config file/);
+  assert.match(wiz.stdout, /written: .*config\.json/);
+  assert.match(wiz.stdout, /account: personal/, 'the menu starts once the config exists');
+  assert.equal(fs.statSync(none.configFile).mode & 0o777, 0o600);
+  const decline = await menu(makeWorld({ config: null }), keys('n'));
+  assert.equal(decline.code, 64);
+  const untrusted = world();
+  fs.chmodSync(untrusted.configFile, 0o644);
+  const u = await menu(untrusted, keys('q'));
+  assert.equal(u.code, 64);
+  assert.match(u.stderr, /must be owned by you and mode 0600/);
+});
+
+/** A menu on fake terminal streams: readline runs in terminal mode, so a typed ^C (\x03) is a real SIGINT event. */
+function terminalMenu(w, deps) {
+  const stdin = new PassThrough(); stdin.isTTY = true; stdin.setRawMode = () => stdin;
+  const stdout = new PassThrough(); stdout.isTTY = true; stdout.columns = 120;
+  let text = '';
+  stdout.on('data', (d) => { text += d; });
+  const stderr = { write: () => true, isTTY: false };
+  const done = run([], { stdout, stderr, stdin, interactive: true, env: w.env, signal: new AbortController().signal, deps });
+  const until = async (re) => { const t0 = Date.now(); while (!re.test(text) && Date.now() - t0 < 15_000) await new Promise((r) => setTimeout(r, 10)); assert.match(text, re); };
+  return { stdin, done, until, text: () => text };
+}
+
+test('Ctrl-C: during a running command it stops the command and the menu stays; at a prompt it quits', async () => {
+  const w = world();
+  let syncs = 0;
+  const m = terminalMenu(w, { sync: async () => { syncs++; return { complete: true, folders: [] }; } });   // the default interval is 5 min: watch is asleep after one tick
+  await m.until(/> \x1b\[3G$/);
+  m.stdin.write('2\n');
+  await m.until(/Interval \(30s, 5m, 1h\) \[5m\]: /);
+  m.stdin.write('\n');
+  await m.until(/ ok recorded 0/);
+  assert.equal(syncs, 1);
+  m.stdin.write('\x03');   // ^C while the watch sleeps
+  await m.until(/Press Enter/);
+  m.stdin.write('\n');
+  await m.until(/> \x1b\[3G$/);   // the menu is back
+  assert.match(m.text(), /Interval/);
+  m.stdin.write('\x03');   // ^C at the menu prompt
+  assert.equal(await m.done, 0);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(w.stateDir, 'test', 'state.json'), 'utf8')).lastWatch.state, 'stopped');
+});

@@ -4,14 +4,10 @@
 // stdout: one JSON line (the sync result, no secret). stderr: human-readable errors. Exit codes: see USAGE.
 
 import { parseArgs } from 'node:util';
-import { execFile } from 'node:child_process';
-import fs from 'node:fs/promises';
 import { Mailproof } from '../src/index.js';
-
-const EX_USAGE = 64;
-const EX_NOPERM = 77;
-const EX_TEMPFAIL = 75;
-const GOOGLE_APP_PASSWORD_SHAPE = /^[a-z]{4}( [a-z]{4}){3}$/;
+import { UsageError, EX_USAGE, exitFor } from '../src/cli/errors.js';
+import { printable } from '../src/cli/printable.js';
+import { runSecretCommand, readSecretFile, passwordAuth, tokenAuth } from '../src/cli/secrets.js';
 
 const USAGE = `Usage: mailproof-sync --trail-dir <dir> --user <user> [options]
 
@@ -49,47 +45,6 @@ Exit codes:
   64  bad usage
   1   anything else (for example a missing folder or a record() failure)
 `;
-
-class UsageError extends Error {}
-
-/** Split a command line into argv: whitespace separated, with '...' and "..." quoting and backslash escapes. No shell. */
-export function splitCommand(/** @type {string} */ s) {
-  /** @type {string[]} */
-  const out = [];
-  let cur = '';
-  let has = false;
-  let quote = '';
-  for (let i = 0; i < s.length; i++) {
-    const c = s[i];
-    if (quote) {
-      if (c === quote) quote = '';
-      else if (c === '\\' && quote === '"' && i + 1 < s.length) cur += s[++i];
-      else cur += c;
-    } else if (c === '"' || c === "'") { quote = c; has = true; }
-    else if (c === '\\' && i + 1 < s.length) { cur += s[++i]; has = true; }
-    else if (/\s/.test(c)) { if (has) { out.push(cur); cur = ''; has = false; } }
-    else { cur += c; has = true; }
-  }
-  if (quote) throw new UsageError('unterminated quote in command');
-  if (has) out.push(cur);
-  return out;
-}
-
-/** @param {string} cmd @returns {Promise<string>} first line of stdout */
-function runSecretCommand(cmd, /** @type {string} */ what) {
-  const argv = splitCommand(cmd);
-  if (!argv.length) throw new UsageError(`${what} is empty`);
-  return new Promise((resolve, reject) => {
-    const child = execFile(argv[0], argv.slice(1), { encoding: 'utf8', timeout: 30000, maxBuffer: 1 << 20 }, (err, stdout) => {
-      // never echo the command's stderr or stdout: either could hold the secret
-      if (err) return reject(Object.assign(new Error(`${what} failed (${/** @type {any} */ (err).code ?? err.name})`), { code: 'EX_SECRET_COMMAND' }));
-      resolve(String(stdout).split('\n')[0]);
-    });
-    // execFile has no stdio option: close the child's stdin so a command that waits for EOF cannot hang
-    child.stdin?.on('error', () => {});
-    child.stdin?.end();
-  });
-}
 
 async function readStdin() {
   let s = '';
@@ -138,24 +93,14 @@ async function main() {
   try {
     /** @type {{ pass: string } | { accessToken: string }} */
     let auth;
-    if (tokenCmd) {
-      const accessToken = (await runSecretCommand(tokenCmd, 'access-token command')).trim();
-      if (!accessToken) throw new UsageError('the access-token command printed nothing');
-      auth = { accessToken };
-    } else {
+    if (tokenCmd) auth = await tokenAuth(tokenCmd);
+    else {
       let raw;
       if (passCmd) raw = await runSecretCommand(passCmd, 'pass command');
-      else if (passFile) {
-        try { raw = (await fs.readFile(passFile, 'utf8')).split('\n')[0]; }
-        catch (e) { throw new UsageError(`cannot read --pass-file: ${/** @type {any} */ (e).code ?? 'error'}`); }
-      } else if (!process.stdin.isTTY) raw = await readStdin();
+      else if (passFile) raw = await readSecretFile(passFile, '--pass-file');
+      else if (!process.stdin.isTTY) raw = await readStdin();
       else throw new UsageError('no password source: use --pass-command, --pass-file or pipe it on stdin');
-      // Google shows an app password as four groups of four lowercase letters; the spaces are not part of it.
-      // Any other value is a real password: only the surrounding whitespace and the line ending go.
-      const trimmed = raw.trim();
-      const pass = GOOGLE_APP_PASSWORD_SHAPE.test(trimmed) ? trimmed.replace(/ /g, '') : trimmed;
-      if (!pass) throw new UsageError('the password source gave an empty password');
-      auth = { pass };
+      auth = passwordAuth(raw);
     }
 
     let result;
@@ -168,30 +113,19 @@ async function main() {
     process.stdout.write(JSON.stringify(result) + '\n');
     const bad = result.folders.find((f) => f.error);
     if (!bad) return 0; // complete, or partial because a cap was hit: the next run continues
-    process.stderr.write(`mailproof-sync: ${bad.folder}: ${bad.error?.code}: ${bad.error?.message}\n`);
+    process.stderr.write(printable(`mailproof-sync: ${bad.folder}: ${bad.error?.code}: ${bad.error?.message}`) + '\n');
     return exitFor(bad.error?.code);
   } finally {
     await mp.close();
   }
 }
 
-/** @param {string | undefined} code */
-function exitFor(code) {
-  switch (code) {
-    case 'ERR_SYNC_LOCKED': case 'ERR_TRAIL_LOCKED': case 'ERR_IMAP_CONNECT': case 'ERR_IMAP_TIMEOUT':
-    case 'ERR_IMAP_THROTTLED': case 'ERR_IMAP_UIDVALIDITY': case 'EX_SECRET_COMMAND':
-      return EX_TEMPFAIL;
-    case 'ERR_IMAP_AUTH': return EX_NOPERM;
-    default: return 1;
-  }
-}
-
 main().then((c) => { process.exitCode = c; }, (e) => {
   if (e instanceof UsageError) {
-    process.stderr.write(`mailproof-sync: ${e.message}\nTry "mailproof-sync --help".\n`);
+    process.stderr.write(printable(`mailproof-sync: ${e.message}`) + '\nTry "mailproof-sync --help".\n');
     process.exitCode = EX_USAGE;
   } else {
-    process.stderr.write(`mailproof-sync: ${e?.code ? e.code + ': ' : ''}${e?.message ?? e}\n`);
+    process.stderr.write(printable(`mailproof-sync: ${e?.code ? e.code + ': ' : ''}${e?.message ?? e}`) + '\n');
     process.exitCode = exitFor(e?.code);
   }
 });

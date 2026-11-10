@@ -154,7 +154,7 @@ test('an index of the old schema rebuilds on its own (participants and links app
   assert.deepEqual(peek(dir, 'SELECT COUNT(*) AS n FROM participants'), [{ n: 0 }]);
   assert.deepEqual(ids(await mp.list({ with: 'zed@zed.example' })), [r.plain.id]);   // the query itself triggers the rebuild
   assert.ok(peek(dir, 'SELECT COUNT(*) AS n FROM links')[0].n > 0);
-  assert.deepEqual(peek(dir, "SELECT v FROM meta WHERE k = 'schema'"), [{ v: '3' }]);
+  assert.deepEqual(peek(dir, "SELECT v FROM meta WHERE k = 'schema'"), [{ v: '4' }]);
   // a schema-1 file that has none of the new tables at all is created and filled too
   const e = new Database(file);
   e.exec("DROP TABLE participants; DROP TABLE links; UPDATE meta SET v = '1' WHERE k = 'schema';");

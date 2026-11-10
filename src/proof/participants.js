@@ -265,4 +265,41 @@ function strongest(links, parent) {
   return best;
 }
 
-export { ROLES, parseAddresses, signedFromAddresses, addressesOf, participantsOf, hasSignedThreading, linksOf, strongest };
+/**
+ * The Message-IDs a record DIRECTLY answers: its In-Reply-To, and the LAST entry of its References (the parent by
+ * RFC 5322). Earlier References entries are ancestors, not parents. Never throws.
+ * @param {MpRecord} rec
+ * @returns {Set<string>}
+ */
+function directParents(rec) {
+  /** @type {Set<string>} */
+  const out = new Set();
+  try {
+    const m = rec?.message ?? {};
+    if (typeof m.in_reply_to === 'string' && m.in_reply_to) out.add(m.in_reply_to);
+    const refs = Array.isArray(m.references) ? m.references : [];
+    const last = refs[refs.length - 1];
+    if (typeof last === 'string' && last) out.add(last);
+  } catch { /* none */ }
+  return out;
+}
+
+/**
+ * The first value (folds removed, as written, a Latin-1 string of the raw bytes) of header `name` (lower case) on a
+ * line a signature covers; `only` limits it to those signature indexes (default: all). Null when none covers it.
+ * @param {MpRecord} rec @param {string} name @param {Iterable<number>} [only]
+ * @returns {string | null}
+ */
+function signedHeaderValue(rec, name, only) {
+  const idx = only ? new Set(only) : null;
+  let out = /** @type {string | null} */ (null);
+  try {
+    sigsOf(rec).forEach((sig, i) => {
+      if (out !== null || (idx && !idx.has(i))) return;
+      for (const l of linesOf(sig)) if (l.name === name) { out = l.value.trim(); return; }
+    });
+  } catch { return null; }
+  return out;
+}
+
+export { directParents, signedHeaderValue, ROLES, parseAddresses, signedFromAddresses, addressesOf, participantsOf, hasSignedThreading, linksOf, strongest };

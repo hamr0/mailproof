@@ -129,6 +129,7 @@ Trust levels `verified`, `forwarded`, `authorized`, `unverified` (PRD §3).
 - A lock is taken over only when `host` equals this machine's hostname AND the pid is dead (`kill(pid, 0)` gives `ESRCH`; `EPERM` means alive). An unparseable lock counts as stale only once its mtime is older than `lockTimeoutMs`. A live or other-host lock is never taken over. Takeover goes through a break lock: a waiter that judges the lock stale first creates `<trailDir>/.<trail>.lock.break` with `O_EXCL` (contents `{pid, host, started}`); a waiter that does not get it leaves the main lock alone and backs off. The holder re-reads the main lock, unlinks it only if it still holds the content judged stale, releases the break lock in `finally` (only if it still holds its own content), then everyone retries the `O_EXCL` open. This is safe because, while the main lock belongs to a dead owner, only a break-lock holder may remove it (the dead owner never releases; a live writer's release removes only its own lock; acquirers need the file absent), so the main lock cannot change between the holder's re-read and its unlink. For the same reason a writer's own read-then-unlink on release is safe: its pid is alive, so its lock is never judged stale. A break lock is held for milliseconds, so it counts as stale when it is same-host with a dead pid, or older than `max(lockTimeoutMs, 10000)` ms by mtime; a stale break lock is removed by a plain unlink and never taken over through another lock.
 - On failure a writer removes only the files it newly created and that git does not track; it never deletes a committed file.
 - The OTS stamp runs inside the lock, so it is cut off after `clamp(floor(lockTimeoutMs / 3), 5000, 30000)` ms (reported as `ots: {error: 'ots timeout'}`; the record is still committed), so a hanging calendar cannot make every waiting writer hit `ERR_TRAIL_LOCKED`. A short `lockTimeoutMs` therefore shortens the stamp, with a 5000 ms floor; writers that wait less than that can still hit `ERR_TRAIL_LOCKED` behind a slow stamp.
+- **`upgradeStamps()`** (M3 step 5): `Promise<{ enabled, upgraded, pending, error? }>`. A fresh stamp is calendar-pending; this runs `ots upgrade` on each committed `records/<id[0:2]>/<id>.json.ots` not yet known to be anchored, **one trail-lock window per stamp** (the `ots` timeout above applies to each), and commits a rewritten proof as its own commit `ots upgrade <id[0:12]>` (the `.bak` the client leaves is removed; a failed commit restores the file). `ots upgrade` exiting non-zero for an unfinished stamp is normal: it stays pending. Anchored ids are remembered in `<trailDir>/.<trail>.ots-state.json` (`{ "v": 1, "anchored": [ids] }`, beside the trail, not in git, written atomically): a cache, so a lost file only repeats the questions. No `otsBin`: `{ enabled: false, upgraded: 0, pending: 0 }`, nothing touched. A missing or hanging binary does not throw: the pass stops and `error` names it (`ots not found`, `ots timeout`), `pending` still counts every stamp not anchored. `countPendingStamps` (internal, read-only, no lock) feeds the CLI `status`.
 - Local filesystems only: `O_EXCL` is not reliable on NFS.
 - `records/`, `replies/` and `keys/` are library-managed. At the start of every write (under the lock) the writer runs `git reset -q`, then deletes the untracked files under them that match the library's own paths, and nothing else: `records/<2hex>/<32 lowercase hex>.json`, `records/<2hex>/<32 lowercase hex>.json.ots`, `replies/<2hex>/<32 lowercase hex>.<slug>.json` (slug `[a-z0-9-]+`; in each, `<2hex>` must be the first two characters of the id), `keys/<domain>/<selector>/<16 hex>.json` (domain and selector lowercase, characters `[a-z0-9._-]`, no `..`, no leading `.`). The shard and key directories this pass emptied (and the ones a rolled-back write created) are removed; `records/` and `replies/` themselves stay. Any other file there is left alone (so `git status` may show it), but a trail is not a place for your own files.
 - **Recovery.** If `ERR_TRAIL_LOCKED` persists and no writer is running (check the `pid` and `host` in `<trailDir>/.<trail>.lock`), delete that file, and `.<trail>.lock.break` if present. A lock from another host is never taken over automatically, including after a hostname change or from a killed container on a shared volume. Volumes shared across hosts are unsupported beyond that manual step. **A trail restored from a backup or clone, or replaced, needs no extra step for the `sync` cursor (`<trailDir>/.<trail>.sync.json`, B4.2): `sync` detects that the cursor is ahead of the trail and rescans (`reset: 'trail'`).** A stale `sync` lock is `.<trail>.sync.lock` (and `.break`), recovered the same way. A `<trail>.prune-tmp` or journal left by a killed `prune` needs no manual step: the next trail-lock holder finishes or undoes the swap (B9.4).
@@ -329,13 +330,13 @@ Owner decisions on the six forks; rationale in [decisions-log](decisions-log.md)
 `list()`, `copies()`, `counterparties()` and `linked()` answer from a SQLite file, not by reading every record (F18, F19). It is a cache: the trail's JSON records stay the single source of truth, nothing is stored only there, and deleting the file loses nothing.
 
 - **File.** `<trailDir>/.<trail>.index.sqlite` (plus SQLite's `-wal` and `-shm` while open), beside the lock file and outside the git repo: never committed, never in a clone. **Lifecycle: opened per query.** Each `list`/`copies` opens the file, does the HEAD check, catch-up or rebuild and the query, and closes it before returning (a throw closes it too); no handle, statement or connection lives between calls, so `close()` has nothing of the index to wait for or release. Concurrent calls in one process each open their own connection (WAL); concurrent first builds serialise on the trail lock, and the second finds the HEAD already stored. Created on the first `list`/`copies` of a trail that has a commit; `record()` alone never creates it. A missing or empty trail lists `[]` and creates nothing.
-- **Tables** (`schema` 3): `rec` (id, captured, direction, live and portable trust, message_id, message_key, copy kind, body_status), `att` (attached-original `message_key` -> record id, for `contained_in`), `participants` (record id, lower-cased `address`, `raw` address as written, `role` `from|to|cc|reply-to`, `signed`; one row per record, role and address), `links` (record id, the Message-ID it points at, `via` `in-reply-to|references`, `strength` `signed|unsigned`, `pos`; one row per record and id), `meta` (`schema`, `head`). `participants` and `links` are what M3 step 2 added (B8); **schema 1 -> 2 -> 3** (3: participants are built from the record's `addresses` field) needs no migration code: a file whose `meta.schema` is not the current number is rebuilt from the records by the first query, like any other mismatch.
+- **Tables** (`schema` 4): `rec` (id, captured, direction, live and portable trust, message_id, message_key, copy kind, body_status, `commit_id`: the commit that added the record file, from one `git log --diff-filter=A --name-only` over the whole history at rebuild or over `<stored>..HEAD` at catch-up; a changed record keeps its stored commit), `att` (attached-original `message_key` -> record id, for `contained_in`), `participants` (record id, lower-cased `address`, `raw` address as written, `role` `from|to|cc|reply-to`, `signed`; one row per record, role and address), `links` (record id, the Message-ID it points at, `via` `in-reply-to|references`, `strength` `signed|unsigned`, `pos`, `direct`: 1 when the id is the record's In-Reply-To or the LAST entry of its References, see B10; one row per record and id), `meta` (`schema`, `head`). `participants` and `links` are what M3 step 2 added (B8); **schema 1 -> 2 -> 3 -> 4** (3: participants are built from the record's `addresses` field; 4: `rec.commit_id` and `links.direct`, M3 step 4) needs no migration code: a file whose `meta.schema` is not the current number is rebuilt from the records by the first query, like any other mismatch. (Opening a schema-3 file adds the two appended columns with `ALTER TABLE ... ADD COLUMN`, so its statements prepare; the rows are then rebuilt.)
 - **What the extra tables are built from.** The record alone (never the content store, which may be off, expired or forgotten), by `src/proof/participants.js`: the record's `addresses` field (B1); a record without it (captured before M3) falls back to the header lines each signature covers (`signatures[].signed_headers`) plus `message.from` of an unsigned record. Thread links come from the parsed `message.in_reply_to` / `message.references`. Addresses come from one linear address-list parser (display names, quoted strings, comments, groups and routes skipped: `"ceo@bank.example" <evil@x.example>` is `evil@x.example`). `signed` is true when some signature's `h=` covers a line that names the address. A link is `signed` only when a signature covers the In-Reply-To / References line that names the id AND that signature verifies offline and aligns with the From domain (`verifyRecord(...).passing`, run only for records that have such a line, so most records pay nothing); otherwise `unsigned`. Per record the index takes at most 500 participant rows and 200 links (the last References ids, the nearest ancestors), bounds in `limits.js`.
 - **Gaps (what a record cannot show).** A record captured since M3 carries every From/To/Cc/Reply-To address, each marked `signed`, so an unsigned Cc is found by `list({ with })` and `counterparties()` and is `signed: false` there (a Gmail-signed mail covers To and Cc; a Microsoft-signed one often does not cover Cc or Reply-To). Two gaps remain: a record captured BEFORE M3 has only the signed lines and an unsigned record's `message.from` (no migration rewrites a record; re-recording the same bytes is a duplicate), and an over-limit record has no `addresses` at all (it is never parsed). Bcc is never in a received header. The record does not say which address is the trail's owner, so the owner appears as a counterparty on every record; there is no reliable way to exclude them from `direction` alone (an `in` mail names the owner somewhere in To/Cc/Bcc, which cannot be told apart from other recipients).
 - **HEAD check.** `meta.head` is the trail git HEAD the index reflects. Every `list`/`copies` compares it with `git rev-parse HEAD` first. Equal: use it. Stored HEAD is an ancestor of HEAD: **catch up** from the records `git diff --name-only --no-renames -z <stored> HEAD -- records` names (added, changed or deleted; the `records/<id[0:2]>/<id>.json` paths are parsed by `parseRecordPath` in `layout.js`, which ignores `.ots` files and any path whose shard is not the id's own), in one transaction. Anything else (restore to an older commit, rewritten history, no index, damaged file, other `schema`): **rebuild** from every record committed in HEAD (one `git ls-tree -r` over `records`, the same parser), in one transaction. Every `list`/`copies`/`counterparties`/`linked` also runs the B3 layout check first, so an old flat trail answers `ERR_TRAIL_LAYOUT` instead of an empty index. Records are read in batches of 500 and written as each batch arrives (the transaction stays open across the reads; any throw rolls it back, so the old rows and old head stay), so peak memory does not grow with the trail (F19, note 2026-11-08). Catch-up and rebuild run under the trail lock (B3), so they never see a half-written commit; a waiting `list` can therefore throw `ERR_TRAIL_LOCKED` after `lockTimeoutMs`.
 - **Record commits.** `record()` never touches the index. The new commit moves the trail HEAD, and the next `list`/`copies` catches up from it (one code path, so a failed or skipped index write cannot lose anything).
 - **Answers.** Identical to the former full read: `list` newest `captured` first (with the B8 filters, the same order), `copies` oldest first; records with equal `captured` come in ascending id order (the full read left that to the file system). Only records whose `id` equals their file name are indexed.
-- **Addon.** `better-sqlite3` (native addon, prebuilt for darwin/linux/win32 x64+arm64, linux musl; no install script) is imported only by `src/proof/index-db.js`, on the first `list`/`copies`. If it cannot load, those two reject with `code: 'ERR_INDEX_UNAVAILABLE'`; there is no fallback to a full read. A rebuild lists the committed record ids with one `git ls-tree` call capped at 16 MB of output (about 350,000 records); past that, `list`/`copies` reject with `code: 'ERR_INDEX_REBUILD'` (message names the cause and the limit). A catch-up lists the changed paths under the same cap; if that list overflows, it falls back to the rebuild, which then rejects the same way. `record`, `check`, `get`, `verify`, `matchBody`, `matchFile` and `sync` never load it, so proof does not depend on it.
+- **Addon.** `better-sqlite3` (native addon, prebuilt for darwin/linux/win32 x64+arm64, linux musl; no install script) is imported only by `src/proof/index-db.js`, on the first `list`/`copies`. If it cannot load, those two reject with `code: 'ERR_INDEX_UNAVAILABLE'`; there is no fallback to a full read. A rebuild lists the committed record ids with one `git ls-tree` call and each record's adding commit with one `git log --diff-filter=A --name-only` call; a catch-up lists the changed paths with one `git diff`. All three are streamed line by line (`gitLines` in `git.js`), never buffered whole, so there is no output-size limit and no trail-size error (F27); memory holds one batch of 500 records plus the id-to-commit map. `record`, `check`, `get`, `verify`, `matchBody`, `matchFile` and `sync` never load it, so proof does not depend on it.
 - **Trust.** Whoever can write the index file can change what `list`/`copies` return, never what `get`/`verify`/`matchBody` return, because those read the records. Do not present `list` output as proof; re-check with `verify`. Local filesystems only (SQLite WAL).
 
 ## B6. Reply text (`replyText`, M2)
@@ -609,7 +610,7 @@ After the swap the old HEAD is not an ancestor of the new one, so B4.2's "restor
 
 ### B9.7 Result
 
-`{ cutoff, noop, previousHead, head, removed, kept, stragglers: [ids], dropped, keysCarried, reverify: { ok, failed: [ids] }, backup, content: { removed, attachments, error? }, timing: { planMs, buildMs, lockMs, totalMs } }`. `previousHead` is the old trail's HEAD at the swap (the backup's HEAD; the notice's `previous-head` is the snapshot, B9.2). `kept` includes records appended during the build. `reverify`: `verifyRecord` over every kept record, offline: `ok` is how many verify, `failed` the ids that do not. The prune cannot have caused a failure (the files are byte-identical), and a record that fails DKIM is a legitimate record (accept-with-flag), so a failure is reported and never stops the prune. OTS stamps are left byte-identical; `ots` is never run. `lockMs` is how long the trail lock was held. `backup` is null for a no-op or after `deleteBackup`.
+`{ cutoff, noop, dryRun, previousHead, head, removed, kept, stragglers: [ids], dropped, keysCarried, reverify: { ok, failed: [ids] }, backup, content: { removed, attachments, error? }, timing: { planMs, buildMs, lockMs, totalMs } }`. `previousHead` is the old trail's HEAD at the swap (the backup's HEAD; the notice's `previous-head` is the snapshot, B9.2). `kept` includes records appended during the build. `reverify`: `verifyRecord` over every kept record, offline: `ok` is how many verify, `failed` the ids that do not. The prune cannot have caused a failure (the files are byte-identical), and a record that fails DKIM is a legitimate record (accept-with-flag), so a failure is reported and never stops the prune. OTS stamps are left byte-identical; `ots` is never run. `lockMs` is how long the trail lock was held. `backup` is null for a no-op or after `deleteBackup`. **`dryRun: true`** (option, default false; M3 step 5): runs the plan and the kept-record re-check, returns this same shape with `dryRun: true`, `head: null`, `content` zero, `timing.buildMs`/`lockMs` 0 and `backup` the path a real prune would use; it builds, swaps and writes nothing (HEAD, tree, content store and sync cursor unchanged; it takes the prune lock like a real prune, and finishes an unfinished earlier swap like any trail-lock holder, but removes no crashed build).
 
 Errors: `TypeError` (bad options), `ERR_PRUNE_RUNNING`, `ERR_SYNC_LOCKED`, `ERR_TRAIL_LOCKED`, `ERR_PRUNE_CUTOFF`, `ERR_PRUNE_REWRITTEN`, `ERR_PRUNE_VERIFY`, `ERR_PRUNE_JOURNAL`, `ERR_TRAIL_LAYOUT`; every one raised before the swap changes nothing.
 
@@ -620,6 +621,284 @@ Files in the trail directory that mailproof does not write (a README a user comm
 ### B9.9 Test plan
 
 `tests/integration/prune.test.js` with `tests/helpers/prune-trail.js` (real `record()`, a moving clock), `prune-check.js` (the POC checker ported to the sharded layout and run against the old trail) and `prune-proc.js` (a child killed with SIGKILL at a named point): result and notice; kept and removed files, carried and dropped keys, stragglers, the dropped reply-text commit, byte-identical blobs and identical commit metadata (checker); content and shared attachments; index; no-op and empty-trail refusal; option validation; OTS stamps; cumulative second and third prune; a record that does not verify is reported; commits made during the build (hook after the plan and after the build; the lock is not held), including the late key rule, a dropped late reply and a late straggler; non-descendant HEAD aborts with nothing changed; a failing build leaves nothing behind; prune lock fail-fast; a held sync lock waits and gives up; crash recovery with a real killed process at each point; a writer in the gap creates no empty trail; the sync cursor and a following `sync`; `deleteBackup` and the backup suffix; journal owner alive and unreadable journal; the checker's negative control; flat layout refused.
+
+## B10. Reply facts (`replyFacts`, M3 step 4)
+
+Design: PRD §7 M3 "Approvals and the fact bundle"; POC and measurements: findings F26, F27. mailproof supplies facts, the consumer decides: nothing here ranks, picks or filters replies.
+
+### B10.1 Surface
+
+`replyFacts({ messageId }) => Promise<Bundle[]>`. `messageId` is the request's Message-ID as in its header (`<id@host>`; the brackets are added when missing). A non-empty string, else `TypeError`. Read-only: nothing is written to the trail (no commit, no reply-text row); the trail index, a cache, may be built or caught up like for `list()`, so it can reject with `ERR_INDEX_UNAVAILABLE`, `ERR_TRAIL_LOCKED` or `ERR_TRAIL_LAYOUT` exactly as `list()` does.
+
+### B10.2 Which records
+
+The inbound records (`direction` `in`) that DIRECTLY answer `messageId`: its In-Reply-To is `messageId`, or `messageId` is the LAST entry of its References. Deeper members of the thread (a later message whose References list the request earlier in the list) are not direct replies; `linked().children` includes them, `replyFacts` does not. The request need not be recorded. Own messages (outbound) are never included. The lookup is one indexed query (`links.mid`, `links.direct`, B5), ordered by `captured` ascending, ties by `id` ascending. `[]` means no reply. Copies of one signed message are separate records and so separate bundles (same `messageKey`; the consumer groups them). More than 200 direct replies (`REPLY_FACTS_MAX`, `limits.js`) rejects with `ERR_TOO_MANY_REPLIES`: nothing is cut silently.
+
+### B10.3 The bundle
+
+A flat object, every value a string, keys in this order. Multi-value fields (`to`, `cc`, `toRaw`, `ccRaw`, `attachments`) are joined with `,` (no space), in header order, `""` for none; the separator cannot occur inside an address (the parser accepts no `,`, `;`, space, quote or angle bracket, F26 Q4) or a `sha256:<64 hex>` value. Address fields are lower-case with a `...Raw` sibling exactly as written. The reply's own Message-ID, `messageKey` or any other absent value is `""`.
+
+| Field | Value |
+|---|---|
+| `messageId` | the reply's Message-ID, `""` when it has none |
+| `messageKey` | the record's `message_key` (groups copies of one signed message), `""` when null |
+| `recordId`, `commit`, `trail` | where the reply is recorded: the record id, the commit that added its file (from the index, B5; `""` only if unknown), the trail name |
+| `captured` | when mailproof captured the record (ISO 8601, UTC) |
+| `from`, `fromRaw` | the first From address, lower-cased / as written; `""` when none |
+| `fromDomain` | the domain of `from` (after the last `@`, lower-case, one trailing `.` removed; `""` when none): a claim, see the note below |
+| `fromDkimAligned` | `pass`: a signature that verifies offline (portable re-check) AND aligns with the From domain, and covers the From header, exists. `fail`: the record has signatures but none qualifies. `none`: the record has no DKIM signature |
+| `to`, `toRaw`, `cc`, `ccRaw` | claimed To/Cc addresses, lower-cased / as written (multi-value) |
+| `date`, `subject` | the header value: when a PASSING signature covers the header, that signed value (`dateSource` / `subjectSource` `signed`); else the header of the stored raw email (`claimed`); else `""` (`none`: the content store does not hold the email, or the header is absent). Date is as written, unfolded; Subject has RFC 2047 encoded words decoded |
+| `dateSource`, `subjectSource` | `signed`, `claimed`, `none` |
+| `dkim` | live DKIM at capture: `pass` (some signature passed), `none` (nothing signed), `fail` (signatures, none passed) |
+| `dmarc`, `spf`, `arc` | live result at capture: `pass`, `fail`, `none` (absent or `none`), `other` (any other result: neutral, softfail, temperror, permerror, policy...) |
+| `live`, `portable` | the two TRUST LEVELS (B2, not DKIM results): `verified`, `forwarded`, `authorized`, `unverified` (`portable` is only `verified` or `unverified`); any other stored value is `unverified` |
+| `link` | the request's link in this reply (B8): `signed` (the request id is in an In-Reply-To/References line a verifying, aligned signature covers), `unsigned` (named, not so covered), `none` |
+| `text`, `firstLine` | the new reply text (B6 stripper, quoted history removed) and its first line, see B10.4; `""` unless `textSource` is `content` |
+| `textSource` | `content` (read from the stored raw email), `none` (no stored raw email: store off, expired, forgotten, or failed its hash check), `over-limit` (the raw email is over an input limit and is not read) |
+| `bodyProven` | `proven`: `textSource` is `content`, the reply has a text/plain part and `body_status` is `matched`. `unproven` otherwise (partial, html-only, mismatch, no content) |
+| `quote` | `found`, `not-found`, `inline` (B6.4); `not-found` when `textSource` is not `content` |
+| `trailing` | `yes`: unquoted text was written BELOW the quoted part and is not in `text`; `no` otherwise (and when there is no content) |
+| `attachments` | the attachment hashes `sha256:<hex>` (multi-value) |
+
+**`fromDomain`.** `fromDomain` is the part of `from` after the last `@` (so lower-case), with one trailing `.` removed (the address parser admits `bob@company.example.`); no IDN/punycode conversion and no Unicode normalisation: the domain as written, lower-cased. It is `""` when `from` is empty or has no domain. Subdomains are not folded: `eu.company.example` is not `company.example`, so a rubric lists each domain it trusts. Always set, and a CLAIM, exactly like `from`: only `fromDkimAligned` = `pass` makes it proven, so a rubric pairs `fromDomain` in `["company.example"]` with `fromDkimAligned` in `["pass"]`. It is for bareguard's whole-value `in` rule: a substring rule (`@company.example`) would also match `bob@company.example.evil.example`.
+
+### B10.4 `text` and `firstLine`
+
+`text` is the B6 stripper result on the raw email in the content store, computed WITHOUT committing a reply-text row (the same stripper, in the same worker pool, as `replyText`). `firstLine` splits `text` on `\r\n`, `\n` or `\r`, takes the first line that is non-empty after ECMAScript `String.prototype.trim` (spaces, tabs, NBSP, BOM, U+2028/2029 and the other WhiteSpace/LineTerminator characters at both ends), and returns it trimmed: no case folding, no normalisation; `""` when there is none. A reply whose text sits under the quote has `text` and `firstLine` of `""` and `trailing` `yes`: fail-safe for an exact-match rule.
+
+### B10.5 Consumer rule (not implemented here)
+
+For an approval, the consumer groups the bundles by `messageKey` (a `""` key is its own group), runs its rule on each distinct reply, and ALLOWS only when at least one is green and none is red. Zero replies, all red, or mixed is DENY. See PRD §7 M3 "Reference recipe" and `mailproof.context.md`.
+
+### B10.6 Test plan
+
+`tests/integration/mailproof-reply-facts.test.js` (the B8 thread) and `tests/unit/reply-facts.test.js`: 0/1/many replies; a grandchild, an unrelated mail and an outbound reply excluded; the last-References match; copies with one `messageKey`; order and ties; HEAD and working tree unchanged; content store off and forgotten; signed versus claimed Date/Subject with encoded words; separators; closed sets; `firstLine` edge cases; `trailing`; `commit` equals git, after a catch-up and after a stale-schema rebuild; the 200 cap; cost at 2,000 records.
+
+## B11. The `mailproof` CLI (M3 step 5)
+
+> **Built (M3 step 5, on `feat/m3-reply-facts`, not released)**; owner decisions 2026-11-10, decisions-log "M3 CLI"; the owner's resolutions of the review list are recorded in B11.12 and what the build had to decide beyond this text in B11.14. One binary, `bin/mailproof.js` (`bin` and `files` in `package.json`), a thin entry over `src/cli/` and the `Mailproof` class like `mailproof-sync` (B4.1): it parses arguments, reads the config, builds one `Mailproof` per command, always `close()`s, prints. No record, verdict or trail logic of its own. `mailproof-sync` stays, unchanged. No new runtime dependency (`node:util` `parseArgs`, `node:readline`, `node:child_process`, `node:fs`).
+
+### B11.1 Invocation
+
+- `mailproof` with no arguments and a TTY on stdin and stdout: the menu (B11.4). Without a TTY it prints the help and exits 64 (a script that forgot its subcommand must not hang on a prompt).
+- `mailproof <command> [flags]`: a direct subcommand, never prompts, never reads a TTY (a missing required flag is exit 64). `mailproof help [command]`, `mailproof <command> --help`, `mailproof --version`.
+- Global flags: `--account <name>` (B11.3), `--config <path>` (B11.2), `--json` (B11.7), `-h/--help`. `--account` and `--json` are accepted before or after the command.
+- Unknown command or flag, a missing required value, a bad date or address: exit 64 with a one-line stderr message naming the flag, then `see: mailproof help <command>`.
+
+### B11.2 Config file (human-edited, secrets by reference)
+
+Path: `--config <path>`, else `$XDG_CONFIG_HOME/mailproof/config.json`, else `~/.config/mailproof/config.json`. JSON, so no dependency. **Only the human edits it**, with one exception: `config add-account` (B11.12 item 6) is an interactive wizard that shows the account JSON and, after an explicit yes, writes the file atomically with mode 0600 (directory 0700), keeping every other account. No other command writes it.
+
+```json
+{
+  "v": 1,
+  "accounts": {
+    "personal": {
+      "user": "ana@example.com",
+      "host": "imap.example.com",
+      "port": 993,
+      "folders": ["INBOX"],
+      "sent": true,
+      "trailDir": "/home/ana/mailproof/personal",
+      "trail": "default",
+      "passCommand": "pass show mailproof/personal",
+      "content": { "store": true, "attachments": true, "days": 730, "sweepDays": 7 },
+      "ots": true,
+      "backupRemote": "git@git.example.org:ana/mailproof-personal.git"
+    },
+    "business": {
+      "user": "ana@corp.example.net",
+      "host": "imap.corp.example.net",
+      "trailDir": "/home/ana/mailproof/business",
+      "accessTokenCommand": "oauth-token --account business"
+    }
+  }
+}
+```
+
+| Field | Default | Meaning |
+|---|---|---|
+| key of `accounts` | (required) | the account name: `[a-z0-9][a-z0-9_-]{0,31}`. Used by `--account` and in the state dir. |
+| `user`, `trailDir` | (required) | IMAP user; the trail's directory (absolute; `~` is expanded). |
+| `host` | `imap.gmail.com` | IMAP host (TLS only, B4.6). |
+| `port` | `993` | |
+| `folders` | `["INBOX"]` | as `mailproof-sync --folders`. |
+| `sent` | `true` | `true`, `false` or a folder path (B4.1). |
+| `trail` | `"default"` | trail name inside `trailDir`. |
+| `passCommand` \| `passFile` \| `accessTokenCommand` | (exactly one) | the secret source, same semantics as `mailproof-sync` (command split into argv, `execFile`, no shell, first stdout line; file first line; XOAUTH2 token command). **There is no password field and no stdin source**: a key named `pass`, `password` or `secret` anywhere in an account is refused (exit 64, "put the password in your password manager and use passCommand"). |
+| `content` | `{}` | the `content` constructor option (B7.2): `store`, `attachments`, `days` (730), `sweepDays` (7). |
+| `ots` | `false` | `true`: set `otsBin` to `ots` from `PATH` (an absolute path string is also accepted). |
+| `backupRemote` | (none) | a git remote URL, used only by `backup --push` (B11.6). |
+
+- **Validation.** An unknown key (top level, account, or `content`), a wrong type or an invalid name is exit 64 naming the JSON path (`accounts.personal.port`). `v` is required and must be `1`. Account names are unique by being object keys; two accounts must not share the same `trailDir` + `trail` (exit 64).
+- **Permissions (fail closed).** The config can name commands that run with the user's rights, so it must be trusted: `stat` the file (after resolving symlinks); if it is not owned by the effective uid, or any group/other permission bit is set (`mode & 0o077`), exit **77** with `config <path> must be owned by you and mode 0600 (chmod 600 <path>)`. A missing file is exit 64 with the template hint (`mailproof config template`). No environment fallbacks: the config is the only source for `accounts` (flags still override the per-command options below).
+- **State** (not config): `$XDG_STATE_HOME/mailproof/`, else `~/.local/state/mailproof/`, mode 0700, created on first write. Everything the tool rewrites by itself lives there, so the config is never touched by a run:
+
+```
+~/.local/state/mailproof/
+  <account>/
+    state.json            last sync/watch/backup/prune times and results, watch status; rewritten atomically (temp + rename)
+    watch.log             append-only, one line per tick; truncated to its last 1 MiB at watch start
+  backups/<account>/
+    <account>-<UTC yyyymmddThhmmssZ>.bundle
+    <account>-<UTC yyyymmddThhmmssZ>.content.tar     only with --with-content
+```
+  `state.json` is `{ "v": 1, "lastSync": { "at", "complete", "recorded", "error" } | null, "lastWatch": { "at", "pid", "state": "running" | "stopped" } | null, "lastBackup": { "at", "path" } | null }`. It is advisory (it feeds `status`); losing it loses nothing. Sync cursors stay beside each trail (`.<trail>.sync.json`, B4.2), the content store stays beside the trail (B7.1): the state dir never holds proof or content, except backups the user asked for.
+
+### B11.3 Account selection
+
+- Exactly one account configured: it is used and `--account` is optional.
+- Two or more: **every account-scoped command requires `--account <name>`**; without it exit 64 listing the names. Nothing ever runs on "all accounts" implicitly (personal and business stay apart by intent). `status` is the one exception: without `--account` it prints each account in turn (read-only).
+- Unknown name: exit 64 listing the names. In the menu the user picks from a numbered list (B11.4).
+- Each command builds `new Mailproof({ trailDir, trail, otsBin?, content })` from the account. Secrets are resolved only by commands that connect (`sync`, `watch`), never logged, never in `--json`, never in `state.json`.
+
+### B11.4 Menu
+
+`mailproof` with no arguments (TTY). stdlib `node:readline`, plain text, no colours required (colour only when `NO_COLOR` is unset and stdout is a TTY). Layout:
+
+```
+mailproof 3.x   account: personal  [b: change]
+ 1) Sync now              fetch new mail (Inbox + Sent), record proofs
+ 2) Watch                 sync every 5 min until Ctrl-C
+ 3) List emails           newest first; filter by person or date
+ 4) Show one email        record details
+ 5) Verify one email      re-check offline
+ 6) Replies to a message  what people answered (by Message-ID)
+ 7) Check against profile trust profile pass/fail
+ 8) Forget                delete stored mail content          (destructive)
+ 9) Prune                 drop old history from the trail     (destructive)
+10) Backup                git bundle of the trail
+11) Status                counts, last sync, storage
+12) Update mailproof      show the upgrade command
+13) Config                show path, validate, template
+14) Export                needs M6 (not available yet)
+ h) Help      q) Quit
+>
+```
+
+- With one account the header shows it; with more, the first screen asks `Account [personal/business]:` and `b` re-asks. An account is chosen before any action; the menu never offers "all".
+- **Each item prompts for exactly the parameters its subcommand takes**, in the same order, then runs the same code path as the subcommand (the menu builds the argument vector and calls the command function; there is no second implementation). Each prompt shows a label, an example and the default in brackets: `With (email address, e.g. bob@example.org, empty = everyone):`, `Before (date, e.g. 2026-08-19):`, `Interval [5m]:`. Input is validated with the subcommand's own validators; a bad value prints the reason and **re-prompts** (up to 3 times, then back to the menu); an empty answer takes the default, and `?` re-prints the hint. A required value with no default re-prompts on empty.
+- After a command the menu prints its human output (B11.7), then `Press Enter`, and shows the menu again. Errors (exit-code classes B11.8) print on the menu and return to it; the menu itself exits only on `q`, Ctrl-D or a closed stdin (exit 0). Ctrl-C during a running command stops the command (as for the subcommand) and returns to the menu; Ctrl-C at a prompt quits.
+- **Destructive items** (8, 9, and `backup --push`): the menu first runs the dry-run summary (B11.5), then requires the user to **type the account name** to proceed; anything else cancels with "nothing changed". `backup --push` shows the warning in B11.6 and asks `y/N`.
+
+### B11.5 Commands
+
+Account-scoped unless noted. `[id]` is a record id (32 hex) or a unique prefix of at least 8 hex (ambiguous = exit 64 listing matches).
+
+| Command | Flags | Library call | Notes |
+|---|---|---|---|
+| `sync` | `--folders <a,b>`, `--sent <on\|off\|path>` (override the account for this run) | `sync` (B4.1) | "Sync now": reads Inbox (+ `folders`) and Sent read-only, records proofs, runs the content sweep (B7.7), then upgrades pending OTS stamps when `ots` is on (B11.12). Output: the sync result plus `ots: { upgraded, pending }`. A capped run is exit 0 (B4.1). |
+| `watch` | `--interval <dur>` (default `5m`; `30s`, `5m`, `1h`; minimum `30s`) | `sync` in a loop | Foreground, long-running; B11.9. |
+| `list` | `--with <address>`, `--role from\|to\|cc\|reply-to`, `--direction in\|out`, `--before <date>`, `--after <date>`, `--limit <n>` (default 50, `--limit 0` = no cap) | `list` | Dates `YYYY-MM-DD` (UTC midnight) or full ISO-8601. Human: one line per record: short id, captured, direction, live/portable verdicts, message id. |
+| `show <id>` | | `get`, `proofParts`, `linked` | The record fields, the graded proof per part and the thread links. `--raw` prints the stored raw email to stdout (`rawEmail`; exit 1 if the content store no longer holds it). |
+| `verify <id>` | `--at <date>` | `get` + `verify` | Exit 0 when `ok`, **2** when the record does not verify (so scripts can branch), 1 on error. |
+| `replies <messageId>` | | `replyFacts` | Prints the flat bundles (B10.3), earliest first; none = "no replies recorded". With `--json` the array. `<messageId>` is the request's Message-ID, with or without angle brackets. |
+| `check <id> --profile <file\|name>` | `--profile` required | `get` + `checkProfile` | A file path (JSON profile, B8.2) or a name looked up as `<configDir>/profiles/<name>.json` (same 0600 rule is NOT required: profiles hold no secrets). Exit 0 pass, **2** fail (the failed rules are printed). |
+| `forget` | `[id ...]` or `--with <address>` with optional `--before`/`--after`; `--yes`, `--dry-run` | `forget` (after `list`) | Content only (B7.6); proofs stay. See safety below. |
+| `prune` | `--before <date>` required; `--yes`, `--dry-run`, `--delete-backup` | `prune` | Rewrites history (B9); keeps `<trail>.pre-prune-<date>` unless `--delete-backup`. |
+| `backup` | `--out <path>`, `--with-content`, `--push`, `--yes` | git, `tar` | B11.6. |
+| `status` | | `indexOverview` (read-only), git, fs | Per account: records (in/out), newest and oldest `captured` (in/out and the dates are null and shown as unknown unless the index is `present`), last sync (from `state.json`), content store size and file count (or `off`), index state (`present`/`absent`/`stale`/`unreadable`/`unknown`, from the cache file and HEAD), pending OTS stamps (count of `.json.ots` not yet anchored; `-` when `ots` is off), last backup, whether a `watch` is recorded as running. Never writes the index or the trail; never opens IMAP; never takes the writer lock; never builds or catches up the index. |
+| `update` | `--run` | `npm` | B11.10. |
+| `config` | `path` \| `validate` \| `template` \| `add-account` | none | `path` prints the resolved path; `validate` runs B11.2 validation and the permission check, prints `ok` or the errors, exit 0/64/77, and resolves no secrets; `template` prints the example JSON of B11.2; `add-account` is the wizard of B11.12 item 6 (it reads answers from stdin, a terminal or piped). `config` works with no config file present (except `validate`). |
+| `export` | | none | Prints `export needs M6 (the proof bundle); not available in this version` and exits 64. Listed in help and the menu as "needs M6". |
+| `mcp` | | none | **Reserved for step 6**: until built, `mailproof mcp` prints `not built yet (M3 step 6)` and exits 64. |
+| `help [command]` | | none | B11.11. |
+
+**Destructive commands (`forget`, `prune`, `backup --push`).**
+1. Always compute and print a **dry-run summary first**: `forget`: the number of records and the stored raw/attachment files it would remove (it runs `list` with the same filters, no deletion; ids listed up to 20, then "and N more"); `prune`: the cutoff, the records and reply rows kept and dropped, the stragglers B9.2 names, the backup path that will be kept (taken from the same computation `prune` does before swapping, which the library exposes as `prune({ before, dryRun: true })`, B9.7); `backup --push`: the remote URL and the commit count that would be pushed.
+2. Subcommand: without `--yes` it prints the summary and exits **64** with `add --yes to proceed`; `--dry-run` prints only the summary and exits 0. With `--yes` it prints the summary and proceeds. No interactive prompt in a subcommand, ever.
+3. Menu: the summary, then type the account name (B11.4).
+4. Nothing destructive is ever reachable without naming the account (B11.3) and its explicit target (`id`, `--with` or `--before`). `forget` with no target is exit 64: there is no "forget everything" flag; `--with` is the broadest form.
+
+### B11.6 `backup`
+
+- **Proofs: a git bundle.** `git -C <trail> bundle create <path> --all` via the `git` binary (the same way `git.js` shells out). Default path `<state>/backups/<account>/<account>-<UTC timestamp>.bundle`; `--out <path>` overrides (parent directory must exist; an existing file is refused, never overwritten). The bundle holds the whole trail history: records, keys, reply rows, `.ots` files. It does not hold the sync cursor (B4.2: restore is detected) or the SQLite index (a rebuildable cache). Written under no writer lock needed for correctness (git reads a consistent object store), but the command takes the trail lock for the `bundle create` call so it cannot run during a prune swap (B9.4); `ERR_TRAIL_LOCKED` is exit 75. After writing, `git bundle verify <path>` must pass or the file is removed and the exit is 1.
+- **Restore** (documented in the usage guide and `mailproof config`-adjacent help, not a command): `git clone <file>.bundle <trailDir>/<trail>`, then point `trailDir`/`trail` at it. The first `sync` after a restore rescans folders from UID 1 because the cursor's `head` no longer matches (B4.2 "Restore"); duplicates are skipped by id. The content store is restored by `tar -C <contentDir> -xf <file>.content.tar` (B7.1 gives `contentDir`).
+- **`--with-content`: a second file, `.content.tar`, made by the `tar` binary** (`tar -C <contentDir> -cf <out> .`). Node's stdlib has no tar writer and a home-made container would be a format only mailproof can read; `tar` is present on every platform that has `git` and a POSIX shell, is restored with a tool every user knows, and mailproof already depends on one external binary the same way. If `tar` is not on `PATH` the command fails with exit 1 `tar not found: install tar or run backup without --with-content` after the bundle succeeded (the bundle is kept). It is a separate file because content is other people's mail and must not travel with proofs by default; it is not encrypted (the user encrypts the file or the disk; stated in the help). With the content store off or empty, `--with-content` prints a note and writes nothing for it.
+- **`--push`: only on explicit invocation**, never from `watch` or `sync`, never scheduled by mailproof. It pushes the trail to the account's `backupRemote` (`git push <remote> --all` plus tags, from the trail directory, no force). Refused with exit 64 when `backupRemote` is not configured. Before pushing it prints: `Proof records contain the signed headers of your mail: sender and recipient addresses, subjects, dates, and Message-IDs (never message bodies). Push only to a remote you trust to hold that.` and, in the menu, asks `y/N`; as a subcommand it needs `--yes`. The content store is never pushed. A push failure is exit 75 for network/auth and 1 otherwise, with git's stderr passed through (credentials in the URL are masked). **It never forces**: after a `prune` the history is rewritten, the push of `main` is a non-fast-forward and the remote refuses it; mailproof then says so (exit 1: the remote keeps the pre-prune history as an archive, mailproof never forces, push to a new remote or force it yourself outside mailproof) and the local bundle stays written. This is the owner's decision (B11.12 item 3).
+- Output: the written path(s) and sizes; `--json`: `{ "bundle", "bytes", "commits", "content": { "path", "bytes" } | null, "pushed": null | { "remote", "refs" } }`.
+
+### B11.7 Output
+
+- **Human by default**, on stdout: aligned plain text, one fact per line, no ANSI unless a TTY and `NO_COLOR` unset. **stderr** carries errors, warnings and progress (`syncing INBOX ...` only when stderr is a TTY).
+- **`--json`**: exactly one JSON document on stdout per command (never several, never interleaved prose; warnings still go to stderr). `sync` prints the `SyncResult` extended with `ots`; `list` an array; `show`/`verify`/`check` an object; `status` an object keyed by account name; `watch` is the one exception and prints **one JSON line per tick** (NDJSON), like `mailproof-sync` per run. The document never contains a secret, a config path's secret field values or a raw email body (`show --raw --json` is refused: `--raw` is bytes).
+- **Text mode is terminal-safe** (F28, branch-review H1). Mail fields and server messages are untrusted, so every string a text command prints passes through `printable()` (`src/cli/printable.js`): every code point a terminal could act on, or that hides or reorders text, is shown as an escape and never dropped. Escaped: C0 controls (`\n \r \t` as such, the rest `\xNN`), DEL and C1 (`\xNN`; 0x9B is CSI), bidi controls, zero-width and blank-rendering format characters, U+2028/2029, variation selectors 1-14 (FE0E/FE0F only after ASCII, unless directly before U+20E3, so emoji and keycaps stay) and the supplementary selectors U+E0100-E01EF, Mongolian free variation selectors U+180B-180D, braille blank U+2800, musical formatting U+1D173-1D17A, tag characters, noncharacters and lone surrogates (`\uNNNN`, `\u{NNNNN}`), and the backslash itself (`\\`), so every escape in the output is one mailproof made and the text decodes back exactly. ZWJ/ZWNJ stay only between two non-ASCII characters that are not themselves joiners (emoji, Persian). Applied per field where a line is built, with the one-line fields (`replies` first line) cut by code points to 100 first (`...(+N)`), plus an output backstop in `print`/`warn` (every line of text output, and the menu and prompt echoes) that escapes whatever a sink missed, keeping backslashes and newlines. The `watch.log` file lines are escaped the same way, and so are the human stderr lines of `mailproof-sync` (its stdout JSON is unchanged). It is one linear pass and returns the same string (no copy) when nothing needs escaping.
+- **Not covered, by design:** `--json` is data as received (`JSON.stringify` leaves DEL, C1 including 0x9B, bidi, zero-width, U+2028/2029 and tag characters raw), so consumers must treat every string in it as untrusted; and `show --raw` writes the stored bytes unchanged (pipe it to a file or a parser, not to a terminal you trust blindly).
+- **Errors in `--json` mode** still go to stderr as one human line AND stdout stays empty, so a script checks the exit code first (matching `mailproof-sync`: stdout is the result, stderr the error).
+
+### B11.8 Exit codes
+
+As `mailproof-sync` (B4.1), plus one:
+
+| Code | Meaning |
+|---|---|
+| `0` | done (a capped or partial sync is still 0: `complete: false` in the output) |
+| `64` | bad usage: unknown command/flag, missing value, bad config, missing `--account`, missing `--yes`, unconfigured `backupRemote`, `export`/`mcp` not available |
+| `75` | try again later: `ERR_SYNC_LOCKED`, `ERR_TRAIL_LOCKED`, `ERR_IMAP_CONNECT`, timeout, throttled, UIDVALIDITY change, secret command failed, push network/auth failure |
+| `77` | permission: config not owned by you or group/world-readable, `ERR_IMAP_AUTH` |
+| `2` | a check ran and the answer is "no": `verify` not ok, `check` profile failed. Not an error: the output is the result |
+| `1` | anything else (record write failure, missing content, `tar` missing, bundle verify failed) |
+
+When a sync folder carries an error the output is still printed and the code follows B4.1.
+
+### B11.9 `watch`
+
+A **foreground** command; mailproof has no daemon, no `start`/`stop`/`restart`, no pid-file management and no background process of its own.
+- Loop: `sync` for the account, write `state.json`, print one line (or NDJSON with `--json`) and append to `watch.log`, sleep `--interval` (default `5m`, minimum `30s`), repeat. Secrets are re-resolved every tick (a fresh OAuth token each time; `passCommand` re-run).
+- **Single instance**: the existing sync lock (B4.5) is the guard; a second `watch` (or a manual `sync`) for the same account gets `ERR_SYNC_LOCKED`; a `watch` tick that hits it logs `skipped (locked)` and waits for the next tick, a `sync` subcommand exits 75.
+- **Failure policy**: `ERR_IMAP_AUTH` stops `watch` with exit 77 (retrying a refused login every few minutes risks a provider lockout). Transient errors (75-class) are logged and retried at the next tick, with the sleep doubled up to 1 h after consecutive failures and reset on success. Any other error exits 1.
+- **Signals**: SIGINT/SIGTERM finish the sync in progress (each message is committed before the cursor moves, so an interrupted run is safe anyway, B4.2), set `lastWatch.state` to `stopped` and exit 0. A second signal exits immediately.
+- Running it unattended is the user's init system's job. The usage guide shows both, nothing is installed by mailproof:
+  - systemd user service, `~/.config/systemd/user/mailproof-watch@.service`: `ExecStart=/usr/bin/env mailproof watch --account %i`, `Restart=on-failure`, `RestartPreventExitStatus=77 64`; `systemctl --user enable --now mailproof-watch@personal`. Needs `loginctl enable-linger` to run when logged out.
+  - cron instead of a loop: `*/5 * * * * mailproof sync --account personal --json >> ~/.local/state/mailproof/personal/cron.log` (exit 75 on a held lock is normal; the next run continues from the cursor).
+- Later option, not built: IMAP IDLE instead of polling. B4.1 forbids `IDLE` today; a change needs its own spec and POC.
+
+### B11.10 `update`
+
+Prints the command and the installed and latest versions it can see offline: `mailproof 3.0.0 installed. To upgrade: npm install -g mailproof@latest`. With **`--run`** it executes exactly `npm install -g mailproof@latest` with `execFile` (no shell), streaming npm's output, exit code = npm's (mapped: non-zero is 1). It never checks the registry itself (no network from `update` without `--run`). Printing is the default because: a global install may be owned by root (a surprise `sudo` prompt or `EACCES` in a tool that handles mail secrets), the user may have installed through pnpm, volta, nvm or `npx` (a hard-coded `npm -g` would install a second copy), and silently replacing the binary that is running mid-session is the user's call. `--run` is the explicit opt-in for the common case. In the menu, item 12 shows the command and asks `Run it now? [y/N]`; on yes it runs exactly what `update --run` runs (B11.12 item 1).
+
+### B11.11 Help from the JSDoc
+
+The command table in B11.5 gives names, flags and library calls; the **descriptions and the `@when`/`@fails` text are not retyped** in the CLI.
+- The generator for `primitives.json` already reads each public method's JSDoc (`@name`, `@signature`, `@when`, `@fails`). `scripts/gen-cli-help.mjs` reads `primitives.json` plus one small map in `src/cli/commands.js` (command name -> `{ primitive, positional, flags, summary }`; the map sits under `src/cli/` with the rest of the CLI, not in `bin/`) and emits `src/cli/help.generated.js`: a frozen table `{ command: { usage, summary, when, fails, flags } }`, where `when`/`fails` are the primitive's full text and `summary` is the one-line text the map carries for the command list and the menu (the first sentence of a `@when` is too long for either). Commands with no primitive (`status`, `update`, `config`, `backup`, `watch`, `help`, `export`, `mcp`) carry their text in the same map, written once there.
+- `mailproof help` prints the command list from the table; `mailproof help <command>` and `<command> --help` print `usage`, `when`, flags (from the map, which `parseArgs` options are also built from, so a flag cannot exist without help text) and `fails`; the menu labels use `summary`.
+- `npm run check:cli-help` regenerates in memory and fails if `help.generated.js` is stale, the same way `check:primitives` works (CI runs it next to `check:primitives`); `prepack` regenerates it after `build:primitives`; a unit test fails if any command in the dispatch table lacks a table row, or any flag lacks help.
+- The MCP tool descriptions (step 6) read the same table: one source for library docs, CLI help, MCP.
+
+### B11.12 Owner review (decided 2026-11-10)
+
+The review list of the spec author, with the owner's resolutions. All are final.
+
+1. **`update`**: the **subcommand prints the command and runs it only with `--run`** (B11.10); the **menu item asks `Run it now? [y/N]` and on yes runs `npm install -g mailproof@latest`**.
+2. **Backup content archive = the `tar` binary**, a separate `.content.tar`, unencrypted (B11.6). Confirmed; the stdlib-only home format was rejected as unreadable by any other tool.
+3. **`backup --push` never forces.** A trusted remote and `--yes` are needed; it pushes `--all` and tags with no force. The remote keeps the history from before a `prune` as an archive; the rejected push is explained and exits non-zero (B11.6).
+4. **`Mailproof#upgradeStamps()`** is a small public library method (B3, wraps the internal `upgradeProof` under the trail lock, one lock window per stamp, no-op result when OTS is off or the binary is missing). `sync` ("Sync now") and `status` use it.
+5. **`prune({ dryRun: true })`** is a library option (B9.7): the CLI's dry-run summary is the library's own computation, not a re-derivation.
+6. **`config add-account` is an interactive wizard.** It prompts every field with a hint, a default and validation (`?` prints the hint, a bad value asks again, three bad answers cancel), shows the resulting account JSON, and writes `config.json` only after an explicit confirmation. It creates the file (mode 0600) and its directory (0700) when missing, keeps all other accounts, asks `Replace it? [y/N]` before touching an existing account name, refuses a config that is not trusted (B11.2 permission rule, exit 77) or not valid (exit 64), and writes atomically (temp file in the same directory, `fsync`, rename). It never asks for or stores a plaintext password: only `passCommand`, `passFile` or `accessTokenCommand`.
+7. **Config strictness**: unknown keys refused (exit 64), `v: 1` required, plaintext `pass`/`password`/`secret` keys refused, no stdin/env secret source in the config. `--pass-*` flags are not accepted by `mailproof` (only the config names the secret); `mailproof-sync` keeps them.
+8. **Profile lookup** `check --profile <name>` reads `<configDir>/profiles/<name>.json`; a path is used as given.
+9. **`status` without `--account`** lists all accounts (read-only), the single exception to B11.3.
+10. **Exit code `2`** for "ran and answered no" (`verify`, `check`).
+11. **`watch` minimum interval 30 s**, the doubling backoff to 1 h, and `ERR_IMAP_AUTH` stops it (exit 77).
+12. **Unique id prefix (8+ hex)** is accepted wherever an `[id]` is taken.
+13. **Backups go under the state dir by default** (`<state>/backups/<account>/`); the output prints the path every time; the menu prompts for the path with that default.
+
+### B11.13 Test plan
+
+Built as: `tests/unit/cli-parse.test.js`, `cli-config.test.js`, `cli-help.test.js`; `tests/integration/cli.test.js` (spawned), `cli-sync-watch.test.js` (a fake sync and sleep; one spawned `watch` stopped by SIGTERM against a closed localhost port), `cli-menu.test.js`, `cli-wizard.test.js`, `cli-backup.test.js` (a local bare repository as the remote), `mailproof-upgrade-stamps.test.js`, `prune-dry-run.test.js`. The restore-then-`sync`-rescan case is the library's (B4.2, `sync.test.js`). The plan was: `tests/unit/cli-*.test.js` (parser, config validation and permission check with a temp file chmodded 0644/0600 and a foreign owner where the test can, account selection, id-prefix resolution, help-table completeness, duration parsing) and `tests/integration/cli.test.js` (spawn `bin/mailproof.js` against a temp config and a fixture trail): every subcommand's exit code and `--json` shape; menu driven through piped stdin lines with a fake TTY flag (prompt, default, bad input re-prompt, Quit, destructive confirm by typed name); `forget`/`prune` refuse without `--yes` and change nothing; `backup` bundle verifies, clones, and re-sync after restore rescans; `watch` with a fake sync and a 30 ms test interval stops on SIGTERM with state `stopped`, stops on auth with 77, skips on a held lock; `update` never spawns npm without `--run`; `--json` stdout is one parseable document; no test writes outside `makeTmpDir`.
+
+### B11.14 Build notes (decided while building, beyond the text above)
+
+- **Code layout.** `bin/mailproof.js` is three lines; everything is in `src/cli/` (shipped: `files` lists `src/cli/`). `commands.js` is the command table, `run.js` the dispatcher (`run(argv, ctx)` returns the exit code and never touches `process`; the menu and the tests call it with injected streams and `deps`), `main.js` the process side (signals, exit code), `menu.js`/`wizard.js`/`prompt.js` the interactive side. The secret sources (`splitCommand`, command/file/token, the Google app-password rule) and the exit-code map live once in `secrets.js` and `errors.js`, which `mailproof-sync` imports; its behaviour is unchanged.
+- **`check` has one extra flag, `--parent <messageId>`**: the library's link rule needs the request's Message-ID (`checkProfile(..., { parent })`), so a profile with `link` cannot pass without it.
+- **`sync --json`** is the `SyncResult` plus `ots`: `{ upgraded, pending }` (plus `error` when the `ots` binary failed; that never fails the sync) or `null` when the account has `ots` off.
+- **`watch --json`** prints per tick `{ at, status: "ok" | "locked" | "error", result?, ots?, error?: { code, message }, nextInMs }`; a stopping error has `nextInMs: null`. Signals: the first SIGINT/SIGTERM finishes the sync in progress and exits 0, the second exits at once with 130; `main.js` installs the handlers only for `watch` (any other command is ended by the signal), and the menu handles Ctrl-C itself (while a command runs it stops the command, at a prompt it quits).
+- **`status`** never writes the index or the trail, never takes the trail lock and never builds or catches up the index; it does not call `list` or `counterparties`. `indexOverview` (index-db.js) opens the index file with SQLite's read-only flag, which on a WAL database may still create SQLite's `-wal`/`-shm` side files next to the index and needs a directory SQLite can write for that; mailproof does not change the journal mode for this. `present` (it reflects HEAD at the current schema) answers the total, the in/out split and the oldest and newest `captured` with one aggregate query. Every other state counts the record files of the HEAD commit with `git ls-tree` (a read of a commit, no lock) and `records.in`, `records.out`, `records.oldest` and `records.newest` are `null`: `absent` (no file), `stale` (opened, but behind HEAD or an older schema; `mailproof list` catches it up), `unreadable` (the file exists but cannot be opened or queried: a trail directory the user cannot write, or a corrupt file; the text hint says to check permissions on the trail directory, and `list` rebuilds it when the directory is writable) and `unknown` (the addon cannot load). **Two totals, named by `records.totalSource`:** `index` = the readable records the index holds; `git` = the record files at HEAD, which also counts a committed record that cannot be read (the index build drops those), so the git total can exceed the index total for such a trail; `status` does not read every record to reconcile them. Text for the git total reads `N files at HEAD (...)`. `--json` keeps its shape plus `records.totalSource`; the four null fields are the only ones that can be null inside `records`. Pending stamps come from `countPendingStamps` (B3). The `lastWatch` entry shows as running only while its pid is alive.
+- **`forget` summary**: the records come from `list({ with, before, after })`, which also matches `Reply-To`, so for `--with` it can name a record `forget` itself would not touch; `forget` prints what it actually removed. It counts the records that have a stored raw email; attachment files are not counted (they depend on what other stored emails still reference).
+- **`backup`**: the bundle is always written; `--push` also needs it. In `--json` mode a failure (a refused push, a missing `tar`) prints nothing on stdout (B11.7) and names the written bundle on stderr. A URL's credentials (`https://user:token@host`) are masked in every message.
+- **Menu**: item 10 passes `--out` only when the answer differs from the default; item 13 asks which `config` action. In a terminal `readline` does the line editing; with piped input the typed line is echoed so a scripted session reads like a transcript. A missing config offers the wizard.
+- **Not verified in a real terminal**: the menu was driven through fake TTY streams (readline in terminal mode, a typed `^C` as a real SIGINT event), not through a real pty.
 
 ---
 

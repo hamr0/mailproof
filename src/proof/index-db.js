@@ -18,17 +18,16 @@
 // loaded addon (the driver class) is cached, never a connection.
 //
 // One code path: if better-sqlite3 cannot load there is no fallback to a full read, `list`/`copies` reject with
-// `ERR_INDEX_UNAVAILABLE`. A rebuild lists every committed record id through one `git ls-tree` call whose output is
-// capped at 16 MB (about 350,000 records); a trail past that rejects with `ERR_INDEX_REBUILD`. Catch-up lists only the
-// changed paths under the same cap; if that overflows it falls back to the rebuild, which then rejects the same way.
+// `ERR_INDEX_UNAVAILABLE`. Every git listing (`ls-tree`, `diff`, `log`) is streamed line by line through `gitLines`, so
+// the rebuild has no output-size ceiling; memory holds one READ_BATCH of records plus the id -> adding-commit map.
 
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { git } from './git.js';
-import { recordIdsFromPaths, assertTrailLayout } from './layout.js';
+import { git, gitLines } from './git.js';
+import { parseRecordPath, assertTrailLayout } from './layout.js';
 import { RECORD_ID_RE, readRecord, withTrailLock, trailLockFile, trailIndexFile } from './trail.js';
-import { LINKED_CHILDREN_DEFAULT } from './limits.js';
-import { participantsOf, linksOf, hasSignedThreading, ROLES } from './participants.js';
+import { LINKED_CHILDREN_DEFAULT, REPLY_FACTS_MAX } from './limits.js';
+import { participantsOf, linksOf, directParents, hasSignedThreading, ROLES } from './participants.js';
 import { verifyRecord } from './recheck.js';
 
 /** @typedef {import('./types.js').MpRecord} MpRecord */
@@ -38,22 +37,21 @@ import { verifyRecord } from './recheck.js';
 /** @typedef {{ id: string, captured: string, direction: string, copy: string, body_status: string, live: string, portable: string }} CopyRow */
 
 /** Bump when the table layout or what a column holds changes: an index of another version is rebuilt. */
-const SCHEMA = 3;
+const SCHEMA = 4;
 const READ_BATCH = 500;
 const BUSY_TIMEOUT_MS = 10000;
-const DEFAULT_GIT_MAX_BUFFER = 16 * 1024 * 1024;
 
 const DDL = `
 CREATE TABLE IF NOT EXISTS meta(k TEXT PRIMARY KEY, v TEXT) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS rec(
   id TEXT PRIMARY KEY, captured TEXT NOT NULL, direction TEXT, live TEXT, portable TEXT,
-  message_id TEXT, message_key TEXT, copy_kind TEXT, body_status TEXT) WITHOUT ROWID;
+  message_id TEXT, message_key TEXT, copy_kind TEXT, body_status TEXT, commit_id TEXT) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS att(att_key TEXT NOT NULL, rec_id TEXT NOT NULL, PRIMARY KEY(att_key, rec_id)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS participants(
   rec_id TEXT NOT NULL, address TEXT NOT NULL, raw TEXT NOT NULL, role TEXT NOT NULL, signed INTEGER NOT NULL,
   PRIMARY KEY(rec_id, role, address)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS links(
-  rec_id TEXT NOT NULL, mid TEXT NOT NULL, via TEXT NOT NULL, strength TEXT NOT NULL, pos INTEGER NOT NULL,
+  rec_id TEXT NOT NULL, mid TEXT NOT NULL, via TEXT NOT NULL, strength TEXT NOT NULL, pos INTEGER NOT NULL, direct INTEGER NOT NULL,
   PRIMARY KEY(rec_id, mid)) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS part_addr ON participants(address, rec_id);
 CREATE INDEX IF NOT EXISTS links_mid ON links(mid, rec_id);
@@ -73,15 +71,6 @@ const str = (v) => (typeof v === 'string' ? v : null);
 function unavailable(cause) {
   const why = cause && typeof cause === 'object' && 'code' in cause && typeof cause.code === 'string' ? ` (${cause.code})` : '';
   return Object.assign(new Error(`trail index unavailable: the better-sqlite3 native addon could not be loaded${why}`), { code: 'ERR_INDEX_UNAVAILABLE', cause });
-}
-
-/**
- * @param {unknown} cause
- * @param {number} limit  The output cap that was hit, in bytes.
- * @returns {Error & { code: string }}
- */
-function rebuildTooLarge(cause, limit) {
-  return Object.assign(new Error(`trail index rebuild failed: the list of committed records exceeds the ${limit}-byte git output limit (about ${Math.floor(limit / 47).toLocaleString('en-US')} records); the trail is too large to index`), { code: 'ERR_INDEX_REBUILD', cause });
 }
 
 /** @param {unknown} e @returns {boolean} A damaged index file (rebuilt from the records), as opposed to any other failure. */
@@ -104,9 +93,10 @@ async function headOf(root) {
  * Every column is a string or null, so one odd record can never make a bind fail and sink a rebuild.
  * @param {string} id  The record's file name.
  * @param {MpRecord | null} r
+ * @param {string | null} commit  The commit that added the record file (SPEC B5), or null when unknown.
  * @returns {{ row: Array<string | null>, att: string[], parts: Array<Array<string | number>>, links: Array<Array<string | number>> } | null}
  */
-function rowOf(id, r) {
+function rowOf(id, r, commit) {
   if (!r || typeof r !== 'object' || r.id !== id) return null;
   const evidence = r.copy?.evidence?.attached_original;
   /** @type {string[]} */
@@ -115,13 +105,50 @@ function rowOf(id, r) {
   // The DKIM re-check (which signatures verify and align) is paid only by a record that has a signed In-Reply-To or
   // References line to grade; the other records never run it.
   const passing = hasSignedThreading(r) ? verifyRecord(r).passing : [];
+  const directs = directParents(r);
   return {
     row: [id, str(r.captured) ?? '', str(r.direction), str(r.verdicts?.live?.trust), str(r.verdicts?.portable?.trust),
-      str(r.message?.message_id), str(r.message_key), str(r.copy?.kind), str(r.body_status)],
+      str(r.message?.message_id), str(r.message_key), str(r.copy?.kind), str(r.body_status), commit],
     att,
     parts: participantsOf(r).map((p) => [id, p.address, p.raw, p.role, p.signed ? 1 : 0]),
-    links: linksOf(r, passing).map((l, i) => [id, l.mid, l.via, l.strength, i]),
+    links: linksOf(r, passing).map((l, i) => [id, l.mid, l.via, l.strength, i, directs.has(l.mid) ? 1 : 0]),
   };
+}
+
+/**
+ * The commit that ADDED each record file (one commit per record, SPEC B3), from one streamed `git log` over `range`
+ * (default: the whole history). Paths are plain hex names, so the unquoted `--name-only` listing is safe to parse line by line.
+ * @param {string} root @param {string | null} range  `<stored>..<head>` or null.
+ * @returns {Promise<Map<string, string>>}  record id -> commit
+ */
+async function addedCommits(root, range) {
+  /** @type {Map<string, string>} */
+  const map = new Map();
+  let commit = '';
+  await gitLines(root, ['log', '--diff-filter=A', '--name-only', '--no-renames', '--format=%H', ...(range ? [range] : []), '--', 'records'], (line) => {
+    if (/^[0-9a-f]{40,64}$/.test(line)) { commit = line; return; }
+    const r = parseRecordPath(line);
+    if (r && !r.ots && commit) map.set(r.id, commit); // log is newest first: the oldest add wins
+  });
+  return map;
+}
+
+/**
+ * Stream the record ids git lists for `args` (a NUL-separated `-z` path listing) to `onIds` in chunks of at most
+ * READ_BATCH, awaiting each chunk before the next is read.
+ * @param {string} root @param {string[]} args @param {(ids: string[]) => Promise<void> | void} onIds
+ * @returns {Promise<void>}
+ */
+async function eachListedBatch(root, args, onIds) {
+  /** @type {string[]} */
+  let ids = [];
+  await gitLines(root, args, async (p) => {
+    const r = parseRecordPath(p);
+    if (!r || r.ots) return;
+    ids.push(r.id);
+    if (ids.length >= READ_BATCH) { const b = ids; ids = []; await onIds(b); }
+  }, { sep: '\0' });
+  if (ids.length) await onIds(ids);
 }
 
 /**
@@ -133,9 +160,12 @@ function rowOf(id, r) {
  * @returns {Promise<void>}
  */
 async function eachBatch(root, ids, fn) {
-  for (let i = 0; i < ids.length; i += READ_BATCH) {
-    fn(await Promise.all(ids.slice(i, i + READ_BATCH).map(async (id) => /** @type {[string, MpRecord | null]} */ ([id, await readRecord(root, id)]))));
-  }
+  for (let i = 0; i < ids.length; i += READ_BATCH) fn(await readBatch(root, ids.slice(i, i + READ_BATCH)));
+}
+
+/** @param {string} root @param {string[]} ids @returns {Promise<Array<[string, MpRecord | null]>>} */
+function readBatch(root, ids) {
+  return Promise.all(ids.map(async (id) => /** @type {[string, MpRecord | null]} */ ([id, await readRecord(root, id)])));
 }
 
 /**
@@ -157,7 +187,6 @@ async function atomic(d, fn) {
  * @property {string} root  The trail repo directory.
  * @property {string} trail  The trail name.
  * @property {number} lockTimeoutMs
- * @property {number} [gitMaxBuffer]  Internal (tests): the output cap, in bytes, for the git listings of a catch-up or rebuild.
  */
 
 /** The loaded driver class: cached after the first successful load. A class, not a handle. @type {any} */
@@ -185,14 +214,15 @@ function session(d) {
   const st = {
     getMeta: d.prepare('SELECT v FROM meta WHERE k = ?'),
     setMeta: d.prepare('INSERT OR REPLACE INTO meta VALUES (?,?)'),
-    putRec: d.prepare('INSERT OR REPLACE INTO rec VALUES (?,?,?,?,?,?,?,?,?)'),
+    putRec: d.prepare('INSERT OR REPLACE INTO rec VALUES (?,?,?,?,?,?,?,?,?,?)'),
+    getCommit: d.prepare('SELECT commit_id FROM rec WHERE id = ?'),
     delRec: d.prepare('DELETE FROM rec WHERE id = ?'),
     delAtt: d.prepare('DELETE FROM att WHERE rec_id = ?'),
     putAtt: d.prepare('INSERT OR IGNORE INTO att VALUES (?,?)'),
     delPart: d.prepare('DELETE FROM participants WHERE rec_id = ?'),
     putPart: d.prepare('INSERT OR IGNORE INTO participants VALUES (?,?,?,?,?)'),
     delLink: d.prepare('DELETE FROM links WHERE rec_id = ?'),
-    putLink: d.prepare('INSERT OR IGNORE INTO links VALUES (?,?,?,?,?)'),
+    putLink: d.prepare('INSERT OR IGNORE INTO links VALUES (?,?,?,?,?,?)'),
   };
   return {
     d,
@@ -200,6 +230,8 @@ function session(d) {
     meta: (k) => st.getMeta.get(k)?.v,
     /** @param {string} k @param {string} v */
     setMeta: (k, v) => { st.setMeta.run(k, v); },
+    /** @param {string} id @returns {string | null} */
+    commitOf: (id) => st.getCommit.get(id)?.commit_id ?? null,
     /** @param {string} id */
     del: (id) => { st.delRec.run(id); st.delAtt.run(id); st.delPart.run(id); st.delLink.run(id); },
     /** @param {NonNullable<ReturnType<typeof rowOf>>} x */
@@ -211,6 +243,19 @@ function session(d) {
       for (const l of x.links) st.putLink.run(...l);
     },
   };
+}
+
+/**
+ * A file made by an older schema has the old shape of `rec` and `links` (CREATE TABLE IF NOT EXISTS keeps them): add the
+ * columns schema 4 appended, so the statements prepare; the rows are rebuilt by the schema mismatch. Idempotent and
+ * safe against a concurrent opener (a duplicate column is ignored).
+ * @param {Db} d
+ */
+function addColumns(d) {
+  for (const [table, col, def] of [['rec', 'commit_id', 'TEXT'], ['links', 'direct', 'INTEGER NOT NULL DEFAULT 0']]) {
+    if (d.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === col)) continue;
+    try { d.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`); } catch (e) { if (!/duplicate column/i.test(String(/** @type {any} */ (e)?.message))) throw e; }
+  }
 }
 
 /**
@@ -227,6 +272,7 @@ async function openFile({ root, trail, lockTimeoutMs }, file) {
       const opened = /** @type {Db} */ (d);
       opened.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}; PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA temp_store = MEMORY;`);
       opened.exec(DDL);
+      addColumns(opened);
       opened.prepare('SELECT v FROM meta WHERE k = ?').get('head');
       return opened;
     } catch (e) {
@@ -241,23 +287,29 @@ async function openFile({ root, trail, lockTimeoutMs }, file) {
  * Bring the index to `head`. Caller holds the trail lock.
  * @param {ReturnType<typeof session>} s @param {IndexCfg} cfg @param {string} head
  */
-async function reconcile(s, { root, gitMaxBuffer = DEFAULT_GIT_MAX_BUFFER }, head) {
+async function reconcile(s, { root }, head) {
   const stored = s.meta('head');
   const versionOk = s.meta('schema') === String(SCHEMA);
   if (stored === head && versionOk) return;
   /** @type {string[] | null} */
   let changed = null;
+  /** @type {Map<string, string>} */
+  let added = new Map();
   if (stored && versionOk) {
     try {
       await git(root, ['merge-base', '--is-ancestor', stored, head]);
-      changed = recordIdsFromPaths(await git(root, ['diff', '--name-only', '--no-renames', '-z', stored, head, '--', 'records'], { maxBuffer: gitMaxBuffer }));
-    } catch { changed = null; } // not an ancestor, or a list too big for the cap: rebuild (which rejects if it is too big too)
+      /** @type {string[]} */
+      const ids = [];
+      await eachListedBatch(root, ['diff', '--name-only', '--no-renames', '-z', stored, head, '--', 'records'], (b) => { for (const id of b) ids.push(id); });
+      added = await addedCommits(root, `${stored}..${head}`);
+      changed = ids;
+    } catch { changed = null; } // not an ancestor (or git failed): rebuild
   }
   if (changed) {
     await atomic(s.d, async () => {
       await eachBatch(root, changed, (batch) => {
         for (const [id, r] of batch) {
-          const x = rowOf(id, r);
+          const x = rowOf(id, r, added.get(id) ?? s.commitOf(id));
           if (x) s.put(x); else s.del(id);
         }
       });
@@ -265,17 +317,12 @@ async function reconcile(s, { root, gitMaxBuffer = DEFAULT_GIT_MAX_BUFFER }, hea
     });
     return;
   }
-  /** @type {string} */
-  let listing;
-  try {
-    listing = await git(root, ['ls-tree', '-r', '--name-only', '-z', head, '--', 'records'], { maxBuffer: gitMaxBuffer });
-  } catch (e) {
-    const c = e instanceof Error ? /** @type {{ code?: string }} */ (e.cause) : null;
-    throw c?.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' ? rebuildTooLarge(e, gitMaxBuffer) : e;
-  }
+  const commits = await addedCommits(root, head);
   await atomic(s.d, async () => {
     s.d.exec('DELETE FROM rec; DELETE FROM att; DELETE FROM participants; DELETE FROM links; DELETE FROM meta;');
-    await eachBatch(root, recordIdsFromPaths(listing), (batch) => { for (const [id, r] of batch) { const x = rowOf(id, r); if (x) s.put(x); } });
+    await eachListedBatch(root, ['ls-tree', '-r', '--name-only', '-z', head, '--', 'records'], async (ids) => {
+      for (const [id, r] of await readBatch(root, ids)) { const x = rowOf(id, r, commits.get(id) ?? null); if (x) s.put(x); }
+    });
     s.setMeta('schema', String(SCHEMA));
     s.setMeta('head', head);
   });
@@ -330,6 +377,52 @@ function isoOf(v, what) {
   const ms = v instanceof Date ? v.getTime() : typeof v === 'number' ? v : typeof v === 'string' ? Date.parse(v) : NaN;
   if (!Number.isFinite(ms)) throw new TypeError(`list: ${what} must be a Date, a timestamp or an ISO date string`);
   return new Date(ms).toISOString();
+}
+
+/**
+ * `totalSource` says what `total` counts: `index` = the readable records the index holds; `git` = the record files at
+ * HEAD, which also counts a committed record that cannot be read (the index build drops those), so it can be larger.
+ * @typedef {{ state: 'absent' | 'present' | 'stale' | 'unreadable' | 'unknown', total: number, totalSource: 'index' | 'git', in: number | null, out: number | null, oldest: string | null, newest: string | null }} IndexOverview
+ */
+
+/**
+ * The index state and the record counts, for the CLI `status`: never writes the index or the trail, never migrates,
+ * rebuilds or catches up the index, and takes no trail lock. Opening the index file may still create SQLite's own
+ * `-wal`/`-shm` side files next to it (a WAL database needs them even to be read), and needs a directory SQLite can
+ * write for that. `present` (the file reflects HEAD, at the current schema) answers the counts and the oldest/newest
+ * capture time with one aggregate query (`totalSource: 'index'`). The other states count the record files of the HEAD
+ * commit through `git ls-tree` (a read of a commit, no lock; `totalSource: 'git'`), and `in`, `out`, `oldest` and
+ * `newest` are null: `absent` (no file), `stale` (opened fine, behind HEAD or an older schema; the next `list`
+ * catches it up), `unreadable` (the file exists but cannot be opened or queried: a trail directory the caller cannot
+ * write, or a corrupt file; `list` rebuilds it only when the directory is writable) and `unknown` (the addon cannot load).
+ * @param {IndexCfg} cfg
+ * @param {string} file  The index file (`trailIndexFile`).
+ * @returns {Promise<IndexOverview>}
+ */
+export async function indexOverview(cfg, file) {
+  const head = await headOf(cfg.root);
+  /** @type {IndexOverview['state']} */
+  let state = 'absent';
+  try { await fs.access(file); state = 'stale'; } catch { /* absent */ }
+  if (state === 'stale' && head !== null) {
+    /** @type {Db | null} */
+    let d = null;
+    try {
+      const Database = await loadDriver();
+      const opened = /** @type {Db} */ (new Database(file, { readonly: true, fileMustExist: true }));
+      d = opened;
+      const meta = (/** @type {string} */ k) => /** @type {{ v?: string } | undefined} */ (opened.prepare('SELECT v FROM meta WHERE k = ?').get(k))?.v;
+      if (meta('head') === head && meta('schema') === String(SCHEMA)) {
+        const r = /** @type {{ n: number, i: number | null, o: number | null, lo: string | null, hi: string | null }} */ (opened.prepare(
+          "SELECT COUNT(*) AS n, SUM(direction = 'in') AS i, SUM(direction = 'out') AS o, MIN(captured) AS lo, MAX(captured) AS hi FROM rec").get());
+        return { state: 'present', total: r.n, totalSource: 'index', in: r.i ?? 0, out: r.o ?? 0, oldest: r.lo, newest: r.hi };
+      }
+    } catch (e) { state = /** @type {any} */ (e)?.code === 'ERR_INDEX_UNAVAILABLE' ? 'unknown' : 'unreadable'; }
+    finally { try { d?.close(); } catch { /* already closed */ } }
+  }
+  let total = 0;
+  if (head !== null) await gitLines(cfg.root, ['ls-tree', '-r', '--name-only', '-z', head, '--', 'records'], (p) => { const r = parseRecordPath(p); if (r && !r.ots) total++; }, { sep: '\0' });
+  return { state, total, totalSource: 'git', in: null, out: null, oldest: null, newest: null };
 }
 
 /**
@@ -434,4 +527,19 @@ export async function copiesIndex(cfg, idOrKey) {
     const original = copies.find((r) => r.copy_kind === 'direct' && r.body_status === 'matched');
     return { message_key: key ?? null, original: original ? original.id : null, copies: copies.map(sum), contained_in: contained.map(sum) };
   }, { message_key: typeof idOrKey === 'string' && RECORD_ID_RE.test(idOrKey) ? idOrKey : null, original: null, copies: [], contained_in: [] });
+}
+
+/**
+ * The direct replies to a Message-ID, for `Mailproof#replyFacts` (SPEC B10): the inbound records whose In-Reply-To
+ * names it or whose last References entry is it, earliest capture first (ties by id), with the commit that added each.
+ * At most REPLY_FACTS_MAX + 1 rows come back, so the caller can tell the list was cut.
+ * @param {IndexCfg} cfg
+ * @param {string} messageId  As stored, with the angle brackets.
+ * @returns {Promise<Array<{ id: string, captured: string, commit: string }>>}
+ */
+export async function repliesIndex(cfg, messageId) {
+  return query(cfg, (d) => d.prepare(
+    `SELECT r.id AS id, r.captured AS captured, r.commit_id AS commit_id FROM links l JOIN rec r ON r.id = l.rec_id
+      WHERE l.mid = ? AND l.direct = 1 AND r.direction = 'in' ORDER BY r.captured, r.id LIMIT ?`,
+  ).all(messageId, REPLY_FACTS_MAX + 1).map((r) => ({ id: r.id, captured: r.captured, commit: r.commit_id ?? '' })), []);
 }

@@ -57,10 +57,24 @@ const reply = await mp.replyText(rawEmail);            // the sender's new words
 
 ## Four ways to use it
 
-1. **Library**: `check`, `record`, `verify`, `matchBody`, `matchFile`, `list`, `copies`, `replyText`, `counterparties`, `linked`, `checkProfile`, `proofParts`, `rawEmail`, `attachment`, `expireContent`, `forget`, `prune`. Use it in your own pipeline, for example a Postfix pipe.
+1. **Library**: `check`, `record`, `verify`, `matchBody`, `matchFile`, `list`, `copies`, `replyText`, `replyFacts`, `counterparties`, `linked`, `checkProfile`, `proofParts`, `rawEmail`, `attachment`, `expireContent`, `forget`, `prune`, `upgradeStamps`. Use it in your own pipeline, for example a Postfix pipe.
 2. **IMAP capture**: `mp.sync({...})` reads a mailbox (Gmail first) read-only and records every message. Run it again to pick up new mail.
-3. **CLI on a timer**: `mailproof-sync` is one sync run for cron or a systemd timer, with the password read from a command, never a flag.
+3. **The `mailproof` command**: run it for a menu, or use its subcommands (`sync`, `watch`, `list`, `show`, `verify`, `replies`, `check`, `forget`, `prune`, `backup`, `status`, ...) in scripts. Your mailboxes live in one config file and the password is always read from a command or a file you name, never typed or stored. `mailproof-sync` stays for one sync run under cron or a systemd timer.
 4. **AI agents**: `primitives.json` is a machine-readable menu of every verb (`when`, `import`, `signature`, `fails`, `example`), generated from source. Also on unpkg: `unpkg.com/mailproof/primitives.json`. Hand your assistant `mailproof.context.md` for the full contract.
+
+### The command line
+
+```bash
+mailproof config add-account     # asks a few questions, shows the result, writes the config only after you say yes
+mailproof                        # the menu: sync, list, show, verify, backup, ...
+mailproof sync --account personal
+mailproof list --with bob@example.org --after 2026-01-01
+mailproof verify 3f2a9c1d        # an id prefix of 8+ characters is enough; exit 2 means "does not verify"
+mailproof watch                  # sync every 5 minutes in the foreground (run it under systemd --user)
+mailproof backup --with-content  # a git bundle of the proofs, plus a tar of the stored mail
+```
+
+`mailproof help` lists everything. How-to, systemd and cron examples, restoring a backup: [usage guide](docs/product/usage-guide.md#the-mailproof-command).
 
 ## What you can rely on
 

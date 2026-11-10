@@ -15,8 +15,11 @@ import { TRAIL_NAME_RE, RECORD_ID_RE, DEFAULT_LOCK_TIMEOUT_MS, commitRecord, com
 import { parseContentOptions, contentDirOf, storeContent, readRaw, readAttachment, expireStore, forgetIds, idsWith, exists, toMs, DAY_MS } from './content.js';
 import { recordPath, recordOtsPath, assertTrailLayout } from './layout.js';
 import { STRIPPER, replyTextPath, extractReplyText, replyTextRecord } from './reply-text.js';
+import { replyBundle } from './reply-facts.js';
+import { REPLY_FACTS_MAX } from './limits.js';
 import { hashDocument } from './hash.js';
 import { runPrune } from './prune.js';
+import { runUpgradeStamps } from './ots-upgrade.js';
 
 const OTS_MIN_TIMEOUT_MS = 5000; // floor for the `ots` timeout, however short lockTimeoutMs is
 
@@ -85,8 +88,6 @@ class Mailproof {
     this._autoSweep = this._autoSweep.bind(this);
     /** @type {{ run: import('./pool.js').WorkerPool['run'], runReplyText: import('./pool.js').WorkerPool['runReplyText'], release: () => Promise<void> } | null} */
     this._lease = null;
-    /** Internal (tests): the git output cap, in bytes, for the index's catch-up and rebuild listings. @type {number | undefined} */
-    this._indexGitMaxBuffer = undefined;
     this.lockTimeoutMs = Number.isFinite(opts.lockTimeoutMs) && /** @type {number} */ (opts.lockTimeoutMs) >= 0 ? /** @type {number} */ (opts.lockTimeoutMs) : DEFAULT_LOCK_TIMEOUT_MS;
     // The stamp runs inside the trail lock, so it is capped at a third of the lock wait (see otsTimeoutMs).
     this.ots = this.otsBin ? createOts({ otsBin: this.otsBin, timeoutMs: otsTimeoutMs(this.lockTimeoutMs) }) : null;
@@ -104,11 +105,13 @@ class Mailproof {
     this.proofParts = this.proofParts.bind(this);
     this.sync = this.sync.bind(this);
     this.replyText = this.replyText.bind(this);
+    this.replyFacts = this.replyFacts.bind(this);
     this.rawEmail = this.rawEmail.bind(this);
     this.attachment = this.attachment.bind(this);
     this.expireContent = this.expireContent.bind(this);
     this.forget = this.forget.bind(this);
     this.prune = this.prune.bind(this);
+    this.upgradeStamps = this.upgradeStamps.bind(this);
     this.close = this.close.bind(this);
   }
 
@@ -314,14 +317,7 @@ class Mailproof {
     const id = hashDocument(buf).replace(/^sha256:/, '').slice(0, 32);   // the id record() gives these bytes
     const rec = await this.get(id);
     if (!rec) throw Object.assign(new Error(`replyText: message ${id} is not recorded in trail "${this.trail}"`), { code: 'ERR_NOT_RECORDED' });
-    /** @type {import('./reply-text.js').Extracted} */
-    let ex;
-    if (this.worker.size === 0) ex = extractReplyText(buf);
-    else {
-      this._lease ??= leasePool(this.worker);
-      const r = await this._lease.runReplyText(buf);
-      ex = 'out' in r ? r.out : { ok: false, limit: r.limit };
-    }
+    const ex = await this._extract(buf);
     if (!ex.ok) throw Object.assign(new Error(`replyText: over limit: ${ex.limit}`), { code: 'ERR_OVER_LIMIT', limit: ex.limit });
     const s = ex.stripped;
     const body_status = rec.body_status ?? 'not-checked';
@@ -336,6 +332,57 @@ class Mailproof {
       source: s.source, boundary: s.boundary, stripper: STRIPPER, body_status,
       proven: s.source === 'text/plain' && body_status === 'matched', commit: res.commit, duplicate: res.duplicate,
     };
+  }
+
+  /**
+   * Strip the quoted history from raw bytes: in the worker under the deadline backstop, or in-process with `worker.size` 0.
+   * @param {Buffer} buf
+   * @returns {Promise<import('./reply-text.js').Extracted>}
+   */
+  async _extract(buf) {
+    if (this.worker.size === 0) return extractReplyText(buf);
+    this._lease ??= leasePool(this.worker);
+    const r = await this._lease.runReplyText(buf);
+    return 'out' in r ? r.out : { ok: false, limit: r.limit };
+  }
+
+  /**
+   * The facts about every direct reply to one email, as flat string-only bundles: who sent it and whether DKIM proves
+   * it, the verdicts, how the reply links to the request, and the new text with its first line. Read-only.
+   * @param {{ messageId: string }} opts  `messageId`: the Message-ID of the request, as in its header (`<id@host>`; the angle brackets are added when missing).
+   * @returns {Promise<Array<Record<string, string>>>}
+   * @name Mailproof#replyFacts
+   * @when Use to learn what the people you wrote to answered, without interpreting it: pass the Message-ID of the email you sent (the request) and get one bundle per recorded inbound DIRECT reply (its In-Reply-To names the request, or the request is the last entry of its References; later messages deeper in the thread are not included), earliest capture first. `[]` means no reply yet. Every value is a string from a closed set or free text, so a rule engine can compare them exactly: `from` (lower-case), `fromDkimAligned` (pass: an aligned DKIM signature that verifies offline covers From), `link` (signed/unsigned/none: is the request in a signed In-Reply-To/References), `bodyProven`, `quote`, `trailing`, `firstLine`, `text`, `dkim`/`dmarc`/`spf`/`arc`, `live`/`portable` (trust levels), `commit`, `recordId`, `messageKey` and more (SPEC B10). Copies of one signed message are separate bundles with the same `messageKey`; mailproof never picks or filters, the consumer groups and decides (an approval rule: allow only when at least one distinct reply is green and none is red). Nothing is written to the trail; the text comes from the local content store, so an expired, forgotten or disabled store gives `text` and `firstLine` of "" with `textSource` "none".
+   * @category read
+   * @signature mp.replyFacts(opts: { messageId: string }) => Promise<Array<{ messageId, messageKey, recordId, commit, trail, captured, from, fromRaw, fromDomain, fromDkimAligned, to, toRaw, cc, ccRaw, date, dateSource, subject, subjectSource, dkim, dmarc, spf, arc, live, portable, link, text, firstLine, textSource, bodyProven, quote, trailing, attachments }>>
+   * @fails Rejects with a TypeError when `messageId` is not a non-empty string, `ERR_TOO_MANY_REPLIES` when more than 200 direct replies exist (a flood; nothing is cut silently), and with `ERR_INDEX_UNAVAILABLE` or `ERR_TRAIL_LOCKED` exactly like `list()` (the lookup uses the trail index). An unrecorded request, an empty trail or no reply gives `[]`. A reply with no Message-ID has `messageId` "".
+   * @example
+   * const replies = await mp.replyFacts({ messageId: '<q-123@mail.example>' });
+   * for (const r of replies) console.log(r.from, r.fromDkimAligned, r.link, r.firstLine);
+   */
+  async replyFacts(opts) {
+    const raw = opts && typeof opts === 'object' ? opts.messageId : undefined;
+    if (typeof raw !== 'string' || !raw.trim()) throw new TypeError('replyFacts: messageId must be a non-empty string');
+    const t = raw.trim();
+    const messageId = t.startsWith('<') ? t : `<${t}>`;
+    const { repliesIndex } = await import('./index-db.js');
+    const rows = await repliesIndex(this._indexCfg(), messageId);
+    if (rows.length > REPLY_FACTS_MAX) throw Object.assign(new Error(`replyFacts: more than ${REPLY_FACTS_MAX} direct replies to ${messageId}`), { code: 'ERR_TOO_MANY_REPLIES' });
+    /** @type {Array<Record<string, string>>} */
+    const out = [];
+    for (const row of rows) {
+      const rec = await readRecord(this.root, row.id);
+      if (!rec) continue;
+      const got = await readRaw(this.contentDir, row.id);
+      /** @type {import('./reply-facts.js').TextFacts} */
+      let text = { source: 'none' };
+      if (got.buf) {
+        const ex = await this._extract(got.buf);
+        text = ex.ok ? { source: 'content', text: ex.stripped.text, quote: ex.stripped.quote, trailing: ex.stripped.trailing, textPlain: ex.stripped.source === 'text/plain' } : { source: 'over-limit' };
+      }
+      out.push(replyBundle({ rec, parent: messageId, commit: row.commit, trail: this.trail, raw: text.source === 'content' ? got.buf : null, text }));
+    }
+    return out;
   }
 
   /**
@@ -462,19 +509,35 @@ class Mailproof {
 
   /**
    * Delete everything captured before a date: a pruned copy of the trail replaces it, and the old one is kept as a backup.
-   * @param {{ before: Date | number | string, deleteBackup?: boolean, now?: Date | number }} opts  `before` (required): records captured strictly before it are removed. `deleteBackup`: remove the backup after a successful swap (default false). `now` overrides the clock (tests).
+   * @param {{ before: Date | number | string, deleteBackup?: boolean, dryRun?: boolean, now?: Date | number }} opts  `before` (required): records captured strictly before it are removed. `deleteBackup`: remove the backup after a successful swap (default false). `dryRun`: compute and return what a prune would do, change nothing (default false). `now` overrides the clock (tests).
    * @returns {Promise<PruneResult>}
    * @name Mailproof#prune
    * @when Use to drop old mail from a trail on purpose, for example to honour a retention promise longer than `content.days`, or to shrink a trail that has grown large: every record, reply-text record, OpenTimestamps stamp and stored content captured before `before` goes, and the trail starts with a prune notice that says what was removed. Everything kept is byte-identical and still verifies offline; only the commit ids change. It is an explicit, rare, never-scheduled operation: it rewrites history. The old trail stays as `<trail>.pre-prune-<date>` beside it (still holding everything pruned) until you delete it, or pass `deleteBackup: true`. Writers keep working while the pruned trail is built; they wait only for the short swap.
    * @category content
-   * @signature mp.prune(opts: { before: Date|number|string, deleteBackup?: boolean, now?: Date|number }) => Promise<{ cutoff, noop, previousHead, head, removed, kept, stragglers: string[], dropped, keysCarried, reverify: { ok, failed: string[] }, backup: string|null, content: { removed, attachments, error? }, timing }>
-   * @fails Throws a TypeError for a missing or bad `before`, `deleteBackup` or `now`, or an unknown option, before anything is read. `ERR_PRUNE_RUNNING` when another prune of this trail is running (at once). `ERR_SYNC_LOCKED` when a `sync` kept running for more than 31 minutes while the swap waited for it, `ERR_TRAIL_LOCKED` when a writer held the trail longer than `lockTimeoutMs` at the swap: in both nothing was changed. `ERR_PRUNE_CUTOFF` when every record is older than `before` (a trail with nothing left is refused). `ERR_PRUNE_REWRITTEN` when the history was rewritten while the pruned trail was built (run it again). `ERR_PRUNE_VERIFY` when the pruned trail did not match the old one (a bug; nothing was changed). `ERR_PRUNE_JOURNAL` when a crashed earlier prune left a state it cannot recognise (nothing is touched; see SPEC B9.4). `ERR_TRAIL_LAYOUT` for a flat pre-M3 trail. A `before` that removes nothing returns `noop: true` and changes nothing (no rewrite, no backup). Records captured before `before` that sit after a later one are kept and listed in `stragglers` (only a prefix of history is ever removed, never a range in the middle); reply-text commits for removed records are `dropped`. The result's `reverify` re-checks every kept record offline; a record that does not verify is listed, never a reason to stop. The time is about quadratic in the trail size on git's side (minutes at 20,000 records); disk needs room for a second copy of the kept trail. After the swap the sync cursor follows the new HEAD (so the next `sync` does not re-record the removed mail), the content of the removed records is deleted, and the trail index rebuilds on the next `list`. A crash at any point leaves either exactly the old trail or exactly the pruned one: the next call that takes the trail lock finishes or undoes the swap. Removing the backup is the only thing that makes the removal final.
+   * @signature mp.prune(opts: { before: Date|number|string, deleteBackup?: boolean, dryRun?: boolean, now?: Date|number }) => Promise<{ cutoff, noop, dryRun, previousHead, head, removed, kept, stragglers: string[], dropped, keysCarried, reverify: { ok, failed: string[] }, backup: string|null, content: { removed, attachments, error? }, timing }>
+   * @fails Throws a TypeError for a missing or bad `before`, `deleteBackup`, `dryRun` or `now`, or an unknown option, before anything is read. `ERR_PRUNE_RUNNING` when another prune of this trail is running (at once). `ERR_SYNC_LOCKED` when a `sync` kept running for more than 31 minutes while the swap waited for it, `ERR_TRAIL_LOCKED` when a writer held the trail longer than `lockTimeoutMs` at the swap: in both nothing was changed. `ERR_PRUNE_CUTOFF` when every record is older than `before` (a trail with nothing left is refused). `ERR_PRUNE_REWRITTEN` when the history was rewritten while the pruned trail was built (run it again). `ERR_PRUNE_VERIFY` when the pruned trail did not match the old one (a bug; nothing was changed). `ERR_PRUNE_JOURNAL` when a crashed earlier prune left a state it cannot recognise (nothing is touched; see SPEC B9.4). `ERR_TRAIL_LAYOUT` for a flat pre-M3 trail. A `before` that removes nothing returns `noop: true` and changes nothing (no rewrite, no backup). Records captured before `before` that sit after a later one are kept and listed in `stragglers` (only a prefix of history is ever removed, never a range in the middle); reply-text commits for removed records are `dropped`. The result's `reverify` re-checks every kept record offline; a record that does not verify is listed, never a reason to stop. The time is about quadratic in the trail size on git's side (minutes at 20,000 records); disk needs room for a second copy of the kept trail. After the swap the sync cursor follows the new HEAD (so the next `sync` does not re-record the removed mail), the content of the removed records is deleted, and the trail index rebuilds on the next `list`. A crash at any point leaves either exactly the old trail or exactly the pruned one: the next call that takes the trail lock finishes or undoes the swap. Removing the backup is the only thing that makes the removal final. With `dryRun: true` it runs the same plan and the same re-check of the kept records and returns the same summary (`dryRun: true`, `head: null`, `content` zero, `backup` the path it would use) without building, swapping or writing anything: HEAD, the working tree, the content store and the sync cursor stay as they were; it still takes the prune lock (so it fails at once with `ERR_PRUNE_RUNNING` while another prune runs) and finishes an unfinished earlier swap like any trail-lock holder.
    * @example
+   * const plan = await mp.prune({ before: '2025-01-01', dryRun: true });   // plan.removed, plan.kept: nothing changed
    * const r = await mp.prune({ before: '2025-01-01' });   // r.removed, r.kept, r.backup
    * await fs.rm(r.backup, { recursive: true });           // when you are sure
    */
   async prune(opts) {
     return runPrune({ root: this.root, trail: this.trail, lockTimeoutMs: this.lockTimeoutMs, now: this.now, hooks: this._pruneHooks }, opts);
+  }
+
+  /**
+   * Fold the Bitcoin attestation into the OpenTimestamps stamps that are still calendar-pending.
+   * @returns {Promise<import('./ots-upgrade.js').StampUpgrade>}
+   * @name Mailproof#upgradeStamps
+   * @when Use on a trail created with `otsBin`, some hours after the records were captured: a fresh stamp only says "submitted to the calendars", and `ots upgrade` merges the Bitcoin attestation once it exists, so the proof then holds offline. Each stamp that gained it is committed as its own small commit; `sync` consumers call this at the end of a run, a `record()`-only consumer calls it from its own schedule. It asks only about stamps not yet known to be anchored (remembered in a sidecar file beside the trail, a cache), so the cost follows the pending ones.
+   * @category verify
+   * @signature mp.upgradeStamps() => Promise<{ enabled: boolean, upgraded: number, pending: number, error?: string }>
+   * @fails With no `otsBin` it does nothing and returns `{ enabled: false, upgraded: 0, pending: 0 }`. A missing or hanging `ots` binary does not throw: the pass stops and the result carries `error` (`ots not found`, `ots timeout`, ...), with `pending` counting every stamp still not anchored. `ots upgrade` exiting non-zero for a stamp the calendars have not finished is normal (it stays pending). Rejects with `ERR_TRAIL_LOCKED` when a writer held the trail longer than `lockTimeoutMs` (retry later), `ERR_TRAIL_LAYOUT` for a flat pre-M3 trail, or a git error if a changed proof cannot be committed (the file is restored). One trail-lock window per stamp, at most `clamp(floor(lockTimeoutMs / 3), 5000, 30000)` ms each (the `ots` timeout). Idempotent.
+   * @example
+   * const { upgraded, pending } = await mp.upgradeStamps();
+   */
+  async upgradeStamps() {
+    return runUpgradeStamps({ root: this.root, trail: this.trail, ots: this.ots, lockTimeoutMs: this.lockTimeoutMs });
   }
 
   /**
@@ -571,7 +634,7 @@ class Mailproof {
    * @when Use to see every route one signed message reached you by (direct, via a mailing list, forwarded), given the id of any copy or the shared `message_key`. `copies` share the key; `contained_in` lists other records that carry it as an attached original (forwards and list digests). `original` is the earliest `direct` copy whose body matched, or null. Use `get(id)` for a full record.
    * @category read
    * @signature mp.copies(idOrKey: string) => Promise<{ message_key, original, copies[], contained_in[] }>
-   * @fails Rejects with `err.code === 'ERR_INDEX_UNAVAILABLE'` when the `better-sqlite3` native addon cannot load on this platform (there is no fallback; `record`, `get` and `verify` do not need it), or `ERR_TRAIL_LOCKED` when bringing the trail index up to date had to wait for a writer longer than `lockTimeoutMs`, or `ERR_INDEX_REBUILD` when a first build (or a rebuild, or a catch-up that falls back to one) finds more than about 350,000 committed records or changes (a 16 MB git output limit; the trail is too large to index), or `ERR_TRAIL_LAYOUT` for a trail still in the pre-M3 flat layout (not converted: re-create it). Otherwise never throws. An unknown id or key, or a record with no `message_key` (unsigned mail with no Message-ID), returns just that record (or nothing) with empty `contained_in`. Answers come from the trail index (SPEC B5), a cache beside the trail that is opened and closed inside each call (nothing stays open, so `close()` has nothing to wait for): whoever can write that file can change this answer, never `get` or `verify`.
+   * @fails Rejects with `err.code === 'ERR_INDEX_UNAVAILABLE'` when the `better-sqlite3` native addon cannot load on this platform (there is no fallback; `record`, `get` and `verify` do not need it), or `ERR_TRAIL_LOCKED` when bringing the trail index up to date had to wait for a writer longer than `lockTimeoutMs`, or `ERR_TRAIL_LAYOUT` for a trail still in the pre-M3 flat layout (not converted: re-create it). Otherwise never throws. An unknown id or key, or a record with no `message_key` (unsigned mail with no Message-ID), returns just that record (or nothing) with empty `contained_in`. Answers come from the trail index (SPEC B5), a cache beside the trail that is opened and closed inside each call (nothing stays open, so `close()` has nothing to wait for): whoever can write that file can change this answer, never `get` or `verify`.
    * @example
    * const { copies, contained_in, original } = await mp.copies(id);
    */
@@ -588,7 +651,7 @@ class Mailproof {
    * @when Use to find recorded emails, newest capture first, optionally by direction or by counterparty: `with` is one exact email address (case-insensitive, no grouping: bob@gmail.com is not bob@company.com) seen on the From, To, Cc or Reply-To of the record (`role` narrows it to one of them), `after` (inclusive) and `before` (exclusive) bound the capture time. It returns summaries; use `get(id)` for the full record.
    * @category read
    * @signature mp.list(opts?: { limit?: number, direction?: 'in'|'out', with?: string, role?: 'from'|'to'|'cc'|'reply-to', before?: Date|number|string, after?: Date|number|string }) => Promise<Array<{ id, captured, direction, live, portable, message_id }>>
-   * @fails Rejects with `err.code === 'ERR_INDEX_UNAVAILABLE'` when the `better-sqlite3` native addon cannot load on this platform (there is no fallback; `record`, `get` and `verify` do not need it), or `ERR_TRAIL_LOCKED` when bringing the trail index up to date had to wait for a writer longer than `lockTimeoutMs`, or `ERR_INDEX_REBUILD` when a first build (or a rebuild, or a catch-up that falls back to one) finds more than about 350,000 committed records or changes (a 16 MB git output limit; the trail is too large to index), or `ERR_TRAIL_LAYOUT` for a trail still in the pre-M3 flat layout (not converted: re-create it). A wrong type for `with`, `role` (it needs `with`), `before` or `after` throws a TypeError. Otherwise never throws. An empty or missing trail returns `[]`. Records captured in the same instant come in ascending id order. Only addresses the record itself shows count: a signed record shows the headers its DKIM signatures cover (an unsigned Cc is not visible), an unsigned one only its From (SPEC B8). Answers come from the trail index (SPEC B5), a cache beside the trail that is opened and closed inside each call (nothing stays open, so `close()` has nothing to wait for): whoever can write that file can change this answer, never `get` or `verify`.
+   * @fails Rejects with `err.code === 'ERR_INDEX_UNAVAILABLE'` when the `better-sqlite3` native addon cannot load on this platform (there is no fallback; `record`, `get` and `verify` do not need it), or `ERR_TRAIL_LOCKED` when bringing the trail index up to date had to wait for a writer longer than `lockTimeoutMs`, or `ERR_TRAIL_LAYOUT` for a trail still in the pre-M3 flat layout (not converted: re-create it). A wrong type for `with`, `role` (it needs `with`), `before` or `after` throws a TypeError. Otherwise never throws. An empty or missing trail returns `[]`. Records captured in the same instant come in ascending id order. Only addresses the record itself shows count: a signed record shows the headers its DKIM signatures cover (an unsigned Cc is not visible), an unsigned one only its From (SPEC B8). Answers come from the trail index (SPEC B5), a cache beside the trail that is opened and closed inside each call (nothing stays open, so `close()` has nothing to wait for): whoever can write that file can change this answer, never `get` or `verify`.
    * @example
    * const recent = await mp.list({ limit: 10 });
    */
@@ -605,7 +668,7 @@ class Mailproof {
    * @when Use to see who is in this trail: one row per exact lower-cased address (bob@gmail.com and bob@company.com are two rows; DKIM proves an address or a domain, not a person), most recently seen first. `records` counts the records that name the address on From, To, Cc or Reply-To; `first`/`last` are the earliest and latest `captured`. The trail's own owner appears too, on every record: a record does not say which address is yours. Then `list({ with })` for the emails.
    * @category read
    * @signature mp.counterparties(opts?: { limit?: number }) => Promise<Array<{ address, records, first, last }>>
-   * @fails Rejects with `ERR_INDEX_UNAVAILABLE`, `ERR_TRAIL_LOCKED` or `ERR_INDEX_REBUILD` exactly like `list()`, and with a TypeError for a `limit` that is not a positive number. An empty or missing trail returns `[]`. Only addresses a record shows count (SPEC B8). Answers come from the trail index, a cache: not proof.
+   * @fails Rejects with `ERR_INDEX_UNAVAILABLE` or `ERR_TRAIL_LOCKED` exactly like `list()`, and with a TypeError for a `limit` that is not a positive number. An empty or missing trail returns `[]`. Only addresses a record shows count (SPEC B8). Answers come from the trail index, a cache: not proof.
    * @example
    * const people = await mp.counterparties({ limit: 20 });
    */
@@ -623,7 +686,7 @@ class Mailproof {
    * @when Use to read a thread around one record without trusting it blindly. `parents` are the Message-IDs this email names in In-Reply-To / References (`id` is the recorded email with that Message-ID, the earliest copy, or null when it is not in the trail); `children` are the recorded emails that name this one's Message-ID. `strength` is `signed` when a DKIM signature that verifies offline covers the header that names it, `unsigned` otherwise (a Microsoft sender signs neither). It reports what looks linked and never asserts "the reply chain"; the other copies of one message are `copies()`.
    * @category read
    * @signature mp.linked(id: string, opts?: { limit?: number }) => Promise<{ id, message_id, parents: [{ id, message_id, via, strength }], children: [{ id, message_id, via, strength }], more: boolean } | null>
-   * @fails Rejects with `ERR_INDEX_UNAVAILABLE`, `ERR_TRAIL_LOCKED` or `ERR_INDEX_REBUILD` exactly like `list()`. Returns null for an unknown or malformed id. A record with no Message-ID has no children. At most `limit` children (default 1000, oldest capture first) come back and `more` is true when there were others; a `limit` that is not a positive integer throws a `TypeError`. Answers come from the trail index, a cache: the strength is the one found when the record was indexed (re-grade one record with `checkProfile`).
+   * @fails Rejects with `ERR_INDEX_UNAVAILABLE` or `ERR_TRAIL_LOCKED` exactly like `list()`. Returns null for an unknown or malformed id. A record with no Message-ID has no children. At most `limit` children (default 1000, oldest capture first) come back and `more` is true when there were others; a `limit` that is not a positive integer throws a `TypeError`. Answers come from the trail index, a cache: the strength is the one found when the record was indexed (re-grade one record with `checkProfile`).
    * @example
    * const t = await mp.linked(replyId);   // t.parents[0].strength === 'signed'
    */
@@ -685,7 +748,7 @@ class Mailproof {
    * @returns {import('./index-db.js').IndexCfg}
    */
   _indexCfg() {
-    return { root: this.root, trail: this.trail, lockTimeoutMs: this.lockTimeoutMs, gitMaxBuffer: this._indexGitMaxBuffer };
+    return { root: this.root, trail: this.trail, lockTimeoutMs: this.lockTimeoutMs };
   }
 
   /**

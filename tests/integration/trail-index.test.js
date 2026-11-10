@@ -310,41 +310,18 @@ async function capTrail() {
   await mp.record(a.raw, { direction: 'in', source: 'test' });
   return { dir, mp, cfg: { root: path.join(dir, 'default'), trail: 'default', lockTimeoutMs: 5000 } };
 }
-const rebuildErr = (e) => e.code === 'ERR_INDEX_REBUILD' && /git output limit/.test(e.message) && /10-byte/.test(e.message);
-
-test('a rebuild past the git output cap rejects with ERR_INDEX_REBUILD naming the cause and the limit; a normal one works', async () => {
-  const { listIndex } = await import('../../src/proof/index-db.js');
-  const { mp, cfg } = await capTrail();
-  await assert.rejects(listIndex({ ...cfg, gitMaxBuffer: 10 }), rebuildErr);
-  assert.equal((await listIndex(cfg)).length, 1);
-  await mp.close();
-});
-
-test('ERR_INDEX_REBUILD surfaces through Mailproof#list() and #copies()', async () => {
-  const { dir, mp } = await capTrail();
-  const id = (await mp.list()).length === 1 ? (await mp.list())[0].id : null; // builds the index once; remove it so the next call rebuilds
-  for (const f of [indexFile(dir), `${indexFile(dir)}-wal`, `${indexFile(dir)}-shm`]) fs.rmSync(f, { force: true });
-  mp._indexGitMaxBuffer = 10;
-  await assert.rejects(mp.list(), rebuildErr);
-  await assert.rejects(mp.copies(id), rebuildErr);
-  mp._indexGitMaxBuffer = undefined;
-  assert.equal((await mp.list()).length, 1, 'the same instance works with the normal cap');
-  await mp.close();
-});
-
-test('a catch-up whose changed-path list passes the cap falls back to a rebuild, which rejects with ERR_INDEX_REBUILD (never a raw buffer error)', async () => {
+test('a rebuild and a catch-up stream git listings: no output cap, same rows', async () => {
   const { dir, mp, cfg } = await capTrail();
   const { listIndex } = await import('../../src/proof/index-db.js');
-  await listIndex(cfg); // index at the first HEAD
+  assert.equal((await listIndex(cfg)).length, 1);
   plantSentinel(dir);
   mp.now = at(9);
   await mp.record(unsigned('more'), { direction: 'in' });
-  // 10 bytes: the diff of one record path (~50 bytes) overflows, so catch-up falls back to a rebuild, which overflows too
-  await assert.rejects(listIndex({ ...cfg, gitMaxBuffer: 10 }), rebuildErr);
-  // with room for the diff, catch-up (not a rebuild) succeeds: the sentinel survives
-  const rows = await listIndex(cfg);
+  const rows = await listIndex(cfg); // catch-up: the sentinel survives
   assert.equal(rows[0].id, 'sentinel');
   assert.equal(rows.length, 3);
+  for (const f of [indexFile(dir), `${indexFile(dir)}-wal`, `${indexFile(dir)}-shm`]) fs.rmSync(f, { force: true });
+  assert.equal((await listIndex(cfg)).length, 2, 'a rebuild lists the two committed records');
   await mp.close();
 });
 
@@ -421,7 +398,8 @@ test('better-sqlite3 is imported by src/proof/index-db.js and by nothing else in
   const hits = [];
   const walk = (d) => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, e.name); if (e.isDirectory()) walk(p); else if (e.name.endsWith('.js') && /better-sqlite3/.test(fs.readFileSync(p, 'utf8'))) hits.push(path.relative(src, p)); } };
   walk(src);
-  assert.deepEqual(hits.filter((h) => h !== path.join('proof', 'index-db.js') && h !== path.join('proof', 'mailproof.js')), []);
+  // mailproof.js and the generated CLI help only quote the name in documentation text (the JSDoc `@fails` of list())
+  assert.deepEqual(hits.filter((h) => h !== path.join('proof', 'index-db.js') && h !== path.join('proof', 'mailproof.js') && h !== path.join('cli', 'help.generated.js')), []);
   const importing = hits.filter((h) => /(?:from\s+|import\()\s*['"]better-sqlite3['"]/.test(fs.readFileSync(path.join(src, h), 'utf8')));
   assert.deepEqual(importing, [path.join('proof', 'index-db.js')]);
 });

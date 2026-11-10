@@ -31,6 +31,7 @@ import { pathsOf, writeJournal, rollForward } from './prune-swap.js';
  * @typedef {Object} PruneResult
  * @property {string} cutoff  ISO time.
  * @property {boolean} noop  True when the cutoff removed nothing: nothing was rewritten, no backup was made.
+ * @property {boolean} dryRun  True for a `dryRun` call: the numbers are what a real prune would produce, nothing was built, swapped or written; `head` is null and `content` is zero.
  * @property {string | null} previousHead  HEAD of the old trail when the swap began (a no-op: the current HEAD).
  * @property {string | null} head  HEAD of the pruned trail (a no-op: the current HEAD).
  * @property {number} removed  Records removed.
@@ -39,7 +40,7 @@ import { pathsOf, writeJournal, rollForward } from './prune-swap.js';
  * @property {number} dropped  Commits not carried over because they only touched removed records (reply-text commits).
  * @property {number} keysCarried  Archived key files kept in the notice commit or added to a kept commit although first committed before the cutoff.
  * @property {{ ok: number, failed: string[] }} reverify  `verifyRecord` over every kept record: how many verify, and the ids that do not (the prune cannot have caused that: the files are byte-identical).
- * @property {string | null} backup  Path of the old trail (`<trail>.pre-prune-<date>`), null for a no-op or after `deleteBackup`.
+ * @property {string | null} backup  Path of the old trail (`<trail>.pre-prune-<date>`), null for a no-op or after `deleteBackup`; for a `dryRun`, the path a real prune would use.
  * @property {{ removed: number, attachments: number, error?: string }} content  Content deleted for the removed records.
  * @property {{ planMs: number, buildMs: number, lockMs: number, totalMs: number }} timing  `lockMs`: how long the trail lock was held.
  */
@@ -454,15 +455,17 @@ async function backupName(trailDir, trail, when) {
 /**
  * Prune a trail (see the file header and SPEC B9). Never scheduled; the caller asked for it.
  * @param {PruneCtx} ctx
- * @param {{ before: Date | number | string, deleteBackup?: boolean, now?: Date | number }} opts
+ * @param {{ before: Date | number | string, deleteBackup?: boolean, dryRun?: boolean, now?: Date | number }} opts
  * @returns {Promise<PruneResult>}
  */
 async function runPrune(ctx, opts) {
   if (!opts || typeof opts !== 'object') throw new TypeError('prune: options required: { before }');
-  for (const k of Object.keys(opts)) if (k !== 'before' && k !== 'deleteBackup' && k !== 'now') throw new TypeError(`prune: unknown option "${k}"`);
+  for (const k of Object.keys(opts)) if (k !== 'before' && k !== 'deleteBackup' && k !== 'dryRun' && k !== 'now') throw new TypeError(`prune: unknown option "${k}"`);
   if (opts.before === undefined) throw new TypeError('prune: before is required (a Date, a timestamp or an ISO date string)');
   const cutoffMs = toMs(opts.before, 'before', 'prune');
   if (opts.deleteBackup !== undefined && typeof opts.deleteBackup !== 'boolean') throw new TypeError('prune: deleteBackup must be a boolean');
+  if (opts.dryRun !== undefined && typeof opts.dryRun !== 'boolean') throw new TypeError('prune: dryRun must be a boolean');
+  const dryRun = opts.dryRun === true;
   const nowMs = opts.now === undefined ? ctx.now().getTime() : toMs(opts.now, 'now', 'prune');
   const { root, trail, lockTimeoutMs, hooks } = ctx;
   const cutoff = new Date(cutoffMs).toISOString();
@@ -475,13 +478,15 @@ async function runPrune(ctx, opts) {
     // A short look under the trail lock: finishes an unfinished earlier swap (the lock does that), takes the snapshot,
     // clears what a crashed earlier build left.
     const snapshot = await lockTrail(async () => {
-      await fs.rm(p.build, { recursive: true, force: true });
-      await fs.rm(p.tmp, { recursive: true, force: true });
+      if (!dryRun) {   // a dry run writes nothing: it leaves a crashed build where it is
+        await fs.rm(p.build, { recursive: true, force: true });
+        await fs.rm(p.tmp, { recursive: true, force: true });
+      }
       return headOf(root);
     });
     /** @returns {PruneResult} */
     const noop = (/** @type {number} */ kept) => ({
-      cutoff, noop: true, previousHead: snapshot, head: snapshot, removed: 0, kept, stragglers: [], dropped: 0, keysCarried: 0,
+      cutoff, noop: true, dryRun, previousHead: snapshot, head: snapshot, removed: 0, kept, stragglers: [], dropped: 0, keysCarried: 0,
       reverify: { ok: 0, failed: [] }, backup: null, content: { removed: 0, attachments: 0 }, timing: { planMs: 0, buildMs: 0, lockMs: 0, totalMs: Date.now() - t0 },
     });
     if (snapshot === null) return noop(0);
@@ -496,7 +501,7 @@ async function runPrune(ctx, opts) {
       if (!plan.boundary) {
         throw Object.assign(new Error(`prune: every record in trail "${trail}" was captured before ${cutoff}; pruning would leave an empty trail, so it is refused`), { code: 'ERR_PRUNE_CUTOFF' });
       }
-      await hooks.afterPlan?.();
+      if (!dryRun) await hooks.afterPlan?.();
 
       // kept records at the snapshot: re-verify, stragglers, the keys they need
       /** @type {KeptState} */
@@ -506,6 +511,14 @@ async function runPrune(ctx, opts) {
       }
       /** @type {Set<string>} */
       const carried = new Set([...plan.prefixKeys.keys()].filter((k) => state.keys.has(k)));
+      if (dryRun) {   // the plan and the kept-record check above are the real computation; nothing below runs
+        return {
+          cutoff, noop: false, dryRun: true, previousHead: snapshot, head: null, removed: plan.prunedIds.size, kept: state.kept, stragglers: state.stragglers,
+          dropped: plan.dropped, keysCarried: carried.size, reverify: { ok: state.ok, failed: state.failed },
+          backup: path.join(p.trailDir, await backupName(p.trailDir, trail, new Date(nowMs))), content: { removed: 0, attachments: 0 },
+          timing: { planMs, buildMs: 0, lockMs: 0, totalMs: Date.now() - t0 },
+        };
+      }
       const earlier = parseNotice((await git(root, ['log', '--max-parents=0', '--format=%B', snapshot], { config: PRUNE_GIT_CONFIG })).replace(/$/, '\n'));
       const notice = noticeMessage({
         cutoff, 'previous-head': snapshot, removed: String(plan.prunedIds.size), kept: String(state.kept), stragglers: String(state.stragglers.length),
@@ -578,7 +591,7 @@ async function runPrune(ctx, opts) {
         try { await fs.rm(backupPath, { recursive: true, force: true }); backupPath = ''; } catch { /* keep it: reported below */ }
       }
       return {
-        cutoff, noop: false, previousHead, head: newHead, removed: plan.prunedIds.size, kept: keptRecords, stragglers: state.stragglers, dropped: plan.dropped + droppedLate,
+        cutoff, noop: false, dryRun: false, previousHead, head: newHead, removed: plan.prunedIds.size, kept: keptRecords, stragglers: state.stragglers, dropped: plan.dropped + droppedLate,
         keysCarried: carried.size, reverify: { ok: state.ok, failed: state.failed }, backup: backupPath || null, content,
         timing: { planMs, buildMs, lockMs, totalMs: Date.now() - t0 },
       };

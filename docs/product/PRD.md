@@ -1,6 +1,6 @@
 # mailproof v2 — PRD
 
-> **Status:** v2 is released as 3.0.0 (2026-11-09; M0-M2 and M3 steps 1-3 shipped). The rest of M3 (CLI, MCP, `replyFacts`) is specified, not built. 1.x is frozen at tag `v1.4.0` (v1 code archived in `archive/v1/`; no `v1` branch).
+> **Status:** v2 is released as 3.0.0 (2026-11-09; M0-M2 and M3 steps 1-3 shipped). M3 steps 4 (`replyFacts`) and 5 (the `mailproof` CLI) are built on `feat/m3-reply-facts`, not released; the rest of M3 (MCP) is specified, not built. 1.x is frozen at tag `v1.4.0` (v1 code archived in `archive/v1/`; no `v1` branch).
 > **Owner:** hamr0 · **Last updated:** 2026-11-09
 >
 > **For future Claude:** this PRD wins on intent and scope. The *why* behind each choice is in
@@ -222,7 +222,7 @@ It stores no text, no body bytes and no subject (the trail stays header-only). I
 
 ### M3 — Two-party record (specified)
 
-**Status:** specified 2026-11-08, approvals round added 2026-11-09; **build step 1 shipped in 3.0.0: the local content store, retention and `forget`** ([SPEC B7](SPEC.md), [F22](findings.md)); **build step 2 shipped in 3.0.0: trust profiles, the counterparty view and graded thread links** ([SPEC B5, B8](SPEC.md), [F23](findings.md)); **build step 3 shipped in 3.0.0: prune before date** ([SPEC B9](SPEC.md), [F25](findings.md)); the rest (step 4 onward: CLI, MCP, `replyFacts`) is not built; a few items still open (see Open below). Reasons and options: [decisions-log](decisions-log.md) entry "M3 scope: one trail per owned account, local content store, prune-before-date, CLI + stdlib MCP". Wire formats go to SPEC Part B when each step is built (B7 is the first).
+**Status:** specified 2026-11-08, approvals round added 2026-11-09; **build step 1 shipped in 3.0.0: the local content store, retention and `forget`** ([SPEC B7](SPEC.md), [F22](findings.md)); **build step 2 shipped in 3.0.0: trust profiles, the counterparty view and graded thread links** ([SPEC B5, B8](SPEC.md), [F23](findings.md)); **build step 3 shipped in 3.0.0: prune before date** ([SPEC B9](SPEC.md), [F25](findings.md)); **build step 4 built, not released: `replyFacts`** ([SPEC B10](SPEC.md), [F26](findings.md), [F27](findings.md)); **build step 5 built, not released: the `mailproof` CLI, with `Mailproof#upgradeStamps()` and `prune({ dryRun })`** ([SPEC B11](SPEC.md)); the rest (MCP) is not built; a few items still open (see Open below). Reasons and options: [decisions-log](decisions-log.md) entry "M3 scope: one trail per owned account, local content store, prune-before-date, CLI + stdlib MCP". Wire formats go to SPEC Part B when each step is built (B7 is the first).
 
 **Goal.** M3 makes mailproof a two-party record for three use cases on one substrate:
 
@@ -270,7 +270,7 @@ Best effort, offered when available.
 
 #### Prune before date
 
-Off by default; an explicit command (`Mailproof#prune`, built in step 3; the CLI comes in step 4). Only "everything captured before date X". Never a range in the middle (that is tampering), and no rotation by period. Mechanism and wire format: [SPEC B9](SPEC.md); the POC that corrected the first draft of these steps: [poc/m3-prune](../../poc/m3-prune/README.md), [F24](findings.md).
+Off by default; an explicit command (`Mailproof#prune`, built in step 3; the CLI comes in step 5). Only "everything captured before date X". Never a range in the middle (that is tampering), and no rotation by period. Mechanism and wire format: [SPEC B9](SPEC.md); the POC that corrected the first draft of these steps: [poc/m3-prune](../../poc/m3-prune/README.md), [F24](findings.md).
 
 1. **Plan without blocking writers.** Build the pruned trail from a snapshot of HEAD with no trail lock, so `record()` and `sync()` carry on; take the trail lock (and the sync lock) only to append the commits made since and swap. The cutoff is the longest *prefix* of history in which every record is before the date: a record captured earlier but committed after a later one (a clock step) is **kept** and reported as a straggler.
 2. Write a new first commit, the **prune notice**: cutoff date, previous HEAD hash, records removed, kept, stragglers and dropped commits, and the notices of earlier prunes (cumulative). Its tree is not empty: it holds `trail.json` and the archived keys that kept records still need (a key first committed with a removed record but named by a kept one).
@@ -291,32 +291,32 @@ Commit ids after the cutoff change. Kept record files, DKIM proofs, keys, OTS st
 Owner decisions, 2026-11-09. Reasons and options: [decisions-log](decisions-log.md) entry "M3 approvals: mailproof never sends; supplies a flat fact bundle; bareguard decides".
 
 - **mailproof never sends email.** It silently shadows the mailbox. Whoever starts an exchange (an agent, bareguard's approval recipe) sends the question with its own tools from the user's own account, ideally setting its own Message-ID. mailproof records the request from Sent and the reply from Inbox like any other mail. The "no third-party sending provider" rule stays intact (§12 Q6).
-- **mailproof supplies, consumers decide.** mailproof never interprets or filters on a consumer's behalf. A new read primitive, `replyFacts({ messageId })` (name proposed), returns a fact bundle for the reply to that Message-ID, or null when there is none. It comes later, after the content store and the read primitives exist. The trust profile stays a separate, optional primitive.
+- **mailproof supplies, consumers decide.** mailproof never interprets or filters on a consumer's behalf. A read primitive, `replyFacts({ messageId })` (built, step 4, [SPEC B10](SPEC.md)), returns one fact bundle per direct reply to that Message-ID (In-Reply-To names it, or it is the last entry of References; never deeper thread members), inbound records only, earliest `captured` first, and `[]` when there is none. It supplies every reply (copies of one signed message are separate bundles sharing `messageKey`); it never picks one. The trust profile stays a separate, optional primitive.
 - **The bundle is flat JSON with string values only.** Each flag comes from a closed set, and claimed and proven values are sibling keys. This shape was agreed with bareguard's session: its rubric reads only its own top-level keys, compares strings exactly, and no rule reads booleans or nested objects. Field names are indicative; they are final at build.
+
+The final field list and the closed sets are in [SPEC B10.3](SPEC.md). In short:
 
 | Field | Meaning |
 |---|---|
-| `messageId` | Message-ID of the reply |
-| `recordId`, `commit`, `trail` | where the reply is recorded |
-| `from` | claimed From address, lower-cased |
-| `fromRaw` | the From address exactly as written |
-| `fromDkimAligned` | `pass`, `fail` or `none`: proven |
-| `to`, `cc` | claimed addresses, lower-cased |
-| `toRaw`, `ccRaw` | the same addresses exactly as written (if convenient) |
-| `date`, `subject` | claimed headers |
-| `dkim`, `dmarc`, `spf`, `arc`, `live`, `portable` | mailproof's existing string verdicts |
+| `messageId`, `messageKey` | Message-ID of the reply (`""` when it has none); `message_key`, which groups copies of one signed message |
+| `recordId`, `commit`, `trail`, `captured` | where and when the reply is recorded; `commit` is the commit that added the record (from the trail index) |
+| `from`, `fromRaw` | the first From address, lower-cased / exactly as written |
+| `fromDomain` | the domain of `from` (after the last `@`, lower-case, one trailing `.` removed; `""` when none). A claim like `from`; subdomains are not folded |
+| `fromDkimAligned` | `pass`: an aligned DKIM signature that verifies offline and covers From exists. `fail`: signatures, none qualifies. `none`: no signature |
+| `to`, `cc`, `toRaw`, `ccRaw` | claimed addresses, lower-cased / as written; multi-value, `,` with no space |
+| `date`, `subject`, `dateSource`, `subjectSource` | the signed value when a verifying signature covers the header, else the raw email's header (subject RFC 2047-decoded), else `""`; the source is `signed`, `claimed` or `none` |
+| `dkim`, `dmarc`, `spf`, `arc` | live results at capture, mapped to closed sets (`dkim`: `pass`/`fail`/`none`; the rest add `other`) |
+| `live`, `portable` | the two trust levels (`verified`, `forwarded`, `authorized`, `unverified`), not DKIM results |
 | `link` | `signed`: the request's Message-ID is in a DKIM-signed In-Reply-To/References. `unsigned`: present but not signed. `none`: absent |
-| `text` | the new reply text (M2) |
-| `firstLine` | see below |
-| `bodyProven` | `proven` or `unproven` |
-| `quote` | `found`, `not-found` or `inline` |
-| `attachments` | hashes, as one string |
+| `text`, `firstLine`, `textSource` | the new reply text (M2) and its first line, read from the content store without writing to the trail; `textSource` is `content`, `none` (no stored email) or `over-limit` |
+| `bodyProven`, `quote`, `trailing` | `proven`/`unproven`; `found`/`not-found`/`inline`; `yes`/`no` (text written below the quote, not in `text`) |
+| `attachments` | hashes, multi-value |
 
   **Address fields are supplied normalised.** `from`, `to`, `cc` (and any domain field) are lower-cased, and the contract says so. Reason: bareguard's `in` rule is exact and case-sensitive, so `Ana@Company.com` would not match `ana@company.com` and a genuine approval would be denied. Domains are case-insensitive and mailbox local parts are case-insensitive in practice. The address exactly as written is also supplied as a sibling (`fromRaw`; `toRaw` and `ccRaw` if convenient), so nothing is hidden.
 
-  Multi-value fields (`to`, `cc`, `attachments`) are one string with a stated separator, decided at build and documented then.
-- **`firstLine` is a contract.** Take the new reply text that `replyText` returns (quoted history removed). Split it on any line break (`\r\n`, `\n`, `\r`). Take the first line that is non-empty after trimming. Trim with ECMAScript `String.prototype.trim` (spaces, tabs, NBSP, BOM and other WhiteSpace/LineTerminator characters at both ends). No case folding, no Unicode normalisation. It is `""` when there is no such line. When the text is unproven, `text` and `firstLine` are still supplied and `bodyProven` is `unproven`.
-- **Reference recipe (bareguard side, not mailproof behaviour).** The question email asks the human to reply with an exact approval word chosen by the user (for example `APPROVE`) as the first line. The user-signed rubric uses bareguard's existing `in` rule: `firstLine` in the approval word(s) (exact, case-sensitive), `from` in the allowed addresses (write rubric values for `from` in lower case), `fromDkimAligned` in `["pass"]`, `bodyProven` in `["proven"]`, `link` in `["signed"]`. Anything not green is not approved: "I do not approve", unlisted lower-case variants and empty replies all fail. The adapter (bareguard's `humanChannel`) is documented on mailproof's side, because bareguard imports no peers. It sends the question, polls `replyFacts` until non-null or its own timer fires (set below bareguard's `humanChannelTimeoutMs`; bareguard denies on its timeout but does not cancel the channel), runs bareguard's `checkStep` on the bundle, and returns `{decision}`. One answer per ask: later mail cannot change a returned decision. The proof reference goes into bareguard's audit through `reason` (`mailproof:<recordId>@<commit>`) and/or `gate.annotate` meta. Bareguard's approval line drops extra keys today; a first-class field would be a bareguard change and is not needed now.
+  Multi-value fields (`to`, `cc`, `toRaw`, `ccRaw`, `attachments`) are one string joined with `,` (no space), in header order, `""` for none (SPEC B10.3).
+- **`firstLine` is a contract.** Take the new reply text that `replyText` returns (quoted history removed). Split it on any line break (`\r\n`, `\n`, `\r`). Take the first line that is non-empty after trimming. Trim with ECMAScript `String.prototype.trim` (spaces, tabs, NBSP, BOM and other WhiteSpace/LineTerminator characters at both ends). No case folding, no Unicode normalisation. It is `""` when there is no such line. When the text is unproven, `text` and `firstLine` are still supplied and `bodyProven` is `unproven`. When the content store no longer holds the raw email (off, expired, forgotten), they are `""` and `textSource` is `none`.
+- **Reference recipe (bareguard side, not mailproof behaviour).** The question email asks the human to reply with an exact approval word chosen by the user (for example `APPROVE`, or any word the user picks) as the first line, and nothing else on that line: the question email must say so. The user-signed rubric uses bareguard's existing `in` rule: `firstLine` in the approval word(s), matched exactly and case-sensitively by default, like a password (bareguard ruling #74, owner decision 2026-11-10; `Mashy` passes only on exactly `Mashy`). Bareguard adds an opt-in `ignoreCase: true` on `in`/`notIn` (bareguard's, being built, not mailproof's): it folds case only (`toLowerCase`), still whole-value, so punctuation, extra words and spacing must match and there is no Unicode normalisation; a real reply `Approved.` matches neither `approve` nor `approved` even with it. For a "trusted sender domain" rule use `fromDomain` in `["company.example", ...]` (each domain listed; `eu.company.example` is not `company.example`) together with `fromDkimAligned` in `["pass"]`: `fromDomain` alone is a claim, and a substring rule on `from` is unsafe (`@company.example` matches `bob@company.example.evil.io`). `ignoreCase` needs bareguard `^0.34.0` (a 0.x caret: `^0.33.0` does not cover it). The rubric also needs `from` in the allowed addresses (write rubric values for `from` in lower case), `fromDkimAligned` in `["pass"]`, `bodyProven` in `["proven"]`, `link` in `["signed"]`. Anything not green is not approved: "I do not approve", any other wording or punctuation, and empty replies all fail. The adapter (bareguard's `humanChannel`) is documented on mailproof's side, because bareguard imports no peers. It sends the question, polls `replyFacts` until the array is non-empty or its own timer fires (set below bareguard's `humanChannelTimeoutMs`; bareguard denies on its timeout but does not cancel the channel), groups the bundles by `messageKey` (copies of one reply), runs bareguard's `checkStep` on each distinct reply, and returns `{decision}`: **ALLOW only when at least one distinct reply is green and none is red; zero replies, all red, or mixed is DENY** (agreed with bareguard's session, 2026-11-10; the rule lives in the adapter, not in mailproof, [decisions-log](decisions-log.md)). A second, contradictory reply (or a flood of replies) can therefore only turn an approval into a denial, never the reverse. One answer per ask: once the adapter has returned a decision, later mail cannot change it. The proof reference goes into bareguard's audit through `reason` (`mailproof:<recordId>@<commit>`) and/or `gate.annotate` meta. Bareguard's approval line drops extra keys today; a first-class field would be a bareguard change and is not needed now.
 - **Known limitation, Microsoft (documented; no workaround, no carve-out).**
   - Microsoft does not sign In-Reply-To/References ([F11](findings.md)). A reply from a Microsoft-hosted sender (outlook.com, msn.com, Microsoft 365 business domains) gets `link` = `unsigned`. Its text is still extracted (the stripper recognises Outlook's quote block) and, when received at a Gmail-like mailbox, is still proven.
   - Mail received at an Outlook/Exchange mailbox has altered bodies ([F10](findings.md)), so `bodyProven` is always `unproven` there. Receive approvals at a non-Microsoft mailbox.
@@ -326,8 +326,8 @@ Owner decisions, 2026-11-09. Reasons and options: [decisions-log](decisions-log.
 #### Interfaces
 
 - **Library** (exists).
-- **One `mailproof` CLI.** Run with no arguments it shows a simple readline menu (stdlib, no TUI framework). The same actions are subcommands for scripts and cron: `sync`, `watch`, `list` (for example `--with <address>`), `show`, `verify`, `export`, `forget`, `prune`, `status`, `mcp`. `export` depends on M6's proof bundle (§7 M6). The existing `mailproof-sync` bin keeps working.
-- **Config:** a JSON file per user (for example `~/.config/mailproof/accounts.json`; JSON so there is no new dependency). Per-account fields such as `user`, `host`, `trailDir`, `trail`, `passCommand`, `contentDays` (730), `storeContent`, `storeAttachments`.
+- **One `mailproof` CLI** (SPEC B11). Run with no arguments it shows a readline menu (stdlib, no TUI framework) that prompts for each action's parameters; every menu action is also a subcommand with flags for scripts and cron: `sync`, `watch` (a foreground command, no daemon; run it under systemd --user or cron), `list`, `show`, `verify`, `replies`, `check`, `forget`, `prune`, `backup`, `status`, `update`, `config`, `export`, `mcp`. With more than one account every command needs `--account`; `forget` and `prune` need `--yes` (menu: type the account name). `export` depends on M6's proof bundle (§7 M6). The existing `mailproof-sync` bin keeps working.
+- **Config:** one JSON file, `~/.config/mailproof/config.json` (XDG; JSON so there is no new dependency), with `accounts` keyed by account name. Per-account fields such as `user`, `host`, `trailDir`, `trail`, `passCommand` | `passFile` | `accessTokenCommand` (never a plain password), `content` (`store`, `attachments`, `days` 730), `ots`, `backupRemote`. Refused unless owned by the user and mode 0600. Runtime state (last runs, logs, backups) lives in `~/.local/state/mailproof/`, never in the config.
 - **MCP server inside the same package** (`mailproof mcp`): stdio JSON-RPC written with the stdlib, no MCP SDK dependency. Proven first by a POC against a real MCP client (Claude Code). Switch to the SDK only if the protocol work proves larger; that needs the dependency checklist and an owner decision. It starts read-only: verify, show, list, check a record against a trust profile, "did X reply to my request". No forget, export or send through MCP without a human gate.
 - **One source of truth:** CLI help, MCP tool descriptions and `primitives.json` all come from the same JSDoc.
 - **No new runtime dependency for M3.**
@@ -337,11 +337,13 @@ Owner decisions, 2026-11-09. Reasons and options: [decisions-log](decisions-log.
 1. Content store, retention and `forget`.
 2. Trust profiles, counterparty view and graded thread links.
 3. Prune before date.
-4. `mailproof` CLI, config and menu.
-5. MCP, after its POC.
-6. `replyFacts`, after the content store and read primitives (steps 1-2).
+4. `replyFacts`, after the content store and read primitives (steps 1-2); POC on real replies first (F26). **Built, not released** ([SPEC B10](SPEC.md), F27).
+5. `mailproof` CLI, config and menu (built, not released; SPEC B11).
+6. MCP, after its POC.
 
-POC first where the mechanism is unproven: the stdlib MCP server, and the prune replay. Approvals via bareguard become a recipe on top of steps 2, 5 and 6.
+Reordered 2026-11-09: `replyFacts` moves ahead of the CLI and MCP, because it needs only steps 1-2 and unblocks bareguard's approval channel. Reasons: [decisions-log](decisions-log.md) entry "M3 build order: `replyFacts` before the CLI and MCP".
+
+POC first where the mechanism is unproven: `replyFacts` on real replies, the stdlib MCP server, and the prune replay. Approvals via bareguard become a recipe on top of steps 2, 4 and 6.
 
 #### Open (not decided)
 
