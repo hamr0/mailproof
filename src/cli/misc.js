@@ -7,6 +7,7 @@ import { parseFolders, parseSent } from './parse.js';
 import { openAccount, print, warn, printJson } from './session.js';
 import { syncOnce, syncText } from './sync-op.js';
 import { configPath, TEMPLATE, loadConfig, ConfigError } from './config.js';
+import { addAccountWizard } from './wizard.js';
 
 /** @typedef {import('./session.js').Ctx} Ctx */
 /** @typedef {import('./session.js').Args} Args */
@@ -79,7 +80,7 @@ export async function configCmd(a, ctx) {
       return EX_OK;
     }
     case 'add-account':
-      throw new UsageError('config add-account: not available yet');
+      return addAccountWizard(a, ctx, file);
     default:
       throw new UsageError(`config: unknown action "${action}"; use path, validate, template or add-account`);
   }

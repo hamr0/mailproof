@@ -11,6 +11,7 @@ import { syncCmd, updateCmd, configCmd, exportCmd, mcpCmd, version } from './mis
 import { watchCmd } from './watch.js';
 import { backupCmd } from './backup.js';
 import { statusCmd } from './status.js';
+import { runMenu } from './menu.js';
 
 /** @typedef {import('./session.js').Ctx} Ctx */
 /** @typedef {import('./session.js').Args} Args */
@@ -64,6 +65,10 @@ export async function run(argv, ctx) {
     if (cmd === null) {
       const help = argv.includes('-h') || argv.includes('--help');
       if (help) { ctx.stdout.write(renderList()); return EX_OK; }
+      if (ctx.interactive && ctx.stdin) {
+        const { values } = parseArgs({ args: argv, options: optionsOf(GLOBAL_FLAGS), allowPositionals: false, strict: true });
+        return runMenu(ctx, (v, c) => run(v, c), { configFlag: /** @type {string | undefined} */ (values.config) });
+      }
       ctx.stdout.write(renderList());
       return EX_USAGE;
     }
