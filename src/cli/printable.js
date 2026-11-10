@@ -23,10 +23,10 @@ function danger(c) {
   if (c < 0x20 || (c >= 0x7f && c <= 0x9f)) return true;       // C0, DEL, C1
   if (c < 0xad) return false;
   if (c < 0x2000) {
-    return c === 0xad || c === 0x34f || c === 0x61c || c === 0x115f || c === 0x1160 || c === 0x17b4 || c === 0x17b5 || c === 0x180e;
+    return c === 0xad || c === 0x34f || c === 0x61c || c === 0x115f || c === 0x1160 || c === 0x17b4 || c === 0x17b5 || (c >= 0x180b && c <= 0x180e);
   }
   if (c < 0x3000) {
-    return (c >= 0x200b && c <= 0x200f) || (c >= 0x2028 && c <= 0x202e) || (c >= 0x2060 && c <= 0x206f);
+    return (c >= 0x200b && c <= 0x200f) || (c >= 0x2028 && c <= 0x202e) || (c >= 0x2060 && c <= 0x206f) || c === 0x2800;
   }
   if (c === 0x3164) return true;
   if (c < 0xd800) return false;
@@ -35,10 +35,22 @@ function danger(c) {
 }
 
 /** @param {number} cp An astral code point. @returns {boolean} */
-const astralDanger = (cp) => (cp >= 0xe0000 && cp <= 0xe007f) || (cp >= 0xe0100 && cp <= 0xe01ef);
+const astralDanger = (cp) => (cp >= 0xe0000 && cp <= 0xe007f) || (cp >= 0x1d173 && cp <= 0x1d17a) || (cp >= 0xe0100 && cp <= 0xe01ef);
 
 /** A neighbour that makes a ZWJ/ZWNJ legitimate: non-ASCII and not itself a joiner (a run of joiners is hidden text). @param {number} c @returns {boolean} */
 const letterLike = (c) => c >= 0x80 && c !== 0x200c && c !== 0x200d;
+
+/**
+ * FE0E/FE0F (text/emoji presentation selectors) are invisible. They are kept after a non-ASCII character (an emoji, a symbol)
+ * and before U+20E3 (a keycap, "1" FE0F 20E3); after ASCII otherwise they hide inside an address or an id, so they are escaped.
+ * @param {string} s @param {number} i Index of the selector. @returns {boolean} true when it must be escaped
+ */
+const presBad = (s, i) => {
+  if (i + 1 < s.length && s.charCodeAt(i + 1) === 0x20e3) return false;
+  if (i === 0) return true;
+  const p = s.charCodeAt(i - 1);
+  return p < 0x80 || p === 0xfe0e || p === 0xfe0f;
+};
 
 const SHORT = new Map([[0x0a, '\\n'], [0x0d, '\\r'], [0x09, '\\t'], [0x5c, '\\\\']]);
 /** @param {number} n @param {number} w @returns {string} */
@@ -95,12 +107,13 @@ export function printable(v, o = {}) {
     if (c === 0x0a && nl) continue;
     if (c >= 0xd800 && c <= 0xdfff) {
       if (c <= 0xdbff && pairAt(s, i)) {
-        if (c === 0xdb40 && astralDanger(((c - 0xd800) << 10) + (s.charCodeAt(i + 1) - 0xdc00) + 0x10000)) break;
+        if ((c === 0xdb40 || c === 0xd834) && astralDanger(((c - 0xd800) << 10) + (s.charCodeAt(i + 1) - 0xdc00) + 0x10000)) break;
         i++;
         continue;
       }
       break;   // lone surrogate
     }
+    if (c === 0xfe0e || c === 0xfe0f) { if (presBad(s, i)) break; continue; }
     if (danger(c)) break;
   }
   if (i === len) return tail ? s + tail : s;
@@ -122,7 +135,8 @@ export function printable(v, o = {}) {
       } else bad = true;
     } else if (c === 0x200c || c === 0x200d) {
       bad = !(i > 0 && letterLike(s.charCodeAt(i - 1)) && i + 1 < len && letterLike(s.charCodeAt(i + 1)));
-    } else bad = danger(c);
+    } else if (c === 0xfe0e || c === 0xfe0f) bad = presBad(s, i);
+    else bad = danger(c);
     if (bad) { out += s.slice(from, i) + esc(cp); from = i + w; }
     i += w - 1;
   }

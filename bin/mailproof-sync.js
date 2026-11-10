@@ -6,6 +6,7 @@
 import { parseArgs } from 'node:util';
 import { Mailproof } from '../src/index.js';
 import { UsageError, EX_USAGE, exitFor } from '../src/cli/errors.js';
+import { printable } from '../src/cli/printable.js';
 import { runSecretCommand, readSecretFile, passwordAuth, tokenAuth } from '../src/cli/secrets.js';
 
 const USAGE = `Usage: mailproof-sync --trail-dir <dir> --user <user> [options]
@@ -112,7 +113,7 @@ async function main() {
     process.stdout.write(JSON.stringify(result) + '\n');
     const bad = result.folders.find((f) => f.error);
     if (!bad) return 0; // complete, or partial because a cap was hit: the next run continues
-    process.stderr.write(`mailproof-sync: ${bad.folder}: ${bad.error?.code}: ${bad.error?.message}\n`);
+    process.stderr.write(printable(`mailproof-sync: ${bad.folder}: ${bad.error?.code}: ${bad.error?.message}`) + '\n');
     return exitFor(bad.error?.code);
   } finally {
     await mp.close();
@@ -121,10 +122,10 @@ async function main() {
 
 main().then((c) => { process.exitCode = c; }, (e) => {
   if (e instanceof UsageError) {
-    process.stderr.write(`mailproof-sync: ${e.message}\nTry "mailproof-sync --help".\n`);
+    process.stderr.write(printable(`mailproof-sync: ${e.message}`) + '\nTry "mailproof-sync --help".\n');
     process.exitCode = EX_USAGE;
   } else {
-    process.stderr.write(`mailproof-sync: ${e?.code ? e.code + ': ' : ''}${e?.message ?? e}\n`);
+    process.stderr.write(printable(`mailproof-sync: ${e?.code ? e.code + ': ' : ''}${e?.message ?? e}`) + '\n');
     process.exitCode = exitFor(e?.code);
   }
 });

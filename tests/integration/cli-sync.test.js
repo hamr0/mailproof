@@ -8,6 +8,7 @@ import os from 'node:os';
 import { spawn } from 'node:child_process';
 import { startFakeImap, makeCert } from '../helpers/fake-imap-server.js';
 import { makeTmpDir } from '../helpers/tmp.js';
+import { hasForbidden } from '../helpers/forbidden.js';
 
 const CLI = path.resolve(import.meta.dirname, '../../bin/mailproof-sync.js');
 const CERT = makeCert();
@@ -184,4 +185,37 @@ test('a --pass-command that reads stdin to EOF is not left waiting on an open pi
   // the CLI's command timeout is 30 s; a run that waited it out ends at >= 30 s, a prompt one takes ~1 s alone and ~20 s on a loaded box
   assert.ok(Date.now() - t0 < 25000, 'did not wait out the 30 s command timeout');
   assert.equal(JSON.parse(r.stdout).folders[0].recorded, 1);
+});
+
+// F28: the human stderr writes carry argv-, server- or record-derived text; none may carry a terminal-active code point.
+const noForbidden = (t) => {
+  assert.ok(!hasForbidden(t), JSON.stringify(t));
+  assert.ok(!/[\u001b\u009b\u202e\u200b]/.test(t));
+};
+
+test('F28: a folder error line (the folder name comes from argv) is escaped on stderr; stdout stays one JSON line', async () => {
+  const srv = await serve(1);
+  const trailDir = makeTmpDir('mp-cli-trail-');
+  const pf = path.join(work, 'pw-f28');
+  fs.writeFileSync(pf, SECRET + '\n');
+  const r = await run([...base(srv, trailDir), '--folders', 'No\u001b[2K\u009b2J\u202epe\u2800', '--pass-file', pf]);
+  assert.notEqual(r.code, 0);
+  noForbidden(r.stderr.replace(/\n$/, ''));
+  assert.match(r.stderr, /No\\x1b\[2K\\x9b2J\\u202epe\\u2800: ERR_IMAP_NO_FOLDER/);
+  assert.equal(r.stderr.trim().split('\n').length, 1);
+  assert.equal(r.stdout.trim().split('\n').length, 1, 'stdout is one JSON line');
+  assert.doesNotThrow(() => JSON.parse(r.stdout));
+});
+
+test('F28: a usage error that echoes argv is escaped on stderr', async () => {
+  const r = await run(['--\u001b[2K\u202e']);
+  assert.equal(r.code, 64);
+  noForbidden(r.stderr.replace(/\nTry "mailproof-sync --help"\.\n$/, ''));
+  assert.match(r.stderr, /Try "mailproof-sync --help"/);
+});
+
+test('F28: a failing pass command whose name carries control characters is escaped on stderr', async () => {
+  const r = await run(['--trail-dir', makeTmpDir('mp-cli-trail-'), '--user', USER, '--pass-command', 'no-such-cmd-\u001b[2K\u202e']);
+  assert.notEqual(r.code, 0);
+  noForbidden(r.stderr.replace(/\n$/, ''));
 });

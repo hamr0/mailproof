@@ -25,6 +25,11 @@ const corpus = {
   'lone surrogates': 'a\ud800b\udc00c',
   'literal backslash that mimics an escape': 'a\\x1b[1Ab',
   'hangul and khmer fillers, mongolian vowel separator': '\u115f\u1160\u17b4\u17b5\u180e\u034f\u061c',
+  'mongolian free variation selectors': 'a\u180bb\u180cc\u180dd',
+  'braille blank': 'bob\u2800@example.org',
+  'musical formatting characters': 'a\u{1d173}b\u{1d17a}c\u{1d176}',
+  'emoji presentation selector inside an address': 'bob\ufe0f@example.org',
+  'text presentation selector after ASCII': 'bob\ufe0e@example.org',
   'noncharacters': '\ufdd0\ufdef\ufff9\ufffe\uffff',
 };
 
@@ -98,5 +103,42 @@ test('printable: linear time on adversarial input (a megabyte of dirty text, lon
     const ms = (process.cpuUsage(t0).user) / 1000;
     assert.ok(!hasForbidden(out) || unit === 'é\u200d' || unit === 'a', 'only a legitimate joiner pattern may survive');
     assert.ok(ms < 1500, `${JSON.stringify(unit)} took ${ms} ms`);
+  }
+});
+
+test('printable: new blank/invisible code points are escaped with their exact form', () => {
+  for (const [cp, esc] of [[0x180b, '\\u180b'], [0x180c, '\\u180c'], [0x180d, '\\u180d'], [0x2800, '\\u2800'],
+    [0x1d173, '\\u{1d173}'], [0x1d174, '\\u{1d174}'], [0x1d17a, '\\u{1d17a}']]) {
+    assert.equal(printable(`a${String.fromCodePoint(cp)}b`), `a${esc}b`);
+  }
+  assert.equal(printable('\u{1d172}\u{1d17b}'), '\u{1d172}\u{1d17b}', 'neighbours stay');
+  assert.equal(printable('\u2801'), '\u2801', 'other braille stays');
+});
+
+test('printable: FE0E/FE0F stay after non-ASCII and before a keycap mark, and are escaped after ASCII', () => {
+  assert.equal(printable('bob\ufe0f@example.org'), 'bob\\ufe0f@example.org');
+  assert.equal(printable('bob\ufe0e@example.org'), 'bob\\ufe0e@example.org');
+  assert.equal(printable('\ufe0f'), '\\ufe0f', 'at the start');
+  assert.equal(printable('é\ufe0f\ufe0f'), 'é\ufe0f\\ufe0f', 'a second selector in a row is escaped');
+  for (const keep of ['❤\ufe0f', '❤\ufe0e', '☺\ufe0f ok', '1\ufe0f\u20e3', '#\ufe0f\u20e3', '*\ufe0f\u20e3', 'é\ufe0f', '😀\ufe0f', '👨\u200d👩\u200d👧\ufe0f']) {
+    assert.ok(Object.is(printable(keep), keep), JSON.stringify(keep));
+  }
+  // keycap: the exception is only for the FE0F directly before U+20E3
+  assert.equal(printable('1\ufe0f x'), '1\\ufe0f x');
+  assert.ok(Object.is(printable('1\ufe0f\u20e3 two'), '1\ufe0f\u20e3 two'));
+});
+
+test('printable: Arabic, Persian, CJK and ZWJ emoji families are unchanged', () => {
+  for (const s of ['مرحبا بالعالم', 'می\u200cخواهم', '日本語のメール 漢字', '👨\u200d👩\u200d👧\u200d👦', '🏳\ufe0f\u200d🌈', '⠁⠃ braille dots']) {
+    assert.ok(Object.is(printable(s), s), JSON.stringify(s));
+  }
+});
+
+test('printable: linear time with many selectors and keycaps', () => {
+  for (const unit of ['a\ufe0f', '1\ufe0f\u20e3', '\u{1d173}']) {
+    const s = unit.repeat(200000);
+    const t0 = process.cpuUsage();
+    printable(s);
+    assert.ok(process.cpuUsage(t0).user / 1000 < 1500);
   }
 });
