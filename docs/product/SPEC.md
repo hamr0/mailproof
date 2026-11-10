@@ -671,6 +671,215 @@ For an approval, the consumer groups the bundles by `messageKey` (a `""` key is 
 
 `tests/integration/mailproof-reply-facts.test.js` (the B8 thread) and `tests/unit/reply-facts.test.js`: 0/1/many replies; a grandchild, an unrelated mail and an outbound reply excluded; the last-References match; copies with one `messageKey`; order and ties; HEAD and working tree unchanged; content store off and forgotten; signed versus claimed Date/Subject with encoded words; separators; closed sets; `firstLine` edge cases; `trailing`; `commit` equals git, after a catch-up and after a stale-schema rebuild; the 200 cap; cost at 2,000 records.
 
+## B11. The `mailproof` CLI (M3 step 5)
+
+> **Specified, not built** (owner decisions 2026-11-10, decisions-log "M3 CLI"; the "Owner review" list at the end holds what the spec author had to decide). One binary, `bin/mailproof.js` (`bin` and `files` in `package.json`), a thin layer over the `Mailproof` class like `mailproof-sync` (B4.1): it parses arguments, reads the config, builds one `Mailproof` per command, always `close()`s, prints. No record, verdict or trail logic of its own. `mailproof-sync` stays, unchanged. No new runtime dependency (`node:util` `parseArgs`, `node:readline/promises`, `node:child_process`, `node:fs`).
+
+### B11.1 Invocation
+
+- `mailproof` with no arguments and a TTY on stdin and stdout: the menu (B11.4). Without a TTY it prints the help and exits 64 (a script that forgot its subcommand must not hang on a prompt).
+- `mailproof <command> [flags]`: a direct subcommand, never prompts, never reads a TTY (a missing required flag is exit 64). `mailproof help [command]`, `mailproof <command> --help`, `mailproof --version`.
+- Global flags: `--account <name>` (B11.3), `--config <path>` (B11.2), `--json` (B11.7), `-h/--help`. `--account` and `--json` are accepted before or after the command.
+- Unknown command or flag, a missing required value, a bad date or address: exit 64 with a one-line stderr message naming the flag, then `see: mailproof help <command>`.
+
+### B11.2 Config file (human-edited, secrets by reference)
+
+Path: `--config <path>`, else `$XDG_CONFIG_HOME/mailproof/config.json`, else `~/.config/mailproof/config.json`. JSON, so no dependency. **Only the human edits it**; the CLI never writes it (the optional `config add-account` wizard prints the JSON to paste, or, if the owner confirms the open point in B11.12, writes it with mode 0600).
+
+```json
+{
+  "v": 1,
+  "accounts": {
+    "personal": {
+      "user": "ana@example.com",
+      "host": "imap.example.com",
+      "port": 993,
+      "folders": ["INBOX"],
+      "sent": true,
+      "trailDir": "/home/ana/mailproof/personal",
+      "trail": "default",
+      "passCommand": "pass show mailproof/personal",
+      "content": { "store": true, "attachments": true, "days": 730, "sweepDays": 7 },
+      "ots": true,
+      "backupRemote": "git@git.example.org:ana/mailproof-personal.git"
+    },
+    "business": {
+      "user": "ana@corp.example.net",
+      "host": "imap.corp.example.net",
+      "trailDir": "/home/ana/mailproof/business",
+      "accessTokenCommand": "oauth-token --account business"
+    }
+  }
+}
+```
+
+| Field | Default | Meaning |
+|---|---|---|
+| key of `accounts` | (required) | the account name: `[a-z0-9][a-z0-9_-]{0,31}`. Used by `--account` and in the state dir. |
+| `user`, `trailDir` | (required) | IMAP user; the trail's directory (absolute; `~` is expanded). |
+| `host` | `imap.gmail.com` | IMAP host (TLS only, B4.6). |
+| `port` | `993` | |
+| `folders` | `["INBOX"]` | as `mailproof-sync --folders`. |
+| `sent` | `true` | `true`, `false` or a folder path (B4.1). |
+| `trail` | `"default"` | trail name inside `trailDir`. |
+| `passCommand` \| `passFile` \| `accessTokenCommand` | (exactly one) | the secret source, same semantics as `mailproof-sync` (command split into argv, `execFile`, no shell, first stdout line; file first line; XOAUTH2 token command). **There is no password field and no stdin source**: a key named `pass`, `password` or `secret` anywhere in an account is refused (exit 64, "put the password in your password manager and use passCommand"). |
+| `content` | `{}` | the `content` constructor option (B7.2): `store`, `attachments`, `days` (730), `sweepDays` (7). |
+| `ots` | `false` | `true`: set `otsBin` to `ots` from `PATH` (an absolute path string is also accepted). |
+| `backupRemote` | (none) | a git remote URL, used only by `backup --push` (B11.6). |
+
+- **Validation.** An unknown key (top level, account, or `content`), a wrong type or an invalid name is exit 64 naming the JSON path (`accounts.personal.port`). `v` is required and must be `1`. Account names are unique by being object keys; two accounts must not share the same `trailDir` + `trail` (exit 64).
+- **Permissions (fail closed).** The config can name commands that run with the user's rights, so it must be trusted: `stat` the file (after resolving symlinks); if it is not owned by the effective uid, or any group/other permission bit is set (`mode & 0o077`), exit **77** with `config <path> must be owned by you and mode 0600 (chmod 600 <path>)`. A missing file is exit 64 with the template hint (`mailproof config template`). No environment fallbacks: the config is the only source for `accounts` (flags still override the per-command options below).
+- **State** (not config): `$XDG_STATE_HOME/mailproof/`, else `~/.local/state/mailproof/`, mode 0700, created on first write. Everything the tool rewrites by itself lives there, so the config is never touched by a run:
+
+```
+~/.local/state/mailproof/
+  <account>/
+    state.json            last sync/watch/backup/prune times and results, watch status; rewritten atomically (temp + rename)
+    watch.log             append-only, one line per tick; truncated to its last 1 MiB at watch start
+  backups/<account>/
+    <account>-<UTC yyyymmddThhmmssZ>.bundle
+    <account>-<UTC yyyymmddThhmmssZ>.content.tar     only with --with-content
+```
+  `state.json` is `{ "v": 1, "lastSync": { "at", "complete", "recorded", "error" } | null, "lastWatch": { "at", "pid", "state": "running" | "stopped" } | null, "lastBackup": { "at", "path" } | null }`. It is advisory (it feeds `status`); losing it loses nothing. Sync cursors stay beside each trail (`.<trail>.sync.json`, B4.2), the content store stays beside the trail (B7.1): the state dir never holds proof or content, except backups the user asked for.
+
+### B11.3 Account selection
+
+- Exactly one account configured: it is used and `--account` is optional.
+- Two or more: **every account-scoped command requires `--account <name>`**; without it exit 64 listing the names. Nothing ever runs on "all accounts" implicitly (personal and business stay apart by intent). `status` is the one exception: without `--account` it prints each account in turn (read-only).
+- Unknown name: exit 64 listing the names. In the menu the user picks from a numbered list (B11.4).
+- Each command builds `new Mailproof({ trailDir, trail, otsBin?, content })` from the account. Secrets are resolved only by commands that connect (`sync`, `watch`), never logged, never in `--json`, never in `state.json`.
+
+### B11.4 Menu
+
+`mailproof` with no arguments (TTY). stdlib `readline/promises`, plain text, no colours required (colour only when `NO_COLOR` is unset and stdout is a TTY). Layout:
+
+```
+mailproof 3.x   account: personal  [b: change]
+ 1) Sync now              fetch new mail (Inbox + Sent), record proofs
+ 2) Watch                 sync every 5 min until Ctrl-C
+ 3) List emails           newest first; filter by person or date
+ 4) Show one email        record details
+ 5) Verify one email      re-check offline
+ 6) Replies to a message  what people answered (by Message-ID)
+ 7) Check against profile trust profile pass/fail
+ 8) Forget                delete stored mail content          (destructive)
+ 9) Prune                 drop old history from the trail     (destructive)
+10) Backup                git bundle of the trail
+11) Status                counts, last sync, storage
+12) Update mailproof      show the upgrade command
+13) Config                show path, validate, template
+14) Export                needs M6 (not available yet)
+ h) Help      q) Quit
+>
+```
+
+- With one account the header shows it; with more, the first screen asks `Account [personal/business]:` and `b` re-asks. An account is chosen before any action; the menu never offers "all".
+- **Each item prompts for exactly the parameters its subcommand takes**, in the same order, then runs the same code path as the subcommand (the menu builds the argument vector and calls the command function; there is no second implementation). Each prompt shows a label, an example and the default in brackets: `With (email address, e.g. bob@example.org, empty = everyone):`, `Before (date, e.g. 2026-08-19):`, `Interval [5m]:`. Input is validated with the subcommand's own validators; a bad value prints the reason and **re-prompts** (up to 3 times, then back to the menu); an empty answer takes the default, and `?` re-prints the hint. A required value with no default re-prompts on empty.
+- After a command the menu prints its human output (B11.7), then `Press Enter`, and shows the menu again. Errors (exit-code classes B11.8) print on the menu and return to it; the menu itself exits only on `q`, Ctrl-D or a closed stdin (exit 0). Ctrl-C during a running command stops the command (as for the subcommand) and returns to the menu; Ctrl-C at a prompt quits.
+- **Destructive items** (8, 9, and `backup --push`): the menu first runs the dry-run summary (B11.5), then requires the user to **type the account name** to proceed; anything else cancels with "nothing changed". `backup --push` shows the warning in B11.6 and asks `y/N`.
+
+### B11.5 Commands
+
+Account-scoped unless noted. `[id]` is a record id (32 hex) or a unique prefix of at least 8 hex (ambiguous = exit 64 listing matches).
+
+| Command | Flags | Library call | Notes |
+|---|---|---|---|
+| `sync` | `--folders <a,b>`, `--sent <on\|off\|path>` (override the account for this run) | `sync` (B4.1) | "Sync now": reads Inbox (+ `folders`) and Sent read-only, records proofs, runs the content sweep (B7.7), then upgrades pending OTS stamps when `ots` is on (B11.12). Output: the sync result plus `ots: { upgraded, pending }`. A capped run is exit 0 (B4.1). |
+| `watch` | `--interval <dur>` (default `5m`; `30s`, `5m`, `1h`; minimum `30s`) | `sync` in a loop | Foreground, long-running; B11.9. |
+| `list` | `--with <address>`, `--role from\|to\|cc\|reply-to`, `--direction in\|out`, `--before <date>`, `--after <date>`, `--limit <n>` (default 50, `--limit 0` = no cap) | `list` | Dates `YYYY-MM-DD` (UTC midnight) or full ISO-8601. Human: one line per record: short id, captured, direction, live/portable verdicts, message id. |
+| `show <id>` | | `get`, `proofParts`, `linked` | The record fields, the graded proof per part and the thread links. `--raw` prints the stored raw email to stdout (`rawEmail`; exit 1 if the content store no longer holds it). |
+| `verify <id>` | `--at <date>` | `get` + `verify` | Exit 0 when `ok`, **2** when the record does not verify (so scripts can branch), 1 on error. |
+| `replies <messageId>` | | `replyFacts` | Prints the flat bundles (B10.3), earliest first; none = "no replies recorded". With `--json` the array. `<messageId>` is the request's Message-ID, with or without angle brackets. |
+| `check <id> --profile <file\|name>` | `--profile` required | `get` + `checkProfile` | A file path (JSON profile, B8.2) or a name looked up as `<configDir>/profiles/<name>.json` (same 0600 rule is NOT required: profiles hold no secrets). Exit 0 pass, **2** fail (the failed rules are printed). |
+| `forget` | `[id ...]` or `--with <address>` with optional `--before`/`--after`; `--yes`, `--dry-run` | `forget` (after `list`) | Content only (B7.6); proofs stay. See safety below. |
+| `prune` | `--before <date>` required; `--yes`, `--dry-run`, `--delete-backup` | `prune` | Rewrites history (B9); keeps `<trail>.pre-prune-<date>` unless `--delete-backup`. |
+| `backup` | `--out <path>`, `--with-content`, `--push`, `--yes` | git, `tar` | B11.6. |
+| `status` | | `list`, `counterparties`, fs | Per account: records (in/out), newest and oldest `captured`, last sync (from `state.json`), content store size and file count (or `off`), index state (`present`/`absent`/`stale`, from the cache file and HEAD), pending OTS stamps (count of `.json.ots` not yet anchored; `-` when `ots` is off), last backup, whether a `watch` is recorded as running. Read-only; never opens IMAP; never takes the writer lock. |
+| `update` | `--run` | `npm` | B11.10. |
+| `config` | `path` \| `validate` \| `template` \| `add-account` | none | `path` prints the resolved path; `validate` runs B11.2 validation and the permission check, prints `ok` or the errors, exit 0/64/77, and resolves no secrets; `template` prints the example JSON of B11.2; `add-account` is optional (B11.12). `config` works with no config file present (except `validate`). |
+| `export` | | none | Prints `export needs M6 (the proof bundle); not available in this version` and exits 64. Listed in help and the menu as "needs M6". |
+| `mcp` | | none | **Reserved for step 6**: until built, `mailproof mcp` prints `not built yet (M3 step 6)` and exits 64. |
+| `help [command]` | | none | B11.11. |
+
+**Destructive commands (`forget`, `prune`, `backup --push`).**
+1. Always compute and print a **dry-run summary first**: `forget`: the number of records and the stored raw/attachment files it would remove (it runs `list` with the same filters, no deletion; ids listed up to 20, then "and N more"); `prune`: the cutoff, the records and reply rows kept and dropped, the stragglers B9.2 names, the backup path that will be kept (taken from the same computation `prune` does before swapping, which the library exposes as `prune({ before, dryRun: true })`; see B11.12); `backup --push`: the remote URL and the commit count that would be pushed.
+2. Subcommand: without `--yes` it prints the summary and exits **64** with `add --yes to proceed`; `--dry-run` prints only the summary and exits 0. With `--yes` it prints the summary and proceeds. No interactive prompt in a subcommand, ever.
+3. Menu: the summary, then type the account name (B11.4).
+4. Nothing destructive is ever reachable without naming the account (B11.3) and its explicit target (`id`, `--with` or `--before`). `forget` with no target is exit 64: there is no "forget everything" flag; `--with` is the broadest form.
+
+### B11.6 `backup`
+
+- **Proofs: a git bundle.** `git -C <trail> bundle create <path> --all` via the `git` binary (the same way `git.js` shells out). Default path `<state>/backups/<account>/<account>-<UTC timestamp>.bundle`; `--out <path>` overrides (parent directory must exist; an existing file is refused, never overwritten). The bundle holds the whole trail history: records, keys, reply rows, `.ots` files. It does not hold the sync cursor (B4.2: restore is detected) or the SQLite index (a rebuildable cache). Written under no writer lock needed for correctness (git reads a consistent object store), but the command takes the trail lock for the `bundle create` call so it cannot run during a prune swap (B9.4); `ERR_TRAIL_LOCKED` is exit 75. After writing, `git bundle verify <path>` must pass or the file is removed and the exit is 1.
+- **Restore** (documented in the usage guide and `mailproof config`-adjacent help, not a command): `git clone <file>.bundle <trailDir>/<trail>`, then point `trailDir`/`trail` at it. The first `sync` after a restore rescans folders from UID 1 because the cursor's `head` no longer matches (B4.2 "Restore"); duplicates are skipped by id. The content store is restored by `tar -C <contentDir> -xf <file>.content.tar` (B7.1 gives `contentDir`).
+- **`--with-content`: a second file, `.content.tar`, made by the `tar` binary** (`tar -C <contentDir> -cf <out> .`). Node's stdlib has no tar writer and a home-made container would be a format only mailproof can read; `tar` is present on every platform that has `git` and a POSIX shell, is restored with a tool every user knows, and mailproof already depends on one external binary the same way. If `tar` is not on `PATH` the command fails with exit 1 `tar not found: install tar or run backup without --with-content` after the bundle succeeded (the bundle is kept). It is a separate file because content is other people's mail and must not travel with proofs by default; it is not encrypted (the user encrypts the file or the disk; stated in the help). With the content store off or empty, `--with-content` prints a note and writes nothing for it.
+- **`--push`: only on explicit invocation**, never from `watch` or `sync`, never scheduled by mailproof. It pushes the trail to the account's `backupRemote` (`git push <remote> --all` plus tags, from the trail directory, no force). Refused with exit 64 when `backupRemote` is not configured. Before pushing it prints: `Proof records contain the signed headers of your mail: sender and recipient addresses, subjects, dates, and Message-IDs (never message bodies). Push only to a remote you trust to hold that.` and, in the menu, asks `y/N`; as a subcommand it needs `--yes`. The content store is never pushed. A push failure (auth, network, non-fast-forward after a prune) is exit 75 for network/auth and 1 otherwise, with git's stderr passed through.
+- Output: the written path(s) and sizes; `--json`: `{ "bundle", "bytes", "commits", "content": { "path", "bytes" } | null, "pushed": null | { "remote", "refs" } }`.
+
+### B11.7 Output
+
+- **Human by default**, on stdout: aligned plain text, one fact per line, no ANSI unless a TTY and `NO_COLOR` unset. **stderr** carries errors, warnings and progress (`syncing INBOX ...` only when stderr is a TTY).
+- **`--json`**: exactly one JSON document on stdout per command (never several, never interleaved prose; warnings still go to stderr). `sync` prints the `SyncResult` extended with `ots`; `list` an array; `show`/`verify`/`check` an object; `status` an object keyed by account name; `watch` is the one exception and prints **one JSON line per tick** (NDJSON), like `mailproof-sync` per run. The document never contains a secret, a config path's secret field values or a raw email body (`show --raw --json` is refused: `--raw` is bytes).
+- **Errors in `--json` mode** still go to stderr as one human line AND stdout stays empty, so a script checks the exit code first (matching `mailproof-sync`: stdout is the result, stderr the error).
+
+### B11.8 Exit codes
+
+As `mailproof-sync` (B4.1), plus one:
+
+| Code | Meaning |
+|---|---|
+| `0` | done (a capped or partial sync is still 0: `complete: false` in the output) |
+| `64` | bad usage: unknown command/flag, missing value, bad config, missing `--account`, missing `--yes`, unconfigured `backupRemote`, `export`/`mcp` not available |
+| `75` | try again later: `ERR_SYNC_LOCKED`, `ERR_TRAIL_LOCKED`, `ERR_IMAP_CONNECT`, timeout, throttled, UIDVALIDITY change, secret command failed, push network/auth failure |
+| `77` | permission: config not owned by you or group/world-readable, `ERR_IMAP_AUTH` |
+| `2` | a check ran and the answer is "no": `verify` not ok, `check` profile failed. Not an error: the output is the result |
+| `1` | anything else (record write failure, missing content, `tar` missing, bundle verify failed) |
+
+When a sync folder carries an error the output is still printed and the code follows B4.1.
+
+### B11.9 `watch`
+
+A **foreground** command; mailproof has no daemon, no `start`/`stop`/`restart`, no pid-file management and no background process of its own.
+- Loop: `sync` for the account, write `state.json`, print one line (or NDJSON with `--json`) and append to `watch.log`, sleep `--interval` (default `5m`, minimum `30s`), repeat. Secrets are re-resolved every tick (a fresh OAuth token each time; `passCommand` re-run).
+- **Single instance**: the existing sync lock (B4.5) is the guard; a second `watch` (or a manual `sync`) for the same account gets `ERR_SYNC_LOCKED`; a `watch` tick that hits it logs `skipped (locked)` and waits for the next tick, a `sync` subcommand exits 75.
+- **Failure policy**: `ERR_IMAP_AUTH` stops `watch` with exit 77 (retrying a refused login every few minutes risks a provider lockout). Transient errors (75-class) are logged and retried at the next tick, with the sleep doubled up to 1 h after consecutive failures and reset on success. Any other error exits 1.
+- **Signals**: SIGINT/SIGTERM finish the sync in progress (each message is committed before the cursor moves, so an interrupted run is safe anyway, B4.2), set `lastWatch.state` to `stopped` and exit 0. A second signal exits immediately.
+- Running it unattended is the user's init system's job. The usage guide shows both, nothing is installed by mailproof:
+  - systemd user service, `~/.config/systemd/user/mailproof-watch@.service`: `ExecStart=/usr/bin/env mailproof watch --account %i`, `Restart=on-failure`, `RestartPreventExitStatus=77 64`; `systemctl --user enable --now mailproof-watch@personal`. Needs `loginctl enable-linger` to run when logged out.
+  - cron instead of a loop: `*/5 * * * * mailproof sync --account personal --json >> ~/.local/state/mailproof/personal/cron.log` (exit 75 on a held lock is normal; the next run continues from the cursor).
+- Later option, not built: IMAP IDLE instead of polling. B4.1 forbids `IDLE` today; a change needs its own spec and POC.
+
+### B11.10 `update`
+
+Prints the command and the installed and latest versions it can see offline: `mailproof 3.0.0 installed. To upgrade: npm install -g mailproof@latest`. With **`--run`** it executes exactly `npm install -g mailproof@latest` with `execFile` (no shell), streaming npm's output, exit code = npm's (mapped: non-zero is 1). It never checks the registry itself (no network from `update` without `--run`). Printing is the default because: a global install may be owned by root (a surprise `sudo` prompt or `EACCES` in a tool that handles mail secrets), the user may have installed through pnpm, volta, nvm or `npx` (a hard-coded `npm -g` would install a second copy), and silently replacing the binary that is running mid-session is the user's call. `--run` is the explicit opt-in for the common case. In the menu, item 12 shows the command and asks `Run it now? [y/N]`.
+
+### B11.11 Help from the JSDoc
+
+The command table in B11.5 gives names, flags and library calls; the **descriptions and the `@when`/`@fails` text are not retyped** in the CLI.
+- The generator for `primitives.json` already reads each public method's JSDoc (`@name`, `@signature`, `@when`, `@fails`). A new `scripts/gen-cli-help.mjs` reads `primitives.json` plus one small map in `bin/cli-commands.js` (command name -> `{ primitive, flags, summary? }`) and emits `src/cli/help.generated.js`: a frozen table `{ command: { usage, summary, when, fails, flags } }`, where `summary` is the first sentence of the primitive's `@when` and `when`/`fails` are the full text. Commands with no primitive (`status`, `update`, `config`, `backup`, `watch`, `help`, `export`, `mcp`) carry their text in the same map, written once there.
+- `mailproof help` prints the command list from the table; `mailproof help <command>` and `<command> --help` print `usage`, `when`, flags (from the map, which `parseArgs` options are also built from, so a flag cannot exist without help text) and `fails`; the menu labels use `summary`.
+- `npm run check:cli-help` regenerates in memory and fails if `help.generated.js` is stale, the same way `check:primitives` works; `prepack` regenerates it after `build:primitives`; a unit test fails if any command in the dispatch table lacks a table row, or any flag lacks help.
+- The MCP tool descriptions (step 6) read the same table: one source for library docs, CLI help, MCP.
+
+### B11.12 Owner review (decided here, please confirm or change)
+
+1. **`update` prints by default, `--run` executes** (B11.10); the menu asks before running.
+2. **Backup content archive = the `tar` binary**, a separate `.content.tar`, unencrypted (B11.6). The alternative, a stdlib-only home format, was rejected as unreadable by any other tool.
+3. **`backup --push` needs a trusted remote and `--yes`**; it pushes `--all` with no force, so after a `prune` (history rewritten) the push is rejected and the user must choose to force it themselves outside mailproof.
+4. **OTS upgrade has no public library method today** (`upgradeProof` is internal to `ots.js`). `sync` and `status` need `Mailproof#upgradeStamps(): Promise<{ upgraded, pending }>` (neutral, one lock window per stamp, like B7.8). This adds one library method and one primitives entry in step 5. Alternative: leave OTS upgrade to a separate manual `ots upgrade` and drop it from "Sync now".
+5. **`prune({ dryRun: true })`** is needed so the CLI's dry-run uses the library's own computation instead of re-deriving it ("one definition per concept"). Adds an option to `prune` and to its SPEC B9.7 result.
+6. **`config add-account` wizard**: optional. Proposed as print-only (it asks the questions with hints, prints the JSON block and the `chmod 600` reminder, writes nothing). Writing the file is left out because the config is human-edited and a wizard that rewrites it could clobber the user's edits or widen permissions. Mark: ship, defer, or drop.
+7. **Config strictness**: unknown keys refused (exit 64), `v: 1` required, plaintext `pass`/`password` keys refused, no stdin/env secret source in the config. `--pass-*` flags are not accepted by `mailproof` (only the config names the secret); `mailproof-sync` keeps them.
+8. **Profile lookup** `check --profile <name>` reads `<configDir>/profiles/<name>.json`; a path is used as given. Name resolution is a convenience; drop it if one source is preferred.
+9. **`status` without `--account`** lists all accounts (read-only), the single exception to B11.3.
+10. **Exit code `2`** for "ran and answered no" (`verify`, `check`) is new; `mailproof-sync` has no equivalent.
+11. **`watch` minimum interval 30 s** and the doubling backoff to 1 h; `ERR_IMAP_AUTH` stops it (exit 77).
+12. **Unique id prefix (8+ hex)** accepted wherever an `[id]` is taken (convenience for humans; scripts should pass full ids).
+13. **State dir holds backups by default** (`~/.local/state/mailproof/backups/`): a backup of other people's headers under a state dir is easy to forget; the output prints the path every time. Alternative: require `--out`.
+
+### B11.13 Test plan
+
+`tests/unit/cli-*.test.js` (parser, config validation and permission check with a temp file chmodded 0644/0600 and a foreign owner where the test can, account selection, id-prefix resolution, help-table completeness, duration parsing) and `tests/integration/cli.test.js` (spawn `bin/mailproof.js` against a temp config and a fixture trail): every subcommand's exit code and `--json` shape; menu driven through piped stdin lines with a fake TTY flag (prompt, default, bad input re-prompt, Quit, destructive confirm by typed name); `forget`/`prune` refuse without `--yes` and change nothing; `backup` bundle verifies, clones, and re-sync after restore rescans; `watch` with a fake sync and a 30 ms test interval stops on SIGTERM with state `stopped`, stops on auth with 77, skips on a held lock; `update` never spawns npm without `--run`; `--json` stdout is one parseable document; no test writes outside `makeTmpDir`.
+
 ---
 
 # Part A — v1 (archived at M3)
