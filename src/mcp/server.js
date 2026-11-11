@@ -5,7 +5,7 @@
 
 import { Mailproof } from '../index.js';
 import { mailproofOptions, mcpSettings, selectAccount } from '../cli/config.js';
-import { stateDir, appendLog, truncateLog, mcpLogFile } from '../cli/state.js';
+import { stateDir, appendLog, rotateLog, mcpLogFile } from '../cli/state.js';
 import { GENERATED_TOOLS } from './tools.generated.js';
 import { validate } from './schema.js';
 import { createProtocol, serve } from './protocol.js';
@@ -170,7 +170,7 @@ export function createMcp(o) {
  */
 export async function serveMcp(o) {
   const mcp = createMcp(o);
-  await truncateLog(mcp.auditFile);
+  await rotateLog(mcp.auditFile);
   try {
     await serve({ input: o.stdin, write: o.write, protocol: mcp.protocol, signal: o.signal, graceMs: o.graceMs });
   } finally { await mcp.closeAll(); }

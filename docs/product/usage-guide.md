@@ -269,7 +269,7 @@ or put `{ "command": "mailproof", "args": ["mcp"] }` under `mcpServers` in `.mcp
 
 **Untrusted data.** Addresses, subjects, reply text, filenames and Message-IDs come from third parties. Every tool description says so; a rubric in your consumer decides, never the mail's own words (see "Reading a reply").
 
-**Audit and logs.** Every write or destructive call appends one JSON line to `~/.local/state/mailproof/mcp.log` (time, account, tool, a summary of the arguments without bytes, outcome); it is cut to its last 1 MiB at start. stdout carries only protocol and stderr stays silent; `--log <file>` keeps diagnostics. Several accounts share one warm worker thread; a slow message on one account delays `check`, `record` and `replyFacts` on the others.
+**Audit and logs.** Every write or destructive call appends one JSON line to `~/.local/state/mailproof/mcp.log` (time, account, tool, a summary of the arguments without bytes, outcome); at start, a file over 1 MiB is renamed to `mcp.log.1` (replacing the older one) and a new one starts, so at most about 2 MiB stay on disk. stdout carries only protocol and stderr stays silent; `--log <file>` keeps diagnostics. Several accounts share one warm worker thread; a slow message on one account delays `check`, `record` and `replyFacts` on the others.
 
 ## Worker thread and deadline
 

@@ -220,7 +220,7 @@ test('a path swapped between the check and the open is refused (TOCTOU), and a r
   await c.close();
 });
 
-test('the audit log: write and destructive calls only, never raw bytes, truncated to its last 1 MiB at start', async () => {
+test('the audit log: write and destructive calls only, never raw bytes, rotated to mcp.log.1 when over 1 MiB at start', async () => {
   const world = oneWorld();
   const config = await loadConfig(world.configFile, world.env);
   fs.mkdirSync(world.stateDir, { recursive: true });
@@ -237,7 +237,8 @@ test('the audit log: write and destructive calls only, never raw bytes, truncate
   input.push(null); await done;
   const text = fs.readFileSync(log, 'utf8');
   const rows = text.split('\n').filter((l) => l.startsWith('{')).map((l) => JSON.parse(l));
-  assert.ok(text.length < 1024 * 1024 + 2000, 'truncated to about 1 MiB');
+  assert.ok(text.length < 2000, 'a new mcp.log started');
+  assert.equal(fs.statSync(`${log}.1`).size, 'old line\n'.length * 200_000, 'the old log is kept whole as mcp.log.1');
   assert.deepEqual(rows.map((r) => r.tool).sort(), ['forget', 'record']);
   assert.equal(text.includes(PLAIN.toString('base64')), false, 'no raw bytes in the log');
   assert.ok(rows.every((r) => r.account === 'a' && typeof r.at === 'string' && r.outcome));

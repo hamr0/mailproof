@@ -94,6 +94,20 @@ export async function truncateLog(file) {
   } catch { /* no log yet */ }
 }
 
+/**
+ * Rotate a log file at the start of a long-running command: when it is over 1 MiB, rename it to `<file>.1` (replacing any older one) and let a new file start.
+ * No line is cut; at most about 2 MiB stay on disk. Best effort: on any failure the current file is left as it is.
+ * @param {string} file
+ * @returns {Promise<void>}
+ */
+export async function rotateLog(file) {
+  try {
+    const st = await fs.stat(file);
+    if (st.size <= LOG_KEEP_BYTES) return;
+    await fs.rename(file, `${file}.1`);   // rename(2) replaces an existing target atomically
+  } catch { /* no log yet, or the rename failed: keep the current file */ }
+}
+
 /** @param {string} dir @param {string} account @returns {string} */
 const watchLogFile = (dir, account) => path.join(accountDir(dir, account), 'watch.log');
 
