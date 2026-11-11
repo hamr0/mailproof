@@ -988,6 +988,7 @@ Neither an MCP `export` nor `backup` is offered (`export` is M6; `backup` writes
 - In Claude Code, scope by per-tool allow rules on tool names (`mcp__mailproof__list`, ...), or run one server per account with `mailproof mcp --account <name>`.
 - The preview-then-`confirm: true` step (B12.5) is the only server-side guard for `forget` and `prune`; a client that allows everything lets a model run both after a preview.
 - `rawEmail` and `attachment` are read-only yet expose other people's mail: gate them by name.
+- On shutdown the server waits 5 s for in-flight calls, but a call still blocked in I/O can keep the process alive until its own timeout (measured: a `sync` stuck connecting held it 29.7 s, the 30 s `SYNC_CONNECT_MS`; worst case `SYNC_SOCKET_MS`, 5 min); MCP clients normally kill the child.
 
 **What the hints cannot say** (for the client's policy): `rawEmail` and `attachment` are `readOnlyHint: true` yet hand over other people's mail, so a policy that must treat them as sensitive has to key on the tool name, not the hint; `check`, `record`, `sync` and `upgradeStamps` are the `openWorldHint: true` set; `sync` and `upgradeStamps` are the non-idempotent writes.
 
