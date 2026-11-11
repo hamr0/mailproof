@@ -63,28 +63,24 @@ export async function updateState(dir, account, patch) {
 }
 
 /**
- * Append one line to watch.log.
- * @param {string} dir
- * @param {string} account
+ * Append one line to a log file (its directory is created, mode 0700; the file is 0600). Best effort: a log never fails a command.
+ * @param {string} file
  * @param {string} line
  * @returns {Promise<void>}
  */
-export async function appendWatchLog(dir, account, line) {
+export async function appendLog(file, line) {
   try {
-    const d = accountDir(dir, account);
-    await fs.mkdir(d, { recursive: true, mode: 0o700 });
-    await fs.appendFile(path.join(d, 'watch.log'), line + '\n', { mode: 0o600 });
+    await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
+    await fs.appendFile(file, line + '\n', { mode: 0o600 });
   } catch { /* advisory */ }
 }
 
 /**
- * Keep only the last 1 MiB of watch.log (done once at watch start).
- * @param {string} dir
- * @param {string} account
+ * Keep only the last 1 MiB of a log file, from a line boundary (done once at the start of a long-running command).
+ * @param {string} file
  * @returns {Promise<void>}
  */
-export async function truncateWatchLog(dir, account) {
-  const file = path.join(accountDir(dir, account), 'watch.log');
+export async function truncateLog(file) {
   try {
     const st = await fs.stat(file);
     if (st.size <= LOG_KEEP_BYTES) return;
@@ -97,3 +93,26 @@ export async function truncateWatchLog(dir, account) {
     } finally { await fh.close(); }
   } catch { /* no log yet */ }
 }
+
+/** @param {string} dir @param {string} account @returns {string} */
+const watchLogFile = (dir, account) => path.join(accountDir(dir, account), 'watch.log');
+
+/** @param {string} dir The state directory. @returns {string} The one audit file of the MCP server (SPEC B12.5). */
+export const mcpLogFile = (dir) => path.join(dir, 'mcp.log');
+
+/**
+ * Append one line to watch.log.
+ * @param {string} dir
+ * @param {string} account
+ * @param {string} line
+ * @returns {Promise<void>}
+ */
+export const appendWatchLog = (dir, account, line) => appendLog(watchLogFile(dir, account), line);
+
+/**
+ * Keep only the last 1 MiB of watch.log (done once at watch start).
+ * @param {string} dir
+ * @param {string} account
+ * @returns {Promise<void>}
+ */
+export const truncateWatchLog = (dir, account) => truncateLog(watchLogFile(dir, account));

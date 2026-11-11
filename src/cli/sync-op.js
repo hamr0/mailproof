@@ -18,7 +18,7 @@ import { printable as p } from './printable.js';
 /**
  * @param {import('./session.js').Session} s
  * @param {import('./session.js').Ctx} ctx
- * @param {{ folders?: string[], sent?: boolean | string }} [over]  Flags that override the account for this run.
+ * @param {{ folders?: string[], sent?: boolean | string, maxMessages?: number }} [over]  Flags that override the account for this run (`maxMessages`: the MCP server's per-call bound, B12.12).
  * @returns {Promise<SyncOnce>}  Throws what `sync()` throws (`ERR_IMAP_AUTH`, `ERR_SYNC_LOCKED`, ...), after noting it in state.json.
  */
 export async function syncOnce(s, ctx, over = {}) {
@@ -26,7 +26,7 @@ export async function syncOnce(s, ctx, over = {}) {
   const now = ctx.deps.now ?? (() => new Date());
   try {
     const auth = await resolveAuth(account.secret);   // re-resolved every run: a fresh token, the command re-run
-    const opts = { host: account.host, port: account.port, user: account.user, auth, folders: over.folders ?? account.folders, sent: over.sent ?? account.sent };
+    const opts = { host: account.host, port: account.port, user: account.user, auth, folders: over.folders ?? account.folders, sent: over.sent ?? account.sent, ...(over.maxMessages ? { maxMessages: over.maxMessages } : {}) };
     const result = await (ctx.deps.sync ? ctx.deps.sync(mp, opts) : mp.sync(opts));
     /** @type {SyncOnce['ots']} */
     let ots = null;
