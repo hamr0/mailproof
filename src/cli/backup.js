@@ -13,6 +13,9 @@ import { withTrailLock, trailLockFile, headOf } from '../proof/trail.js';
 
 const run = promisify(execFile);
 
+/** fs.link errors that mean "this filesystem has no hard links" (or no more of them): fall back to a copy. */
+const NO_HARD_LINKS = new Set(['EPERM', 'ENOTSUP', 'ENOSYS', 'EXDEV', 'EMLINK']);
+
 export const PUSH_WARNING = 'Proof records contain the signed headers of your mail: sender and recipient addresses, subjects, dates, and Message-IDs (never message bodies). Push only to a remote you trust to hold that.';
 
 /**
@@ -111,8 +114,16 @@ export async function backupCmd(a, ctx) {
       await fs.chmod(tmpFile, 0o600);
       try { await fs.link(tmpFile, out); }
       catch (e) {
-        if (/** @type {any} */ (e)?.code === 'EEXIST') throw new UsageError(`--out: ${p(out)} already exists; a backup is never overwritten`);
-        throw e;
+        const code = /** @type {any} */ (e)?.code;
+        if (code === 'EEXIST') throw new UsageError(`--out: ${p(out)} already exists; a backup is never overwritten`);
+        if (!NO_HARD_LINKS.has(code)) throw e;
+        // FAT/exFAT and some network mounts have no hard links: copy instead, still never overwriting
+        try { await fs.copyFile(tmpFile, out, fs.constants.COPYFILE_EXCL); }
+        catch (e2) {
+          if (/** @type {any} */ (e2)?.code === 'EEXIST') throw new UsageError(`--out: ${p(out)} already exists; a backup is never overwritten`);
+          throw e2;
+        }
+        await fs.chmod(out, 0o600).catch(() => {});   // FAT has no modes
       }
       bundleBytes = (await fs.stat(out)).size;
     } finally {
@@ -153,8 +164,8 @@ export async function backupCmd(a, ctx) {
       const remote = /** @type {string} */ (account.backupRemote);
       try {
         const env = { ...process.env, GIT_TERMINAL_PROMPT: '0' };
-        const all = await run('git', ['push', '--porcelain', '--all', remote], { cwd: mp.root, env });
-        const tags = await run('git', ['push', '--porcelain', '--tags', remote], { cwd: mp.root, env });
+        const all = await run('git', ['push', '--porcelain', '--all', '--', remote], { cwd: mp.root, env });
+        const tags = await run('git', ['push', '--porcelain', '--tags', '--', remote], { cwd: mp.root, env });
         const refs = `${all.stdout}\n${tags.stdout}`.split('\n').filter((l) => /^[ +\-*=!]\t/.test(l)).map((l) => l.split('\t')[1]);
         pushed = { remote: redactUrl(remote), refs };
       } catch (e) {

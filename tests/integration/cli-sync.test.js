@@ -133,6 +133,17 @@ test('login refused is exit 77, without the secret', async () => {
   assert.ok(!(r.stdout + r.stderr).includes('wrong-' + SECRET));
 });
 
+test('a loose --pass-file is exit 77 (config-permission class) with the PermError text', async () => {
+  const srv = await serve(1);
+  const loose = path.join(work, 'loose-pw');
+  fs.writeFileSync(loose, SECRET + '\n', { mode: 0o600 });
+  fs.chmodSync(loose, 0o644);
+  const r = await run([...base(srv, makeTmpDir('mp-cli-trail-')), '--pass-file', loose]);
+  assert.equal(r.code, 77, r.stderr);
+  assert.match(r.stderr, /must be owned by you and mode 0600/);
+  assert.ok(!(r.stdout + r.stderr).includes(SECRET));
+});
+
 test('another sync holding the lock is exit 75', async () => {
   const srv = await serve(1);
   const trailDir = makeTmpDir('mp-cli-trail-');

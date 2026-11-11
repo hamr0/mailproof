@@ -1,8 +1,9 @@
 // `backup` (SPEC B11.6): a git bundle that verifies and clones, the content archive through tar, and a push that never
 // forces (proved against a local bare repository after a prune rewrote the history).
-import test from 'node:test';
+import test, { mock } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { buildThread } from '../helpers/thread-trail.js';
@@ -229,4 +230,51 @@ test('the bundle is written in a private 0700 directory next to --out and moved 
   assert.equal(r3.code, 1, r3.stderr);
   assert.match(r3.stderr, /the bundle did not verify and was removed: nope/);
   assert.deepEqual(fs.readdirSync(dir3), []);
+});
+
+for (const code of ['EPERM', 'ENOTSUP', 'ENOSYS', 'EXDEV', 'EMLINK']) {
+  test(`--out where hard links are refused (${code}): falls back to an exclusive copy, 0600, verified, no temp left, never overwrites`, async (t) => {
+    const T = await buildThread();
+    const w = makeWorld({ accounts: { acme: account(T.dir) } });
+    const root = path.join(T.dir, 'default');
+    const dir = makeTmpDir('mp-cli-nolink-');
+    const out = path.join(dir, 'x.bundle');
+    const linkMock = mock.method(fsp, 'link', async () => { throw Object.assign(new Error('no links here'), { code }); });
+    t.after(() => linkMock.mock.restore());
+    const r = await w.run(['backup', '--out', out, '--json']);
+    assert.equal(r.code, 0, r.stderr);
+    assert.ok(linkMock.mock.callCount() >= 1, 'fs.link was attempted (and refused)');
+    assert.equal(json(r).bundle, out);
+    git(root, 'bundle', 'verify', out);
+    assert.equal(fs.statSync(out).mode & 0o777, 0o600);
+    assert.deepEqual(fs.readdirSync(dir), ['x.bundle'], 'no .mailproof-bundle-* left');
+    const before = fs.readFileSync(out);
+    const again = await w.run(['backup', '--out', out]);
+    assert.equal(again.code, 64);
+    assert.match(again.stderr, /already exists; a backup is never overwritten/);
+    assert.deepEqual(fs.readFileSync(out), before);
+  });
+}
+
+test('--out: a link error that is not a no-hard-links code still fails and leaves nothing behind', async (t) => {
+  const T = await buildThread();
+  const w = makeWorld({ accounts: { acme: account(T.dir) } });
+  const dir = makeTmpDir('mp-cli-linkerr-');
+  const out = path.join(dir, 'x.bundle');
+  const linkMock = mock.method(fsp, 'link', async () => { throw Object.assign(new Error('disk on fire'), { code: 'EIO' }); });
+  t.after(() => linkMock.mock.restore());
+  const r = await w.run(['backup', '--out', out]);
+  assert.notEqual(r.code, 0);
+  assert.deepEqual(fs.readdirSync(dir), [], 'nothing left, no copy fallback');
+});
+
+test('--push: a backupRemote that starts with "-" is a bad remote, never an option', async () => {
+  const T = await buildThread();
+  const remote = path.join(makeTmpDir('mp-cli-remote-'), 'remote.git');
+  execFileSync('git', ['init', '-q', '--bare', '--initial-branch=main', remote]);
+  // as an option, --repo=<bare> would make the push succeed
+  const w = makeWorld({ accounts: { acme: account(T.dir, { backupRemote: `--repo=${remote}` }) } });
+  const r = await w.run(['backup', '--push', '--yes', '--out', path.join(makeTmpDir('mp-cli-pushout-'), 'b.bundle'), '--json']);
+  assert.notEqual(r.code, 0, 'the push failed as a bad remote');
+  assert.equal(git(remote, 'branch', '--list'), '', 'no option took effect: nothing was pushed');
 });

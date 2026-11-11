@@ -33,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `list()` and `copies()` read the trail HEAD once per caught-up call instead of twice (one less `git rev-parse`).
 
 ### Fixed
+- `backup --out` on a filesystem without hard links (FAT/exFAT, some network mounts) falls back to an exclusive copy (still never overwriting, 0600) instead of failing; `backupRemote` is passed to `git push` after `--`, so a value starting with `-` can never be read as an option.
 - `expireContent()` now also removes stray temp files in `att/` that a crashed attachment write left (SPEC B7 already promised this).
 - `mailproof status` with an unloadable SQLite add-on (`index unknown`) says to reinstall or rebuild better-sqlite3 instead of the stale "run `mailproof list`" hint.
 
