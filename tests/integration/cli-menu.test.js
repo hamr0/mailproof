@@ -45,9 +45,9 @@ test('List: each prompt shows label, example and default; the output is the subc
   assert.equal(r.stdout.split('Sync now').length, 3, 'the menu was shown again after the command');
   // answers become the subcommand's flags
   const f = await menu(w, keys('3', 'bob@beta.example', 'from', 'in', '', '2026-11-02', '1', '', 'q'));
-  assert.equal(f.stdout.split('\n').filter((l) => /^[0-9a-f]{12}  /.test(l)).length, 0, '--after 2026-11-02 leaves none');
+  assert.equal(f.stdout.split('\n').filter((l) => /  [0-9a-f]{12}$/.test(l)).length, 0, '--after 2026-11-02 leaves none');
   const g = await menu(w, keys('3', 'bob@beta.example', 'from', 'in', '', '', '1', '', 'q'));
-  assert.equal(g.stdout.split('\n').filter((l) => /^[0-9a-f]{12}  /.test(l)).length, 1, '--limit 1');
+  assert.equal(g.stdout.split('\n').filter((l) => /  [0-9a-f]{12}$/.test(l)).length, 1, '--limit 1');
   assert.ok(g.stdout.includes('Role (from, to, cc, reply-to, empty = any): '), 'Role is asked only after a With');
 });
 
@@ -57,8 +57,8 @@ test('a bad value prints the reason and re-prompts; ? prints the hint; three bad
   assert.match(r.stdout, /--with: "not-an-address" is not an email address|With: "not-an-address" is not an email address/);
   assert.match(r.stdout, /Direction: use in, out/);
   const s = await menu(w, keys('4', 'zz', '?', 'zz', 'zz', 'q'));
-  assert.equal((s.stdout.match(/give 32 hex characters, or a unique prefix of at least 8/g) ?? []).length, 3, 'three tries');
-  assert.match(s.stdout, /32 hex characters, or a unique prefix of 8 or more\n/, '? prints the example');
+  assert.equal((s.stdout.match(/an address \(b@example\.com\), a Message-ID in angle brackets/g) ?? []).length, 3, 'three tries');
+  assert.match(s.stdout, /an address like bob@example\.org, a <message-id>, or a record id \(8\+ hex\)\n/, '? prints the example');
   assert.match(s.stdout, /cancelled/);
   assert.equal(s.stdout.split('Sync now').length, 3, 'back at the menu, which then took the q');
   const e = await menu(w, keys('4', '', '', '', 'q'));
@@ -98,7 +98,7 @@ test('two accounts: the first screen asks which, b asks again, and the choice go
   assert.match(r.stdout, /account: two  \[b: change\]/);
   assert.match(r.stdout, /no emails recorded/, 'account two is empty');
   assert.match(r.stdout, /account: one  \[b: change\]/);
-  assert.match(r.stdout, /^[0-9a-f]{12}  /m, 'account one lists its emails');
+  assert.match(r.stdout, /  [0-9a-f]{12}$/m, 'account one lists its emails');
   const bad = await menu(w, keys('nine', 'nine', 'nine'));
   assert.equal(bad.code, 0);
   assert.match(bad.stdout, /choose one of one, two/);

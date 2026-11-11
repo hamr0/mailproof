@@ -7,13 +7,14 @@ import { COMMANDS, GLOBAL_FLAGS } from './commands.js';
 import { renderList, renderCommand } from './help.js';
 import { print, warn } from './session.js';
 import { printable as p } from './printable.js';
-import { listCmd, showCmd, verifyCmd, repliesCmd, checkCmd, forgetCmd, pruneCmd } from './ops.js';
+import { listCmd, peopleCmd, showCmd, verifyCmd, repliesCmd, checkCmd, forgetCmd, pruneCmd } from './ops.js';
 import { syncCmd, updateCmd, configCmd, mcpCmd, stampCmd, version } from './misc.js';
 import { exportCmd, verifyBundleCmd } from './bundle.js';
 import { watchCmd } from './watch.js';
 import { backupCmd } from './backup.js';
 import { statusCmd } from './status.js';
 import { runMenu } from './menu.js';
+import { ID_HINT } from './target.js';
 
 /** @typedef {import('./session.js').Ctx} Ctx */
 /** @typedef {import('./session.js').Args} Args */
@@ -30,7 +31,7 @@ async function helpCmd(a, ctx) {
 
 /** @type {Record<string, (a: Args, ctx: Ctx) => Promise<number>>} */
 const HANDLERS = {
-  sync: syncCmd, watch: watchCmd, list: listCmd, show: showCmd, verify: verifyCmd, replies: repliesCmd, check: checkCmd, forget: forgetCmd, prune: pruneCmd,
+  sync: syncCmd, watch: watchCmd, list: listCmd, people: peopleCmd, show: showCmd, verify: verifyCmd, replies: repliesCmd, check: checkCmd, forget: forgetCmd, prune: pruneCmd,
   backup: backupCmd, stamp: stampCmd, status: statusCmd, update: updateCmd, config: configCmd, export: exportCmd, 'verify-bundle': verifyBundleCmd, mcp: mcpCmd, help: helpCmd,
 };
 
@@ -81,7 +82,11 @@ export async function run(argv, ctx) {
     let parsed;
     try {
       parsed = parseArgs({ args: rest, options: { ...optionsOf(GLOBAL_FLAGS), ...optionsOf(spec.flags) }, allowPositionals: true, strict: true });
-    } catch (e) { throw new UsageError(/** @type {Error} */ (e).message.replace(/\. To specify a positional argument starting with a '-'.*$/, '')); }
+    } catch (e) {
+      const m = /** @type {Error} */ (e).message.replace(/\. To specify a positional argument starting with a '-'.*$/, '');
+      const hex = /^Unknown option '--[0-9a-fA-F]+'/.test(m) && ['show', 'verify', 'check'].includes(cmd);
+      throw new UsageError(hex ? `${m}. ${ID_HINT}` : m);
+    }
     if (parsed.values.help) { ctx.stdout.write(/** @type {string} */ (renderCommand(cmd))); return EX_OK; }
     if (parsed.positionals.length < spec.min) throw new UsageError(`${cmd} needs ${spec.positional || 'no arguments'}`);
     if (parsed.positionals.length > spec.max) throw new UsageError(`${cmd}: unexpected argument "${parsed.positionals[spec.max]}"`);

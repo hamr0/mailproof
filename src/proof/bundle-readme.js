@@ -208,4 +208,4 @@ THE EMAILS`;
   return `${lines.join('\n')}\n`;
 }
 
-export { factsOf, emailBlock, readmeText, wrap };
+export { factsOf, emailBlock, readmeText, wrap, asText };

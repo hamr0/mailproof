@@ -7,9 +7,9 @@ import { parseDate, parseAddress, parseLimit, parseChoice, resolveId, messageIdO
 import { loadProfile } from './config.js';
 import { withAccount, print, warn, printJson } from './session.js';
 import { printable as p } from './printable.js';
-import path from 'node:path';
-import { readAnchored } from '../proof/ots-upgrade.js';
-import { manifestOtsPath } from '../proof/layout.js';
+import { gather, render } from './detail.js';
+import { classifyTarget, factsOfRecord, minute } from './target.js';
+import { showMany, verifyMany, peopleRun } from './by-person.js';
 
 /** @typedef {import('./session.js').Ctx} Ctx */
 /** @typedef {import('./session.js').Args} Args */
@@ -47,33 +47,28 @@ export async function listCmd(a, ctx) {
     const rows = await mp.list({ ...f, ...(limit > 0 ? { limit } : {}) });
     if (a.values.json) { printJson(ctx, rows); return EX_OK; }
     if (!rows.length) { print(ctx, 'no emails recorded'); return EX_OK; }
-    for (const r of rows) print(ctx, `${short(r.id)}  ${p(r.captured.replace(/\.\d+Z$/, 'Z'))}  ${p(r.direction).padEnd(3)}  ${p(r.live)}/${p(r.portable)}  ${p(r.message_id ?? '-')}`);
+    // date, in/out, live trust, the other party, subject, short id last (SPEC B11.5): the party and subject come from each record
+    const recs = [];
+    for (let i = 0; i < rows.length; i += 25) recs.push(...await Promise.all(rows.slice(i, i + 25).map((r) => mp.get(r.id))));
+    const width = Math.max(60, Number(/** @type {any} */ (ctx.stdout).columns) || 110);
+    rows.forEach((r, i) => {
+      const x = recs[i] ? factsOfRecord(recs[i]) : null;
+      const who = p(x?.other ?? '-', { max: 24 }).padEnd(24);
+      const head = `${minute(r.captured)}  ${p(r.direction).padEnd(3)}  ${p(r.live ?? '-').padEnd(10)}  ${who}  `;
+      const room = Math.max(10, width - head.length - 14);
+      print(ctx, `${head}${p(x?.subject ?? '(none recorded)', { max: room }).padEnd(room)}  ${short(r.id)}`);
+    });
     return EX_OK;
   });
-}
-
-/**
- * The `sealed:` line of `show` (SPEC B13.1.12), from `findSeal`: read-only, no lock; `ots info` (local) only for the block number.
- * @param {import('./session.js').Session['mp']} mp @param {string} id
- * @returns {Promise<{ text: string | null, data: unknown }>}  text null: the seal is off for this account.
- */
-async function sealLine(mp, id) {
-  if (!mp.otsBin) return { text: null, data: null };
-  const seal = await mp._findSeal(id).catch(() => null);
-  if (!seal) return { text: 'unsealed', data: null };
-  if (seal.via === 'record') return { text: `own stamp ${p(seal.stamp)}`, data: seal };
-  if (!seal.stamp) return { text: `manifest ${seal.seq}, not stamped yet`, data: seal };
-  const anchored = (await readAnchored(mp.root, mp.trail)).manifests.has(seal.stamp.seq);
-  let block = null;
-  if (anchored && mp.jobOts) block = await mp.jobOts.readBlockHeight(path.join(mp.root, manifestOtsPath(seal.stamp.seq))).catch(() => null);
-  return { text: `manifest ${seal.seq}, stamped by manifest ${seal.stamp.seq} (${anchored ? `anchored${block ? `, block ${block}` : ''}` : 'pending'})`, data: { ...seal, anchored, block } };
 }
 
 /** @param {Args} a @param {Ctx} ctx @returns {Promise<number>} */
 export async function showCmd(a, ctx) {
   if (a.values.raw && a.values.json) throw new UsageError('--raw prints bytes: it cannot be combined with --json');
-  return withAccount(a, ctx, async ({ mp }) => {
-    const id = await resolveId(a.positionals[0], mp.root);
+  const t = classifyTarget(a.positionals[0]);
+  return withAccount(a, ctx, async ({ mp, account }) => {
+    if (t.kind !== 'id') return showMany(a, ctx, mp, account, t);
+    const id = await resolveId(t.value, mp.root);
     if (a.values.raw) {
       const raw = await mp.rawEmail(id);
       if (!raw) { warn(ctx, `mailproof: the content store no longer holds ${short(id)} (expired, forgotten, or never stored)`); return EX_ERR; }
@@ -84,25 +79,13 @@ export async function showCmd(a, ctx) {
     if (!rec) { warn(ctx, `mailproof: no record ${short(id)}`); return EX_ERR; }
     const parts = await mp.proofParts(rec);
     const links = await mp.linked(id);
-    const seal = await sealLine(mp, id);
-    if (a.values.json) { printJson(ctx, { record: rec, proof: parts, links, seal: seal.data }); return EX_OK; }
-    const m = rec.message ?? {};
-    /** @type {Array<[string, string]>} */
-    const rows = [
-      ['id', p(rec.id)], ['captured', p(rec.captured)], ['direction', p(`${rec.direction} (${rec.source})`)], ['message-id', p(m.message_id ?? '-')],
-      ['from', p(m.from ?? rec.addresses?.find((x) => x.role === 'from')?.address ?? '-')],
-      ['copy', p(rec.copy?.kind ?? '-')], ['live', p(rec.verdicts?.live?.trust ?? '-')], ['portable', p(rec.verdicts?.portable?.trust ?? '-')],
-      ['re-check', parts ? `${parts.email.ok ? 'ok' : 'not ok'} (${p(parts.email.trust)})` : '-'], ['body', p(rec.body_status ?? '-')],
-      ['signatures', String(rec.signatures?.length ?? 0)],
-    ];
-    for (const r of rows) print(ctx, `${r[0].padEnd(11)} ${r[1]}`);
-    if (seal.text) print(ctx, `sealed      ${seal.text}`);
-    for (const x of parts?.attachments ?? []) print(ctx, `attachment   ${p(x.filename ?? '(no name)')}  stored ${x.stored ? 'yes' : 'no'}${x.match === null ? '' : x.match ? '  matches' : '  DIFFERS'}`);
-    if (links) {
-      for (const par of links.parents) print(ctx, `parent       ${p(par.message_id)}  ${p(par.strength)}${par.id ? `  ${short(par.id)}` : '  (not recorded)'}`);
-      for (const c of links.children) print(ctx, `child        ${p(c.message_id ?? '-')}  ${p(c.strength)}  ${short(c.id)}`);
-      if (links.more) print(ctx, 'child        ... more');
+    const f = await gather(mp, account, rec, { links: true });
+    if (a.values.json) {
+      const { body, seal_data: seal, ...facts } = f;
+      printJson(ctx, { record: rec, proof: parts, links, seal, facts: { ...facts, body: { stored: body.stored, source: body.source, ...(a.values.full ? { text: body.text } : {}) } } });
+      return EX_OK;
     }
+    for (const l of render(f, { full: true })) print(ctx, l);
     return EX_OK;
   });
 }
@@ -110,8 +93,10 @@ export async function showCmd(a, ctx) {
 /** @param {Args} a @param {Ctx} ctx @returns {Promise<number>} */
 export async function verifyCmd(a, ctx) {
   const at = a.values.at === undefined ? undefined : parseDate(a.values.at, '--at');
+  const t = classifyTarget(a.positionals[0]);
   return withAccount(a, ctx, async ({ mp }) => {
-    const id = await resolveId(a.positionals[0], mp.root);
+    if (t.kind !== 'id') return verifyMany(a, ctx, mp, t, at);
+    const id = await resolveId(t.value, mp.root);
     const rec = await mp.get(id);
     if (!rec) { warn(ctx, `mailproof: no record ${short(id)}`); return EX_ERR; }
     const v = await mp.verify(rec, at ? { at } : undefined);
@@ -121,6 +106,11 @@ export async function verifyCmd(a, ctx) {
     if (v.error) print(ctx, `  ${p(v.error)}`);
     return v.ok ? EX_OK : EX_NO;
   });
+}
+
+/** @param {Args} a @param {Ctx} ctx @returns {Promise<number>} */
+export async function peopleCmd(a, ctx) {
+  return withAccount(a, ctx, (s) => peopleRun(a, ctx, s));
 }
 
 /** @param {Args} a @param {Ctx} ctx @returns {Promise<number>} */

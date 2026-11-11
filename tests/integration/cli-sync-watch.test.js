@@ -101,14 +101,14 @@ test('sync with OTS on: the run ends with the stamp job, its result is `ots` (a 
   const st0 = JSON.parse((await w.run(['status', '--json'])).stdout).acme;
   assert.deepEqual([st0.pendingStamps, st0.seal.enabled, st0.seal.manifests, st0.seal.last], [0, true, 0, null]);
   assert.match((await w.run(['status'])).stdout, /seal +batch every 6h; never run/);
-  assert.match((await w.run(['show', rec.id])).stdout, /^sealed +unsealed$/m);
+  assert.match((await w.run(['show', rec.id])).stdout, /^seal +unsealed$/m);
   const first = JSON.parse((await w.run(['sync', '--json'], { deps })).stdout).ots;
   assert.deepEqual([first.ran, first.manifests.length, first.manifests[0].records, first.stamped, first.upgraded, first.pending, first.unstamped, first.unsealed], [true, 1, 1, 1, 0, 1, 0, 0]);
   const again = JSON.parse((await w.run(['sync', '--json'], { deps })).stdout).ots;
   assert.deepEqual([again.ran, again.skipped, again.upgraded, again.pending], [false, 'not due', 0, 1], 'upgraded and pending keep their meaning');
   assert.match((await w.run(['sync'], { deps })).stdout, /ots: skipped \(not due\), 0 upgraded, 1 pending/);
   const sh = (await w.run(['show', rec.id])).stdout;
-  assert.match(sh, /^sealed +manifest 1, stamped by manifest 1 \(pending\)$/m);
+  assert.match(sh, /^seal +manifest 1, stamped by manifest 1 \(pending\)$/m);
   const st1 = JSON.parse((await w.run(['status', '--json'])).stdout).acme;
   assert.deepEqual([st1.seal.manifests, st1.seal.unstamped, st1.seal.pending, st1.seal.chain, st1.pendingStamps], [1, 0, 1, 'ok', 1]);
   assert.match((await w.run(['status'])).stdout, /seal +batch every 6h; last \d{4}-.*next due .*; 1 manifests \(0 without a proof\); 1 proofs not yet anchored/);
@@ -121,7 +121,7 @@ test('sync with OTS on: the run ends with the stamp job, its result is `ots` (a 
   const s2 = await w.run(['stamp']);
   assert.equal(s2.code, 0);
   assert.match(s2.stdout, /nothing new to seal/);
-  assert.match((await w.run(['show', rec.id])).stdout, /^sealed +manifest 1, stamped by manifest 1 \(anchored, block 777\)$/m);
+  assert.match((await w.run(['show', rec.id])).stdout, /^seal +manifest 1, stamped by manifest 1 \(anchored, block 777\)$/m);
   assert.equal(JSON.parse((await w.run(['status', '--json'])).stdout).acme.pendingStamps, 0);
   // a held stamp lock is 75
   fs.writeFileSync(path.join(dir, '.default.stamp.lock'), JSON.stringify({ pid: process.pid, host: os.hostname(), started: new Date().toISOString() }));

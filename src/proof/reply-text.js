@@ -98,23 +98,27 @@ function splitMultipart(s, boundary) {
 }
 
 /**
- * First text/plain leaf, depth first; not inside message/rfc822, not an attachment.
+ * First leaf of media type `type`, depth first; not inside message/rfc822, not an attachment.
  * @param {Msg} msg
+ * @param {string} type  Lower case, e.g. `text/plain`.
  * @returns {{ msg: Msg, ct: { type: string, params: Record<string, string> } } | null}
  */
-function findTextPart(msg) {
+function findPart(msg, type) {
   const ct = parseParams(h1(msg, 'content-type') || 'text/plain; charset=us-ascii');
   const disp = h1(msg, 'content-disposition').toLowerCase();
   if (ct.type.startsWith('multipart/') && ct.params.boundary) {
     for (const child of splitMultipart(msg.body, ct.params.boundary)) {
-      const r = findTextPart(parseMessage(child));
+      const r = findPart(parseMessage(child), type);
       if (r) return r;
     }
     return null;
   }
-  if (ct.type === 'text/plain' && !disp.startsWith('attachment')) return { msg, ct };
+  if (ct.type === type && !disp.startsWith('attachment')) return { msg, ct };
   return null;
 }
+
+/** First text/plain leaf (the stripper's part). @param {Msg} msg */
+const findTextPart = (msg) => findPart(msg, 'text/plain');
 
 // ---- transfer + charset decoding ---------------------------------------------------------------------------
 const CR = 13, LF = 10, SP = 32, TAB = 9, EQ = 0x3d;
@@ -426,4 +430,4 @@ function replyTextRecord({ id, stripped: s, body_status, extracted_at }) {
   };
 }
 
-export { STRIPPER, replyTextPath, stripReplyText, extractReplyText, replyTextRecord, decodeWindows1252 };
+export { STRIPPER, replyTextPath, stripReplyText, extractReplyText, replyTextRecord, decodeWindows1252, parseMessage, findPart, decodePart, unflow };

@@ -11,14 +11,15 @@ import { defaultBundlePath, PUSH_WARNING, redactUrl } from './backup.js';
 import { version } from './misc.js';
 import { defaultBundleOut } from './bundle.js';
 import { stateDir } from './state.js';
+import { classifyTarget } from './target.js';
 
 /** @typedef {import('./session.js').Ctx} Ctx */
 
 /** The numbered items: key, command, label. The description comes from the help table. */
 const ITEMS = [
-  ['1', 'sync', 'Sync now'], ['2', 'watch', 'Watch'], ['3', 'list', 'List emails'], ['4', 'show', 'Show one email'], ['5', 'verify', 'Verify one email'],
+  ['1', 'sync', 'Sync now'], ['2', 'watch', 'Watch'], ['3', 'list', 'List emails'], ['4', 'show', 'Show emails'], ['5', 'verify', 'Verify emails'],
   ['6', 'replies', 'Replies to a message'], ['7', 'check', 'Check against profile'], ['8', 'forget', 'Forget'], ['9', 'prune', 'Prune'], ['10', 'backup', 'Backup'],
-  ['11', 'status', 'Status'], ['12', 'update', 'Update mailproof'], ['13', 'config', 'Config'], ['14', 'export', 'Export'], ['15', 'stamp', 'Seal now'],
+  ['11', 'status', 'Status'], ['12', 'update', 'Update mailproof'], ['13', 'config', 'Config'], ['14', 'export', 'Export'], ['15', 'stamp', 'Seal now'], ['16', 'people', 'People'],
 ];
 
 /** @param {string} s @returns {string} */
@@ -85,6 +86,18 @@ export async function runMenu(ctx, exec, opts = {}) {
       if (await typedName()) await go([...argv, '--yes']);
     };
 
+    /** The export questions for the given addresses (shared by the Export item and People). @param {string} who */
+    const exportFor = async (who) => {
+      const after = await askDate('After', '--after', 'date, e.g. 2026-01-01, empty = from the beginning');
+      const before = await askDate('Before', '--before', 'date, e.g. 2026-08-19, empty = until now');
+      const dflt = defaultBundleOut(account, (ctx.deps.now ?? (() => new Date()))(), false);
+      const outPath = await ask({ label: 'Write the bundle to', example: 'a new directory', def: dflt });
+      const tar = await confirm(p, 'Also pack it into one .tar file for mailing?');
+      await go(['export', '--with', who, ...(after ? ['--after', after] : []), ...(before ? ['--before', before] : []), ...(outPath === dflt ? [] : ['--out', outPath]), ...(tar ? ['--tar'] : [])]);
+    };
+    /** One target: an address, a Message-ID or a record id. */
+    const askTarget = () => ask({ label: 'Target', example: 'an address like bob@example.org, a <message-id>, or a record id (8+ hex)', validate: (s) => { classifyTarget(s); return s.trim(); } });
+
     /** @type {Record<string, () => Promise<void>>} */
     const handlers = {
       sync: async () => {
@@ -105,11 +118,29 @@ export async function runMenu(ctx, exec, opts = {}) {
         const limit = await ask({ label: 'Limit', example: 'a number, 0 = all', def: '50', validate: (s) => { if (!/^\d+$/.test(s)) throw new UsageError('a whole number'); return s; } });
         await go(['list', ...(who ? ['--with', who] : []), ...(role ? ['--role', role] : []), ...(direction ? ['--direction', direction] : []), ...(before ? ['--before', before] : []), ...(after ? ['--after', after] : []), '--limit', limit]);
       },
-      show: async () => { await go(['show', await ask({ label: 'Id', example: '32 hex characters, or a unique prefix of 8 or more', validate: idArg })]); },
+      show: async () => { await go(['show', await askTarget()]); },
       verify: async () => {
-        const id = await ask({ label: 'Id', example: '32 hex characters, or a unique prefix of 8 or more', validate: idArg });
+        const target = await askTarget();
         const at = await askDate('At', '--at', 'judge as of this date, empty = the capture time');
-        await go(['verify', id, ...(at ? ['--at', at] : [])]);
+        await go(['verify', target, ...(at ? ['--at', at] : [])]);
+      },
+      people: async () => {
+        // the same `people --json` the subcommand prints, read here so the user can pick one
+        /** @type {string[]} */
+        const chunks = [];
+        const code = await exec([...pre, 'people', '--json', '--account', account], { ...base, stdout: { write: (s) => { chunks.push(String(s)); return true; } } });
+        if (code !== 0) return;
+        /** @type {Array<{ address: string, emails: number, verified: number, you: boolean }>} */
+        const people = JSON.parse(chunks.join(''));
+        if (!people.length) { out('no emails recorded'); return; }
+        people.forEach((x, i) => out(`${String(i + 1).padStart(3)}) ${x.address}${x.you ? ' (you)' : ''}  ${x.emails} emails, ${x.verified} verified`));
+        const pick = await ask({ label: 'Person', example: 'a number from the list, or an address', validate: (s) => {
+          const n = /^\d+$/.test(s.trim()) ? people[Number(s) - 1]?.address : undefined;
+          if (/^\d+$/.test(s.trim()) && !n) throw new UsageError(`choose 1 to ${people.length}`);
+          return n ?? parseAddress(s, 'Person');
+        } });
+        const what = await ask({ label: 'Action', example: 'show, verify, export', def: 'show', validate: (s) => parseChoice(s, 'Action', 'show', 'verify', 'export') });
+        if (what === 'export') await exportFor(pick); else await go([what, pick]);
       },
       replies: async () => { await go(['replies', await ask({ label: 'Message-ID', example: 'the request\'s, e.g. <q-123@mail.example>', validate: (s) => messageIdOf(s) })]); },
       check: async () => {
@@ -153,13 +184,7 @@ export async function runMenu(ctx, exec, opts = {}) {
         await go(['config', action]);
       },
       export: async () => {
-        const who = await ask({ label: 'With', example: 'exact addresses, comma separated, e.g. bob@example.org,bob@work.example', validate: (s) => { s.split(',').map((x) => parseAddress(x.trim(), 'With')); return s; } });
-        const after = await askDate('After', '--after', 'date, e.g. 2026-01-01, empty = from the beginning');
-        const before = await askDate('Before', '--before', 'date, e.g. 2026-08-19, empty = until now');
-        const dflt = defaultBundleOut(account, (ctx.deps.now ?? (() => new Date()))(), false);
-        const outPath = await ask({ label: 'Write the bundle to', example: 'a new directory', def: dflt });
-        const tar = await confirm(p, 'Also pack it into one .tar file for mailing?');
-        await go(['export', '--with', who, ...(after ? ['--after', after] : []), ...(before ? ['--before', before] : []), ...(outPath === dflt ? [] : ['--out', outPath]), ...(tar ? ['--tar'] : [])]);
+        await exportFor(await ask({ label: 'With', example: 'exact addresses, comma separated, e.g. bob@example.org,bob@work.example', validate: (s) => { s.split(',').map((x) => parseAddress(x.trim(), 'With')); return s; } }));
       },
       stamp: async () => { await go(['stamp']); },
     };

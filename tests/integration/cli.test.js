@@ -49,7 +49,7 @@ test('list: text, filters, --json is one array; a bad date, address or role is 6
   const text = await sp(['list']);
   assert.equal(text.code, 0);
   assert.equal(text.stdout.trim().split('\n').length, 6);
-  assert.match(text.stdout, new RegExp(`^${id('plain').slice(0, 12)}  `, 'm'));
+  assert.match(text.stdout, new RegExp(`  ${id('plain').slice(0, 12)}$`, 'm'));
   assert.equal(json(await sp(['list', '--json', '--limit', '2'])).length, 2);
   assert.equal(json(await sp(['list', '--json', '--limit', '0'])).length, 6);
   assert.equal(json(await sp(['list', '--json', '--direction', 'out'])).length, 1);
@@ -65,7 +65,7 @@ test('list: text, filters, --json is one array; a bad date, address or role is 6
 
 test('show: text, --json {record, proof, links}, an id prefix, --raw bytes; unknown and ambiguous ids', async () => {
   const j = json(await sp(['show', id('signed'), '--json']));
-  assert.deepEqual(Object.keys(j).sort(), ['links', 'proof', 'record', 'seal']);
+  assert.deepEqual(Object.keys(j).sort(), ['facts', 'links', 'proof', 'record', 'seal']);
   assert.equal(j.seal, null, 'recorded but not sealed yet');
   assert.equal(j.record.id, id('signed'));
   assert.equal(j.proof.email.ok, true);
@@ -73,7 +73,7 @@ test('show: text, --json {record, proof, links}, an id prefix, --raw bytes; unkn
   const text = await sp(['show', id('signed').slice(0, 10)]);
   assert.equal(text.code, 0);
   assert.match(text.stdout, new RegExp(`^id +${id('signed')}$`, 'm'));
-  assert.match(text.stdout, /^parent .*<req@owner.example>  signed/m);
+  assert.match(text.stdout, /^in-reply-to +<req@owner.example>, link signed$/m);
   const raw = await sp(['show', id('signed'), '--raw']);
   assert.equal(raw.code, 0);
   assert.deepEqual(raw.stdoutBytes, T.mails.signed.raw, 'the stored raw email, byte for byte');
@@ -81,7 +81,7 @@ test('show: text, --json {record, proof, links}, an id prefix, --raw bytes; unkn
   assert.equal((await sp(['show', 'ab'.repeat(16)])).code, 1, 'a well-formed id with no record');
   const short = await sp(['show', id('signed').slice(0, 7)]);
   assert.equal(short.code, 64);
-  assert.match(short.stderr, /at least 8/);
+  assert.match(short.stderr, /8 or more hex characters/);
   const none = await sp(['show', '0'.repeat(10)]);
   assert.equal(none.code, 64);
   assert.match(none.stderr, /no record has an id starting with/);

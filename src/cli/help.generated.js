@@ -85,25 +85,63 @@ export const HELP = Object.freeze({
         }
       ]
     },
+    "people": {
+      "usage": "mailproof people [flags]",
+      "summary": "who is in this trail (addresses, emails, verified)",
+      "when": "Use to see who is in this trail, to pick an address for show, verify or export: one line per exact address (bob@gmail.com and bob@company.com are two), most recently seen first, with how many emails name it, how many RECEIVED emails naming it verified at capture, and the first and last capture. Your own address appears too (marked \"(you)\" when it is the account user): a record does not say which address is yours. Then: mailproof show <address>, mailproof verify <address>, mailproof export --with <address>.",
+      "fails": "Exit 0 for an empty trail (it says so); 75 when the trail index is locked; 1 when it cannot be built.",
+      "account": true,
+      "flags": [
+        {
+          "name": "limit",
+          "type": "string",
+          "arg": "<n>",
+          "help": "most addresses (default 50, 0 = no cap)"
+        }
+      ]
+    },
     "show": {
-      "usage": "mailproof show <id> [flags]",
-      "summary": "record details",
-      "when": "Use to read one stored record (to export it, or to hand to `verifyRecord`). Use `list()` first if you do not have an id.",
-      "fails": "Returns null for an unknown id or anything that is not 32 hex characters. Rejects only for a trail still in the pre-M3 flat layout (`records/<id>.json`): `err.code === 'ERR_TRAIL_LAYOUT'`, the trail must be re-created.",
+      "usage": "mailproof show <address|messageId|id> [flags]",
+      "summary": "an address, Message-ID or id: the emails and their proof",
+      "when": "Use to see what the trail holds, starting from the person: `show b@example.com` lists every recorded email that names that exact address on From, To, Cc or Reply-To (the same match as `list --with`), newest first, one block each (date, received or sent, the other party, the signed subject, trust, body status, attachments, seal). `show <abc@mail.example>` (angle brackets) lists every recorded copy of one Message-ID. `show 3f2a9c1d` (8 to 32 hex characters, a record id; kept for scripts) prints the full record: signatures, re-check, links, attachments. Nothing else is accepted: an id shorter than 8 characters or a bare word is exit 64 with the three forms.",
+      "fails": "Exit 1 when no email names the address or Message-ID (\"no email with <address> in this trail\"), when the id is unknown, or when --raw finds the content store without the email; 64 for a bad target, a date, --raw with an address, or an id prefix that is ambiguous; 75 when the trail index is locked.",
       "account": true,
       "flags": [
         {
           "name": "raw",
           "type": "boolean",
-          "help": "print the stored raw email to stdout instead (exit 1 when the content store no longer holds it)"
+          "help": "with a record id: print the stored raw email to stdout instead (exit 1 when the content store no longer holds it)"
+        },
+        {
+          "name": "after",
+          "type": "string",
+          "arg": "<date>",
+          "help": "address or Message-ID target: captured on or after this date"
+        },
+        {
+          "name": "before",
+          "type": "string",
+          "arg": "<date>",
+          "help": "address or Message-ID target: captured before this date"
+        },
+        {
+          "name": "limit",
+          "type": "string",
+          "arg": "<n>",
+          "help": "address or Message-ID target: most emails shown (default 50, 0 = all); the rest are counted"
+        },
+        {
+          "name": "full",
+          "type": "boolean",
+          "help": "show every line of each body (an address or Message-ID target cuts it to 10 lines), and with --json include the body text"
         }
       ]
     },
     "verify": {
-      "usage": "mailproof verify <id> [flags]",
-      "summary": "re-check one email offline",
-      "when": "Use to re-check a recorded email later, offline, from the record alone (no DNS, no raw email). It judges `x=`/`t=` as of capture time, so a valid record stays valid after the signature's expiry. Pass `at` only to ask \"was it valid at T?\".",
-      "fails": "Never throws. An unknown id, junk input, a tampered record or a missing or garbled `captured` comes back `ok: false` (fail closed). `ok` means at least one signature verifies; `trust` is the portable level recomputed now.",
+      "usage": "mailproof verify <address|messageId|id> [flags]",
+      "summary": "re-check an address's emails (or one id) offline",
+      "when": "Use to prove what a person sent you: `verify b@example.com` re-checks, offline and from the records alone, every recorded email naming that address (newest first), prints one line per email (date, received or sent, ok or NOT OK, trust, the reason when it fails) and a summary. The exit code follows the RECEIVED emails only: your own Sent copies are normally unsigned by the provider and would fail for that reason, so they are listed and counted apart (\"sent: ...\") and do not decide the exit code unless you pass --all. `verify <abc@mail.example>` does the same for the copies of one Message-ID; `verify 3f2a9c1d` (a record id) re-checks one record and prints its signatures. The re-check is DKIM against the archived key (the portable verdict).",
+      "fails": "Exit 0 when every counted email verifies; 2 when any counted email does not, or when there is no received email to check (the answer is no: nothing proves it; use --all to count sent copies); 1 when no email names the address or Message-ID or the id is unknown; 64 for a bad target, date or ambiguous prefix; 75 when the trail index is locked.",
       "account": true,
       "flags": [
         {
@@ -111,6 +149,29 @@ export const HELP = Object.freeze({
           "type": "string",
           "arg": "<date>",
           "help": "judge key and signature expiry as of this time (default: the capture time)"
+        },
+        {
+          "name": "all",
+          "type": "boolean",
+          "help": "address or Message-ID target: also count your sent copies in the exit code"
+        },
+        {
+          "name": "after",
+          "type": "string",
+          "arg": "<date>",
+          "help": "address or Message-ID target: captured on or after this date"
+        },
+        {
+          "name": "before",
+          "type": "string",
+          "arg": "<date>",
+          "help": "address or Message-ID target: captured before this date"
+        },
+        {
+          "name": "limit",
+          "type": "string",
+          "arg": "<n>",
+          "help": "address or Message-ID target: check only the newest n (default 0 = all; a partial check says so)"
         }
       ]
     },
