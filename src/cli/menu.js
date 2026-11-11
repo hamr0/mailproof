@@ -12,15 +12,19 @@ import { version } from './misc.js';
 import { defaultBundleOut } from './bundle.js';
 import { stateDir } from './state.js';
 import { classifyTarget } from './target.js';
+import { styleOf } from './style.js';
+import { headerFacts } from './status.js';
+import { mainHeader, firstRun, MAIN_ITEMS, MORE_ITEMS } from './menu-header.js';
+import { checkFileCmd } from './check-file.js';
+import { configPath } from './config.js';
 
 /** @typedef {import('./session.js').Ctx} Ctx */
 
-/** The numbered items: key, command, label. The description comes from the help table. */
-const ITEMS = [
-  ['1', 'sync', 'Sync now'], ['2', 'watch', 'Watch'], ['3', 'list', 'List emails'], ['4', 'show', 'Show emails'], ['5', 'verify', 'Verify emails'],
-  ['6', 'replies', 'Replies to a message'], ['7', 'check', 'Check against profile'], ['8', 'forget', 'Forget'], ['9', 'prune', 'Prune'], ['10', 'backup', 'Backup'],
-  ['11', 'status', 'Status'], ['12', 'update', 'Update mailproof'], ['13', 'config', 'Config'], ['14', 'export', 'Export'], ['15', 'stamp', 'Seal now'], ['16', 'people', 'People'],
-];
+/** Every command the menu can run, by number (the action line shows 1-7, `?` lists 8-17) and by name. */
+/** @type {Map<string, string>} */
+const BY_KEY = new Map([...MAIN_ITEMS.map(([k, cmd]) => /** @type {[string, string]} */ ([k, cmd])), ...MORE_ITEMS.map(([k, cmd]) => /** @type {[string, string]} */ ([k, cmd]))]);
+/** @type {Map<string, string>} */
+const BY_NAME = new Map([...[...BY_KEY.values()].map((c) => /** @type {[string, string]} */ ([c, c])), ['seal', 'stamp']]);
 
 /** @param {string} s @returns {string} */
 const idArg = (s) => {
@@ -48,17 +52,50 @@ export async function runMenu(ctx, exec, opts = {}) {
   const cfgArgs = { cmd: '', values: { config: opts.configFlag }, positionals: /** @type {string[]} */ ([]) };
   /** An optional date prompt. @param {string} label @param {string} flag @param {string} [example] */
   const askDate = (label, flag, example = 'date, e.g. 2026-08-19') => ask({ label, example, optional: true, validate: (s) => { parseDate(s, flag); return s; } });
+  const st = styleOf(ctx);
+  const now = () => (ctx.deps.now ?? (() => new Date()))();
+  /** The home directory shown as `~`. @param {string} f */
+  const tilde = (f) => { const h = ctx.env.HOME; return h && f.startsWith(`${h}/`) ? `~${f.slice(h.length)}` : f; };
+  /**
+   * The screen when there is no config: set up an account, check a saved .eml, verify a bundle.
+   * @returns {Promise<import('./config.js').Config | number>}  The config once an account exists, or the menu's exit code.
+   */
+  const firstRunScreen = async () => {
+    for (;;) {
+      out('');
+      for (const l of firstRun(st, { version: version(), configFile: tilde(configPath(opts.configFlag, ctx.env)) })) out(l);
+      const choice = await p.ask('> ');
+      if (choice === null) return 0;
+      const c = choice.trim().toLowerCase();
+      if (c === 'q') return 0;
+      if (c === '') continue;
+      try {
+        if (c === '1') {
+          await exec([...pre, 'config', 'add-account'], base);
+          try { return (await loadCtxConfig(cfgArgs, ctx)).config; } catch { continue; }
+        } else if (c === '2') {
+          await checkFileCmd(await ask({ label: 'Path of the .eml file', example: 'e.g. ~/Downloads/mail.eml' }), base).catch((e) => { warn(ctx, `mailproof: ${/** @type {Error} */ (e).message}`); });
+        } else if (c === '3') {
+          await exec([...pre, 'verify-bundle', await ask({ label: 'Bundle directory', example: 'the directory mailproof export wrote' })], base);
+        } else if (c === '?' || c === 'h') await exec([...pre, 'help'], base);
+        else out(`not a menu item: ${c}`);
+      } catch (e) {
+        if (e instanceof Cancel) { if (e.reason === 'eof') return 0; out('cancelled'); continue; }
+        throw e;
+      }
+      if ((await p.ask('Press Enter ')) === null) return 0;
+    }
+  };
   try {
-    // the config is needed before anything: a missing or untrusted one is said once, clearly
+    // the config is needed before anything: a missing one starts the first-run screen, an untrusted or invalid one is said once, clearly
     /** @type {import('./config.js').Config} */
     let config;
     try { ({ config } = await loadCtxConfig(cfgArgs, ctx)); }
     catch (e) {
-      err(`mailproof: ${/** @type {Error} */ (e).message}`);
-      if (!(e instanceof UsageError) || !/no config file/.test(e.message)) return EX_USAGE;
-      if (!(await confirm(p, 'Create it now with the account wizard?', true))) return EX_USAGE;
-      await exec([...pre, 'config', 'add-account'], base);
-      try { ({ config } = await loadCtxConfig(cfgArgs, ctx)); } catch { return EX_USAGE; }
+      if (!(e instanceof UsageError) || !/no config file/.test(e.message)) { err(`mailproof: ${/** @type {Error} */ (e).message}`); return EX_USAGE; }
+      const got = await firstRunScreen();
+      if (typeof got === 'number') return got;
+      config = got;
     }
     const names = Object.keys(config.accounts);
     const pickAccount = async () => (names.length === 1 ? names[0] : ask({
@@ -125,21 +162,30 @@ export async function runMenu(ctx, exec, opts = {}) {
         await go(['verify', target, ...(at ? ['--at', at] : [])]);
       },
       people: async () => {
-        // the same `people --json` the subcommand prints, read here so the user can pick one
+        // the table is the `people` command's own text, numbered here so a row can be picked; the rows come from the same `people --json`
         /** @type {string[]} */
         const chunks = [];
-        const code = await exec([...pre, 'people', '--json', '--account', account], { ...base, stdout: { write: (s) => { chunks.push(String(s)); return true; } } });
+        const code = await exec([...pre, 'people', '--json', '--account', account], { ...base, stdout: { write: (x) => { chunks.push(String(x)); return true; } } });
         if (code !== 0) return;
         /** @type {Array<{ address: string, emails: number, verified: number, you: boolean }>} */
         const people = JSON.parse(chunks.join(''));
         if (!people.length) { out('no emails recorded'); return; }
-        people.forEach((x, i) => out(`${String(i + 1).padStart(3)}) ${x.address}${x.you ? ' (you)' : ''}  ${x.emails} emails, ${x.verified} verified`));
-        const pick = await ask({ label: 'Person', example: 'a number from the list, or an address', validate: (s) => {
-          const n = /^\d+$/.test(s.trim()) ? people[Number(s) - 1]?.address : undefined;
-          if (/^\d+$/.test(s.trim()) && !n) throw new UsageError(`choose 1 to ${people.length}`);
-          return n ?? parseAddress(s, 'Person');
+        /** @type {string[]} */
+        const text = [];
+        await exec([...pre, 'people', '--account', account], { ...base, stdout: { write: (x) => { text.push(String(x)); return true; }, isTTY: ctx.stdout.isTTY, ...(ctx.stdout.columns ? { columns: ctx.stdout.columns } : {}) } });
+        text.join('').split('\n').filter(Boolean).forEach((l, i) => out(i === 0 ? `    ${l}` : `${String(i).padStart(3)} ${l}`));
+        out(st.dim('pick a person (number or address), then ') + `${st.cyan('s')} show  ${st.cyan('v')} verify  ${st.cyan('e')} export`);
+        const ACTIONS = /** @type {Record<string, string>} */ ({ s: 'show', show: 'show', v: 'verify', verify: 'verify', e: 'export', export: 'export' });
+        const answer = await ask({ label: 'Person', example: 'a number or an address, then s, v or e (default show), e.g. 3 v', validate: (line) => {
+          const tokens = line.trim().split(/\s+/);
+          const act = tokens.length > 1 && Object.hasOwn(ACTIONS, tokens[tokens.length - 1].toLowerCase()) ? ACTIONS[tokens.pop()?.toLowerCase() ?? 's'] : 'show';
+          if (tokens.length !== 1) throw new UsageError('give one person, then optionally s, v or e');
+          const first = tokens[0];
+          const n = /^\d+$/.test(first) ? people[Number(first) - 1]?.address : undefined;
+          if (/^\d+$/.test(first) && !n) throw new UsageError(`choose 1 to ${people.length}`);
+          return `${n ?? parseAddress(first, 'Person')} ${act}`;
         } });
-        const what = await ask({ label: 'Action', example: 'show, verify, export', def: 'show', validate: (s) => parseChoice(s, 'Action', 'show', 'verify', 'export') });
+        const [pick, what] = answer.split(' ');
         if (what === 'export') await exportFor(pick); else await go([what, pick]);
       },
       replies: async () => { await go(['replies', await ask({ label: 'Message-ID', example: 'the request\'s, e.g. <q-123@mail.example>', validate: (s) => messageIdOf(s) })]); },
@@ -187,22 +233,36 @@ export async function runMenu(ctx, exec, opts = {}) {
         await exportFor(await ask({ label: 'With', example: 'exact addresses, comma separated, e.g. bob@example.org,bob@work.example', validate: (s) => { s.split(',').map((x) => parseAddress(x.trim(), 'With')); return s; } }));
       },
       stamp: async () => { await go(['stamp']); },
+      mcp: async () => { await go(['mcp']); },
     };
 
+    let showHeader = true;
     for (;;) {
-      out(`\nmailproof ${version()}   account: ${account}${names.length > 1 ? '  [b: change]' : ''}`);
-      for (const [k, cmd, label] of ITEMS) out(`${k.padStart(2)}) ${label.padEnd(22)} ${summaryOf(cmd)}`);
-      out(' h) Help      q) Quit');
+      if (showHeader) {
+        out('');
+        /** @type {Awaited<ReturnType<typeof headerFacts>> | null} */
+        let f = null;
+        try { f = await headerFacts(config.accounts[account], ctx); } catch { /* a broken trail still gets a menu */ }
+        const h = { version: version(), user: config.accounts[account].user, account, trailOk: false, lastSync: null, records: null, seal: { state: /** @type {const} */ ('off'), nextDue: null }, watch: false, ...f, manyAccounts: names.length > 1 };
+        for (const l of mainHeader(st, h, now())) out(l);
+      }
+      showHeader = true;
       const choice = await p.ask('> ');
       if (choice === null) return 0;
       const c = choice.trim().toLowerCase();
       if (c === 'q') return 0;
       if (c === '') continue;
       if (c === 'h') { await exec([...pre, 'help'], base); continue; }
-      if (c === 'b' && names.length > 1) { account = await pickAccount(); continue; }
-      const item = ITEMS.find(([k]) => k === c);
-      if (!item) { out(`not a menu item: ${c}`); continue; }
-      try { await handlers[item[1]](); }
+      if (c === '?') {
+        for (const [k, cmd] of MORE_ITEMS) out(`${st.cyan(k.padStart(3))} ${cmd.padEnd(8)} ${st.dim(summaryOf(cmd))}`);
+        out(st.dim('type a number or a name, h for the full help'));
+        showHeader = false;
+        continue;
+      }
+      if ((c === 'a' || c === 'b') && names.length > 1) { account = await pickAccount(); continue; }
+      const cmd = BY_KEY.get(c) ?? BY_NAME.get(c);
+      if (!cmd) { out(`not a menu item: ${c}`); showHeader = false; continue; }
+      try { await handlers[cmd](); }
       catch (e) {
         if (e instanceof Cancel) { if (e.reason === 'eof') return 0; out('cancelled'); continue; }
         throw e;

@@ -3,10 +3,10 @@
 
 import readline from 'node:readline';
 import { UsageError } from './errors.js';
-import { printable } from './printable.js';
+import { allowStyle } from './style.js';
 
-/** Output backstop for what a prompt writes (typed input is echoed back, validators quote it): F28. @param {string} s @returns {string} */
-const safe = (s) => printable(s, { keepNewline: true, keepBackslash: true });
+/** Output backstop for what a prompt writes (typed input is echoed back, validators quote it): F28. It keeps only the style sequences style.js makes. @param {string} s @returns {string} */
+const safe = allowStyle;
 
 /** Raised when the person cannot be asked any more: the input ended, Ctrl-C at a prompt, or three bad answers. */
 export class Cancel extends Error {
@@ -24,6 +24,7 @@ export const isTerminal = (ctx) => ctx.stdout.isTTY === true && /** @type {{ isT
 /**
  * @typedef {Object} Prompter
  * @property {(label: string) => Promise<string | null>} ask  One line, or null when the input ended.
+ * @property {(label: string) => Promise<string | null>} askSecret  One line typed with the echo OFF (a terminal shows nothing; scripted input is not echoed into the transcript), or null when the input ended. The caller never prints the answer.
  * @property {(fn: (() => void) | null) => void} onInterrupt  What Ctrl-C does while a command runs (null: end the input).
  * @property {() => void} close
  */
@@ -44,6 +45,11 @@ export function createPrompter(input, output, terminal) {
   let closed = false;
   /** @type {(() => void) | null} */
   let interrupt = null;
+  // echo off for askSecret: readline writes every typed character through _writeToOutput, so a flag mutes it (there is no public API)
+  let muted = false;
+  const rlAny = /** @type {any} */ (rl);
+  const origWrite = typeof rlAny._writeToOutput === 'function' ? rlAny._writeToOutput : null;
+  if (terminal && origWrite) rlAny._writeToOutput = (/** @type {string} */ str) => { if (!muted) origWrite.call(rl, str); };
   rl.on('line', (l) => { if (waiter) { const w = waiter; waiter = null; w(l); } else queue.push(l); });
   rl.on('close', () => { closed = true; if (waiter) { const w = waiter; waiter = null; w(null); } });
   rl.on('SIGINT', () => { if (interrupt) interrupt(); else rl.close(); });
@@ -62,6 +68,21 @@ export function createPrompter(input, output, terminal) {
       if (queue.length) return Promise.resolve(echo(/** @type {string} */ (queue.shift())));
       if (closed) return Promise.resolve(echo(null));
       return new Promise((resolve) => { waiter = (l) => resolve(echo(l)); });
+    },
+    askSecret(label) {
+      if (terminal) {
+        if (closed) return Promise.resolve(null);
+        rl.setPrompt(label);
+        rl.prompt();
+        muted = true;
+        return new Promise((resolve) => { waiter = (l) => { muted = false; output.write('\n'); resolve(l); }; });
+      }
+      output.write(safe(label));
+      /** @param {string | null} l */
+      const done = (l) => { output.write('\n'); return l; };
+      if (queue.length) return Promise.resolve(done(/** @type {string} */ (queue.shift())));
+      if (closed) return Promise.resolve(done(null));
+      return new Promise((resolve) => { waiter = (l) => resolve(done(l)); });
     },
     onInterrupt(fn) { interrupt = fn; },
     close() { rl.close(); },
