@@ -41,7 +41,8 @@ Exit codes:
       run continues from the saved cursor.
   75  try again later: another sync or writer holds the lock (ERR_SYNC_LOCKED, ERR_TRAIL_LOCKED), server
       unreachable or TLS failed (ERR_IMAP_CONNECT), timeout, throttled, UIDVALIDITY changed, secret command failed
-  77  login refused (ERR_IMAP_AUTH)
+  77  login refused (ERR_IMAP_AUTH), or a --pass-file / MAILPROOF_PASS_FILE with group or other
+      permission bits or owned by someone else (refused unread)
   64  bad usage
   1   anything else (for example a missing folder or a record() failure)
 `;

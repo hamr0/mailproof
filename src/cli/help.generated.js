@@ -147,7 +147,7 @@ export const HELP = Object.freeze({
       "usage": "mailproof forget [id ...] [flags]",
       "summary": "delete stored mail content (destructive)",
       "when": "Use to erase what you hold of other people's mail earlier than retention would: one email, a list, or everything with one correspondent. Only the raw email and attachment files not needed by any remaining stored email are deleted. The proof stays: headers, verdicts, hashes and archived keys still re-verify offline, and anyone who later produces the raw email (sha256 = the record id) or an attachment gets it re-checked.",
-      "fails": "Throws a TypeError for a malformed id, an empty or non-string `with`, or a bad `before`/`after`; `ERR_TRAIL_LOCKED` and `ERR_TRAIL_LAYOUT` as `expireContent()`. An id with nothing stored is not an error (`removed` counts only what was deleted), so it is idempotent. The counterparty is found from the From/To/Cc/Reply-To lines of the signed headers in the record, of the unsigned record's `from`, and of the stored raw email's header block; the match is exact, `bob@gmail.com` is not `bob@company.com`.",
+      "fails": "Throws a TypeError for a malformed id, an empty or non-string `with`, a bad `before`/`after`, or a bad `opts`/`dryRun`; `ERR_TRAIL_LOCKED` and `ERR_TRAIL_LAYOUT` as `expireContent()`. An id with nothing stored is not an error (`removed` counts only what was deleted), so it is idempotent. The counterparty is found from the From/To/Cc/Reply-To lines of the signed headers in the record, of the unsigned record's `from`, and of the stored raw email's header block; the match is exact, `bob@gmail.com` is not `bob@company.com`.",
       "account": true,
       "flags": [
         {
@@ -279,12 +279,19 @@ export const HELP = Object.freeze({
       "flags": []
     },
     "mcp": {
-      "usage": "mailproof mcp",
-      "summary": "reserved (not built yet)",
-      "when": "Reserved for the MCP server (M3 step 6). Not available in this version.",
-      "fails": "Always exits 64.",
+      "usage": "mailproof mcp [flags]",
+      "summary": "serve the trail to an MCP client (stdio)",
+      "when": "Use to let an AI client (Claude Code, Claude Desktop, any MCP client) read and prove mail through mailproof. It is a stdio server the client starts: register it as `claude mcp add mailproof -- mailproof mcp`. One process serves every account in the config (every account-bound tool takes `account`, required when there are two or more); --account restricts it to one, so a client can give each account its own server and policy. It lists every tool, each with MCP annotations (read-only, destructive, idempotent, open-world) so the client can allow reads and ask a human before the destructive ones; forget and prune only preview until called again with confirm. Paths are read only from the folders in the config `mcp.inputDirs` and files are saved only into `mcp.outputDir`; both are off until you set them. Every write or destructive call adds one line to <state>/mcp.log. Everything an email says reaches the model as untrusted data. stdout carries protocol only and stderr stays silent; --log <file> keeps diagnostics.",
+      "fails": "Exit 0 when the client closes stdin or on SIGINT/SIGTERM (calls in flight finish first, up to 5 s; a second signal exits at once), 64 for a bad config, an unknown --account, or a terminal on stdin (it is not an interactive command), 77 when the config file is not private.",
       "account": false,
-      "flags": []
+      "flags": [
+        {
+          "name": "log",
+          "type": "string",
+          "arg": "<file>",
+          "help": "append diagnostics to this file (stderr stays silent)"
+        }
+      ]
     },
     "help": {
       "usage": "mailproof help [command]",

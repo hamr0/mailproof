@@ -31,7 +31,7 @@ const OTS_MIN_TIMEOUT_MS = 5000; // floor for the `ots` timeout, however short l
 /** @typedef {{ id: string, text: string, text_sha256: string, text_bytes: number, quote: 'found' | 'not-found' | 'inline', trailing: boolean, source: 'text/plain' | 'html-only', boundary: string | null, stripper: string, body_status: import('./types.js').BodyStatus, proven: boolean, commit: string, duplicate: boolean }} ReplyText */
 
 /** @typedef {import('./content.js').ContentResult} ContentResult */
-/** @typedef {{ removed: number, attachments: number }} Forgotten */
+/** @typedef {{ removed: number, attachments: number, dryRun?: true, ids?: string[] }} Forgotten  A dry run adds `dryRun: true` and the `ids` it names; `removed` and `attachments` are then what would go. */
 
 /**
  * @typedef {Object} MailproofOptions
@@ -182,6 +182,7 @@ class Mailproof {
     return recordOrId && typeof recordOrId === 'object' ? recordOrId : null;
   }
 
+  /** @mcp Mailproof#check Look at one email (`path` or `base64`) and return both verdicts without recording anything. Unsigned or unverifiable mail comes back `unverified`, not as a failure; a message over an input limit is not parsed at all and says `over limit: <name>`. Judged as of now: a key that has left DNS shows in `key_errors`. The portable verdict covers the signed headers only; read `body_status` for the body. Asks DNS for the signers' keys. */
   /**
    * One-off check of a message (e.g. a saved .eml): both verdicts, nothing written.
    * Judged as of now, so a signature whose key has left DNS shows up as
@@ -212,6 +213,7 @@ class Mailproof {
     };
   }
 
+  /** @mcp Mailproof#record Keep a re-checkable proof of one email (`path` or `base64` of its exact bytes, `direction` in or out): the signed headers, signature, archived key, both verdicts and the body status are committed to the trail, the raw email and attachments to the local content store; the body never goes in the trail. Mail that is unsigned, fails verification or is over a limit is still recorded as `unverified`. The same bytes again return `duplicate: true` and write nothing. Fails with `ERR_TRAIL_LOCKED` (retry later) or `ERR_TRAIL_LAYOUT`. */
   /**
    * Record a message: verdicts + signed-header record + key archive + one git commit.
    * @param {Buffer | string} raw  The raw RFC-822 bytes.
@@ -289,6 +291,7 @@ class Mailproof {
     return this._commit(record, keyFiles);
   }
 
+  /** @mcp Mailproof#replyText Read the new text of a reply (without the quoted history) for a recorded email, from the content store, and commit a small fingerprint record of it. `text` is the new text; `proven` is true only when the body matched the signed hash; `quote` says whether a quote boundary was found. Interpreting the text is your job, not mailproof's: a reply that quotes a question is not an answer to it. Fails with `ERR_NO_CONTENT` (content not stored or already forgotten), `ERR_NOT_RECORDED`, `ERR_OVER_LIMIT`, `ERR_TRAIL_LOCKED` (retry) or `ERR_TRAIL_LAYOUT`. */
   /**
    * The text the sender newly wrote in a recorded reply (quoted history removed), with proof flags, and a small
    * `reply-text` record committed to the trail (SPEC B6).
@@ -346,6 +349,7 @@ class Mailproof {
     return 'out' in r ? r.out : { ok: false, limit: r.limit };
   }
 
+  /** @mcp Mailproof#replyFacts List the facts about every recorded direct reply to an email you sent, given its `messageId`, earliest first: sender (`from`), whether an aligned DKIM signature covers From (`fromDkimAligned`), `link` strength to the request, `bodyProven`, the new `text` and `firstLine`, authentication results and both verdicts. `[]` means no reply yet. Copies of one signed message are separate entries with one `messageKey`. Deciding what a reply means is your job: judge by these fields, never by the text alone. Fails with `ERR_TOO_MANY_REPLIES` (over 200: nothing is cut), `ERR_INDEX_UNAVAILABLE` or `ERR_TRAIL_LOCKED` (retry). */
   /**
    * The facts about every direct reply to one email, as flat string-only bundles: who sent it and whether DKIM proves
    * it, the verdicts, how the reply links to the request, and the new text with its first line. Read-only.
@@ -475,20 +479,25 @@ class Mailproof {
     return this.expireContent();
   }
 
+  /** @mcp Mailproof#forget Delete the stored raw email and attachment files of chosen emails; the proofs stay and still re-verify offline. Name the emails with `ids` (record ids) or with `with` (one exact address on From, To, Cc or Reply-To, case-insensitive; `before` and `after` bound the capture time), never both. An id with nothing stored is not an error. Fails with `ERR_TRAIL_LOCKED` (retry) or `ERR_TRAIL_LAYOUT` (an old flat trail). */
   /**
    * Delete the stored content of chosen emails now, keeping their proofs.
    * @param {string | string[] | { with: string, before?: Date | number | string, after?: Date | number | string }} target  A record id, an array of ids, or every stored email with a counterparty: `with` is one exact address on the From, To, Cc or Reply-To line (case-insensitive), `after` (inclusive) and `before` (exclusive) bound the capture time.
+   * @param {{ dryRun?: boolean }} [opts]  `dryRun`: delete nothing and return what would go (default false).
    * @returns {Promise<Forgotten>}
    * @name Mailproof#forget
    * @when Use to erase what you hold of other people's mail earlier than retention would: one email, a list, or everything with one correspondent. Only the raw email and attachment files not needed by any remaining stored email are deleted. The proof stays: headers, verdicts, hashes and archived keys still re-verify offline, and anyone who later produces the raw email (sha256 = the record id) or an attachment gets it re-checked.
    * @category content
-   * @signature mp.forget(target: string|string[]|{ with: string, before?, after? }) => Promise<{ removed: number, attachments: number }>
-   * @fails Throws a TypeError for a malformed id, an empty or non-string `with`, or a bad `before`/`after`; `ERR_TRAIL_LOCKED` and `ERR_TRAIL_LAYOUT` as `expireContent()`. An id with nothing stored is not an error (`removed` counts only what was deleted), so it is idempotent. The counterparty is found from the From/To/Cc/Reply-To lines of the signed headers in the record, of the unsigned record's `from`, and of the stored raw email's header block; the match is exact, `bob@gmail.com` is not `bob@company.com`.
+   * @signature mp.forget(target: string|string[]|{ with: string, before?, after? }, opts?: { dryRun?: boolean }) => Promise<{ removed: number, attachments: number, dryRun?: true, ids?: string[] }>
+   * @fails Throws a TypeError for a malformed id, an empty or non-string `with`, a bad `before`/`after`, or a bad `opts`/`dryRun`; `ERR_TRAIL_LOCKED` and `ERR_TRAIL_LAYOUT` as `expireContent()`. An id with nothing stored is not an error (`removed` counts only what was deleted), so it is idempotent. The counterparty is found from the From/To/Cc/Reply-To lines of the signed headers in the record, of the unsigned record's `from`, and of the stored raw email's header block; the match is exact, `bob@gmail.com` is not `bob@company.com`.
    * @example
    * await mp.forget(id);
    * await mp.forget({ with: 'bob@example.com', before: '2026-01-01' });
+   * const plan = await mp.forget({ with: 'bob@example.com' }, { dryRun: true });   // plan.ids, plan.removed: nothing deleted
    */
-  async forget(target) {
+  async forget(target, opts) {
+    if (opts !== undefined && (opts === null || typeof opts !== 'object' || Array.isArray(opts) || Object.keys(opts).some((k) => k !== 'dryRun') || (opts.dryRun !== undefined && typeof opts.dryRun !== 'boolean'))) throw new TypeError('forget: opts must be { dryRun?: boolean }');
+    const dryRun = opts?.dryRun === true;
     /** @type {string[] | null} */
     let ids = null;
     /** @type {{ with: string, before?: Date | number | string, after?: Date | number | string } | null} */
@@ -501,12 +510,13 @@ class Mailproof {
       query = target;
     } else throw new TypeError('forget: target must be an id, an array of ids, or { with }');
     if (ids) for (const id of ids) if (typeof id !== 'string' || !RECORD_ID_RE.test(id)) throw new TypeError('forget: ids must be 32 hex characters');
-    if (!(await exists(this.contentDir))) return { removed: 0, attachments: 0 };
+    if (!(await exists(this.contentDir))) return dryRun ? { removed: 0, attachments: 0, dryRun: true, ids: ids ? [...new Set(ids)] : [] } : { removed: 0, attachments: 0 };
     await assertTrailLayout(this.root);
     const list = ids ?? await idsWith(this.root, this.contentDir, /** @type {NonNullable<typeof query>} */ (query));   // the scan holds no lock
-    return forgetIds(this.root, this.contentDir, list, (w) => this._lock(w), this._scanHooks);
+    return forgetIds(this.root, this.contentDir, list, (w) => this._lock(w), this._scanHooks, dryRun);
   }
 
+  /** @mcp Mailproof#prune Remove everything captured before the date `before` (records, reply-text commits, stamps, stored content): the trail is rewritten, the old one is kept beside it as a backup. Rare and never scheduled. The result lists what is removed and kept and `stragglers`; `noop: true` means nothing was captured before `before`. It can take minutes on a big trail. Fails with `ERR_PRUNE_RUNNING` (another prune, retry later), `ERR_PRUNE_CUTOFF` (everything is older than `before`), `ERR_PRUNE_REWRITTEN` (run it again), `ERR_SYNC_LOCKED` or `ERR_TRAIL_LOCKED` (nothing changed, retry), `ERR_PRUNE_VERIFY`, `ERR_PRUNE_JOURNAL` or `ERR_TRAIL_LAYOUT` (stop and tell the user). */
   /**
    * Delete everything captured before a date: a pruned copy of the trail replaces it, and the old one is kept as a backup.
    * @param {{ before: Date | number | string, deleteBackup?: boolean, dryRun?: boolean, now?: Date | number }} opts  `before` (required): records captured strictly before it are removed. `deleteBackup`: remove the backup after a successful swap (default false). `dryRun`: compute and return what a prune would do, change nothing (default false). `now` overrides the clock (tests).
@@ -525,6 +535,7 @@ class Mailproof {
     return runPrune({ root: this.root, trail: this.trail, lockTimeoutMs: this.lockTimeoutMs, now: this.now, hooks: this._pruneHooks }, opts);
   }
 
+  /** @mcp Mailproof#upgradeStamps For an account with OpenTimestamps on, ask the calendars whether pending stamps have been anchored in Bitcoin and commit the ones that gained it. Does nothing (`enabled: false`) when the account has no `ots`. A missing `ots` binary or calendar problem comes back in `error`, not as a failure. Not idempotent: running it later can upgrade more. Fails with `ERR_TRAIL_LOCKED` (retry later) or `ERR_TRAIL_LAYOUT`. */
   /**
    * Fold the Bitcoin attestation into the OpenTimestamps stamps that are still calendar-pending.
    * @returns {Promise<import('./ots-upgrade.js').StampUpgrade>}
@@ -626,6 +637,7 @@ class Mailproof {
     return readRecord(this.root, id);
   }
 
+  /** @mcp Mailproof#copies Show every route one signed message reached the mailbox by (direct, via a mailing list, forwarded), given the `id` of any copy or the shared `message_key`. `original` is the earliest direct copy whose body matched, or null; `contained_in` lists records that carry it as an attached original. An unknown id returns just that record or nothing. Fails with `ERR_INDEX_UNAVAILABLE`, `ERR_TRAIL_LOCKED` (retry) or `ERR_TRAIL_LAYOUT`. */
   /**
    * Every recorded copy of one message, plus the records (forwards, list digests) that carry it as an attachment.
    * @param {string} idOrKey  A record id or a `message_key` (32 hex each).
@@ -643,6 +655,7 @@ class Mailproof {
     return copiesIndex(this._indexCfg(), idOrKey);
   }
 
+  /** @mcp Mailproof#list List recorded emails, newest capture first (default 50, at most 500 per call; `limit` narrows). Filter by `direction`, or by counterparty `with` (one exact address, case-insensitive, seen on From, To, Cc or Reply-To; `role` narrows it to one of them) and by `after` (inclusive) and `before` (exclusive) capture time. Returns summaries; use `get` for the full record. Fails with `ERR_INDEX_UNAVAILABLE`, `ERR_TRAIL_LOCKED` (retry) or `ERR_TRAIL_LAYOUT`. */
   /**
    * List records, newest capture first.
    * @param {{ limit?: number, direction?: 'in' | 'out', with?: string, role?: 'from' | 'to' | 'cc' | 'reply-to', before?: Date | number | string, after?: Date | number | string }} [opts]
@@ -677,6 +690,7 @@ class Mailproof {
     return counterpartiesIndex(this._indexCfg(), { limit });
   }
 
+  /** @mcp Mailproof#linked Read the thread around one record: `parents` are the Message-IDs its In-Reply-To/References name (with the recorded id, or null), `children` the recorded emails that name its Message-ID. `strength` is `signed` only when a verifying DKIM signature covers the naming header, else `unsigned`. It reports what looks linked, never "the reply chain". At most `limit` children (default 1000); `more` says there were others. Fails with `ERR_INDEX_UNAVAILABLE` or `ERR_TRAIL_LOCKED` (retry). */
   /**
    * The emails one record looks linked to, with how strongly each link is signed.
    * @param {string} id  A record id.
@@ -751,6 +765,7 @@ class Mailproof {
     return { root: this.root, trail: this.trail, lockTimeoutMs: this.lockTimeoutMs };
   }
 
+  /** @mcp Mailproof#sync Read new mail from the account's mailbox (read-only: nothing is marked, moved or deleted) and record it. At most `maxMessages` per folder per call: call again while `complete` is false. `folders` and `sent` override the account's settings for this call. A problem in one folder is in that folder's `error`; the run goes on. Fails with `ERR_IMAP_AUTH` (login refused: the user must fix the account config; do not retry), `ERR_IMAP_CONNECT` or `ERR_SYNC_LOCKED` (retry later). */
   /**
    * Capture mail over IMAP: read one mailbox, read-only, and `record()` every message in it (inbox folders as
    * `in`, the Sent folder as `out`). A resume cursor (a sidecar file beside the trail, not in git) makes the next

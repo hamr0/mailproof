@@ -1,6 +1,6 @@
 # mailproof v2 — PRD
 
-> **Status:** v2 is released as 3.0.0 (2026-11-09; M0-M2 and M3 steps 1-3 shipped). M3 steps 4 (`replyFacts`) and 5 (the `mailproof` CLI) are built on `feat/m3-reply-facts`, not released; the rest of M3 (MCP) is specified, not built. 1.x is frozen at tag `v1.4.0` (v1 code archived in `archive/v1/`; no `v1` branch).
+> **Status:** v2 is released through 3.2.0 (M0-M2 and M3 steps 1-3 shipped in 3.0.0). M3 steps 4 (`replyFacts`) and 5 (the `mailproof` CLI) shipped in 3.1.0, and 3.2.0 (2026-11-11) is the latest; M3 step 6 (the MCP server, `mailproof mcp`, SPEC B12) is built on `feat/m3-mcp` and not yet released. 1.x is frozen at tag `v1.4.0` (v1 code archived in `archive/v1/`; no `v1` branch).
 > **Owner:** hamr0 · **Last updated:** 2026-11-09
 >
 > **For future Claude:** this PRD wins on intent and scope. The *why* behind each choice is in
@@ -222,7 +222,7 @@ It stores no text, no body bytes and no subject (the trail stays header-only). I
 
 ### M3 — Two-party record (specified)
 
-**Status:** specified 2026-11-08, approvals round added 2026-11-09; **build step 1 shipped in 3.0.0: the local content store, retention and `forget`** ([SPEC B7](SPEC.md), [F22](findings.md)); **build step 2 shipped in 3.0.0: trust profiles, the counterparty view and graded thread links** ([SPEC B5, B8](SPEC.md), [F23](findings.md)); **build step 3 shipped in 3.0.0: prune before date** ([SPEC B9](SPEC.md), [F25](findings.md)); **build step 4 built, not released: `replyFacts`** ([SPEC B10](SPEC.md), [F26](findings.md), [F27](findings.md)); **build step 5 built, not released: the `mailproof` CLI, with `Mailproof#upgradeStamps()` and `prune({ dryRun })`** ([SPEC B11](SPEC.md)); the rest (MCP) is not built; a few items still open (see Open below). Reasons and options: [decisions-log](decisions-log.md) entry "M3 scope: one trail per owned account, local content store, prune-before-date, CLI + stdlib MCP". Wire formats go to SPEC Part B when each step is built (B7 is the first).
+**Status:** specified 2026-11-08, approvals round added 2026-11-09; **build step 1 shipped in 3.0.0: the local content store, retention and `forget`** ([SPEC B7](SPEC.md), [F22](findings.md)); **build step 2 shipped in 3.0.0: trust profiles, the counterparty view and graded thread links** ([SPEC B5, B8](SPEC.md), [F23](findings.md)); **build step 3 shipped in 3.0.0: prune before date** ([SPEC B9](SPEC.md), [F25](findings.md)); **build step 4 shipped in 3.1.0: `replyFacts`** ([SPEC B10](SPEC.md), [F26](findings.md), [F27](findings.md)); **build step 5 shipped in 3.1.0: the `mailproof` CLI, with `Mailproof#upgradeStamps()` and `prune({ dryRun })`** ([SPEC B11](SPEC.md)); **build step 6, the MCP server, is built on `feat/m3-mcp`, not released** ([SPEC B12](SPEC.md), [F30](findings.md)); a few items still open (see Open below). Reasons and options: [decisions-log](decisions-log.md) entry "M3 scope: one trail per owned account, local content store, prune-before-date, CLI + stdlib MCP". Wire formats go to SPEC Part B when each step is built (B7 is the first).
 
 **Goal.** M3 makes mailproof a two-party record for three use cases on one substrate:
 
@@ -328,7 +328,7 @@ The final field list and the closed sets are in [SPEC B10.3](SPEC.md). In short:
 - **Library** (exists).
 - **One `mailproof` CLI** (SPEC B11). Run with no arguments it shows a readline menu (stdlib, no TUI framework) that prompts for each action's parameters; every menu action is also a subcommand with flags for scripts and cron: `sync`, `watch` (a foreground command, no daemon; run it under systemd --user or cron), `list`, `show`, `verify`, `replies`, `check`, `forget`, `prune`, `backup`, `status`, `update`, `config`, `export`, `mcp`. With more than one account every command needs `--account`; `forget` and `prune` need `--yes` (menu: type the account name). `export` depends on M6's proof bundle (§7 M6). The existing `mailproof-sync` bin keeps working.
 - **Config:** one JSON file, `~/.config/mailproof/config.json` (XDG; JSON so there is no new dependency), with `accounts` keyed by account name. Per-account fields such as `user`, `host`, `trailDir`, `trail`, `passCommand` | `passFile` | `accessTokenCommand` (never a plain password), `content` (`store`, `attachments`, `days` 730), `ots`, `backupRemote`. Refused unless owned by the user and mode 0600. Runtime state (last runs, logs, backups) lives in `~/.local/state/mailproof/`, never in the config.
-- **MCP server inside the same package** (`mailproof mcp`): stdio JSON-RPC written with the stdlib, no MCP SDK dependency. Proven first by a POC against a real MCP client (Claude Code). Switch to the SDK only if the protocol work proves larger; that needs the dependency checklist and an owner decision. It starts read-only: verify, show, list, check a record against a trust profile, "did X reply to my request". No forget, export or send through MCP without a human gate.
+- **MCP server inside the same package** (`mailproof mcp`): stdio JSON-RPC written with the stdlib, no MCP SDK dependency. Proven first by a POC against a real MCP client (Claude Code). Switch to the SDK only if the protocol work proves larger; that needs the dependency checklist and an owner decision. Full toolset, all always listed, with tool annotations the client scopes by; tool names = library method names; one server for all accounts (an `account` argument); preview-then-`confirm` for the destructive tools: [SPEC B12](SPEC.md), decisions-log "M3 MCP: stdlib, method names, full toolset with annotations" (2026-11-11; supersedes "starts read-only"). No export or send through MCP.
 - **One source of truth:** CLI help, MCP tool descriptions and `primitives.json` all come from the same JSDoc.
 - **No new runtime dependency for M3.**
 
@@ -337,8 +337,8 @@ The final field list and the closed sets are in [SPEC B10.3](SPEC.md). In short:
 1. Content store, retention and `forget`.
 2. Trust profiles, counterparty view and graded thread links.
 3. Prune before date.
-4. `replyFacts`, after the content store and read primitives (steps 1-2); POC on real replies first (F26). **Built, not released** ([SPEC B10](SPEC.md), F27).
-5. `mailproof` CLI, config and menu (built, not released; SPEC B11).
+4. `replyFacts`, after the content store and read primitives (steps 1-2); POC on real replies first (F26). **Shipped in 3.1.0** ([SPEC B10](SPEC.md), F27).
+5. `mailproof` CLI, config and menu (shipped in 3.1.0; SPEC B11).
 6. MCP, after its POC.
 
 Reordered 2026-11-09: `replyFacts` moves ahead of the CLI and MCP, because it needs only steps 1-2 and unblocks bareguard's approval channel. Reasons: [decisions-log](decisions-log.md) entry "M3 build order: `replyFacts` before the CLI and MCP".
@@ -347,7 +347,7 @@ POC first where the mechanism is unproven: `replyFacts` on real replies, the std
 
 #### Open (not decided)
 
-- **MCP write tools** and their human gate.
+- **MCP:** built (SPEC B12, F30), not released; the hint choices (B12.10) still await owner confirmation, and F30 shows Claude Code does not act on the hints, so scoping is by tool name. Elicitation as a real human gate is a later POC.
 - **`watch` mechanism:** interval vs IMAP IDLE. A mechanism choice, decided at build.
 - **Pair/thread export:** whether a minimal one ships in M3 or waits for M6.
 - **Provider sampling (evidence task, not done):** sample one reply each from Yahoo, iCloud, Proton and Fastmail to see whether they sign In-Reply-To/References. Signing is per-provider configuration; only Gmail and Microsoft are measured.

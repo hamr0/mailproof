@@ -242,6 +242,35 @@ cron instead of a loop (exit 75 on a held lock is normal; the next run continues
 
 **Scripting.** `--json` prints exactly one JSON document on stdout (`watch` prints one line per tick); errors go to stderr and stdout stays empty, so check the exit code first. Exit codes: 0 done (a partial sync is still 0), 2 a check ran and the answer is no, 64 bad usage, 75 try again later (lock held, server unreachable, throttled, secret command failed), 77 permission (config mode) or a refused login, 1 anything else. `mailproof-sync` stays available for a single run from flags and the environment; it shares the secret handling and exit codes.
 
+## AI agents: the MCP server (`mailproof mcp`)
+
+`mailproof mcp` is a stdio MCP server over the same accounts and config as the CLI (SPEC B12). Register it once:
+
+```bash
+claude mcp add mailproof -- mailproof mcp                      # every account in the config, one server
+claude mcp add mailproof-work -- mailproof mcp --account work  # one server per account, so each gets its own rules
+```
+
+or put `{ "command": "mailproof", "args": ["mcp"] }` under `mcpServers` in `.mcp.json`. Every account-bound tool takes `account` (optional with one account, required with two or more; the names are an enum in the schema); `accounts` lists them (names and paths, no secrets).
+
+**Tools** (named like the library methods): read `accounts`, `list`, `get`, `copies`, `counterparties`, `linked`, `verify`, `verifyRecord`, `proofParts`, `checkProfile`, `replyFacts`, `matchBody`, `matchFile`, `rawEmail`, `attachment`, `check`; write `record`, `replyText`, `sync`, `upgradeStamps`; destructive `forget`, `prune`. All are always listed; there is no read-only switch. Results are JSON text; ids may be a unique prefix of 8+ hex.
+
+**Scoping: do it by tool name.** Each tool carries `readOnlyHint`, `destructiveHint`, `idempotentHint` and `openWorldHint`, but **Claude Code (2.1.322, measured, findings F30) does not act on them**: it refuses every MCP tool that is not allowed, read-only ones included, and once `forget` is allowed it runs it. Allow what you want by name, for example `--allowedTools 'mcp__mailproof__list' 'mcp__mailproof__get' 'mcp__mailproof__replyFacts'`, and leave `forget`, `prune`, `sync`, `record`, `rawEmail` and `attachment` out unless you mean it (`rawEmail` and `attachment` hand over other people's mail although they are read-only). A client with a hint-based policy can use the annotations directly.
+
+**Known limits.** The hints are advisory metadata; no current client enforces them. To scope in Claude Code use per-tool allow rules by name, or one server per account (`mailproof mcp --account <name>`). The preview-then-`confirm: true` step is the only server-side guard for `forget` and `prune`; if your client allows every tool, a model can run them after a preview. On shutdown the server waits 5 s for in-flight calls, but a call still blocked in I/O can keep the process alive until its own timeout (measured: a `sync` stuck connecting held it 29.7 s, the 30 s `SYNC_CONNECT_MS`; worst case `SYNC_SOCKET_MS`, 5 min); MCP clients normally kill the child.
+
+**Deleting.** `forget` and `prune` delete nothing unless called with `confirm: true`; without it they return `{ executed: false, preview, next }` (the library's own dry run). This makes the model show you the plan; it is not a human gate, because a model can pass `confirm: true` itself. The gate is your client's allow list.
+
+**Files in and out.** A tool that takes an email or a file takes `base64` (the exact bytes) or an absolute `path`. Paths are refused until the config lists folders: `"mcp": { "inputDirs": ["~/Downloads"], "outputDir": "~/mailproof-out" }` (symlinks out of those folders, directories and FIFOs are refused). `rawEmail` and `attachment` return the bytes as an embedded blob (Claude Code saves it to a file and tells the model the path) up to `maxBinaryBytes` (default 1 MiB); for anything larger, or to put the file where you want it, pass `saveTo` (a file name, written into `outputDir`, never overwriting). `maxResponseBytes` (default 512 KiB) caps a result; a result over it is an error that says how to narrow the call, never a truncation.
+
+**`sync` from an agent** reads at most 100 messages per folder per call (about 8 s here; the argument can lower it); call again while `complete` is false. A login refused is `ERR_IMAP_AUTH` and not retryable.
+
+**Errors** are results with `isError: true` and `{"error":{"code":"ERR_...","message":"...","retryable":true|false}}`: the library's code, `ERR_BAD_ARGUMENT` for a bad argument or unknown account, `ERR_PATH_NOT_ALLOWED`, `ERR_TOO_LARGE`, `ERR_RESPONSE_TOO_LARGE`, `ERR_INTERNAL`. `retryable` is true for a held lock or a transient IMAP failure (the CLI's exit 75 set).
+
+**Untrusted data.** Addresses, subjects, reply text, filenames and Message-IDs come from third parties. Every tool description says so; a rubric in your consumer decides, never the mail's own words (see "Reading a reply").
+
+**Audit and logs.** Every write or destructive call appends one JSON line to `~/.local/state/mailproof/mcp.log` (time, account, tool, a summary of the arguments without bytes, outcome); at start, a file over 1 MiB is renamed to `mcp.log.1` (replacing the older one) and a new one starts, so at most about 2 MiB stay on disk. stdout carries only protocol and stderr stays silent; `--log <file>` keeps diagnostics. Several accounts share one warm worker thread; a slow message on one account delays `check`, `record` and `replyFacts` on the others.
+
 ## Worker thread and deadline
 
 `check()` and `record()` parse and verify in a warm worker thread; the commit, the lock and git stay on your thread. The thread is killed, and the message recorded `unverified` as `over limit: time` or `over limit: memory`, when one message uses more than 15 s of the thread's CPU, 120 s of busy wall time (DNS waits excluded) or 1,536 MB of memory. It backs up the input limits, which stay the first line. Waiting in the queue behind other messages does not count. If the thread dies for any other reason, the message is recorded `over limit: crash` and the next one gets a fresh worker. A worker that cannot start at all (before it is ready) rejects the call instead, and nothing is recorded.

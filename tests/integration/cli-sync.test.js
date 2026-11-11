@@ -183,6 +183,7 @@ test('--help prints usage and exits 0', async () => {
   assert.equal(r.code, 0);
   assert.match(r.stdout, /Usage: mailproof-sync/);
   assert.match(r.stdout, /Exit codes/);
+  assert.match(r.stdout, /77 .*login refused[^]*pass-file/);
 });
 
 test('a --pass-command that reads stdin to EOF is not left waiting on an open pipe', async () => {

@@ -23,12 +23,22 @@ import { TRAIL_NAME_RE } from '../proof/trail.js';
  * @property {string | null} otsBin
  * @property {string | null} backupRemote
  */
-/** @typedef {{ v: 1, accounts: Record<string, Account> }} Config */
+/**
+ * The server-wide `mcp` block (SPEC B12.2). Absent from the file: the defaults of `mcpSettings`.
+ * @typedef {Object} McpConfig
+ * @property {string[]} inputDirs  Absolute folders a tool may read a `path` from; empty refuses every path.
+ * @property {string | null} outputDir  The one folder `saveTo` may write into; null refuses `saveTo`.
+ * @property {number} maxResponseBytes  Cap on a result's text.
+ * @property {number} maxBinaryBytes  Cap on a returned raw email or attachment.
+ */
+/** @typedef {{ v: 1, accounts: Record<string, Account>, mcp?: McpConfig }} Config */
 
 export const ACCOUNT_NAME_RE = /^[a-z0-9][a-z0-9_-]{0,31}$/;
 const PLAINTEXT_KEYS = new Set(['pass', 'password', 'secret']);
 const ACCOUNT_KEYS = new Set(['user', 'host', 'port', 'folders', 'sent', 'trailDir', 'trail', 'passCommand', 'passFile', 'accessTokenCommand', 'content', 'ots', 'backupRemote']);
 const CONTENT_KEYS = new Set(['store', 'attachments', 'days', 'sweepDays']);
+const MCP_KEYS = new Set(['inputDirs', 'outputDir', 'maxResponseBytes', 'maxBinaryBytes']);
+export const MCP_DEFAULTS = Object.freeze({ maxResponseBytes: 524288, maxBinaryBytes: 1048576 });
 const SECRET_KEYS = ['passCommand', 'passFile', 'accessTokenCommand'];
 
 /** The text `mailproof config template` prints (it validates, see the tests). */
@@ -130,7 +140,8 @@ export function validateConfig(json, env) {
   /** @type {string[]} */
   const problems = [];
   if (!isObj(json)) return { config: null, problems: ['config: must be a JSON object'] };
-  for (const k of Object.keys(json)) if (k !== 'v' && k !== 'accounts') problems.push(`${k}: unknown key`);
+  for (const k of Object.keys(json)) if (k !== 'v' && k !== 'accounts' && k !== 'mcp') problems.push(`${k}: unknown key`);
+  const mcp = json.mcp === undefined ? undefined : validateMcp(json.mcp, env, problems);
   if (json.v !== 1) problems.push('v: must be 1');
   if (!isObj(json.accounts)) { problems.push('accounts: must be an object of accounts'); return { config: null, problems }; }
   /** @type {Record<string, Account>} */
@@ -230,7 +241,55 @@ export function validateConfig(json, env) {
     }
   }
   if (Object.keys(json.accounts).length === 0) problems.push('accounts: at least one account is required');
-  return problems.length ? { config: null, problems } : { config: { v: 1, accounts }, problems };
+  return problems.length ? { config: null, problems } : { config: { v: 1, accounts, ...(mcp ? { mcp } : {}) }, problems };
+}
+
+/**
+ * Validate the `mcp` block (SPEC B12.2): strict, every problem names its JSON path.
+ * @param {unknown} raw
+ * @param {Record<string, string | undefined>} env
+ * @param {string[]} problems
+ * @returns {McpConfig | undefined}
+ */
+function validateMcp(raw, env, problems) {
+  if (!isObj(raw)) { problems.push('mcp: must be an object'); return undefined; }
+  const before = problems.length;
+  for (const k of Object.keys(raw)) if (!MCP_KEYS.has(k)) problems.push(`mcp.${k}: unknown key`);
+  /** @type {string[]} */
+  const inputDirs = [];
+  if (raw.inputDirs !== undefined) {
+    if (!Array.isArray(raw.inputDirs)) problems.push('mcp.inputDirs: must be an array of absolute directories');
+    else raw.inputDirs.forEach((d, i) => {
+      const dir = typeof d === 'string' ? expandHome(d, env) : '';
+      if (!dir || !path.isAbsolute(dir)) problems.push(`mcp.inputDirs[${i}]: must be an absolute path (or start with ~/)`);
+      else inputDirs.push(path.resolve(dir));
+    });
+  }
+  /** @type {string | null} */
+  let outputDir = null;
+  if (raw.outputDir !== undefined) {
+    const dir = typeof raw.outputDir === 'string' ? expandHome(raw.outputDir, env) : '';
+    if (!dir || !path.isAbsolute(dir)) problems.push('mcp.outputDir: must be an absolute path (or start with ~/)');
+    else outputDir = path.resolve(dir);
+  }
+  /** @type {{ maxResponseBytes: number, maxBinaryBytes: number }} */
+  const sizes = { maxResponseBytes: MCP_DEFAULTS.maxResponseBytes, maxBinaryBytes: MCP_DEFAULTS.maxBinaryBytes };
+  for (const k of /** @type {const} */ (['maxResponseBytes', 'maxBinaryBytes'])) {
+    if (raw[k] === undefined) continue;
+    const v = raw[k];
+    if (!Number.isInteger(v) || /** @type {number} */ (v) < 1024) problems.push(`mcp.${k}: must be an integer of at least 1024`);
+    else sizes[k] = /** @type {number} */ (v);
+  }
+  return problems.length === before ? { inputDirs, outputDir, ...sizes } : undefined;
+}
+
+/**
+ * The `mcp` settings with the defaults filled in.
+ * @param {Config} config
+ * @returns {McpConfig}
+ */
+export function mcpSettings(config) {
+  return config.mcp ?? { inputDirs: [], outputDir: null, ...MCP_DEFAULTS };
 }
 
 /**

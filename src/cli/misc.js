@@ -2,9 +2,11 @@
 
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
+import path from 'node:path';
 import { UsageError, EX_OK, EX_ERR, EX_USAGE } from './errors.js';
 import { parseFolders, parseSent } from './parse.js';
-import { openAccount, print, warn, printJson } from './session.js';
+import { openAccount, loadCtxConfig, print, warn, printJson } from './session.js';
+import { serveMcp } from '../mcp/server.js';
 import { syncOnce, syncText } from './sync-op.js';
 import { configPath, TEMPLATE, loadConfig, ConfigError } from './config.js';
 import { addAccountWizard } from './wizard.js';
@@ -96,7 +98,15 @@ export async function exportCmd(a, ctx) {
 
 /** @param {Args} a @param {Ctx} ctx @returns {Promise<number>} */
 export async function mcpCmd(a, ctx) {
-  void a;
-  warn(ctx, 'mailproof: not built yet (M3 step 6)');
-  return EX_USAGE;
+  const stdin = ctx.stdin;
+  if (!stdin || /** @type {{ isTTY?: boolean }} */ (stdin).isTTY) {
+    warn(ctx, 'mailproof mcp is a stdio server: register it in your MCP client');
+    return EX_USAGE;
+  }
+  const { file, config } = await loadCtxConfig(a, ctx);   // a bad config or an unknown --account ends here (64, 77) before anything is read
+  return serveMcp({
+    config, accountFlag: a.values.account, env: ctx.env, deps: ctx.deps, configFile: file, version: version(),
+    ...(a.values.log !== undefined ? { logFile: path.resolve(a.values.log) } : {}),
+    stdin, write: (s) => ctx.stdout.write(s), signal: ctx.signal,
+  });
 }
