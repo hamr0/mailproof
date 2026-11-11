@@ -1,6 +1,6 @@
 # mailproof v2 — PRD
 
-> **Status:** v2 is released through 3.3.0 (2026-11-11, the latest). M0-M2 and M3 are complete: M3 steps 1-3 shipped in 3.0.0, `replyFacts` and the `mailproof` CLI in 3.1.0, and the MCP server (`mailproof mcp`, SPEC B12) in 3.3.0. **M4 (seal and pair export) is specified and in progress on `feat/m4-export`**; M5 and M6 are parked. 1.x is frozen at tag `v1.4.0` (v1 code archived in `archive/v1/`; no `v1` branch).
+> **Status:** v2 is released through 3.3.0 (2026-11-11, the latest). M0-M2 and M3 are complete: M3 steps 1-3 shipped in 3.0.0, `replyFacts` and the `mailproof` CLI in 3.1.0, and the MCP server (`mailproof mcp`, SPEC B12) in 3.3.0. **M4 (seal and pair export) is specified and in progress on `feat/m4-export`**; M5 (a `record` command plus a self-hosting guide) is specified for after M4; M6 is parked. 1.x is frozen at tag `v1.4.0` (v1 code archived in `archive/v1/`; no `v1` branch).
 > **Owner:** hamr0 · **Last updated:** 2026-11-11
 >
 > **For future Claude:** this PRD wins on intent and scope. The *why* behind each choice is in
@@ -123,7 +123,7 @@ Honest limits for "I sent you this":
   (a Gmail-address Sent copy: moot, [F3](findings.md)).
 - The strong proof is the counterparty's **signed reply** that references my Message-ID.
 - If they never reply, only my own timestamped record exists.
-- Only self-hosting (M5) gives signed copies of what I send.
+- Only self-hosting (M5, [guide](self-hosting.md)) gives signed copies of what I send.
 
 ## 6. Go / no-go (M0)
 
@@ -388,9 +388,18 @@ Calendar or iTIP handling; an agreement ceremony; raw email or attachment copies
 
 After M4 the v2 promise of §1 and §2 is met. "I sent you this" without a reply stays partial until signed own sends exist (M5).
 
-### M5 — Hosting your own (PARKED)
+### M5 — Hosting your own (specified, after M4)
 
-Parked 2026-11-11. If revived, it is a generic "Postfix + OpenDKIM + pipe" recipe (its own doc, or a privcloud module or Docker image), **never inside the npm package** (mailproof must not become a mail server). Signing default is opendkim (key stays in the MTA); in-library signing via mailauth's `dkimSign` is an option. Prior art: knowless `OPS.md` §5 for the SPF/DKIM/PTR operator steps, and gitdone's Postfix pipe transport with exit 75 (EX_TEMPFAIL) handling for inbound delivery (the same pattern as `ERR_TRAIL_LOCKED` to 75). knowless was asked on 2026-11-11 and declined: it has no MTA or signer, and hosting would break its auth-mail-only rule.
+**Status:** re-scoped 2026-11-11 by the owner. Reasons and options: [decisions-log](decisions-log.md) entry "M5: a record command and a self-hosting guide, not a Docker image". Two deliverables, built after M4:
+
+1. **`mailproof record --direction in|out`**: a small CLI command that reads one raw email from stdin and calls the existing `record()` (outline: [SPEC B14](SPEC.md)). It is in the npm package like every other command.
+2. **A self-hosting guide**, [`self-hosting.md`](self-hosting.md): the step-by-step setup of the user's own Postfix + OpenDKIM server that signs their outbound mail and pipes every mail in and out into `mailproof record`. A guide in `docs/`, **never code in the npm package**.
+
+**No Docker image.** The hard parts (DNS, PTR, port 25, IP reputation) cannot be containerised, and an image would make mailproof a mail-server product to patch. In-library signing (mailauth's `dkimSign`) stays an option, not the default: the key stays in the MTA. Prior art: the gitdone operators' records and knowless `OPS.md` §5 (knowless declined to host anything, 2026-11-11).
+
+**Evidence so far (gitdone operators, real box, 2026-11-11):** a locally submitted, locally delivered copy of an outbound message carries OpenDKIM's `DKIM-Signature` and verifies. The OpenDKIM default `h=` lists only `From:To:Subject:Date:From`, so the guide sets `SignHeaders` (Message-ID, In-Reply-To, References, ...) explicitly; that line is recommended, not yet tested. **One open evidence task:** prove on a real box, end to end with `mailproof record` and `mailproof verify`, that the `sender_bcc_maps` copy carries the DKIM-Signature (strongly implied by the mechanism: the same queue file; not tested). The guide's "verified and unverified" table tracks every other step.
+
+**Out of scope:** an image, a mail-server product, sending (mailproof never sends mail), submission (port 587) setup, multi-user hosting.
 
 ### M6 — Zero-knowledge disclosure (PARKED)
 

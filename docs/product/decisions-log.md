@@ -348,3 +348,14 @@ Also: `path` inputs are refused until `mcp.inputDirs` is set (`base64` always al
 5. The PRD M3 open item "Pair/thread export: M3 or M6" is answered: M4.
 **Rationale**: Prefer the simple path and one source of truth: the trail already holds what the owner's case needs, so what is missing is a strong time seal without lock cost, and a way to hand a counterparty a re-checkable bundle. Batch stamping cuts calendar calls and lock time; the manifest chain keeps order and shows other records only as hashes.
 **Consequences**: PRD §7 M4-M6 and §12 Q8 updated; SPEC B13 outlines the wire formats, to be specified at build; B3 and B4.5 (OTS inside the lock, per record) and B11 `export` (exits 64, "needs M6") are shipped text that M4 changes. After M4 the v2 promise (§1, §2) is met; "I sent you this" without a reply stays partial until signed own sends exist (M5). OTS time becomes "no later than", up to the cadence after capture; the git commit keeps the exact capture time.
+
+### Decision: M5: a record command and a self-hosting guide, not a Docker image
+**Date**: 2026-11-11
+**Status**: Accepted (owner: hamr0); guide written, command specified (SPEC B14), not built
+**Context**: M5 ("hosting your own") was parked on 2026-11-11 with the options "a generic recipe, a privcloud module or a Docker image". Signed copies of what the user sends need the user's own MTA to sign, and a way to pipe mail in and out into `record()`. The gitdone operators (real box, 2026-11-11) supplied the Postfix/OpenDKIM facts and one test: a locally delivered copy of an outbound mail carries a valid DKIM-Signature.
+**Decision**:
+1. **Two deliverables:** a CLI command `mailproof record --direction in|out` (stdin to `record()`, SPEC B14) in the npm package, and a step-by-step guide `docs/product/self-hosting.md` for Postfix + OpenDKIM. After M4.
+2. **No Docker image.** Options: an image (rejected), a privcloud module (rejected: a second place to keep current), a recipe only with no command (rejected: every user would write the same stdin wrapper).
+3. The guide marks every step proven or UNVERIFIED, and uses the multi-domain OpenDKIM form with an explicit `SignHeaders` (the default signs no Message-ID).
+**Rationale**: The hard parts are DNS, PTR, port 25 and IP reputation, none of which a container can set; an image would also make mailproof a mail-server product that must be patched. The command is the one piece that is code, tiny, and shared by every user. Simple path, one source of truth.
+**Consequences**: PRD §7 M5 rewritten; SPEC gains B14 (outline); one open evidence task (the `sender_bcc_maps` copy end to end); a pipe-only account may need B11.2 to allow a config with no IMAP block (to settle at build). Postfix bounces sysexits codes (64, 77), so the guide's wrapper maps every failure to 75 rather than the command changing its codes.

@@ -28,14 +28,16 @@ Further tiers (process, ops) and docs (GUIDE) appear as they earn their place.
 
 1. **How do I use mailproof (surfaces, reading a reply, capture, running on a timer, operations)?** →
    [`product/usage-guide.md`](product/usage-guide.md).
-2. **What is mailproof v2, and what does it refuse to do?** →
+2. **How do I run my own mail server so my outbound mail is signed (M5)?** →
+   [`product/self-hosting.md`](product/self-hosting.md).
+3. **What is mailproof v2, and what does it refuse to do?** →
    [`product/PRD.md`](product/PRD.md) — see §1 (problem), §3 (trust rule),
    §7 (modules), and §10 (out of scope).
-3. **How was v1 built (extraction boundary, wire formats)?** →
+4. **How was v1 built (extraction boundary, wire formats)?** →
    [`../archive/v1/docs/DESIGN.md`](../archive/v1/docs/DESIGN.md) and
    [`product/SPEC.md`](product/SPEC.md) (v1; being superseded).
-4. **Why was X decided?** → [`product/decisions-log.md`](product/decisions-log.md).
-5. **What did the POCs prove, with what evidence?** →
+5. **Why was X decided?** → [`product/decisions-log.md`](product/decisions-log.md).
+6. **What did the POCs prove, with what evidence?** →
    [`product/findings.md`](product/findings.md).
 
 ## Document precedence
