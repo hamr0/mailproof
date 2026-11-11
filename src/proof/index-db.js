@@ -394,7 +394,7 @@ function isoOf(v, what) {
 /**
  * `totalSource` says what `total` counts: `index` = the readable records the index holds; `git` = the record files at
  * HEAD, which also counts a committed record that cannot be read (the index build drops those), so it can be larger.
- * @typedef {{ state: 'absent' | 'present' | 'stale' | 'unreadable' | 'unknown', total: number, totalSource: 'index' | 'git', in: number | null, out: number | null, oldest: string | null, newest: string | null }} IndexOverview
+ * @typedef {{ state: 'absent' | 'present' | 'stale' | 'unreadable' | 'unknown', total: number, totalSource: 'index' | 'git', in: number | null, out: number | null, oldest: string | null, newest: string | null, verified: number | null, unverified: number | null }} IndexOverview
  */
 
 /**
@@ -425,16 +425,16 @@ export async function indexOverview(cfg, file) {
       d = opened;
       const meta = (/** @type {string} */ k) => /** @type {{ v?: string } | undefined} */ (opened.prepare('SELECT v FROM meta WHERE k = ?').get(k))?.v;
       if (meta('head') === head && meta('schema') === String(SCHEMA)) {
-        const r = /** @type {{ n: number, i: number | null, o: number | null, lo: string | null, hi: string | null }} */ (opened.prepare(
-          "SELECT COUNT(*) AS n, SUM(direction = 'in') AS i, SUM(direction = 'out') AS o, MIN(captured) AS lo, MAX(captured) AS hi FROM rec").get());
-        return { state: 'present', total: r.n, totalSource: 'index', in: r.i ?? 0, out: r.o ?? 0, oldest: r.lo, newest: r.hi };
+        const r = /** @type {{ n: number, i: number | null, o: number | null, lo: string | null, hi: string | null, v: number | null, u: number | null }} */ (opened.prepare(
+          "SELECT COUNT(*) AS n, SUM(direction = 'in') AS i, SUM(direction = 'out') AS o, MIN(captured) AS lo, MAX(captured) AS hi, SUM(direction = 'in' AND live = 'verified') AS v, SUM(direction = 'in' AND (live IS NULL OR live != 'verified')) AS u FROM rec").get());
+        return { state: 'present', total: r.n, totalSource: 'index', in: r.i ?? 0, out: r.o ?? 0, oldest: r.lo, newest: r.hi, verified: r.v ?? 0, unverified: r.u ?? 0 };
       }
     } catch (e) { state = /** @type {any} */ (e)?.code === 'ERR_INDEX_UNAVAILABLE' ? 'unknown' : 'unreadable'; }
     finally { try { d?.close(); } catch { /* already closed */ } }
   }
   let total = 0;
   if (head !== null) await gitLines(cfg.root, ['ls-tree', '-r', '--name-only', '-z', head, '--', 'records'], (p) => { const r = parseRecordPath(p); if (r && !r.ots) total++; }, { sep: '\0' });
-  return { state, total, totalSource: 'git', in: null, out: null, oldest: null, newest: null };
+  return { state, total, totalSource: 'git', in: null, out: null, oldest: null, newest: null, verified: null, unverified: null };
 }
 
 /**

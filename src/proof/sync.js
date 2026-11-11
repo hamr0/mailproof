@@ -28,6 +28,16 @@ const EMPTY_WINDOWS_PER_PERSIST = 100;
  * @property {number} [maxMessages]  Per folder per run; can only lower the limits.js value.
  * @property {number} [maxBytes]  Per folder per run; can only lower the limits.js value.
  * @property {{ ca?: string | Buffer | Array<string | Buffer> }} [tls]  Extra CA (private server, tests). Certificate checking is never off.
+ * @property {(p: SyncProgress) => void} [onProgress]  Called after each message handled in a folder (SPEC B4.1): a progress hook for a caller that shows a line. Optional and additive: absent, nothing changes. It is called synchronously, its return value is ignored and a throw is swallowed, so it can never fail or slow a run.
+ */
+
+/**
+ * @typedef {Object} SyncProgress
+ * @property {string} folder
+ * @property {'in' | 'out'} direction
+ * @property {number} done  Messages handled in this folder in this run (recorded, duplicate, over limit and skipped all count).
+ * @property {number} uid  The highest UID handled so far in this folder.
+ * @property {number} uidMax  The folder's highest UID at the start of its pass (`uid / uidMax` is a progress fraction by UID, not by message count).
  */
 
 /**
@@ -83,7 +93,7 @@ const SYNC_LIMITS = Object.freeze({
 });
 /** @typedef {{ [K in keyof typeof SYNC_LIMITS]: (typeof SYNC_LIMITS)[K] extends readonly number[] ? number[] : number }} SyncLimits */
 
-const SYNC_KEYS = new Set(['host', 'port', 'user', 'auth', 'folders', 'sent', 'maxMessages', 'maxBytes', 'tls']);
+const SYNC_KEYS = new Set(['host', 'port', 'user', 'auth', 'folders', 'sent', 'maxMessages', 'maxBytes', 'tls', 'onProgress']);
 const ERROR_MESSAGE_MAX = 300;
 
 /** @param {string} code @param {string} message @returns {Error & { code: string }} */
@@ -96,7 +106,7 @@ const posInt = (v) => typeof v === 'number' && Number.isSafeInteger(v) && v > 0;
  * Validate the caller's options. Throws a TypeError before any connection.
  * @param {unknown} opts
  * @returns {{ host: string, port: number, user: string, auth: { pass: string } | { accessToken: string }, folders: string[],
- *   sent: boolean | string, maxMessages: number | null, maxBytes: number | null, tls: { ca?: string | Buffer | Array<string | Buffer> } | undefined }}
+ *   sent: boolean | string, maxMessages: number | null, maxBytes: number | null, tls: { ca?: string | Buffer | Array<string | Buffer> } | undefined, onProgress: ((p: SyncProgress) => void) | null }}
  */
 function parseSyncOptions(opts) {
   if (!opts || typeof opts !== 'object' || Array.isArray(opts)) throw new TypeError('sync: options object required');
@@ -127,8 +137,9 @@ function parseSyncOptions(opts) {
     for (const k of Object.keys(o.tls)) if (k !== 'ca') throw new TypeError(`sync: unknown tls option "${k}" (certificate checking is never off; only tls.ca can be added)`);
     tls = o.tls.ca === undefined ? {} : { ca: o.tls.ca };
   }
+  if (o.onProgress !== undefined && typeof o.onProgress !== 'function') throw new TypeError('sync: onProgress must be a function');
   return {
-    host: o.host, port, user: o.user,
+    host: o.host, port, user: o.user, onProgress: o.onProgress ?? null,
     auth: hasPass ? { pass: a.pass } : { accessToken: a.accessToken },
     folders: [...folders], sent, maxMessages: o.maxMessages ?? null, maxBytes: o.maxBytes ?? null, tls,
   };
@@ -460,6 +471,7 @@ async function runSync(host, rawOpts, deps) {
               last = uid;
               e.last_uid = last;
               await persist(folderPath, sel.uidvalidity, last);
+              if (opts.onProgress) { try { opts.onProgress({ folder: folderPath, direction, done: handled, uid, uidMax: target }); } catch { /* a progress hook never fails a run */ } }
             }
             last = hi; // everything in (last, hi] was handled; UIDs with no message are gone
             e.last_uid = last;
