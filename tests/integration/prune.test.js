@@ -132,7 +132,7 @@ test('4. options are validated before anything is read', async () => {
 test('5. OpenTimestamps stamps of kept records stay byte-identical; those of removed records go', async () => {
   const bin = path.join(makeTmpDir('mp-prune-ots-'), 'ots');
   fs.writeFileSync(bin, '#!/bin/sh\n[ "$1" = stamp ] && cp "$2" "$2.ots"\n', { mode: 0o755 });
-  const t = await makeTrail({ extra: { otsBin: bin } });
+  const t = await makeTrail({ extra: { otsBin: bin, stamp: { mode: 'record' } } });
   assert.equal(ls(t.root).filter((p) => p.endsWith('.ots')).length, 10);
   const stamps = new Map(ls(t.root).filter((p) => p.endsWith('.ots')).map((p) => [p, fs.readFileSync(path.join(t.root, p))]));
   const r = await t.mp.prune({ before: t.cutoff });

@@ -85,7 +85,7 @@ test('read-only command log: only the allowed commands, EXAMINE not SELECT, BODY
     },
   });
   const trailDir = makeTmpDir('mp-imap-ro-');
-  const mp = new Mailproof({ trailDir, trail: 't', worker: { size: 0 } });
+  const mp = new Mailproof({ trailDir, trail: 't', worker: { size: 0 }, otsBin: null });
   const res = await mp.sync({ host: '127.0.0.1', port: srv.port, user: USER, auth: { pass: SECRET }, tls: { ca: CERT.cert } });
   assert.equal(res.complete, true, JSON.stringify(res));
   assert.deepEqual(res.folders.map((f) => [f.folder, f.direction, f.recorded]), [['INBOX', 'in', 3], ['[Gmail]/Sent Mail', 'out', 1]]);
@@ -133,7 +133,7 @@ test('17. bytes are exact (bare LF, CRLF, FF FE 00); folder names with spaces an
     await assert.rejects(() => s.select('Nope/Missing'), { code: 'ERR_IMAP_NO_FOLDER' });
   });
   const trailDir = makeTmpDir('mp-imap-bytes-');
-  const mp = new Mailproof({ trailDir, trail: 't', worker: { size: 0 } });
+  const mp = new Mailproof({ trailDir, trail: 't', worker: { size: 0 }, otsBin: null });
   const res = await mp.sync({ host: '127.0.0.1', port: srv.port, user: USER, auth: { pass: SECRET }, tls: { ca: CERT.cert } });
   assert.equal(res.folders[0].recorded, 1, JSON.stringify(res));
   const rec = await mp.get((await mp.list())[0].id);
@@ -168,7 +168,7 @@ test('18. literals: a short literal rejects and returns no Buffer; a server igno
   });
   // a short literal never reaches record(): sync.js sees the drop, reconnects and never records partial bytes
   const trailDir = makeTmpDir('mp-imap-short-');
-  const mp = new Mailproof({ trailDir, trail: 't', worker: { size: 0 } });
+  const mp = new Mailproof({ trailDir, trail: 't', worker: { size: 0 }, otsBin: null });
   const host = { root: mp.root, trail: mp.trail, record: mp.record, recordDigest: (d, c) => mp._recordDigest(d, c) };
   const res = await runSync(host, { host: '127.0.0.1', port: srv.port, user: USER, auth: { pass: SECRET }, tls: { ca: CERT.cert }, sent: false }, { openSession, sleep: async () => {} });
   assert.equal(res.folders[0].error.code, 'ERR_IMAP_PROTOCOL');
@@ -207,7 +207,7 @@ test('a lying size and a UIDVALIDITY change through the real wrapper, end to end
   const big = MAX_TOTAL_BYTES + 1024 * 1024;
   const srv = await serve({ folders: { INBOX: { msgs: [{ uid: 1, genSize: big, announcedSize: 1024 }, { uid: 2, raw: plainMail(2) }] } } });
   const trailDir = makeTmpDir('mp-imap-lie-');
-  const mp = new Mailproof({ trailDir, trail: 't', worker: { size: 0 } });
+  const mp = new Mailproof({ trailDir, trail: 't', worker: { size: 0 }, otsBin: null });
   const opts = { host: '127.0.0.1', port: srv.port, user: USER, auth: { pass: SECRET }, tls: { ca: CERT.cert }, sent: false };
   const res = await mp.sync(opts);
   assert.deepEqual([res.folders[0].recorded, res.folders[0].over_limit, res.complete], [2, 1, true], JSON.stringify(res));

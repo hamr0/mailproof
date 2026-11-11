@@ -52,6 +52,7 @@ const EMPTY_WINDOWS_PER_PERSIST = 100;
  * @typedef {Object} SyncResult
  * @property {boolean} complete  True when every folder reached the server's end with no error and no cap hit.
  * @property {SyncFolderResult[]} folders
+ * @property {import('./stamp.js').StampResult | null} stamp  The automatic stamp job at the end of the run (SPEC B13.1.7): its result, or null when it did not run (OpenTimestamps off).
  */
 
 /**
@@ -273,6 +274,7 @@ const realSleep = (ms) => new Promise((r) => setTimeout(r, ms));
  * @property {string} trail
  * @property {(raw: Buffer, ctx: { direction: 'in' | 'out', source: string }) => Promise<{ duplicate: boolean, record?: import('./types.js').MpRecord }>} record
  * @property {() => Promise<unknown>} [expireContent]  Retention sweep of the content store, called once at the end of a run (errors ignored).
+ * @property {() => Promise<import('./stamp.js').StampResult | null>} [stamp]  The automatic stamp job (when due), called after the sweep, inside the sync lock; it never rejects.
  * @property {(digest: { raw_sha256: string, size: number }, ctx: { direction: 'in' | 'out', source: string }) => Promise<{ duplicate: boolean, record?: import('./types.js').MpRecord }>} recordDigest
  */
 
@@ -582,7 +584,9 @@ async function runSync(host, rawOpts, deps) {
     }
     // Retention (SPEC B7): once per run, after the mailbox work. A failure here never fails the run (records are in).
     if (host.expireContent) await host.expireContent().catch(() => {});
-    return { complete: results.every((r) => r.complete), folders: results };
+    // The seal (SPEC B13.1.7): the automatic stamp job, when due, still inside the sync lock. A stamp problem never fails the run.
+    const stamp = host.stamp ? await host.stamp().catch(() => null) : null;
+    return { complete: results.every((r) => r.complete), folders: results, stamp };
   }, SYNC_LOCK);
 }
 

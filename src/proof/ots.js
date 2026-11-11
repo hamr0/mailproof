@@ -196,4 +196,7 @@ function createOts({ otsBin, timeoutMs = DEFAULT_OTS_TIMEOUT_MS } = {}) {
   return { stampFile, upgradeProof, readBlockHeight };
 }
 
-export { DEFAULT_OTS_TIMEOUT_MS, createOts, parseOtsBlockHeight };
+/** The one plain message for a missing `ots` binary (StampResult.error, CLI output): capture is never blocked by it. */
+const OTS_MISSING_MESSAGE = 'ots not installed: records are not sealed; install opentimestamps-client or set ots: false';
+
+export { OTS_MISSING_MESSAGE, DEFAULT_OTS_TIMEOUT_MS, createOts, parseOtsBlockHeight };

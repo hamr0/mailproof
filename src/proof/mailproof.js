@@ -9,6 +9,9 @@ import { workerConfig, leasePool } from './pool.js';
 import { guardResolver, systemResolver } from './resolver-guard.js';
 import { engine } from './verdict.js';
 import { createOts, DEFAULT_OTS_TIMEOUT_MS } from './ots.js';
+import { runStamp, parseStampOptions } from './stamp.js';
+import { findSeal } from './seal.js';
+import { STAMP_OTS_TIMEOUT_MS } from './limits.js';
 import { verifyRecord, matchBodyRecord, matchFileRecord } from './recheck.js';
 import { checkProfile } from './profile.js';
 import { TRAIL_NAME_RE, RECORD_ID_RE, DEFAULT_LOCK_TIMEOUT_MS, commitRecord, commitFiles, readRecord, withTrailLock, trailLockFile } from './trail.js';
@@ -38,12 +41,13 @@ const OTS_MIN_TIMEOUT_MS = 5000; // floor for the `ots` timeout, however short l
  * @property {string} trailDir  Directory holding the trails; each trail is a git repo inside it.
  * @property {string} [trail]  Trail name (default "default").
  * @property {(name: string, type?: string) => Promise<any>} [resolver]  mailauth-compatible DNS resolver (tests inject one). A lookup it has not answered within 5 s is answered as the error `dns timeout` (`code: 'ETIMEOUT'`). It must return plain data, as `node:dns` does (a value structured clone refuses, such as a function, is answered as a DNS error, `code: 'EBADRESP'`).
- * @property {string | null} [otsBin]  Path to the `ots` binary; null/absent keeps OpenTimestamps off.
+ * @property {string | null} [otsBin]  The `ots` binary (OpenTimestamps client). Absent: ON, `ots` from PATH (the default since M4). A string: on, that binary. `null`: OFF (no manifest, no stamp, nothing touched; `record()` reports `ots: 'off'`).
+ * @property {{ mode?: 'batch' | 'record', everyHours?: number }} [stamp]  The seal (SPEC B13.1): `mode` `'batch'` (default) makes `record()` never run `ots`: the stamp job (`stamp()`, run by `sync()` when due) lists new files in a manifest and stamps it once; `'record'` stamps each record inside the trail lock (the 3.3.0 behaviour) and makes no manifests. `everyHours` (1..720, default 6) is the cadence of the automatic run. An unknown key or a bad value throws at construction.
  * @property {() => Date} [now]  Clock (tests inject one).
  * @property {string[]} [trustedSealers]  ARC sealer domains whose chains may yield `forwarded` (live only).
  * @property {import('./pool.js').WorkerOptions} [worker]  The deadline backstop (default on): the parsing and verifying half of `check()`/`record()` runs in a warm worker thread that is killed when one message uses more than `cpuMs` (15000) of the thread's CPU, `wallMs` (120000) of busy wall time (DNS waits excluded) or `maxMemoryMb` (1536) of heap plus external memory. The message is then recorded `unverified` as `over limit: time` / `over limit: memory`; a worker that dies for no nameable reason gives `over limit: crash`. `size` is the number of warm workers (default 1); `size: 0` runs everything in-process, with no backstop. Needs Node 22.19 or later.
  * @property {{ store?: boolean, attachments?: boolean, days?: number, sweepDays?: number }} [content]  The local content store (SPEC B7): the raw email and its attachments, kept beside the trail (`<trailDir>/<trail>.content/`), outside git. `store` (default true) keeps the raw email of every recorded message; `store: false` is "proof only" (nothing is written, the caller supplies raw bytes). `attachments` (default true) also keeps attachment files, once per distinct sha256. `days` (default 730) is how long content is kept after the record's `captured` time. The automatic sweep (`expireContent()`) runs at the end of a `sync()` only when the last sweep is at least `sweepDays` days old (default 7; there is no timer, the first `sync()` after the interval runs it), so content lives between `days` and `days + sweepDays`; an explicit `expireContent()` always runs. Records are never deleted.
- * @property {number} [lockTimeoutMs]  How long `record()` waits for another writer of the same trail (default 30000). On timeout it throws `ERR_TRAIL_LOCKED` and writes nothing. With `otsBin`, the OTS stamp runs inside that lock and is cut off after `clamp(floor(lockTimeoutMs / 3), 5000, 30000)` ms, so a short `lockTimeoutMs` shortens the stamp (5 s floor), and concurrent writers can wait up to that long behind a slow stamp.
+ * @property {number} [lockTimeoutMs]  How long `record()` waits for another writer of the same trail (default 30000). On timeout it throws `ERR_TRAIL_LOCKED` and writes nothing. In `stamp: { mode: 'record' }` the OTS stamp runs inside that lock and is cut off after `clamp(floor(lockTimeoutMs / 3), 5000, 30000)` ms, so a short `lockTimeoutMs` shortens the stamp (5 s floor), and concurrent writers can wait up to that long behind a slow stamp; in the default batch mode `record()` never runs `ots`.
  */
 
 /**
@@ -58,10 +62,10 @@ function otsTimeoutMs(lockTimeoutMs) {
 class Mailproof {
   /**
    * @param {MailproofOptions} opts
-   * @signature new Mailproof({ trailDir: string, trail?: string, resolver?: Function, otsBin?: string|null, now?: () => Date, trustedSealers?: string[], lockTimeoutMs?: number, worker?: { size?: number, cpuMs?: number, wallMs?: number, maxMemoryMb?: number }, content?: { store?: boolean, attachments?: boolean, days?: number, sweepDays?: number } })
+   * @signature new Mailproof({ trailDir: string, trail?: string, resolver?: Function, otsBin?: string|null, stamp?: { mode?: 'batch'|'record', everyHours?: number }, now?: () => Date, trustedSealers?: string[], lockTimeoutMs?: number, worker?: { size?: number, cpuMs?: number, wallMs?: number, maxMemoryMb?: number }, content?: { store?: boolean, attachments?: boolean, days?: number, sweepDays?: number } })
    * @when Start here. Construct one per trail (a git repo of records under `trailDir`), then `record()` each email you want a re-checkable proof of and `verify()` it later, offline. All methods are bound, so `const { verify } = mp` works.
    * @category proof
-   * @fails Throws at construction when `trailDir` is missing, `trail` is not `[a-z0-9][a-z0-9_-]{0,63}`, or `worker` or `content` holds an unknown key or a bad value (`content.store` and `content.attachments` must be booleans, `content.days` and `content.sweepDays` positive integers). Nothing touches the disk until the first `record()`. With `otsBin`, the OTS stamp runs inside the writer lock and is cut off after `clamp(floor(lockTimeoutMs / 3), 5000, 30000)` ms: a short `lockTimeoutMs` shortens the stamp (5 s floor), and concurrent writers can wait up to that long behind a slow stamp.
+   * @fails Throws at construction when `trailDir` is missing, `trail` is not `[a-z0-9][a-z0-9_-]{0,63}`, or `worker`, `content` or `stamp` holds an unknown key or a bad value (`content.store` and `content.attachments` must be booleans, `content.days` and `content.sweepDays` positive integers, `stamp.mode` `batch` or `record`, `stamp.everyHours` an integer 1..720). Nothing touches the disk until the first `record()`. OpenTimestamps is on by default (`otsBin` absent means `ots` from PATH; a missing binary never blocks capture): pass `otsBin: null` to turn it off. In `stamp: { mode: 'record' }` the OTS stamp runs inside the writer lock and is cut off after `clamp(floor(lockTimeoutMs / 3), 5000, 30000)` ms.
    * @example
    * import { Mailproof } from 'mailproof';
    * const mp = new Mailproof({ trailDir: './trails' });
@@ -75,7 +79,9 @@ class Mailproof {
     this.trail = trail;
     this.root = path.resolve(opts.trailDir, trail);
     this.resolver = opts.resolver;
-    this.otsBin = opts.otsBin || null;
+    // M4 (SPEC B13.1.1): OpenTimestamps is ON by default (`ots` from PATH); `otsBin: null` turns the seal off.
+    this.otsBin = opts.otsBin === undefined ? 'ots' : opts.otsBin || null;
+    this.stampOpts = parseStampOptions(opts.stamp);
     this.now = opts.now || (() => new Date());
     this.trustedSealers = opts.trustedSealers || [];
     this.worker = workerConfig(opts.worker);
@@ -90,7 +96,11 @@ class Mailproof {
     this._lease = null;
     this.lockTimeoutMs = Number.isFinite(opts.lockTimeoutMs) && /** @type {number} */ (opts.lockTimeoutMs) >= 0 ? /** @type {number} */ (opts.lockTimeoutMs) : DEFAULT_LOCK_TIMEOUT_MS;
     // The stamp runs inside the trail lock, so it is capped at a third of the lock wait (see otsTimeoutMs).
-    this.ots = this.otsBin ? createOts({ otsBin: this.otsBin, timeoutMs: otsTimeoutMs(this.lockTimeoutMs) }) : null;
+    this.ots = this.otsBin && this.stampOpts.mode === 'record' ? createOts({ otsBin: this.otsBin, timeoutMs: otsTimeoutMs(this.lockTimeoutMs) }) : null;
+    // The stamp job and the upgrade pass run outside the trail lock: their own timeout, not clamped by lockTimeoutMs (SPEC B13.1.5).
+    this.jobOts = this.otsBin ? createOts({ otsBin: this.otsBin, timeoutMs: STAMP_OTS_TIMEOUT_MS }) : null;
+    /** Internal (tests): the seams of the stamp job. @type {import('./stamp.js').StampHooks} */
+    this._stampHooks = {};
     this.check = this.check.bind(this);
     this.record = this.record.bind(this);
     this.verify = this.verify.bind(this);
@@ -112,6 +122,7 @@ class Mailproof {
     this.forget = this.forget.bind(this);
     this.prune = this.prune.bind(this);
     this.upgradeStamps = this.upgradeStamps.bind(this);
+    this.stamp = this.stamp.bind(this);
     this.close = this.close.bind(this);
   }
 
@@ -218,15 +229,15 @@ class Mailproof {
    * Record a message: verdicts + signed-header record + key archive + one git commit.
    * @param {Buffer | string} raw  The raw RFC-822 bytes.
    * @param {{ direction: 'in' | 'out', source?: string, envelope?: Envelope }} ctx
-   * @returns {Promise<{ id: string, duplicate: boolean, commit: string, record?: MpRecord, ots?: 'off' | 'pending' | { error: string }, content?: ContentResult }>}
+   * @returns {Promise<{ id: string, duplicate: boolean, commit: string, record?: MpRecord, ots?: 'off' | 'queued' | 'pending' | { error: string }, content?: ContentResult }>}
    *   `content`: absent when the content store is off (`content.store: false`); else `{ stored, attachments, error? }`: whether the raw email is in the store after this call, how many distinct attachment files are, and the reason when a write failed (the proof is committed regardless). A duplicate of a message whose content is missing (and not yet expired) writes it now.
-   *   `ots`: 'off' unless `otsBin` is set; 'pending' once the stamp is committed beside the record; `{ error }`
+   *   `ots`: 'off' when `otsBin` is null; 'queued' in batch mode (the default: the next stamp job seals it, `record()` never runs `ots`); in `record` mode 'pending' once the stamp is committed beside the record, or `{ error }`
    *   when stamping failed (the record is committed regardless: accept-with-flag).
    * @name Mailproof#record
    * @when Use to keep a proof of an email (one record per distinct copy, marked `direct` / `relayed` / `forward` / `digest`): it stores the signed headers, the signature, the archived key, both verdicts and the body status (`body_status`: did the body match the signed `bh=`, with hints on what changed) as one git commit, and never the body in the trail. With the content store on (the default) the raw email and its attachments are also kept beside the trail, outside git, for `rawEmail()`, `attachment()`, `replyText({ id })` and `matchBody(id)`. Call it for every email you may need to prove later, including ones that fail verification (they are recorded as `unverified`).
    * @category proof
    * @signature mp.record(raw: Buffer|string, ctx: { direction: 'in'|'out', source?: string, envelope?: Envelope }) => Promise<{ id, duplicate, commit, record?, ots?, content? }>
-   * @fails Throws on an empty message, a `direction` other than 'in'/'out', `err.code === 'ERR_TRAIL_LAYOUT'` for a trail still in the pre-M3 flat layout (not converted: re-create it), a git failure (the tree is rolled back: only files this call created are removed), or `err.code === 'ERR_TRAIL_LOCKED'` when another process holds the trail's writer lock for longer than `lockTimeoutMs` (nothing is written; retry later). Never throws because the mail is unsigned or fails verification. A message over an input limit, or one the worker backstop stopped (see `check()`), is still recorded (committed, accept-with-flag) but never parsed or verified, and no DNS is asked: `unverified` with `reason: 'over limit: <name>'` on both verdicts, `signatures: []`, `body_status` `not-checked`, and only the `id`, `raw_sha256` and `size` taken from the bytes (`message_id` null, no attachments, `copy.kind` `unknown`, `message_key` null). This includes a header block over 256 KiB, which used to reject with `EMAXLEN` and record nothing. The id is the hash of the raw bytes: the identical bytes recorded twice return `duplicate: true` and write nothing, while a copy with any byte difference (a list footer, an added header) is its own record, linked by `message_key` (see `copies()`). An OTS failure or timeout is reported in `ots`, not thrown; the stamp runs inside the writer lock, so it is cut off after `clamp(floor(lockTimeoutMs / 3), 5000, 30000)` ms. A content-store write failure (disk full, permissions) never fails the call and never loses the proof: the record commits and `content` is `{ stored: false, attachments: 0, error }`. If the commit fails, the content files this call created are removed with the rest. The raw email of a message over 25 MiB is not stored.
+   * @fails Throws on an empty message, a `direction` other than 'in'/'out', `err.code === 'ERR_TRAIL_LAYOUT'` for a trail still in the pre-M3 flat layout (not converted: re-create it), a git failure (the tree is rolled back: only files this call created are removed), or `err.code === 'ERR_TRAIL_LOCKED'` when another process holds the trail's writer lock for longer than `lockTimeoutMs` (nothing is written; retry later). Never throws because the mail is unsigned or fails verification. A message over an input limit, or one the worker backstop stopped (see `check()`), is still recorded (committed, accept-with-flag) but never parsed or verified, and no DNS is asked: `unverified` with `reason: 'over limit: <name>'` on both verdicts, `signatures: []`, `body_status` `not-checked`, and only the `id`, `raw_sha256` and `size` taken from the bytes (`message_id` null, no attachments, `copy.kind` `unknown`, `message_key` null). This includes a header block over 256 KiB, which used to reject with `EMAXLEN` and record nothing. The id is the hash of the raw bytes: the identical bytes recorded twice return `duplicate: true` and write nothing, while a copy with any byte difference (a list footer, an added header) is its own record, linked by `message_key` (see `copies()`). In `record` mode an OTS failure or timeout is reported in `ots`, not thrown, and the stamp runs inside the writer lock, so it is cut off after `clamp(floor(lockTimeoutMs / 3), 5000, 30000)` ms. A content-store write failure (disk full, permissions) never fails the call and never loses the proof: the record commits and `content` is `{ stored: false, attachments: 0, error }`. If the commit fails, the content files this call created are removed with the rest. The raw email of a message over 25 MiB is not stored.
    * @example
    * const { id, duplicate } = await mp.record(fs.readFileSync('mail.eml'), { direction: 'in', source: 'file' });
    */
@@ -246,13 +257,13 @@ class Mailproof {
    * @param {MpRecord} record
    * @param {Array<{ rel: string, json: unknown }>} keyFiles
    * @param {import('./content.js').ContentJob | null} [content]  What the content store should keep (null: nothing).
-   * @returns {Promise<{ id: string, duplicate: boolean, commit: string, record?: MpRecord, ots?: 'off' | 'pending' | { error: string }, content?: ContentResult }>}
+   * @returns {Promise<{ id: string, duplicate: boolean, commit: string, record?: MpRecord, ots?: 'off' | 'queued' | 'pending' | { error: string }, content?: ContentResult }>}
    */
   async _commit(record, keyFiles, content = null) {
     const message = `record ${record.id.slice(0, 12)} ${record.direction} ${record.verdicts.live.trust}/${record.verdicts.portable.trust}`;
-    const ots = this.ots;
-    /** @type {'off' | 'pending' | { error: string }} */
-    let otsState = ots ? { error: 'not attempted' } : 'off';
+    const ots = this.ots;   // record mode only: batch mode never runs `ots` in record() (SPEC B13.1.1)
+    /** @type {'off' | 'queued' | 'pending' | { error: string }} */
+    let otsState = ots ? { error: 'not attempted' } : this.otsBin ? 'queued' : 'off';
     const afterWrite = ots ? async (/** @type {string} */ recordAbs) => {
       const st = await ots.stampFile(recordAbs);
       if ('error' in st) { otsState = { error: st.error }; return []; }
@@ -548,7 +559,53 @@ class Mailproof {
    * const { upgraded, pending } = await mp.upgradeStamps();
    */
   async upgradeStamps() {
-    return runUpgradeStamps({ root: this.root, trail: this.trail, ots: this.ots, lockTimeoutMs: this.lockTimeoutMs });
+    return runUpgradeStamps({ root: this.root, trail: this.trail, ots: this.jobOts, lockTimeoutMs: this.lockTimeoutMs, hooks: this._stampHooks });
+  }
+
+  /**
+   * Run the stamp job (SPEC B13.1): write a manifest listing, by sha256, the record and reply-text files added since the last
+   * manifest, commit it, stamp the newest manifest once with OpenTimestamps (a Bitcoin-anchored time proof), and upgrade older
+   * pending proofs. Capture never stamps; `sync()` runs this automatically when due.
+   * @returns {Promise<import('./stamp.js').StampResult>}
+   * @name Mailproof#stamp
+   * @when Use to seal what was recorded since the last run: from a cron job for a trail filled by the Postfix pipe (`sync()` and `mailproof watch` already run it every `stamp.everyHours`, default 6), or after a bulk `record()` loop. Only one 32-byte hash of a manifest (a list of file hashes, no addresses, subjects or content) goes to the public OpenTimestamps calendars; set `otsBin: null` to turn the seal off.
+   * @category proof
+   * @signature mp.stamp() => Promise<{ enabled, mode, ran, skipped?, manifests: Array<{ seq, records, replies, sha256, commit }>, stamped: number|null, unstamped, unsealed, upgraded, pending, error? }>
+   * @fails With `otsBin: null` it does nothing and returns `enabled: false`. A missing `ots` binary, a hung calendar or any `ots` failure does not throw: the manifest is still committed and the result carries `error` (a missing binary says `ots not installed: records are not sealed; install opentimestamps-client or set ots: false`). Rejects with `ERR_STAMP_LOCKED` (another job is running), `ERR_TRAIL_LOCKED` (retry later), `ERR_TRAIL_LAYOUT`, `ERR_STAMP_CHAIN` (the committed manifest chain is broken: nothing is written) or a git error. Idempotent: with nothing new and nothing pending it commits nothing.
+   * @example
+   * const r = await mp.stamp();   // r.manifests, r.stamped, r.pending; r.error when ots is missing or a calendar is down
+   */
+  async stamp() {
+    return runStamp(this._stampCtx());
+  }
+
+  /**
+   * INTERNAL (the CLI `show`, B13.2 export; not a primitive): the seal of a record or reply-text file (SPEC B13.1.10), with the trail index as a hint.
+   * @param {string} id
+   * @param {{ slug?: string }} [opts]
+   * @returns {Promise<import('./seal.js').Seal | null>}
+   */
+  async _findSeal(id, opts = {}) {
+    if (typeof id !== 'string' || !RECORD_ID_RE.test(id)) return null;
+    const hint = async (/** @type {string} */ i, /** @type {string | null} */ slug) => (await import('./index-db.js')).sealSeqsIndex({ root: this.root, trail: this.trail, lockTimeoutMs: this.lockTimeoutMs }, i, slug);
+    return findSeal(this.root, id, { ...opts, hint });
+  }
+
+  /** @returns {import('./stamp.js').StampCtx} */
+  _stampCtx() {
+    return { root: this.root, trail: this.trail, ots: this.jobOts, stamp: this.stampOpts, lockTimeoutMs: this.lockTimeoutMs, now: this.now, hooks: this._stampHooks };
+  }
+
+  /**
+   * The automatic job `sync()` runs after the content sweep: only when due, never throws (a stamp problem never fails a run).
+   * @returns {Promise<import('./stamp.js').StampResult | null>}  null when OpenTimestamps is off.
+   */
+  async _autoStamp() {
+    if (!this.jobOts) return null;
+    try { return await runStamp(this._stampCtx(), { auto: true }); }
+    catch (e) {
+      return { enabled: true, mode: this.stampOpts.mode, ran: false, manifests: [], stamped: null, unstamped: 0, unsealed: 0, upgraded: 0, pending: 0, error: String(/** @type {Error} */ (e)?.message ?? e).slice(0, 200) };
+    }
   }
 
   /**
@@ -776,13 +833,13 @@ class Mailproof {
    * @when Use to record the mail in a mailbox you can log in to (Gmail with an app password, or any IMAP server with an OAuth2 access token you obtained), from a cron job or a one-off backfill, instead of piping each mail in by hand. The mailbox is only read: nothing is marked seen, moved or deleted. Run it again to pick up new mail; loop until `complete` is true to backfill a large folder.
    * @category capture
    * @signature mp.sync(opts: { host: string, port?: number, user: string, auth: { pass: string } | { accessToken: string }, folders?: string[], sent?: boolean|string, maxMessages?: number, maxBytes?: number, tls?: { ca?: string|Buffer|Array } }) => Promise<{ complete: boolean, folders: Array<{ folder, direction, attempted, uidvalidity, reset, last_uid, seen, recorded, duplicate, over_limit, skipped[], bytes, complete, error }> }>
-   * @fails Throws a TypeError for bad options, before any connection. Then it throws only when the whole run is pointless: `ERR_IMAP_AUTH` (login refused; the message never contains the credential), `ERR_IMAP_CONNECT` (server unreachable, or its TLS certificate did not verify: TLS is always on and certificate checking is never off), `ERR_SYNC_LOCKED` (another `sync` on this trail is running: it fails at once, so a cron job skips an overlapping run). A problem in one folder lands in that folder's `error` (`ERR_IMAP_NO_FOLDER`, `ERR_IMAP_NO_SENT`, `ERR_IMAP_PROTOCOL`, `ERR_IMAP_TIMEOUT`, `ERR_IMAP_THROTTLED`, `ERR_IMAP_UIDVALIDITY`) and the run goes on to the next folder. The first trail error (`ERR_TRAIL_LOCKED` or any `record()` failure) stops the run: that folder carries the error, later folders come back `attempted: false`, and progress already recorded stays recorded. It never throws because a message is unsigned, fails verification or is over a limit: those are recorded `unverified`. A message over 25 MiB is stream-hashed and recorded `over limit: total_bytes`; over 128 MiB it is listed in `skipped` and not recorded. Caps per folder per run: 1,000 messages and 512 MiB (`maxMessages` and `maxBytes` can only lower them), 30 minutes per call. A caller passes the secret only to `sync`; it is never logged, returned or stored. A restored or replaced trail is detected from the cursor file (`reset: 'trail'`) and rescanned automatically (duplicates are no-ops); no manual step. Leave `otsBin` off for a backfill: every record is stamped inside the trail lock.
+   * @fails Throws a TypeError for bad options, before any connection. Then it throws only when the whole run is pointless: `ERR_IMAP_AUTH` (login refused; the message never contains the credential), `ERR_IMAP_CONNECT` (server unreachable, or its TLS certificate did not verify: TLS is always on and certificate checking is never off), `ERR_SYNC_LOCKED` (another `sync` on this trail is running: it fails at once, so a cron job skips an overlapping run). A problem in one folder lands in that folder's `error` (`ERR_IMAP_NO_FOLDER`, `ERR_IMAP_NO_SENT`, `ERR_IMAP_PROTOCOL`, `ERR_IMAP_TIMEOUT`, `ERR_IMAP_THROTTLED`, `ERR_IMAP_UIDVALIDITY`) and the run goes on to the next folder. The first trail error (`ERR_TRAIL_LOCKED` or any `record()` failure) stops the run: that folder carries the error, later folders come back `attempted: false`, and progress already recorded stays recorded. It never throws because a message is unsigned, fails verification or is over a limit: those are recorded `unverified`. A message over 25 MiB is stream-hashed and recorded `over limit: total_bytes`; over 128 MiB it is listed in `skipped` and not recorded. Caps per folder per run: 1,000 messages and 512 MiB (`maxMessages` and `maxBytes` can only lower them), 30 minutes per call. A caller passes the secret only to `sync`; it is never logged, returned or stored. A restored or replaced trail is detected from the cursor file (`reset: 'trail'`) and rescanned automatically (duplicates are no-ops); no manual step. The run ends with the automatic stamp job when due (`result.stamp`, SPEC B13.1.7): one manifest and one `ots stamp` per due run, never one per message, so a backfill needs no special setting; a stamp problem never fails the run.
    * @example
    * const res = await mp.sync({ host: 'imap.gmail.com', user: 'you@gmail.com', auth: { pass: process.env.APP_PASSWORD } });
    * // res.complete, res.folders[0].recorded; call again until res.complete is true
    */
   async sync(opts) {
-    const host = { root: this.root, trail: this.trail, record: this.record, recordDigest: (/** @type {{ raw_sha256: string, size: number }} */ d, /** @type {{ direction: 'in' | 'out', source: string }} */ c) => this._recordDigest(d, c), expireContent: this._autoSweep };
+    const host = { root: this.root, trail: this.trail, record: this.record, recordDigest: (/** @type {{ raw_sha256: string, size: number }} */ d, /** @type {{ direction: 'in' | 'out', source: string }} */ c) => this._recordDigest(d, c), expireContent: this._autoSweep, stamp: () => this._autoStamp() };
     return runSync(host, opts, {
       openSession: async (args) => (await import('./imap.js')).openSession(args),
     });

@@ -23,10 +23,10 @@ const gitOut = (cwd, ...a) => execFileSync('git', a, { cwd, encoding: 'utf8' }).
 async function trailWith(bin, n = 2) {
   const dir = makeTmpDir('mp-ots-up-');
   const ids = [];
-  const mp = new Mailproof({ trailDir: dir, worker: { size: 0 }, ...(bin ? { otsBin: bin } : {}) });
+  const mp = new Mailproof({ trailDir: dir, worker: { size: 0 }, ...(bin ? { otsBin: bin, stamp: { mode: 'record' } } : { otsBin: null }) });
   for (let i = 0; i < n; i++) {
     const m = await signedMail({ body: `m${i}\r\n` });
-    const r = await new Mailproof({ trailDir: dir, resolver: m.resolver, worker: { size: 0 }, ...(bin ? { otsBin: bin } : {}) }).record(m.raw, { direction: 'in' });
+    const r = await new Mailproof({ trailDir: dir, resolver: m.resolver, worker: { size: 0 }, ...(bin ? { otsBin: bin, stamp: { mode: 'record' } } : { otsBin: null }) }).record(m.raw, { direction: 'in' });
     ids.push(r.id);
   }
   return { mp, dir, root: path.join(dir, 'default'), ids };
@@ -42,7 +42,7 @@ test('OTS off: a no-op result, nothing written', async () => {
 
 test('binary missing: no throw, the error is reported, the pending stamps are counted, nothing committed', async () => {
   const t = await trailWith(fakeOts(OTS('/nonexistent')));
-  const mp = new Mailproof({ trailDir: t.dir, otsBin: '/nonexistent/ots', worker: { size: 0 } });
+  const mp = new Mailproof({ trailDir: t.dir, otsBin: '/nonexistent/ots', stamp: { mode: 'record' }, worker: { size: 0 } });
   const head = gitOut(t.root, 'rev-parse', 'HEAD');
   assert.deepEqual(await mp.upgradeStamps(), { enabled: true, upgraded: 0, pending: 2, error: 'ots not found' });
   assert.equal(gitOut(t.root, 'rev-parse', 'HEAD'), head);

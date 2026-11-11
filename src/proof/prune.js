@@ -20,7 +20,7 @@ import {
   withTrailLock, trailLockFile, syncLockFile, pruneLockFile, TRAIL_LOCK, PRUNE_LOCK, SYNC_LOCK_WAIT,
   headOf, isAncestor, idsAt,
 } from './trail.js';
-import { recordPath, parseRecordPath, parseReplyPath, assertTrailLayout } from './layout.js';
+import { recordPath, parseRecordPath, parseReplyPath, parseManifestPath, manifestPath, manifestOtsPath, assertTrailLayout } from './layout.js';
 import { verifyRecord } from './recheck.js';
 import { contentDirOf, sweepOrphans, toMs, exists } from './content.js';
 import { exportRange, startImport, catFile, lsTree, diffTree } from './prune-stream.js';
@@ -37,7 +37,8 @@ import { pathsOf, writeJournal, rollForward } from './prune-swap.js';
  * @property {number} removed  Records removed.
  * @property {number} kept  Records kept.
  * @property {string[]} stragglers  Ids of records kept although captured before the cutoff (they sit after a later one).
- * @property {number} dropped  Commits not carried over because they only touched removed records (reply-text commits).
+ * @property {number} dropped  Commits not carried over because they only touched removed records (reply-text commits, and `ots upgrade` commits of a removed manifest's proof).
+ * @property {number} manifestsRemoved  Stamp manifests removed with the records they list (SPEC B13.1.11); the newest manifest of the pruned prefix is carried, not removed. 0 on a trail without manifests.
  * @property {number} keysCarried  Archived key files kept in the notice commit or added to a kept commit although first committed before the cutoff.
  * @property {{ ok: number, failed: string[] }} reverify  `verifyRecord` over every kept record: how many verify, and the ids that do not (the prune cannot have caused that: the files are byte-identical).
  * @property {string | null} backup  Path of the old trail (`<trail>.pre-prune-<date>`), null for a no-op or after `deleteBackup`; for a `dryRun`, the path a real prune would use.
@@ -60,14 +61,27 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 /**
  * What one path of the trail is, for prune.
  * @param {string} p
- * @returns {{ kind: 'record' | 'reply', id: string } | { kind: 'key' } | null}  null: something else (kept).
+ * @returns {{ kind: 'record' | 'reply', id: string } | { kind: 'manifest', seq: number } | { kind: 'key' } | null}  null: something else (kept). A manifest's `.ots` is classified with its manifest (SPEC B13.1.11).
  */
 function classify(p) {
   const r = parseRecordPath(p);
   if (r) return { kind: 'record', id: r.id };
   const y = parseReplyPath(p);
   if (y) return { kind: 'reply', id: y.id };
+  const m = parseManifestPath(p);
+  if (m) return { kind: 'manifest', seq: m.seq };
   return p.startsWith('keys/') ? { kind: 'key' } : null;
+}
+
+/**
+ * Does the plan remove this classified path? Records and replies of a pruned id, manifests (and their proofs) of a pruned seq.
+ * @param {{ prunedIds: Set<string>, prunedManifests: Set<number> }} plan
+ * @param {ReturnType<typeof classify>} k
+ * @returns {boolean}
+ */
+function removes(plan, k) {
+  if (k === null || k.kind === 'key') return false;
+  return k.kind === 'manifest' ? plan.prunedManifests.has(k.seq) : plan.prunedIds.has(k.id);
 }
 
 // ---- the prune notice (the root commit of a pruned trail) ----
@@ -113,6 +127,9 @@ function noticeMessage(fields, earlier) {
  * @property {number} prefixCommits
  * @property {string} tail  The last pruned commit (the kept range starts after it).
  * @property {Set<string>} prunedIds
+ * @property {Set<number>} prunedManifests  Manifests of the pruned prefix that go (all but the newest one, which is carried: SPEC B13.1.11). Final once `settled`.
+ * @property {Map<number, { manifest?: { mode: string, ref: string }, ots?: { mode: string, ref: string } }>} prefixManifests  Manifest files first committed in the pruned prefix, as of its end.
+ * @property {boolean} settled  `prunedManifests` and the carry of the newest manifest are decided (the prefix has ended).
  * @property {Map<string, { mode: string, ref: string }>} carry  Files of the pruned prefix that stay and are not records, replies or keys (trail.json, ...).
  * @property {Map<string, { mode: string, ref: string }>} prefixKeys  Archived keys first committed in the pruned prefix.
  * @property {number} dropped  Kept-range commits that touch only removed records.
@@ -146,7 +163,7 @@ const capturedMs = (rec) => (rec && typeof rec.captured === 'string' ? Date.pars
 async function planPrune(root, snapshot, cutoffMs, cat) {
   const exp = exportRange(root, snapshot, { data: false });
   /** @type {Plan} */
-  const plan = { prefixCommits: 0, tail: '', prunedIds: new Set(), carry: new Map(), prefixKeys: new Map(), dropped: 0, boundary: false };
+  const plan = { prefixCommits: 0, tail: '', prunedIds: new Set(), prunedManifests: new Set(), prefixManifests: new Map(), settled: false, carry: new Map(), prefixKeys: new Map(), dropped: 0, boundary: false };
   for await (const c of exp.items) {
     if (c.type !== 'commit') continue;
     if (!plan.boundary) {
@@ -161,6 +178,13 @@ async function planPrune(root, snapshot, cutoffMs, cat) {
         for (const id of ids) plan.prunedIds.add(id);
         for (const o of c.ops) {
           const k = classify(o.path);
+          if (k && k.kind === 'manifest') {   // manifests and proofs of the prefix: decided when the prefix ends
+            const e = plan.prefixManifests.get(k.seq) ?? {};
+            const field = /** @type {{ ots: boolean }} */ (parseManifestPath(o.path)).ots ? 'ots' : 'manifest';
+            if (o.st === 'D') delete e[field]; else e[field] = { mode: o.mode, ref: o.ref };
+            plan.prefixManifests.set(k.seq, e);
+            continue;
+          }
           if (k && k.kind !== 'key') continue;   // records and replies are pruned
           const into = k ? plan.prefixKeys : plan.carry;
           if (o.st === 'D') into.delete(o.path); else into.set(o.path, { mode: o.mode, ref: o.ref });
@@ -170,10 +194,29 @@ async function planPrune(root, snapshot, cutoffMs, cat) {
         continue;
       }
     }
-    if (c.ops.every((o) => { const k = classify(o.path); return k !== null && k.kind !== 'key' && plan.prunedIds.has(k.id); })) plan.dropped++;
+    settleManifests(plan);
+    if (c.ops.every((o) => removes(plan, classify(o.path)))) plan.dropped++;
   }
   await exp.done;
+  settleManifests(plan);
   return plan;
+}
+
+/**
+ * The prefix has ended: every manifest of it goes except the newest (highest seq), which is carried with its proof in the
+ * notice commit so the chain stays connected (SPEC B13.1.11).
+ * @param {Plan} plan
+ */
+function settleManifests(plan) {
+  if (plan.settled) return;
+  plan.settled = true;
+  const seqs = [...plan.prefixManifests.keys()].sort((a, b) => a - b);
+  const newest = seqs.pop();
+  for (const s of seqs) plan.prunedManifests.add(s);
+  if (newest === undefined) return;
+  const e = /** @type {NonNullable<ReturnType<Plan['prefixManifests']['get']>>} */ (plan.prefixManifests.get(newest));
+  if (e.manifest) plan.carry.set(manifestPath(newest), e.manifest);
+  if (e.ots) plan.carry.set(manifestOtsPath(newest), e.ots);
 }
 
 // ---- kept records ----
@@ -255,8 +298,8 @@ async function buildPruned({ root, snapshot, build, plan, carried, notice, nowSe
     await imp.write('\n');
     for await (const c of exp.items) {
       if (c.type !== 'commit') continue;
-      const ops = c.ops.filter((o) => { const k = classify(o.path); return k === null || k.kind === 'key' || !plan.prunedIds.has(k.id); });
-      if (ops.length === 0) continue;   // a reply-text commit for a removed record
+      const ops = c.ops.filter((o) => !removes(plan, classify(o.path)));
+      if (ops.length === 0) continue;   // a reply-text commit for a removed record, or an upgrade of a removed manifest's proof
       for (const b of commitHead(c.author, c.committer, c.extra, c.msg)) await imp.write(b);
       for (const o of ops) await imp.write(opLine(o));
       await imp.write('\n');
@@ -301,7 +344,7 @@ async function materialise(root, build, tmp) {
  */
 function wanted(p, plan, carried) {
   const k = classify(p);
-  if (k && k.kind !== 'key' && plan.prunedIds.has(k.id)) return false;
+  if (removes(plan, k)) return false;
   if (k && k.kind === 'key' && plan.prefixKeys.has(p) && !carried.has(p)) return false;
   return true;
 }
@@ -380,7 +423,7 @@ async function appendSince({ root, tmp, snapshot, head, plan, carried, state, cu
   try {
     for await (const c of exp.items) {
       if (c.type === 'blob') { blobs.set(c.mark, c.data); continue; }
-      const ops = c.ops.filter((o) => { const k = classify(o.path); return k === null || k.kind === 'key' || !plan.prunedIds.has(k.id); });
+      const ops = c.ops.filter((o) => !removes(plan, classify(o.path)));
       if (ops.length === 0) { dropped++; continue; }
       /** @type {string[]} */
       const wantKeys = [];
@@ -486,7 +529,7 @@ async function runPrune(ctx, opts) {
     });
     /** @returns {PruneResult} */
     const noop = (/** @type {number} */ kept) => ({
-      cutoff, noop: true, dryRun, previousHead: snapshot, head: snapshot, removed: 0, kept, stragglers: [], dropped: 0, keysCarried: 0,
+      cutoff, noop: true, dryRun, previousHead: snapshot, head: snapshot, removed: 0, kept, stragglers: [], dropped: 0, manifestsRemoved: 0, keysCarried: 0,
       reverify: { ok: 0, failed: [] }, backup: null, content: { removed: 0, attachments: 0 }, timing: { planMs: 0, buildMs: 0, lockMs: 0, totalMs: Date.now() - t0 },
     });
     if (snapshot === null) return noop(0);
@@ -514,7 +557,7 @@ async function runPrune(ctx, opts) {
       if (dryRun) {   // the plan and the kept-record check above are the real computation; nothing below runs
         return {
           cutoff, noop: false, dryRun: true, previousHead: snapshot, head: null, removed: plan.prunedIds.size, kept: state.kept, stragglers: state.stragglers,
-          dropped: plan.dropped, keysCarried: carried.size, reverify: { ok: state.ok, failed: state.failed },
+          dropped: plan.dropped, manifestsRemoved: plan.prunedManifests.size, keysCarried: carried.size, reverify: { ok: state.ok, failed: state.failed },
           backup: path.join(p.trailDir, await backupName(p.trailDir, trail, new Date(nowMs))), content: { removed: 0, attachments: 0 },
           timing: { planMs, buildMs: 0, lockMs: 0, totalMs: Date.now() - t0 },
         };
@@ -592,7 +635,7 @@ async function runPrune(ctx, opts) {
       }
       return {
         cutoff, noop: false, dryRun: false, previousHead, head: newHead, removed: plan.prunedIds.size, kept: keptRecords, stragglers: state.stragglers, dropped: plan.dropped + droppedLate,
-        keysCarried: carried.size, reverify: { ok: state.ok, failed: state.failed }, backup: backupPath || null, content,
+        manifestsRemoved: plan.prunedManifests.size, keysCarried: carried.size, reverify: { ok: state.ok, failed: state.failed }, backup: backupPath || null, content,
         timing: { planMs, buildMs, lockMs, totalMs: Date.now() - t0 },
       };
     } finally {

@@ -24,7 +24,8 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { git, gitLines } from './git.js';
-import { parseRecordPath, assertTrailLayout } from './layout.js';
+import { parseRecordPath, parseManifestPath, assertTrailLayout } from './layout.js';
+import { readChain, readManifestAt } from './seal.js';
 import { RECORD_ID_RE, readRecord, withTrailLock, trailLockFile, trailIndexFile, headOf } from './trail.js';
 import { LINKED_CHILDREN_DEFAULT, REPLY_FACTS_MAX } from './limits.js';
 import { participantsOf, linksOf, directParents, hasSignedThreading, ROLES } from './participants.js';
@@ -37,7 +38,7 @@ import { verifyRecord } from './recheck.js';
 /** @typedef {{ id: string, captured: string, direction: string, copy: string, body_status: string, live: string, portable: string }} CopyRow */
 
 /** Bump when the table layout or what a column holds changes: an index of another version is rebuilt. */
-const SCHEMA = 4;
+const SCHEMA = 5;
 const READ_BATCH = 500;
 const BUSY_TIMEOUT_MS = 10000;
 
@@ -53,6 +54,7 @@ CREATE TABLE IF NOT EXISTS participants(
 CREATE TABLE IF NOT EXISTS links(
   rec_id TEXT NOT NULL, mid TEXT NOT NULL, via TEXT NOT NULL, strength TEXT NOT NULL, pos INTEGER NOT NULL, direct INTEGER NOT NULL,
   PRIMARY KEY(rec_id, mid)) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS seal(kind TEXT NOT NULL, id TEXT NOT NULL, slug TEXT NOT NULL, seq INTEGER NOT NULL, PRIMARY KEY(kind, id, slug, seq)) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS part_addr ON participants(address, rec_id);
 CREATE INDEX IF NOT EXISTS links_mid ON links(mid, rec_id);
 CREATE INDEX IF NOT EXISTS rec_cap ON rec(captured);
@@ -211,6 +213,7 @@ function session(d) {
     putPart: d.prepare('INSERT OR IGNORE INTO participants VALUES (?,?,?,?,?)'),
     delLink: d.prepare('DELETE FROM links WHERE rec_id = ?'),
     putLink: d.prepare('INSERT OR IGNORE INTO links VALUES (?,?,?,?,?,?)'),
+    putSeal: d.prepare('INSERT OR IGNORE INTO seal VALUES (?,?,?,?)'),
   };
   return {
     d,
@@ -220,6 +223,11 @@ function session(d) {
     setMeta: (k, v) => { st.setMeta.run(k, v); },
     /** @param {string} id @returns {string | null} */
     commitOf: (id) => st.getCommit.get(id)?.commit_id ?? null,
+    /** @param {import('./seal.js').Manifest} m  Index what a manifest lists (SPEC B13.1.10): a hint of which manifest to read, never proof. */
+    putManifest: (m) => {
+      for (const e of m.records) st.putSeal.run('r', e[0], '', m.seq);
+      for (const e of m.replies) st.putSeal.run('y', e[0], e[1], m.seq);
+    },
     /** @param {string} id */
     del: (id) => { st.delRec.run(id); st.delAtt.run(id); st.delPart.run(id); st.delLink.run(id); },
     /** @param {NonNullable<ReturnType<typeof rowOf>>} x */
@@ -283,6 +291,8 @@ async function reconcile(s, { root }, head) {
   let changed = null;
   /** @type {Map<string, string>} */
   let added = new Map();
+  /** @type {number[]} */
+  let newManifests = [];
   if (stored && versionOk) {
     try {
       await git(root, ['merge-base', '--is-ancestor', stored, head]);
@@ -290,6 +300,7 @@ async function reconcile(s, { root }, head) {
       const ids = [];
       await eachListedBatch(root, ['diff', '--name-only', '--no-renames', '-z', stored, head, '--', 'records'], (b) => { for (const id of b) ids.push(id); });
       added = await addedCommits(root, `${stored}..${head}`);
+      newManifests = (await git(root, ['diff', '--name-only', '--diff-filter=A', '--no-renames', '-z', stored, head, '--', 'manifests'])).split('\0').map((p) => parseManifestPath(p)).filter((m) => m !== null && !m.ots).map((m) => /** @type {{ seq: number }} */ (m).seq);
       changed = ids;
     } catch { changed = null; } // not an ancestor (or git failed): rebuild
   }
@@ -301,16 +312,18 @@ async function reconcile(s, { root }, head) {
           if (x) s.put(x); else s.del(id);
         }
       });
+      for (const seq of newManifests) { const m = await readManifestAt(root, head, seq); if (m) s.putManifest(m); }   // a manifest is immutable once committed: only additions matter
       s.setMeta('head', head);
     });
     return;
   }
   const commits = await addedCommits(root, head);
   await atomic(s.d, async () => {
-    s.d.exec('DELETE FROM rec; DELETE FROM att; DELETE FROM participants; DELETE FROM links; DELETE FROM meta;');
+    s.d.exec('DELETE FROM rec; DELETE FROM att; DELETE FROM participants; DELETE FROM links; DELETE FROM seal; DELETE FROM meta;');
     await eachListedBatch(root, ['ls-tree', '-r', '--name-only', '-z', head, '--', 'records'], async (ids) => {
       for (const [id, r] of await readBatch(root, ids)) { const x = rowOf(id, r, commits.get(id) ?? null); if (x) s.put(x); }
     });
+    await readChain(root, head, (m) => s.putManifest(m));
     s.setMeta('schema', String(SCHEMA));
     s.setMeta('head', head);
   });
@@ -531,4 +544,17 @@ export async function repliesIndex(cfg, messageId) {
     `SELECT r.id AS id, r.captured AS captured, r.commit_id AS commit_id FROM links l JOIN rec r ON r.id = l.rec_id
       WHERE l.mid = ? AND l.direct = 1 AND r.direction = 'in' ORDER BY r.captured, r.id LIMIT ?`,
   ).all(messageId, REPLY_FACTS_MAX + 1).map((r) => ({ id: r.id, captured: r.captured, commit: r.commit_id ?? '' })), []);
+}
+
+/**
+ * The manifests that list a record or reply-text file, newest first: only a HINT for `findSeal` (SPEC B13.1.10), which reads
+ * those manifests from the trail and checks them. `slug` null: the record file; else the reply-text file of that stripper version.
+ * @param {IndexCfg} cfg
+ * @param {string} id
+ * @param {string | null} slug
+ * @returns {Promise<number[]>}
+ */
+export async function sealSeqsIndex(cfg, id, slug) {
+  if (typeof id !== 'string' || !RECORD_ID_RE.test(id)) return [];
+  return query(cfg, (d) => d.prepare('SELECT seq FROM seal WHERE kind = ? AND id = ? AND slug = ? ORDER BY seq DESC').all(slug === null ? 'r' : 'y', id, slug ?? '').map((r) => r.seq), []);
 }
