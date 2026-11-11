@@ -96,7 +96,7 @@ test('verify: exit 0 when ok, 2 when it does not (a tampered signature), --json 
   assert.deepEqual(Object.keys(o).sort(), ['at', 'basis', 'engine', 'id', 'ok', 'signatures', 'trust']);
   const no = await sp(['verify', id('failing')]);
   assert.equal(no.code, 2);
-  assert.match(no.stdout, /^NOT OK/);
+  assert.match(no.stdout, /^x NOT OK/);
   assert.equal(json(await sp(['verify', id('failing'), '--json'])).ok, false);
   assert.equal((await sp(['verify', id('signed'), '--at', '2026-13-45'])).code, 64);
   assert.equal(json(await sp(['verify', id('signed'), '--at', '2026-11-01T10:30:00Z', '--json'])).ok, true);
