@@ -359,3 +359,37 @@ Also: `path` inputs are refused until `mcp.inputDirs` is set (`base64` always al
 3. The guide marks every step proven or UNVERIFIED, and uses the multi-domain OpenDKIM form with an explicit `SignHeaders` (the default signs no Message-ID).
 **Rationale**: The hard parts are DNS, PTR, port 25 and IP reputation, none of which a container can set; an image would also make mailproof a mail-server product that must be patched. The command is the one piece that is code, tiny, and shared by every user. Simple path, one source of truth.
 **Consequences**: PRD §7 M5 rewritten; SPEC gains B14 (outline); one open evidence task (the `sender_bcc_maps` copy end to end); a pipe-only account may need B11.2 to allow a config with no IMAP block (to settle at build). Postfix bounces sysexits codes (64, 77), so the guide's wrapper maps every failure to 75 rather than the command changing its codes.
+
+### Decision: OTS on by default in the library too, released as 3.4.0
+**Date**: 2026-11-11
+**Status**: Accepted (owner: hamr0); built on `feat/m4-export`, not yet released
+**Context**: M4 made the batch seal the default. A pushback was considered: a library that makes network calls (calendar servers) by default.
+**Decision**: OTS stays on by default in the library as well as the CLI; `otsBin: null` turns it off. The pushback was withdrawn: the network is touched only in `sync()` and `stamp()`, never in `record()`, `check()`, `verify()` or the read primitives. Clarity comes from a "What leaves your machine" section in the docs, a seal line in `status`, and a plain message when `ots` is missing. Released as 3.4.0 (additive).
+**Rationale**: A time seal that is off by default is a seal few users have when they need it; the network paths are few and named.
+**Consequences**: docs state what leaves the machine; a missing binary never blocks capture (accept-with-flag).
+
+### Decision: Address-first CLI, `people`, and the fixed-label `show`
+**Date**: 2026-11-11
+**Status**: Accepted (owner: hamr0); built (SPEC B11.5a), F34
+**Context**: The first real walkthrough (F34). The owner: "who would use id?"
+**Decision**:
+1. `show` and `verify` take an address, a Message-ID or an id; a resolver picks by shape. A new `people` command lists counterparties. `list` is readable (sender, decoded subject). An id given as a flag gets a hint, not "Unknown option".
+2. `show` prints every field in a fixed order, with `N/A` when absent (owner): an account line `user (name)`; each header marked signed, failing or not-signed; body text from the content store labelled proven, partial or not proven; attachments with name, size, sha256, stored and match; and a why-not-verified line from the recorded facts.
+3. **"signed" display rule:** a header is shown "signed" only when a passing signature covers it, "covered by a signature that does not verify" when only failing ones do. The record field `addresses[].signed` keeps its capture-time meaning (covered by any signature); read views add a derived coverage.
+4. **`verify <address>` exit rule:** exit 2 if any RECEIVED record fails or nothing was counted; own Sent copies are listed, not counted (provider Sent copies are unsigned, F3); `--all` counts them; exit 1 for no match.
+5. `~/` is expanded in every path field of the config, `passFile` included; the wizard's example paths show the real home; the setup guide uses `~/` paths only, never personal absolute paths (owner).
+6. The setup guide ([setup-guide.md](setup-guide.md)) and the self-hosting guide are linked from the README (owner). Hotmail/Outlook needs an OAuth2 token command and is untested (F37); a local OAuth proxy route is unsupported.
+**Rationale**: People know addresses, not hex ids; the view must not claim more than the record proves.
+**Consequences**: SPEC B11.5a; the `signed` rule changes what `show` prints, not what is recorded.
+
+### Decision: M4 export and verify-bundle defaults confirmed
+**Date**: 2026-11-11
+**Status**: Accepted (owner: hamr0); built (SPEC B13.2, B13.3)
+**Decision**: `verify-bundle` is lenient with `--strict` available; `with` is a union of addresses; `export` never auto-stamps; the bundle README carries a privacy paragraph (it holds other people's addresses and subjects).
+**Consequences**: no change to the M4 scope in the PRD.
+
+### Decision: M5 guide choices (multi-domain, SignHeaders, local sendmail, wrapper exit code)
+**Date**: 2026-11-11
+**Status**: Accepted (owner: hamr0), after the gitdone operators' review (F32, F33)
+**Decision**: The guide uses multi-domain OpenDKIM; an explicit `SignHeaders` (Message-ID, In-Reply-To, References, ...); local `sendmail(8)` submission only, with port-587 submission listed as open; generic naming (no production box names); and a wrapper that maps every non-zero exit to 75 and sends mailproof output to a log, because pipe(8) bounces sysexits codes and reads a `5.x.x` start of output as a status.
+**Consequences**: the command keeps its exit codes (supersedes nothing in "M5: a record command and a self-hosting guide").

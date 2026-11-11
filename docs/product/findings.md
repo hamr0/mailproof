@@ -534,3 +534,55 @@ POC script: [`poc/m0-header-recheck.js`](../../poc/m0-header-recheck.js) (throwa
 - **Calendars.** The whole suite (829 tests) ran with a spy `ots` first on `PATH` that records each call and exits without a network call: the suite made no calendar call.
 - **Consequence.** The cost is a few seconds once per backlog and a few hundred milliseconds per cadence for a trail of tens of thousands of records, with the trail lock held only for file writes and a commit (B13.1.5). No change to the design; the caps `STAMP_MAX_ENTRIES` / `STAMP_MAX_MANIFESTS` stay.
 - **Affects:** SPEC B13.1.4, B13.1.14.
+
+## F32 — M5: outbound signing on a real box (measured 2026-11-11)
+
+- **Question.** Does a message submitted through local `sendmail(8)` on a real Postfix + OpenDKIM box carry a valid DKIM-Signature in the copy mailproof would record, and what does it sign?
+- **Setup.** The gitdone operators' box, owner-approved, no configuration change. One test message submitted with `sendmail(8)` and delivered locally.
+- **Evidence.** The maillog shows OpenDKIM adding the signature in `cleanup`. The delivered copy carries the `DKIM-Signature` and verifies with `opendkim-testmsg` (exit 0). Delivery-time headers (Received, Return-Path) are added after signing, are unsigned and are harmless. `h=` was `From:To:Subject:Date:From` (OpenDKIM's `OversignHeaders From` on top of the default list): **Message-ID, MIME-Version and Content-Type were not signed** with that box's defaults. The live config is multi-domain (`KeyTable` / `SigningTable`). gitdone's own wiki was stale and was fixed on its branch `docs/deployment-live-mail-config`.
+- **Not tested.** The `sender_bcc_maps` copy. It is strongly implied (the same queue file is copied after signing) but not proven; it stays the one open evidence task of M5.
+- **Result.** Local signing is proven; the default `h=` leaves Message-ID unsigned, so the guide sets an explicit `SignHeaders` (Message-ID, In-Reply-To, References, ...). That line is recommended and not yet tested.
+- **Affects:** PRD §7 M5, [self-hosting.md](self-hosting.md), SPEC B14.
+
+## F33 — M5: the gitdone operators' review of the self-hosting guide; knowless declined (2026-11-11)
+
+- **Question.** Is the self-hosting guide right for a real box, and can an existing sibling project host the recipe?
+- **Evidence.** The gitdone operators reviewed the guide against their live box and returned 17 points, now folded into the guide. In summary: `virtual_mailbox_maps` set to `static:nothing` for the pipe domain; EPEL needed on the RHEL family; `ots` installed through pip; rotation steps written for the multi-domain `KeyTable`; the pipe(8) transport maps exit codes (sysexits such as 64 and 77 become bounces, and output starting with a `5.x.x` status is read as an enhanced status code), so the wrapper maps every non-zero exit to 75 and sends mailproof output to a log; inbound spoofing through `sender_bcc_maps` must be considered; that box uses its own TLS certificate, not Let's Encrypt; SELinux is disabled there; IPv4-only is proven; the firewall steps are proven; sizing 1 vCPU / 1 GB works.
+- **knowless.** Asked on 2026-11-11 and declined: it has no MTA and no DKIM signer, is auth-mail-only and is frozen at v1.0.0.
+- **Result.** The guide marks each step proven or UNVERIFIED (generic naming, no production box names).
+- **Affects:** [self-hosting.md](self-hosting.md), decisions-log "M5".
+
+## F34 — M4/M3 CLI: the first real walkthrough on a real Gmail account, bugs found (2026-11-11)
+
+- **Question.** Does the built CLI work end to end on the owner's real Gmail account (app password), as a new user would run it?
+- **Evidence.** First `sync`: 5 records (INBOX 4, Sent 1) in about 31 s wall, about 164 MB max RSS, one batch manifest stamped (pending). Second `sync`: nothing new, seal "not due". The Gmail INBOX and Sent folders hold few messages while their UIDs are high (6132 and 2064): archived mail lives in `[Gmail]/All Mail`, which must be added to `folders` to capture history (not yet run).
+- **Bugs found, each with a red test first** (fixes on this branch):
+  1. `~` was not expanded for `passFile`: sync failed ENOENT (exit 64) while `config validate` passed because it reads no secret. Now `~/` is expanded in every path field.
+  2. `list` printed raw RFC 2047 subjects. Now decoded.
+  3. `show` called headers "signed" when only a failing signature covered them. Now "signed" only when a passing signature covers the header.
+  4. `show <id>` used as a flag gave "Unknown option". Now a hint.
+  5. `list` had no sender or subject columns. Added.
+  6. Found, fix in progress on this branch (the commit history will confirm): MCP `list` was thin, `counterparties` lacked verified counts, and the `sync` result duplicated `ots`.
+- **Tests on this branch** (Node 22.22; the Node 22.19 run is pending before the release PR): 799 before M4, 829 after the stamp job, 869 after `export` and `verify-bundle`, 885 then 888 after the address-first CLI.
+- **Affects:** SPEC B11.5a, [setup-guide.md](setup-guide.md), decisions-log "Address-first CLI".
+
+## F35 — Observed senders on the owner's own services (2026-11-11)
+
+Public DNS facts about the owner's own services, seen in the real walkthrough (F34); no message content beyond "a weekly stats report".
+
+- addypin.com, ownsub.com and signedreply.com verify: DKIM pass, aligned, DMARC `p=none` pass, ARC by google.com.
+- late.fyi signs (`d=late.fyi`, `s=latefyi2026`, body matched) but publishes **no DKIM key** (DNS ENODATA at capture), no DMARC and no SPF: DKIM is neutral and the capture stays unverified forever, because the key cannot be archived.
+- The owner's boxes sign `h=Date:From:To:Subject:From` only, so Message-ID is unsigned and a reply cannot be provably linked. This matches F32; the guide's `SignHeaders` fixes it.
+- **Affects:** [self-hosting.md](self-hosting.md), usage guide.
+
+## F36 — M3 MCP: a walkthrough in Claude Code on a real trail (2026-11-11)
+
+- **Evidence.** `list`, `verify`, `get`, `counterparties`, `proofParts`, `verifyRecord`, the `forget` preview and `sync` all worked. `forget` refused without `confirm` and returned an exact preview. `verifyRecord` needed the whole record JSON passed through the conversation, so its description now points trail records to `verify`. Several answers needed two or three calls because `list` lacked sender and subject.
+- **Result.** The tool surface works; `list` and `counterparties` were thin (see F34 item 6).
+- **Affects:** SPEC B12, F30.
+
+## F37 — Microsoft consumer IMAP: basic auth is gone (2026-11-11; desk research, not run)
+
+- **Evidence.** Basic authentication and app passwords for consumer Outlook/Hotmail IMAP are removed. Microsoft's official page gives no date; third-party sources say 2024-09-16; Microsoft Q&A reports failures from about 2024-10-01. XOAUTH2 (OAuth2) is required; reports of the needed scope disagree. Sources are listed in the setup guide.
+- **Result.** An `accessTokenCommand` is required. **Untested with mailproof.** A local OAuth proxy route is unsupported (the CLI has no CA option).
+- **Affects:** [setup-guide.md](setup-guide.md).
