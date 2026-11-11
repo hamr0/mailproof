@@ -677,7 +677,7 @@ For an approval, the consumer groups the bundles by `messageKey` (a `""` key is 
 
 ## B11. The `mailproof` CLI (M3 step 5)
 
-> **Built (M3 step 5, on `feat/m3-reply-facts`, not released)**; owner decisions 2026-11-10, decisions-log "M3 CLI"; the owner's resolutions of the review list are recorded in B11.12 and what the build had to decide beyond this text in B11.14. One binary, `bin/mailproof.js` (`bin` and `files` in `package.json`), a thin entry over `src/cli/` and the `Mailproof` class like `mailproof-sync` (B4.1): it parses arguments, reads the config, builds one `Mailproof` per command, always `close()`s, prints. No record, verdict or trail logic of its own. `mailproof-sync` stays, unchanged. No new runtime dependency (`node:util` `parseArgs`, `node:readline`, `node:child_process`, `node:fs`).
+> **Built (M3 step 5, shipped in 3.1.0)**; owner decisions 2026-11-10, decisions-log "M3 CLI"; the owner's resolutions of the review list are recorded in B11.12 and what the build had to decide beyond this text in B11.14. One binary, `bin/mailproof.js` (`bin` and `files` in `package.json`), a thin entry over `src/cli/` and the `Mailproof` class like `mailproof-sync` (B4.1): it parses arguments, reads the config, builds one `Mailproof` per command, always `close()`s, prints. No record, verdict or trail logic of its own. `mailproof-sync` stays, unchanged. No new runtime dependency (`node:util` `parseArgs`, `node:readline`, `node:child_process`, `node:fs`).
 
 ### B11.1 Invocation
 

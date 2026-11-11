@@ -277,7 +277,7 @@ the [PRD](PRD.md) / [DESIGN](../../archive/v1/docs/DESIGN.md).
 
 ### Decision: prune mechanism details (M3 step 3), mechanism-level forks
 **Date**: 2026-11-09
-**Status**: Built, not released (mechanism forks decided by the implementer inside the owner's brief: fast-export / fast-import, no lock during the build; the two items marked "product-visible" are for the owner to confirm)
+**Status**: Built, shipped in 3.0.0 (mechanism forks decided by the implementer inside the owner's brief: fast-export / fast-import, no lock during the build; the two items marked "product-visible" are for the owner to confirm)
 **Context**: Building prune on the POC's recommendation ([F24](findings.md), [F25](findings.md), SPEC B9) forced a few choices the POC did not need.
 **Decision**:
 1. **The notice describes the snapshot.** The pruned trail is built from a snapshot HEAD without the lock, and the notice is its root commit, so it cannot be written after the commits made during the build are known. Its counts and `previous-head` are the snapshot's; the result and the backup carry the final numbers. Options: build under the lock (rejected by the owner: blocks writers); rewrite the notice at the end (changes every commit id again, the cost the unlocked build avoids).
@@ -304,7 +304,7 @@ the [PRD](PRD.md) / [DESIGN](../../archive/v1/docs/DESIGN.md).
 
 ### Decision: M3 CLI: menu + subcommands, one config file, explicit account, no daemon
 **Date**: 2026-11-10
-**Status**: Accepted (owner: hamr0); built on `feat/m3-reply-facts` (SPEC B11), not released
+**Status**: Accepted (owner: hamr0); built (SPEC B11), shipped in 3.1.0
 **Context**: M3 step 5 (decisions-log "M3 scope" item 10 fixed only "one CLI, menu, config, MCP"). The owner decided the shape of the CLI and config; the spec author listed what was left to decide in SPEC B11.12.
 **Decision**:
 1. **Menu and subcommands share one code path.** `mailproof` with no arguments is a stdlib readline menu; each item prompts for its parameters with hints, defaults and re-prompt on bad input, then runs the same command function as the subcommand (`mailproof prune --account work --before 2026-08-19`). No second implementation, no TUI framework; the menu has Quit.
