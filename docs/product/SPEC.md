@@ -808,7 +808,8 @@ Account-scoped unless noted. `[id]` is a record id (32 hex) or a unique prefix o
 | `update` | `--run` | `npm` | B11.10. |
 | `config` | `path` \| `validate` \| `template` \| `add-account` | none | `path` prints the resolved path; `validate` runs B11.2 validation and the permission check, prints `ok` or the errors, exit 0/64/77, and resolves no secrets; `template` prints the example JSON of B11.2; `add-account` is the wizard of B11.12 item 6 (it reads answers from stdin, a terminal or piped). `config` works with no config file present (except `validate`). |
 | `stamp` | | `stamp` | Runs the stamp job now (manifest, stamp, upgrade; B13.1.12). Exit 0, 1 on an `ots` error, 75 when locked. |
-| `export` | (see B13.2) | `export` | Today (before M4 step 2 is built) it prints `export needs M6 (the proof bundle); not available in this version` and exits 64, listed in help and the menu as "not available until M4 (B13)". **M4 step 2 replaces this** with the pair export (B13.2); `verify-bundle` (B13.3) is added with it. |
+| `export` | `--with <a,b>` (required), `--after <date>`, `--before <date>`, `--out <path>`, `--tar` | `export` | Today (before M4 step 2 is built) it prints `export needs M6 (the proof bundle); not available in this version` and exits 64, listed in help and the menu as "not available until M4 (B13)". **M4 step 2 replaces this** with the pair export (B13.2.9). |
+| `verify-bundle <dir>` | `--expect <sha256>`, `--strict` | `verifyBundle` | Account-free (no config needed); not built yet (M4 step 3, B13.3): checks a bundle on the recipient's machine; exit 0 ok, 2 a check failed, 64 bad usage. Not in the menu. |
 | `mcp` | | none | The stdio MCP server (B12): `mailproof mcp [--account <name>] [--log <file>]`. Run on a terminal (stdin is a TTY) it prints a hint and exits 64; a bad config ends 64 or 77 before anything is read. |
 | `help [command]` | | none | B11.11. |
 
@@ -1076,7 +1077,7 @@ JSON carries strings, not bytes, and the record `id` is the sha256 of the **exac
 
 ## B13. Seal and pair export (M4)
 
-Decided 2026-11-11 (decisions-log "M4: drop appointments; seal and pair export", PRD §7 M4). **B13.1 is built (step 1: `stamp`, manifests, default-on seal, in the `feat/m4-export` branch, after 3.3.0); B13.2 and B13.3 are specified below and not yet built.** B3, B4.5, B5, B9 and B11 describe the built stamp job.
+Decided 2026-11-11 (decisions-log "M4: drop appointments; seal and pair export", PRD §7 M4). **B13.1 is built (step 1: `stamp`, manifests, default-on seal, in the `feat/m4-export` branch, after 3.3.0); B13.2 and B13.3 are fully specified (2026-11-11) and not yet built (steps 2 and 3).** B3, B4.5, B5, B9 and B11 describe the built stamp job.
 
 ### B13.1 Stamp job and manifest chain (M4 part a)
 
@@ -1269,18 +1270,369 @@ The B1 admission limits, the sync caps (B4.3) and the prune bounds are unchanged
 - **Prune.** Manifests in the prefix are removed except the newest, which is carried with its `.ots`; kept-range manifests byte-identical; a dropped upgrade commit of a removed manifest; `previous_sha256` of the first kept manifest resolves to the carried one; a job after a prune continues the `seq` and chain; a job straddling the swap ends `skipped: 'rewritten'`; `manifestsRemoved`; the checker of `tests/helpers/prune-check.js` learns the path.
 - **CLI.** `stamp` exit codes, `--json`, `ots is off`; `sync --json` `ots` shape (superset of 3.3.0's); `status` fields and `chain broken`; config `ots`/`stamp` validation; `show` seal line; help and primitives checks pass (`check:primitives`, `check:cli-help`, `check:mcp-tools`).
 
-### B13.2 `export`
+### B13.2 `export` (M4 part b, build step 2)
 
-- `export({ with: [addresses], after?, before? })` and the CLI `export`. Selection: one or more exact addresses matched the way `list({ with })` matches (From/To/Cc/Reply-To, one definition), and a date range on `captured`.
-- The bundle holds only what the trail has: the matching records (signed headers, verdicts, attachment names and sha256), their archived keys, their reply-text records, the stamp manifests that list them with their `.ots`, and a README stating per record what is proven and what is best effort.
-- Raw emails and attachments are not copied. Each record says whether its content is still in the content store (with the id and sha256 to fetch it by `rawEmail` / `attachment`) or expired or forgotten.
-- Export stays off in MCP (B12).
-- To be specified: directory layout, README wording, the per-record content field, empty selection, errors, CLI flags and exit codes.
+Decided 2026-11-11 (PRD §7 M4 part b, not reopened here). The owner hands a counterparty a **bundle**: a directory of trail data about the emails exchanged with one or more addresses, which the recipient checks with `verify-bundle` (B13.3) without the owner's trail, content store or account. Everything below is mechanism under that scope.
 
-### B13.3 `verify-bundle`
+#### B13.2.1 Surface
 
-- `npx mailproof verify-bundle <dir>`: the same verifier code as `verifyRecord`, one source of truth, no standalone copied verifier.
-- To be specified: checks (record verdicts, key match, manifest chain, `.ots` state), output, exit codes.
+`Mailproof#export(opts) => Promise<ExportResult>`, public (`primitives.json`, help table; **not an MCP tool**, B12), and the CLI `mailproof export` (B13.2.9).
+
+```
+opts = {
+  with: string[],                       // 1..EXPORT_MAX_ADDRESSES exact addresses
+  after?: Date | number | string,       // captured >= after   (as list(), B5)
+  before?: Date | number | string,      // captured <  before
+  out: string,                          // the bundle directory to create (B13.2.7); with tar: true, the .tar file
+  tar?: boolean,                        // default false (B13.2.3)
+}
+ExportResult = {
+  out: string,                          // the directory (or the .tar file when tar: true)
+  bytes: number, files: number,         // of the bundle (the tar's size when tar: true)
+  head: string,                         // the trail commit the bundle is a snapshot of
+  bundle_sha256: string,                // sha256 of bundle.json, 64 hex: the bundle's name (B13.2.5)
+  records: number, replies: number, keys: number, manifests: number,
+  seals: { anchored: number, pending: number, unstamped: number, unsealed: number },   // records, as the trail shows them at export (B13.2.4)
+  content: { stored: number, absent: number },    // records whose raw email the content store still holds / does not
+}
+```
+
+Rejects with `ERR_EXPORT_EMPTY`, `ERR_EXPORT_TOO_BIG`, `ERR_EXPORT_REWRITTEN`, `ERR_EXPORT_EXISTS`, `ERR_EXPORT_SELF_CHECK`, `ERR_TRAIL_LOCKED`, `ERR_TRAIL_LAYOUT`, `ERR_INDEX_UNAVAILABLE`, `ERR_STAMP_CHAIN` (a seal cannot be walked through a broken chain, B13.1.10), a `TypeError` for a bad option, or a git or file-system error. **Read-only on the trail**: no commit, no lock held while reading (B13.2.6), no `ots` call, no network, no change to the index beyond its normal catch-up, the content store untouched.
+
+#### B13.2.2 Selection (one definition)
+
+- `with` is a non-empty array of exact addresses, each validated exactly as `list({ with })` validates one (case-insensitive, no grouping: `bob@gmail.com` is not `bob@company.com`), at most `EXPORT_MAX_ADDRESSES` (20), duplicates collapsed. **A record is selected when it names any of them** on From, To, Cc or Reply-To (a union: several addresses are one person's several mailboxes). The trail owner's own address is on every record (B5 gaps), so one counterparty address selects the whole exchange.
+- The test is `participantsOf(record)` (`participants.js`, B5/B8): the same function that fills the index, so "who a record names" has one definition. The same limits apply: only addresses the record itself shows count (a signed record shows the headers its signatures cover and, since M3, the `addresses` field; an over-limit record has none and is never selected).
+- `after` inclusive and `before` exclusive on `captured` (the same Date-or-ISO parsing as `list`; `after >= before` is a `TypeError`). No other filter: not `direction`, not `role`, not a thread. (A thread is selected by choosing its participants; `linked` is not followed.)
+- **The index proposes, the record decides.** The candidate ids come from the trail index (`listIndex` per address, no `limit`; a cache, B5). Each candidate's record is then read from the trail commit and tested again with `participantsOf` and `captured`; a record that fails the test is dropped, so a damaged or tampered index cannot put a foreign record in a bundle (it could only omit one; export is the owner's own act and the owner chose the selection). A candidate the commit does not hold means the history changed: `ERR_EXPORT_REWRITTEN`.
+- **No match is refused**: `ERR_EXPORT_EMPTY`, nothing written. An empty bundle proves nothing and is easy to hand over by mistake. More than `EXPORT_MAX_RECORDS` (10,000) matches is `ERR_EXPORT_TOO_BIG` naming the count: narrow with `after`/`before`.
+
+#### B13.2.3 Bundle format: a plain directory, optionally one `.tar`
+
+The bundle is a **plain directory**: every file is readable with any tool, there is no container format only mailproof reads, and no dependency is added. The files are **byte-identical copies of the committed trail blobs** (read with `git cat-file`, never the working tree, never re-serialised), under the **same relative paths as the trail** (`layout.js` builds them, B3), so the verifier uses the one set of path parsers.
+
+`tar: true` (CLI `--tar`) additionally packs it into one file for mailing, as `backup --with-content` does (B11.6): the system `tar` binary (`tar -C <private temp parent> -cf <out> <name>`), never a home-made container. `out` is then the `.tar` path; the single top-level directory inside is its file name without `.tar`; the file is created exclusively with mode 0600 before `tar` writes to it; the directory is built in the private temp area (B13.2.7) and removed afterwards. `tar` missing: exit 1 before anything is built, `tar not found: install tar or export without --tar`. The `.tar` is not byte-reproducible (mtimes); `bundle.json` is the integrity record, and `verify-bundle` takes a directory only (the recipient extracts with `tar -xf` into an empty directory: mailproof never extracts an archive it was handed).
+
+#### B13.2.4 What goes in, and what does not
+
+```
+<out>/
+  README.txt                                   B13.2.10
+  bundle.json                                  B13.2.5
+  records/<2hex>/<id>.json                     each selected record, as committed
+  records/<2hex>/<id>.json.ots                 only a legacy per-record stamp (3.3.0 or `record` mode)
+  replies/<2hex>/<id>.<slug>.json              the reply-text records (B6.2) of selected records
+  keys/<domain>/<selector>/<h16>.json          the archived key each signature of a selected record names (`key_file`)
+  manifests/<seq>.json                         the manifests a seal needs (below)
+  manifests/<seq>.json.ots                     the proof of a stamped manifest
+```
+
+- **Records and replies**: every selected record file; every reply-text file of a selected record present at the snapshot commit (one streamed `git ls-tree -r` over `replies/`, filtered by the selected ids). A reply of a record outside the selection is never added.
+- **Keys**: the file each signature's `key_file` names (deduplicated). A `key_file` the commit does not hold is `ERR_EXPORT_SELF_CHECK` (the trail is damaged: the record still verifies from its inline key, but the archive copy the bundle claims is missing).
+- **Seals** (one pass over the manifests at the snapshot commit, not one `findSeal` per record; the decision is the one pure function `findSeal` already uses, B13.1.10, extracted so that `export` and `verify-bundle` share it):
+  - a record or reply with its own committed `.ots` (legacy): the `.ots` is copied;
+  - one listed in manifest `L` (the file hash equal to the listed one, B13.1.10) whose stamp is manifest `S` (`S >= L`, the nearest stamped one, each link verified): **every manifest `L..S`** and the `.ots` of `S` are copied, so the chain from the listing to the stamp is in the bundle;
+  - one listed in `L` with **no stamp yet** (`stamp: null`): **no manifest is copied** (a listing with no time evidence proves nothing and only discloses a batch); the record is exported with seal state `unstamped`;
+  - one listed in no manifest: state `unsealed`.
+  The union of what the records and replies need is copied once each, so the manifests form runs of consecutive `seq`; a gap between runs is normal in a bundle (B13.3.4).
+- **Not copied, ever**: raw emails, attachments, `trail.json`, other records, other keys, other manifests, other replies, the content store, the index, any lock or marker. A manifest carries the other records of its batch **as id and file-hash pairs only** (B13.1.3): the recipient learns that other records were sealed in those batches, how many and when (`created`), and nothing about them. That disclosure is part of the format and the README says it.
+- **Content status** (per record in `bundle.json`, nothing copied): `raw.stored` is whether `<trail>.content/raw/<id[0:2]>/<id>.eml` exists, `attachments[i].stored` likewise for `att/<hex[0:2]>/<hex>` (B7.1). It is an existence check (stat), **no re-hash** (a bundle of thousands must not read gigabytes), and **absent** means expired, forgotten, never stored or a store that is off; the record cannot say which. The ids and hashes (`raw_sha256`, each attachment `sha256`) are what a recipient who is later handed the bytes compares with `sha256sum`. A new stat-only helper beside `readRaw` in `content.js` is the one place that knows the content layout (no second path builder).
+- **Seal state at export** (informational; the verifier recomputes all of it): `anchored` when the stamp's proof is in the trail's anchored cache (B3 `upgradeStamps`, `readAnchored`), `pending` when it is not, `unstamped`, `unsealed`. Export never runs `ots`: a proof upgraded after the export stays as exported. Export prints a warning when any record is `pending`, `unstamped` or `unsealed`: run `mailproof stamp` (it stamps and upgrades) and export again.
+
+#### B13.2.5 `bundle.json`
+
+UTF-8, LF, two-space indent, fixed key order, final newline (as a record, B1); written last, after every other file is hashed.
+
+```jsonc
+{
+  "v": 1,
+  "kind": "mailproof-pair-bundle",
+  "created": "2026-11-12T09:30:00.000Z",          // the instance clock; informational
+  "mailproof": "3.4.0",                            // the exporting version
+  "trail": "default",
+  "trail_head": "<40 hex: the commit the bundle is a snapshot of>",
+  "selection": { "with": ["bob@example.org"], "after": null, "before": null, "records": 41 },   // as given: lower-cased, sorted; dates as ISO or null
+  "completeness": "none: the owner chose the selection; nothing here shows that no other email exists",
+  "records": [                                      // ascending by (captured, id)
+    {
+      "id": "<32 hex>", "file": "records/ab/<id>.json",
+      "captured": "<ISO>", "direction": "in|out",
+      "portable": "verified|unverified", "live": "verified|forwarded|authorized|unverified",   // the record's own verdicts
+      "body_status": "matched|partial|mismatch|not-checked",
+      "seal": { "state": "anchored|pending|unstamped|unsealed", "via": "record|manifest|null",
+                "listed_in": 12, "stamped_by": 14 },                     // seq numbers, or null; at export
+      "content": { "raw": { "sha256": "<64 hex>", "size": 0, "stored": true },
+                   "attachments": [ { "filename": "<name or null>", "size": 0, "sha256": "<64 hex>", "stored": false } ] },
+      "replies": [ "<slug>" ]
+    }
+  ],
+  "files": { "README.txt": "<64 hex>", "records/ab/<id>.json": "<64 hex>", "...": "..." }   // every file except bundle.json, path -> sha256, sorted bytewise
+}
+```
+
+`bundle_sha256` (`ExportResult`, printed by the CLI) is the sha256 of the `bundle.json` bytes. **`bundle.json` is an index, not a proof.** Nothing signs it: whoever edits a file can regenerate it. What stops forgery is not this file but the DKIM signatures `verify-bundle` re-checks and the seals; what it adds is detection of a damaged or incomplete copy, and (when the owner tells the recipient `bundle_sha256` by another channel, for example in the cover email, and the recipient runs `verify-bundle --expect <hex>`) detection of a bundle that is not the one the owner made.
+
+#### B13.2.6 Mechanism, locks, concurrency
+
+1. Validate options; refuse `out` (B13.2.7); with `tar`, check the binary.
+2. Candidate ids from the index (`listIndex`, per address). This is where `ERR_TRAIL_LOCKED` (index catch-up under the trail lock, `lockTimeoutMs`) and `ERR_INDEX_UNAVAILABLE` come from.
+3. Pin the snapshot: `git rev-parse HEAD` **after** step 2 (every id the index knew is in this commit, barring a prune). Everything below is read at that commit through one `git cat-file --batch`.
+4. Read and re-test the records (B13.2.2), read replies, keys and manifests, decide seals (B13.2.4), stat content, check the size caps (B13.2.8) as bytes accumulate.
+5. Write into the private temp directory (B13.2.7): the files, then `README.txt`, then `bundle.json`.
+6. **Self-check:** run `verifyBundle(temp, { ots: null })` (B13.3: the same code the recipient will run, without `ots`). A bundle that does not verify is not delivered: the temp is removed and the call rejects `ERR_EXPORT_SELF_CHECK` naming the failed check. (A record whose DKIM does not verify is not a failure: accept-with-flag, B13.3.3 step 4.)
+7. Move into place (B13.2.7). Before it, re-read HEAD: if the snapshot is no longer HEAD or its ancestor, or any git read of the snapshot failed because the objects are gone (a prune swapped the trail, B9.4), the temp is removed and the call rejects `ERR_EXPORT_REWRITTEN` (retry; exit 75).
+
+**No lock is held while reading**: a commit's objects are immutable, so a `record()`, a stamp job or a `sync` running meanwhile is harmless (their records are simply not in this snapshot, and `trail_head` says which commit it is). Export takes neither the trail lock (except inside the index catch-up), the stamp lock nor the sync lock, and so never delays capture.
+
+#### B13.2.7 Output path and refusal
+
+- `out` must not exist, or be an **existing empty directory** you own; anything else (a file, a non-empty directory, a symlink) is `ERR_EXPORT_EXISTS` and nothing is touched: an export never overwrites. Its parent must exist (CLI exit 64). `out` must not resolve (after `realpath` of its parent) to a place inside `<trailDir>/<trail>` or the content directory, nor inside an existing bundle: a bundle never lands in the repo (B3's start-of-write cleanup is not meant to meet it) or the store.
+- Built in a private temp directory `<parent of out>/.mailproof-export-<random>` (mode 0700, files 0600), then `rename`d onto `out` (atomic on one file system; an existing empty `out` is replaced by the rename). A failure or kill leaves at most that temp directory, named for what it is; it is never removed automatically (export does not delete in a directory it did not make). **The bundle stays 0700/0600** (it holds other people's addresses and subjects): sharing it is the owner's act.
+- No default `out` in the library. The CLI default is `./mailproof-bundle-<account>-<UTC yyyymmdd-hhmmss>` (the current directory, where the owner will copy it from; not the state directory, B11.6's `backup` default, because a bundle is made to be handed over).
+
+#### B13.2.8 Limits (`src/proof/limits.js`, one place; the verifier reads the same constants)
+
+| Constant | Value | Why |
+|---|---|---|
+| `EXPORT_MAX_ADDRESSES` | 20 | `with` entries. |
+| `EXPORT_MAX_RECORDS` | 10,000 | Selected records; a bundle is a pair's exchange, not the trail (`ERR_EXPORT_TOO_BIG`: narrow with dates). |
+| `BUNDLE_MAX_FILES` | 100,000 | Files in a bundle. |
+| `BUNDLE_MAX_BYTES` | 256 MiB | All files together; export stops with `ERR_EXPORT_TOO_BIG` as it passes it, the verifier refuses a bigger directory without reading it. |
+| `BUNDLE_MAX_RECORD_BYTES` | 4 MiB | One record file (a hostile bundle can name any size). |
+| `BUNDLE_MAX_MANIFEST_BYTES` | 4 MiB | One manifest (`STAMP_MAX_ENTRIES` x about 120 bytes is 2.4 MB). |
+| `BUNDLE_MAX_OTS_BYTES` | 1 MiB | One `.ots` (real ones are a few KB). |
+| `BUNDLE_MAX_SMALL_BYTES` | 256 KiB | One reply-text or key file. |
+| `BUNDLE_MAX_JSON_BYTES` | 64 MiB | `bundle.json`. |
+| `BUNDLE_MAX_README_BYTES` | 32 MiB | `README.txt` (about 2 KiB a record at most; long fields are cut, B13.2.10). |
+| `BUNDLE_OTS_TIMEOUT_MS` | 10,000 | One `ots info` call (B13.3.4). |
+| `BUNDLE_OTS_MAX_MS` | 300,000 | All `ots info` calls of one `verify-bundle` run; the rest are reported `unchecked`. |
+| `BUNDLE_OTS_OUTPUT_BYTES` | 65,536 | `ots info` output read per call. |
+
+#### B13.2.9 CLI, errors, exit codes
+
+`mailproof export --account <name> --with <a,b,...> [--after <date>] [--before <date>] [--out <path>] [--tar] [--json]` (B11.3 account selection; `--with` required; the addresses comma-separated, as `--folders`, an address never contains a comma; dates as `list`, B11.5). Account-scoped; it opens no IMAP and resolves no secret. In the menu (item 14) it prompts for the same four values and runs the same path; it writes only a new directory, so it has no destructive confirm.
+
+Human output: `wrote <out> (<N> records, <R> replies, <K> keys, <M> manifests, <size>)`, then `bundle sha256 <hex>  (tell the recipient this out of band; they can run: mailproof verify-bundle --expect <hex> <dir>)`, then `seals: A anchored, P pending, U unstamped, X unsealed` and the content line `raw emails still stored: S of N`, then the warning of B13.2.4 when it applies. `--json`: the `ExportResult`.
+
+| Exit | When |
+|---|---|
+| `0` | written |
+| `64` | bad usage: no `--with`, a bad address or date, `out` exists / its parent is missing / is inside the trail or content directory (`ERR_EXPORT_EXISTS`), a TypeError |
+| `75` | `ERR_TRAIL_LOCKED`, `ERR_EXPORT_REWRITTEN` (retry) |
+| `77` | config permissions (B11.8) |
+| `1` | `ERR_EXPORT_EMPTY`, `ERR_EXPORT_TOO_BIG`, `ERR_EXPORT_SELF_CHECK`, `tar` missing, `ERR_STAMP_CHAIN`, `ERR_INDEX_UNAVAILABLE`, any other error |
+
+`export` replaces the exit-64 stub of B11.5; B11.8's "`export` not available" disappears with it.
+
+#### B13.2.10 `README.txt`
+
+Plain text, 80 columns, LF, generated by `export` from a fixed template and the records (no free text of the owner's). **Every value that comes from an email (addresses, subjects, ids as written, file names) goes through `printable()`** (B11.7, F28: the README is read in a terminal and a subject is attacker-chosen), and a subject or file name is cut to 200 code points. The fixed parts (angle brackets are the filled values):
+
+```
+MAILPROOF PAIR BUNDLE
+=====================
+Made <created> by mailproof <version> from the trail "<trail>" (commit <first 12 of trail_head>).
+Selection: emails that name <a>, <b> on From, To, Cc or Reply-To, captured <from after|the beginning> to <before|now>.
+<N> emails. bundle.json sha256: <hex>
+
+WHAT THIS IS
+Proof records of emails, not the emails. For each email the record holds the
+header lines the sender's mail server signed (DKIM), the signatures, and the
+sender's public key as fetched when the mail arrived. An OpenTimestamps seal
+fixes a latest date for each record. The emails themselves (bodies and
+attachments) are NOT in this bundle.
+
+CHECK IT, with no account, no trail and no network:
+    npx mailproof verify-bundle <this directory>
+(Install opentimestamps-client first if you want the seals checked as well:
+without it verify-bundle says "seals not checked".) To check that this is the
+bundle its owner made, ask for its sha256 by another channel and add
+--expect <sha256>.
+
+WHAT IS PROVEN (each line below says it per email; verify-bundle recomputes it)
+- A signed email: the signing domain's key signed exactly the header lines listed
+  as "signed". Those headers were not altered after signing. A signed From
+  that aligns with the signing domain says that domain vouched for the sender.
+- The record's file existed no later than the date of its seal (the Bitcoin
+  block), through the manifest chain in manifests/. "Pending" means the seal
+  is not in a Bitcoin block yet.
+- The key shown is the key the record carries.
+
+WHAT IS BEST EFFORT, NOT PROVEN
+- Headers the signature does not cover: To, Cc, Reply-To, In-Reply-To and
+  References are shown as recorded and marked "unsigned". "Replied to" is
+  what the headers say, nothing a signature backs.
+- The body and attachments: not in the bundle. "body: matched" says that at
+  capture the body hashed to the signed value; only the owner's copy of the
+  email can show it again. If you are given an email, its sha256 must equal the
+  sha256 listed below (sha256sum), and its first 32 hex are the id.
+- "captured" is the owner's clock. Only the seal bounds it ("no later than").
+- An unsigned email (for example a sent copy at some providers) proves nothing
+  about the sender; only that the owner recorded these bytes by the seal date.
+- COMPLETENESS: not proven. The owner chose which emails to include. Nothing
+  here shows that no other email between you exists. One weak check: the
+  manifests list other records by hash. If you hold an email that is not here,
+  take the first 32 hex of its sha256: if a manifest lists that id, the owner
+  recorded it and left it out.
+
+PRIVACY
+This bundle names the people the owner wrote to and heard from, and the
+subjects of these emails. Its manifests also show that other records existed
+(how many, and when each batch was sealed), never what they were. Share it
+only with whom you mean to.
+
+THE EMAILS
+<one block per email, oldest first>
+[1] <id>
+    direction : received | sent        captured : <ISO> (owner's clock)
+    From      : <addr> (signed|unsigned)
+    To        : <addrs> (signed|unsigned)     [Cc and Reply-To the same way, only when present]
+    Subject   : <text> (signed)  |  not recorded (not signed)
+    Date      : <value> (signed)  |  not recorded
+    Message-ID: <value>          In-Reply-To: <value> (signed|unsigned) | none
+    DKIM      : verified by d=<domain> s=<selector>, <n> header names signed (<h= list>)
+              | not verified: <why>   |   unsigned
+    Body      : matched | partial (the signature covers only the first <n> bytes) | mismatch | not checked
+    Seal      : anchored in Bitcoin block <N> (manifest <L> listed it, manifest <S> stamped) | pending | listed but not stamped | not sealed
+    Owner holds: raw email sha256 <hex> (<stored|not stored>); attachment <name> <size> sha256 <hex> (<stored|not stored>)
+    Reply text : <slug> recorded (sha256 <hex>)  [only when a reply-text record is included]
+```
+
+The seal line at export reads the cache of B13.2.4 and says "at export"; the verifier's own report is the authority. The README is not read by the verifier (it is listed in `files` so that damage is noticed, and nothing in it is trusted).
+
+#### B13.2.11 What the bundle proves, and what it cannot
+
+Said once here and in the README; this is the honest scope.
+
+- **Proves, per included record** (checked by B13.3): the signed header lines are what the signing domain's archived key signed (`verifyRecord`, offline, at `captured`); the key in the record is the archived key; the record file is listed in a manifest and the chain of manifests reaches a stamp whose proof commits to that chain; and, when the proof is anchored, the record existed no later than that Bitcoin block (up to the cadence plus the sync gap after capture, B13.1.7).
+- **Does not prove completeness.** The owner picked the selection and the bundle cannot show that no other email with that person exists, or that the selection is the whole exchange. It does not prove that the owner did not also record and omit something. The manifests expose that other records were sealed in the same batches (as hashes); a recipient holding an email the bundle omits can detect the omission only if that email was recorded and sealed in one of the included batches (README, "COMPLETENESS"), which is evidence, not a guarantee.
+- **Does not prove the content.** Nothing is in the bundle but headers and hashes; `matched` is the owner's claim at capture, re-checkable only with the raw email.
+- **Does not prove the key was the domain's key.** The key was fetched from DNS by the owner's machine at capture and is covered by the seal as part of the record; a recipient who doubts it can compare it with the selector's DNS record while that record exists.
+- **Does not prove when something was received**, only that the owner's record existed by the seal (`captured` is the owner's clock; the signed `Date` is the sender's).
+- **Cannot be signed as a whole**: `bundle.json` is an index (B13.2.5).
+
+#### B13.2.12 Test plan
+
+`tests/integration/export.test.js` (real `record()` over fixture mail in `tests/integration/fixtures`, a moving clock, a fake `ots` that writes a proof, `tests/helpers/prune-trail.js` style; no `/tmp` leaks, `makeTmpDir`):
+- **Selection.** One address; several (union); case-insensitivity; `bob@gmail.com` is not `bob@company.com`; the owner's own address selects everything; an address seen only on an unsigned Cc is selected (M3 `addresses`); an old record (no `addresses`) selected by its signed lines; `after` inclusive, `before` exclusive; a record outside the range excluded; an over-limit record never selected; a corrupted index naming a foreign record: dropped (re-test), naming a missing record: `ERR_EXPORT_REWRITTEN`; `with` validation (empty array, 21 addresses, a non-address, a non-string); `after >= before`.
+- **Contents.** The file set for: a legacy per-record stamp; a record listed in a stamped manifest (own); in an unstamped manifest covered by a later stamp (manifests `L..S` all present, intermediate chain complete); listed but never stamped (no manifest copied, state `unstamped`); unsealed; a reply-text record; a record with two signatures and two keys (deduplicated key); no raw email, no attachment, no `trail.json`, no foreign manifest/key/reply in any case. Every copied file byte-identical to `git show`. The content status: stored, expired (`expireContent`), forgotten (`forget`), store off, attachments off; `stored` is a stat (a corrupted stored file still says stored: documented).
+- **bundle.json.** Golden bytes for a fixed trail; sorted records and files; `files` hashes equal the bytes; `bundle_sha256` equals the hash of the file; `completeness` present; selection normalised.
+- **Output path.** A new path; an existing empty directory; an existing non-empty directory, a file, a symlink: `ERR_EXPORT_EXISTS`, nothing changed; a missing parent; `out` inside the trail and inside the content directory refused; temp removed on failure (a killed child leaves only the named temp); modes 0700/0600; killed child (SIGKILL after the temp is built, before the rename) leaves no `out`.
+- **Concurrency.** A `record()` and a stamp job during the read: bundle at the pinned commit, `trail_head` right, no lock held (a hook holds the trail lock after step 3: export completes); a prune swap during the read: `ERR_EXPORT_REWRITTEN` and no `out`; `ERR_TRAIL_LOCKED` from the index catch-up; no change to HEAD, the trail tree or the content store (compared before and after).
+- **Limits.** `EXPORT_MAX_RECORDS`, `BUNDLE_MAX_BYTES` lowered by the test hook: `ERR_EXPORT_TOO_BIG`, nothing written; empty selection `ERR_EXPORT_EMPTY`.
+- **Self-check.** A trail whose record names a missing `key_file`: `ERR_EXPORT_SELF_CHECK`, no `out`; an unverified (unsigned or bad-signature) record exports fine.
+- **README.** Golden file for fixed records (signed all headers, signed From only, unsigned, Microsoft-style unsigned threading, `body: partial`, `mismatch`, pending seal, no seal, content absent); a subject with ESC, bidi and a 5,000-character subject (escaped, cut); the privacy and completeness paragraphs present.
+- **CLI.** Flags and exit codes of B13.2.9; `--json` shape; `--tar` (file mode, one top-level directory, extract-and-verify round trip; `tar` missing via PATH override: exit 1 before anything is built); the menu item; no account needed for nothing else; help and primitives generated (`check:primitives`, `check:cli-help`, `check:mcp-tools`: `Mailproof#export` deferred with a reason string).
+
+### B13.3 `verify-bundle` (M4 part b, build step 3)
+
+`npx mailproof verify-bundle <dir>` checks a bundle (B13.2) on **the recipient's machine with nothing of the owner's**: no trail, no index, no content store, no account, no config file, and no network.
+
+#### B13.3.1 Surface
+
+- Library: `verifyBundle(dir, opts?) => Promise<BundleResult>`, public beside `verifyRecord` (`src/index.js`, `primitives.json`; a function, not a method of `Mailproof`; **not an MCP tool**). `opts = { ots?: string | null, expect?: string, strict?: boolean }`: `ots` the binary (default `ots` from `PATH`; `null`: do not run it, seals are reported `unchecked`), `expect` the 64-hex `bundle_sha256`, `strict` (below).
+- CLI: `mailproof verify-bundle <dir> [--expect <sha256>] [--strict] [--json]`. Account-free (works with no config file, as `config`, B11.5); not in the menu (the menu is account-scoped, B11.4). The `ots` binary: `MAILPROOF_OTS=off` skips it, an absolute path names it, otherwise `ots` from `PATH` (the same environment variable as `mailproof-sync`, B13.1.14).
+- **Same verifier code, one source of truth**: records are checked with `verifyRecord` (`recheck.js`), manifests parsed with `parseManifest`/`chainError` and seals decided with the shared pure seal function (`seal.js`, B13.2.4), paths parsed by `layout.js`, `ots info` output by the one parser in `ots.js` (B13.3.4), "who a record names" by `participantsOf`. The module imports nothing from the trail, the index (`better-sqlite3`), IMAP or the content store, so a missing native add-on or no git cannot stop it; the dispatcher loads it lazily. There is no copied standalone verifier.
+- **Read-only**: it writes nothing (not the bundle, not a cache, not a temp file); it never runs `ots upgrade` or `ots verify` (both query calendars live; decisions-log "OTS-proof verification"); `ots info` parses a proof locally.
+
+#### B13.3.2 The bundle is hostile input
+
+The sender is the counterparty and may be an adversary; every rule of the admission gate's spirit applies (a bounded cost before any parser):
+- `<dir>` is `lstat`ed: it must be a real directory (not a symlink). The walk (`readdir`, no recursion into symlinks) accepts only **regular files** and directories; any symlink, device, FIFO or socket is a failure (`unsafe entry`), never followed or opened.
+- Counts and sizes are checked from `lstat` before any read: more than `BUNDLE_MAX_FILES` files, a total over `BUNDLE_MAX_BYTES`, or a file over its type's limit (B13.2.8) fails the check `files` and the file is not read.
+- Every path must be built by `layout.js`'s parsers (`records/..`, `replies/..`, `manifests/..`, `keys/..`) or be exactly `README.txt` / `bundle.json`; any other name is `unexpected path`. Paths from `bundle.json` are used only as lookup keys into the directory listing already made, never joined to a path and opened, so `..` and absolute paths cannot reach outside.
+- JSON is parsed once per file, with the size caps above; `verifyRecord` never throws and bounds its own work (at most 10 signatures, `h=` cap, B1); a manifest is parsed by `parseManifest` (shape, order and `seq` checked, bounded by `BUNDLE_MAX_MANIFEST_BYTES`).
+- `ots` is run with an argument vector (`execFile`, no shell) on a path the verifier built from a parsed name, with `BUNDLE_OTS_TIMEOUT_MS`, output capped at `BUNDLE_OTS_OUTPUT_BYTES`, all calls together capped at `BUNDLE_OTS_MAX_MS`.
+- Output is untrusted text: every string from the bundle printed in text mode passes through `printable()` (F28); `--json` is data (consumers treat strings as untrusted, B11.7).
+
+#### B13.3.3 Checks, in order
+
+Each check has a name; a failed check does not stop the later ones that can still run, so one report lists everything wrong. `failed` in the result is the ordered list of failed names.
+
+1. **`bundle.json`**: present, a regular file, parses, `v` is `1` (an unknown version fails with `unsupported bundle version N: upgrade mailproof`), `kind` is `mailproof-pair-bundle`, the fields the verifier uses have their shapes (`records[]`, `files`, `selection`), every `records[].id` is 32 lowercase hex and unique. Later checks that need it are skipped if it fails.
+2. **`expect`** (only with `--expect`): the sha256 of the `bundle.json` bytes equals the given hex (case-insensitive).
+3. **`files`**: the directory's file set equals `files` plus `bundle.json` (no missing, no unlisted), and the sha256 of every file equals its listed one. (The limits and unsafe-entry rules of B13.3.2 are part of this check.)
+4. **`records`**: for each entry: the record file is present at `file` and that path is the id's `layout.js` path; it parses; `v` is 2; `id` equals the entry and the file name; `message.raw_sha256` starts with the id; the entry's `captured` and `direction` equal the record's; then **`verifyRecord(record)` at `captured`** (the record's own clock, as `mailproof verify` does, B11.5). A record whose DKIM does not verify, or that is unsigned, is **not a failure** (accept-with-flag: the trail records everything); it is reported with its verdict and, per signature, `why`. The check fails only when the record **says `portable: verified` but recomputes to unverified** (or its recorded portable verdict does not equal the `portable` of the bundle entry): the owner's record claims what the bytes do not give. The reverse (recorded unverified, recomputed verified, for example a later engine version) is a note `verdict improved`, not a failure. `verdicts.portable.engine.rules` differing from this build's `RULES_VERSION` is a note.
+5. **`selection`**: every record names at least one of `selection.with` (`participantsOf`) and its `captured` is within `selection.after`/`before`: a bundle whose records are not what its selection says is not the bundle it claims to be. (This binds the records to the claim, not the selection to the exchange: B13.2.11.)
+6. **`keys`**: for each signature of each record that names a `key_file`: that file is in the bundle (`keys/<domain>/<selector>/<h16>.json`, path by `layout.js`'s key parser: domain and selector lowercase equal the signature's `d=` and `s=` tags, `h16` the first 16 hex of the sha256 of `p`), parses (`v` 2), and its `k` and `p` equal the signature's inline `key`. A signature with no key (`key_error`) has nothing to check. A mismatch or a missing file fails.
+7. **`replies`**: each reply-text file parses (`kind: 'reply-text'`, `v` 2), its `record_id` equals the id in its file name and is a record of the bundle, and the entry's `replies` slugs equal the files present for that record.
+8. **`chain`**: every manifest parses (`parseManifest`: shape, entry order, `seq` equals the file name). The manifests are grouped into runs of consecutive `seq`; inside a run each `previous_sha256` equals the sha256 of the previous manifest's **bytes** (never re-serialised, B13.1.3); the first manifest of a run is not checked against a predecessor the bundle does not hold (that is the normal shape of a bundle, B13.2.4, unlike a gap in a trail, B13.1.11). A manifest that does not parse, an unequal link, or a manifest no record or reply uses (an unreferenced manifest would only add disclosure) fails.
+9. **`seals`**: for each record and each reply file, by the shared seal function over the bundle's manifests (B13.1.10): own `.ots` beside the file; else the manifest that lists it (the listed hash must equal the sha256 of the bundled file) and the stamp reached through verified links; else no seal. Then for each distinct `.ots` (a manifest's, or a legacy record's), with `ots` available, `ots info <file.ots>` (B13.3.4): the digest the proof commits to must equal the sha256 of the file it stamps (a manifest, or the record file); the attestations give the state. States per record: `anchored` (a Bitcoin block attestation; `block`, `merkle_root`), `pending` (calendar attestation only), `unstamped` (listed, no stamp in the bundle), `unsealed`, `unchecked` (`ots` absent, off, timed out, or out of its time budget: the structure above was still checked, the proof was not read), `bad` (the proof commits to other bytes, does not parse, or has no attestation; the `why` says which). **A `bad` seal fails the check; every other state passes it** (pending is normal; unsealed is the owner's state; the report shows them).
+10. **Summary and verdict.** `ok` is true when no check failed. With `strict` it is also false unless every record is `verified` (portable) and every seal is `anchored` (so an unsigned record, a pending or `unchecked` seal, or a missing `ots` fails strict). `strict` adds the names `strict:verified` / `strict:anchored` to `failed`.
+
+#### B13.3.4 Seals and `ots` without a node
+
+`ots info` parses a `.ots` locally and prints the digest it commits to and its attestations; it needs no network and no node. Verified against `opentimestamps-client` 0.7.2 on a hand-built proof (output as it is, one proof per kind):
+
+```
+File sha256 hash: 65e4...3d2e
+Timestamp:
+verify PendingAttestation('https://alice.btc.calendar.opentimestamps.org')
+
+File sha256 hash: 65e4...3d2e
+Timestamp:
+verify BitcoinBlockHeaderAttestation(823840)
+# Bitcoin block merkle root 2e3d...e465
+```
+
+`parseOtsInfo(stdout) => { digest, block, merkleRoot, pending } | null` joins `parseOtsBlockHeight` in `ots.js` (the one place that reads `ots` output; line-anchored: `^File sha256 hash: ([0-9a-f]{64})$`, `^verify BitcoinBlockHeaderAttestation\((\d+)\)$`, `^# Bitcoin block merkle root ([0-9a-f]{64})$`, `^verify PendingAttestation\(`; a non-zero exit, a missing digest line or no attestation line is `null`, reported `bad`). `anchored` wins over `pending` when both lines are present (an upgraded proof keeps the calendar path).
+
+**What `anchored` means here, honestly.** The proof is for exactly these bytes and carries a Bitcoin block attestation (`block`, `merkle_root` as `ots info` computed them from the file hash through the proof's operations). `verify-bundle` does **not** check that block's header against the Bitcoin chain (that needs a node or an explorer; `ots verify` does it and queries them live, so it is never run here). The report prints the block number and merkle root for the recipient to compare with any block explorer, and the README says so; a recipient who wants the full check runs `ots verify <file>.ots` on the manifest it names. **`ots` absent**: `seals` still checks everything that needs no `ots` (the listing, the file hash in the manifest, the chain links, the presence of a `.ots`), the states become `unchecked`, the text report says `seals NOT checked: ots not installed (install opentimestamps-client)` on its own line, and `strict` fails.
+
+A pending proof in a bundle stays pending: whoever holds a copy may run `ots upgrade` on a copy of the `.ots` (network), which does not change the bundle's files and hashes; the owner exports again after `mailproof stamp` for a refreshed one.
+
+#### B13.3.5 Result
+
+```
+BundleResult = {
+  ok: boolean,
+  failed: string[],                                  // check names, in order
+  bundle: { v, kind, created, mailproof, trail, trail_head, selection, bundle_sha256 } | null,
+  expect: { given: string, match: boolean } | null,
+  files: { listed: number, found: number, bytes: number, problems: Array<{ path: string, why: string }> },
+  records: Array<{
+    id: string, ok: boolean,                         // ok: no failure for this record in checks 4-9
+    trust: 'verified' | 'unverified', at: string | null,
+    signatures: Array<{ index, d, s, ok, aligned, why }>,   // verifyRecord's, as is
+    key: 'ok' | 'none' | 'mismatch' | 'missing',
+    seal: { state: 'anchored' | 'pending' | 'unstamped' | 'unsealed' | 'unchecked' | 'bad',
+            via: 'record' | 'manifest' | null, listed_in: number | null, stamped_by: number | null,
+            block?: number, merkle_root?: string, why?: string },
+    replies: Array<{ slug: string, seal: <same shape> }>,
+    notes: string[],
+  }>,
+  chain: { runs: Array<{ from: number, to: number }>, problems: Array<{ seq: number, why: string }> },
+  ots: 'used' | 'absent' | 'off' | 'out of time',     // what happened to the proofs
+  counts: { records, verified, unverified, anchored, pending, unstamped, unsealed, unchecked, bad },
+}
+```
+
+Text mode prints, first, one line `OK` or `FAILED: <names>` and the counts; the `seals NOT checked` line when it applies; one line per record (short id, captured, direction, `verified`/`unverified`, seal state with block, the first problem if any); the failures of each check; then three fixed sentences: the bundle does not prove completeness; `anchored` is not checked against a Bitcoin node; `captured` is the owner's clock. `--json`: exactly one `BundleResult` on stdout (B11.7). Nothing is written anywhere.
+
+#### B13.3.6 Exit codes
+
+| Exit | When |
+|---|---|
+| `0` | `ok` |
+| `2` | `ok` is false: a check failed (including `bundle.json` missing or unreadable in a directory that exists, and `strict` conditions). Not an error: the output is the result (B11.8) |
+| `64` | bad usage: no `<dir>`, a path that does not exist or is not a directory, a bad `--expect` (not 64 hex) |
+| `1` | anything else (an unexpected exception) |
+
+No `75` or `77`: no lock, no config. Library: `verifyBundle` resolves to a `BundleResult` for every bundle that can be examined (never rejects for a bad bundle) and rejects only with a `TypeError` for a bad argument or an unexpected exception.
+
+#### B13.3.7 Test plan
+
+`tests/integration/verify-bundle.test.js` (bundles made by the real `export` over real trails, then damaged by the test; a fake `ots` for scripted `info` output, plus the real `ots info` on hand-built proofs when the binary is present, skipped otherwise; the verifier is run with the owner's trail directory renamed away to prove it needs nothing of it):
+- **Pass.** A mixed bundle (signed, unsigned, legacy stamp, stamped manifest, unstamped-covered manifest, unstamped, unsealed, reply-text) passes; counts; text and `--json` shapes; byte-identical report for two runs; nothing written in the bundle directory (tree and mtimes compared); a tar-extracted bundle verifies the same.
+- **Each check, one failure at a time.** A flipped byte in a record (files hash, and with a regenerated `bundle.json` the DKIM verdict `verified` -> unverified fails `records`); a record's header line edited then re-hashed in `bundle.json`; a recorded `portable: verified` on a record that recomputes unverified; `portable` edited in `bundle.json`; id / file name mismatch; a swapped key file (`k`/`p` differ), a key file at the wrong `h16` path, a missing key file; a reply-text with a foreign `record_id`; a manifest with a changed entry (chain link fails); a deleted middle manifest (the stamp is unreachable: `seals`); a manifest whose `seq` is not its file name; an unreferenced manifest; a record whose listed hash differs from its file; a proof for other bytes (`bad`); an unparseable `.ots`; an extra file, a missing file, an unlisted file; `bundle.json` missing, junk, `v: 2`; a record outside the selection.
+- **Seals and `ots`.** Anchored, pending, both lines (anchored wins), no attestation; `ots` absent (PATH without it): `unchecked`, the NOT checked line, exit 0, `--strict` exit 2; `MAILPROOF_OTS=off`; an `ots` that hangs (`BUNDLE_OTS_TIMEOUT_MS` lowered) and the total budget (`BUNDLE_OTS_MAX_MS` lowered): the rest `unchecked`; `ots` never called with `upgrade` or `verify` (a spy records every argv).
+- **Hostile bundle.** A symlink (to a file, to a directory, to `/etc/passwd`), a FIFO, a file over its size cap, a thousand-signature record (bounded), a manifest with a million entries (size cap), `files` keys with `..` and absolute paths (never opened, `unexpected path`), a path that parses as a record path with an uppercase id, control characters and bidi in a subject/file name in the output (escaped), a directory with more than `BUNDLE_MAX_FILES` entries (cheap refusal); time bounded by wall-clock, not by input.
+- **CLI.** Exit codes; `--expect` match, mismatch, bad value; no config file and no `HOME` state needed; the command works with `better-sqlite3` made unloadable (the module is not imported); `check:primitives`, `check:cli-help` and `check:mcp-tools` pass (`verifyBundle` and `Mailproof#export` listed as not offered over MCP, with the reason).
+- **Round trip.** Export from a real trail, verify (exit 0); edit the exported README: `files` fails (its hash is listed; nothing in it is trusted); prune the owner's trail afterwards: the old bundle still verifies.
+
+#### B13.3.8 Not here
+
+Opening a `.tar` (extract it yourself); fetching a missing key from DNS (the archive is the point); checking a Bitcoin header (`ots verify`, a node); comparing a bundle with the owner's trail; any claim about completeness (B13.2.11); an MCP tool for either command; a standalone copy of the verifier. A later option, not scheduled: `verify-bundle --raw <file>` to bind one email's bytes to its record (sha256 and `matchBodyRecord`); today the README gives the `sha256sum` check.
 
 ## B14. `mailproof record` (M5)
 
