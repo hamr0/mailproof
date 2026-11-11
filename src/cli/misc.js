@@ -11,6 +11,7 @@ import { syncOnce, syncText } from './sync-op.js';
 import { configPath, TEMPLATE, loadConfig, ConfigError } from './config.js';
 import { addAccountWizard } from './wizard.js';
 import { printable as p } from './printable.js';
+import { stampText } from './sync-op.js';
 
 /** @typedef {import('./session.js').Ctx} Ctx */
 /** @typedef {import('./session.js').Args} Args */
@@ -31,6 +32,21 @@ export async function syncCmd(a, ctx) {
     if (a.values.json) printJson(ctx, { ...r.result, ots: r.ots }); else print(ctx, syncText(r));
     if (r.folderError) warn(ctx, `mailproof: ${p(r.folderError.folder)}: ${p(r.folderError.code)}: ${p(r.folderError.message)}`);
     return r.exit;
+  } finally { await s.close(); }
+}
+
+/**
+ * `stamp` (SPEC B13.1.12): run the stamp job now. Exit 0 when the job completed without an `ots` error (also when the seal is off),
+ * 1 when `ots` failed (the manifest is still committed), 75 for a held lock (the dispatcher maps ERR_TRAIL_LOCKED / ERR_STAMP_LOCKED).
+ * @param {Args} a @param {Ctx} ctx @returns {Promise<number>}
+ */
+export async function stampCmd(a, ctx) {
+  const s = await openAccount(a, ctx);
+  try {
+    const r = await s.mp.stamp();
+    if (a.values.json) printJson(ctx, r); else print(ctx, stampText(r));
+    if (r.error) { warn(ctx, `mailproof: ${p(r.error)}`); return EX_ERR; }
+    return EX_OK;
   } finally { await s.close(); }
 }
 

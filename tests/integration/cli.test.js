@@ -65,7 +65,8 @@ test('list: text, filters, --json is one array; a bad date, address or role is 6
 
 test('show: text, --json {record, proof, links}, an id prefix, --raw bytes; unknown and ambiguous ids', async () => {
   const j = json(await sp(['show', id('signed'), '--json']));
-  assert.deepEqual(Object.keys(j).sort(), ['links', 'proof', 'record']);
+  assert.deepEqual(Object.keys(j).sort(), ['links', 'proof', 'record', 'seal']);
+  assert.equal(j.seal, null, 'recorded but not sealed yet');
   assert.equal(j.record.id, id('signed'));
   assert.equal(j.proof.email.ok, true);
   assert.equal(j.links.parents[0].strength, 'signed');
@@ -148,7 +149,8 @@ test('status: one account, --json keyed by account, read-only (HEAD and tree unc
   assert.equal(j.test.records.total, 6);
   assert.deepEqual([j.test.records.in, j.test.records.out], [5, 1]);
   assert.ok(j.test.content.files >= 6);
-  assert.equal(j.test.pendingStamps, null, 'ots off');
+  assert.equal(j.test.pendingStamps, 0, 'ots is on by default: nothing stamped yet');
+  assert.deepEqual([j.test.seal.enabled, j.test.seal.mode, j.test.seal.everyHours, j.test.seal.last, j.test.seal.manifests, j.test.seal.chain], [true, 'batch', 6, null, 0, 'ok']);
   assert.equal(j.test.lastSync, null);
   assert.equal(j.test.watch.running, false);
   assert.equal(j.test.index, 'present');

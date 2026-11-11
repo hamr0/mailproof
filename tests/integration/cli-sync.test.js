@@ -37,7 +37,7 @@ test.after(async () => { await Promise.all(servers.map((s) => s.close())); });
 function run(args, { input, env = {} } = {}) {
   return new Promise((resolve) => {
     const child = spawn(process.execPath, [CLI, ...args], {
-      env: { PATH: process.env.PATH, NODE_EXTRA_CA_CERTS: certFile, ...env }, stdio: ['pipe', 'pipe', 'pipe'],
+      env: { PATH: process.env.PATH, NODE_EXTRA_CA_CERTS: certFile, MAILPROOF_OTS: 'off', ...env }, stdio: ['pipe', 'pipe', 'pipe'],
     });
     let stdout = ''; let stderr = '';
     child.stdout.on('data', (d) => { stdout += d; });

@@ -121,7 +121,7 @@ test('every tool once, with the shape of its result; blobs, saveTo, prefixes, no
   assert.equal(rcd.duplicate, false); assert.equal((await s.call('record', { base64: PLAIN.toString('base64'), direction: 'in' })).json.duplicate, true);
   assert.equal((await s.call('get', { id: rcd.id })).json.source, 'mcp');
   assert.ok((await s.call('replyText', { id: t.r.signed.id })).json.text !== undefined);
-  assert.equal((await s.call('upgradeStamps')).json.enabled, false);
+  assert.equal((await s.call('upgradeStamps')).json.enabled, true, 'ots is on by default; nothing is stamped, so nothing is asked');
   assert.equal(s.stderr, '');
   s.end(); await s.exited;
 });

@@ -155,6 +155,7 @@ export const TOOLS = {
 export const EXCLUDED = {
   'Mailproof': 'construction: the server builds one instance per account from the config.',
   'Mailproof#close': 'lifecycle: the server owns it; an agent calling it would end its own worker.',
+  'Mailproof#stamp': 'deferred (SPEC B13.1.9): the MCP decision is made with the pair export (B13.2); sync already runs the seal when due.',
   'Mailproof#expireContent': 'policy, not an agent need: sync enforces retention every sweepDays and forget is the on-demand tool.',
   'hashDocument': 'a pure helper; matchFile answers the real question and a model cannot usefully hand it bytes.',
   'checkProfile': 'the method of the same name covers it by id: one tool per name.',

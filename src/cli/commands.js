@@ -124,6 +124,9 @@ export const COMMANDS = {
     when: 'Use to work with the config file. `path` prints where it is; `validate` checks the permissions and every field without reading any secret (exit 0, 64 or 77); `template` prints an example to start from; `add-account` asks for one account step by step, shows the JSON, and writes it to the file only after you confirm (mode 0600, other accounts kept). The config holds no password: only a command, a file or a token command that yields one.',
     fails: 'validate: 64 for a missing file or a bad field (the message names the JSON path), 77 when the file is not owned by you or is readable by group or others.',
   },
+  stamp: {
+    primitive: 'Mailproof#stamp', summary: 'seal new mail now (OpenTimestamps)', account: true, positional: '', min: 0, max: 0, flags: {},
+  },
   export: {
     summary: 'needs M6 (not available yet)', account: false, positional: '', min: 0, max: 0, flags: {},
     when: 'Reserved for the proof bundle (M6). Not available in this version.', fails: 'Always exits 64.',

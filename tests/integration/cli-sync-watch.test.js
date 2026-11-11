@@ -3,6 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { Mailproof } from '../../src/proof/mailproof.js';
@@ -87,29 +88,67 @@ test('sync with a secret command that fails is 75 and never echoes the command o
   assert.match(r.stderr, /pass command failed/);
 });
 
-test('sync with OTS on: pending stamps are upgraded after the run and reported; status counts the pending ones', async () => {
+test('sync with OTS on: the run ends with the stamp job, its result is `ots` (a superset of 3.3.0), a second run is not due; `stamp` runs it now; status and show report the seal', async () => {
   const dir = makeTmpDir('mp-cli-ots-trail-');
   const marker = path.join(makeTmpDir('mp-cli-ots-m-'), 'm');
   const bin = path.join(scripts, 'ots');
-  fs.writeFileSync(bin, `#!/bin/sh\ncase "$1" in stamp) cp "$2" "$2.ots";; upgrade) if [ -f "${marker}" ]; then cp "$2" "$2.bak"; echo anchored >> "$2"; exit 0; else exit 1; fi;; info) echo "Bitcoin block 1";; esac\n`, { mode: 0o755 });
+  fs.writeFileSync(bin, `#!/bin/sh\ncase "$1" in stamp) cp "$2" "$2.ots";; upgrade) if [ -f "${marker}" ]; then grep -q anchored "$2" || { cp "$2" "$2.bak"; echo anchored >> "$2"; }; exit 0; else exit 1; fi;; info) echo "Bitcoin block 777";; esac\n`, { mode: 0o755 });
   const m = await signedMail({});
-  await new Mailproof({ trailDir: dir, resolver: m.resolver, worker: { size: 0 }, otsBin: bin }).record(m.raw, { direction: 'in' });
+  const rec = await new Mailproof({ trailDir: dir, resolver: m.resolver, worker: { size: 0 }, otsBin: bin }).record(m.raw, { direction: 'in' });
+  assert.equal(rec.ots, 'queued');
   const w = makeWorld({ accounts: { acme: account(dir, { passCommand, ots: bin }) } });
-  const deps = { sync: async () => result() };
-  assert.equal(JSON.parse((await w.run(['status', '--json'])).stdout).acme.pendingStamps, 1);
-  assert.deepEqual(JSON.parse((await w.run(['sync', '--json'], { deps })).stdout).ots, { upgraded: 0, pending: 1 });
+  const deps = { sync: async (mp) => ({ ...result(), stamp: await mp._autoStamp() }) };
+  const st0 = JSON.parse((await w.run(['status', '--json'])).stdout).acme;
+  assert.deepEqual([st0.pendingStamps, st0.seal.enabled, st0.seal.manifests, st0.seal.last], [0, true, 0, null]);
+  assert.match((await w.run(['status'])).stdout, /seal +batch every 6h; never run/);
+  assert.match((await w.run(['show', rec.id])).stdout, /^sealed +unsealed$/m);
+  const first = JSON.parse((await w.run(['sync', '--json'], { deps })).stdout).ots;
+  assert.deepEqual([first.ran, first.manifests.length, first.manifests[0].records, first.stamped, first.upgraded, first.pending, first.unstamped, first.unsealed], [true, 1, 1, 1, 0, 1, 0, 0]);
+  const again = JSON.parse((await w.run(['sync', '--json'], { deps })).stdout).ots;
+  assert.deepEqual([again.ran, again.skipped, again.upgraded, again.pending], [false, 'not due', 0, 1], 'upgraded and pending keep their meaning');
+  assert.match((await w.run(['sync'], { deps })).stdout, /ots: skipped \(not due\), 0 upgraded, 1 pending/);
+  const sh = (await w.run(['show', rec.id])).stdout;
+  assert.match(sh, /^sealed +manifest 1, stamped by manifest 1 \(pending\)$/m);
+  const st1 = JSON.parse((await w.run(['status', '--json'])).stdout).acme;
+  assert.deepEqual([st1.seal.manifests, st1.seal.unstamped, st1.seal.pending, st1.seal.chain, st1.pendingStamps], [1, 0, 1, 'ok', 1]);
+  assert.match((await w.run(['status'])).stdout, /seal +batch every 6h; last \d{4}-.*next due .*; 1 manifests \(0 without a proof\); 1 proofs not yet anchored/);
+  // `stamp` runs the job now, whatever the cadence: it upgrades once the calendars have it
   fs.writeFileSync(marker, '');
-  const r = await w.run(['sync', '--json'], { deps });
-  assert.deepEqual(JSON.parse(r.stdout).ots, { upgraded: 1, pending: 0 });
-  assert.equal(r.code, 0);
-  assert.match((await w.run(['sync'], { deps })).stdout, /ots: 0 upgraded, 0 pending/);
+  const s1 = await w.run(['stamp', '--json']);
+  assert.equal(s1.code, 0, s1.stderr);
+  const sj = JSON.parse(s1.stdout);
+  assert.deepEqual([sj.ran, sj.manifests, sj.upgraded, sj.pending, sj.error], [true, [], 1, 0, undefined]);
+  const s2 = await w.run(['stamp']);
+  assert.equal(s2.code, 0);
+  assert.match(s2.stdout, /nothing new to seal/);
+  assert.match((await w.run(['show', rec.id])).stdout, /^sealed +manifest 1, stamped by manifest 1 \(anchored, block 777\)$/m);
   assert.equal(JSON.parse((await w.run(['status', '--json'])).stdout).acme.pendingStamps, 0);
-  // a missing binary is reported in the result and never fails the sync
+  // a held stamp lock is 75
+  fs.writeFileSync(path.join(dir, '.default.stamp.lock'), JSON.stringify({ pid: process.pid, host: os.hostname(), started: new Date().toISOString() }));
+  const locked = await w.run(['stamp']);
+  fs.rmSync(path.join(dir, '.default.stamp.lock'));
+  assert.equal(locked.code, 75);
+  // a missing binary: one plain message, the sync still succeeds (exit 0), `stamp` exits 1, status shows it
+  const m2 = await signedMail({ body: 'second\r\n' });
+  await new Mailproof({ trailDir: dir, resolver: m2.resolver, worker: { size: 0 }, otsBin: null }).record(m2.raw, { direction: 'in' });
   const w2 = makeWorld({ accounts: { acme: account(dir, { passCommand, ots: '/nonexistent/ots' }) } });
-  fs.rmSync(path.join(dir, '.default.ots-state.json'));
+  fs.rmSync(path.join(dir, '.default.stamp.json'), { force: true });
   const bad = await w2.run(['sync', '--json'], { deps });
   assert.equal(bad.code, 0);
-  assert.equal(JSON.parse(bad.stdout).ots.error, 'ots not found');
+  const MSG = 'ots not installed: records are not sealed; install opentimestamps-client or set ots: false';
+  assert.equal(JSON.parse(bad.stdout).ots.error, MSG);
+  assert.match((await w2.run(['sync'], { deps })).stdout, /ots: skipped \(not due\)/, 'one spawn per cadence, not per sync');
+  const sb = await w2.run(['stamp']);
+  assert.equal(sb.code, 1);
+  assert.ok(sb.stderr.includes(MSG), sb.stderr);
+  assert.ok(sb.stdout.includes(MSG));
+  assert.match((await w2.run(['status'])).stdout, /ots not installed/);
+  // off: nothing is done and the CLI says so
+  const w3 = makeWorld({ accounts: { acme: account(dir, { passCommand, ots: false }) } });
+  const off = await w3.run(['stamp']);
+  assert.deepEqual([off.code, off.stdout.trim()], [0, 'ots is off for this account']);
+  assert.equal(JSON.parse((await w3.run(['sync', '--json'], { deps })).stdout).ots, null);
+  assert.match((await w3.run(['status'])).stdout, /seal +off/);
 });
 
 /** A watch run: ticks until `stopAfter` sleeps, then aborts like a SIGTERM would. */

@@ -21,6 +21,8 @@ Options (env fallback in brackets):
   --user <user>                  IMAP user [MAILPROOF_USER]
   --folders <a,b>                comma-separated folders, default INBOX [MAILPROOF_FOLDERS]
   --sent <on|off>                also sync the \\Sent folder, default on [MAILPROOF_SENT]
+  (env only) MAILPROOF_OTS=off   turn the OpenTimestamps seal off (default: on; the run ends with the stamp job
+                                 when due, and sends one 32-byte hash to the public calendars); a path names the ots binary
 
 Secret (exactly one source; a plain password in an env var or flag is not accepted):
   --pass-command "<cmd>"         run <cmd> (split into arguments, no shell); first stdout line is the password
@@ -88,7 +90,9 @@ async function main() {
   if (passCmd && passFile) throw new UsageError('give --pass-command or --pass-file, not both');
 
   const mp = (() => {
-    try { return new Mailproof({ trailDir, trail: v.trail ?? env.MAILPROOF_TRAIL }); }
+    const ots = env.MAILPROOF_OTS;
+    const otsOpt = ots === undefined || ots === '' ? {} : ['off', 'false', '0', 'no'].includes(ots.toLowerCase()) ? { otsBin: null } : ots.startsWith('/') ? { otsBin: ots } : {};
+    try { return new Mailproof({ trailDir, trail: v.trail ?? env.MAILPROOF_TRAIL, ...otsOpt }); }
     catch (e) { throw new UsageError(/** @type {Error} */ (e).message); }
   })();
   try {

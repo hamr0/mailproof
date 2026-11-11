@@ -41,6 +41,7 @@ Whoever runs mailproof keeps that data and is responsible for it. An individual 
 | Check a body or an attachment you produce later | `mp.matchBody(id, raw)` / `mp.matchFile(id, bytes)` |
 | Read what the sender newly wrote in a recorded reply | `mp.replyText(raw)` |
 | Read the facts of every signed reply to a request you sent (who, whether it is aligned and signed, the first line) | `mp.replyFacts({ messageId })` |
+| Seal what was recorded since the last run (manifest, stamp, upgrade) | `mp.stamp()` (`mailproof stamp`) |
 | Fold pending OpenTimestamps stamps into their Bitcoin attestation | `mp.upgradeStamps()` |
 | Capture a mailbox over IMAP, read-only | `mp.sync({ host, user, auth, ... })` |
 | Capture a mailbox on a schedule | the `mailproof-sync` CLI under cron or a systemd timer |
@@ -140,7 +141,7 @@ const res = await mp.sync({
 - **Resuming.** A capped run (1,000 messages or 512 MiB per folder, 30 minutes per call) is continued by calling again until `res.complete` is true. A resume cursor lives in `<trailDir>/.<trail>.sync.json`, beside the trail and not in git. A trail restored from an older backup or replaced is detected from the cursor (it records the trail's HEAD) and rescanned (`reset: 'trail'`, no manual step); the same bytes are never recorded twice.
 - **Size.** Mail over 25 MiB is stream-hashed and recorded `over limit: total_bytes`; over 128 MiB it is listed in `skipped`.
 - **Sent copies.** A provider's Sent copy is normally unsigned, so it is recorded `unverified`; the counterparty's signed copy is the proof.
-- **OpenTimestamps.** Leave it off for a backfill.
+- **OpenTimestamps.** On by default and batched: a backfill makes one manifest and one `ots stamp` per due run, never one per message (the old advice to leave it off is withdrawn). The calendars get one 32-byte hash per run; `"ots": false` turns it off.
 - **Locking.** A second `sync` on the same trail while one runs throws `ERR_SYNC_LOCKED` at once. `sync` holds `<trailDir>/.<trail>.sync.lock` for the whole call but never holds the trail lock across IMAP I/O, so a pipe delivery during a backfill waits behind at most one message's commit.
 - **Errors.** A TypeError for bad options; otherwise only `ERR_IMAP_AUTH`, `ERR_IMAP_CONNECT` or `ERR_SYNC_LOCKED` are thrown. Everything else is in a folder's `error`: `ERR_IMAP_NO_FOLDER`, `ERR_IMAP_NO_SENT`, `ERR_IMAP_PROTOCOL`, `ERR_IMAP_TIMEOUT`, `ERR_IMAP_THROTTLED`, `ERR_IMAP_UIDVALIDITY`, `ERR_TRAIL_LOCKED`. The first trail error stops the run. The credential is never logged, returned or stored.
 - There is no envelope on IMAP, so `authorized` cannot occur.
@@ -202,13 +203,17 @@ For a system unit add `User=mailproof`. `ProtectHome=read-only` keeps the `pass`
 */15 * * * * mailproof-sync --trail-dir $HOME/mailproof-trails --user you@gmail.com --pass-command "pass show mailproof/gmail_pass" >> $HOME/mailproof-sync.log 2>&1
 ```
 
+## What leaves your machine
+
+Three things use the network, each with an off switch: IMAP (`sync`: your login and read-only requests, to your mail provider), DNS (the sender's DKIM, DMARC and SPF records, at capture), and the OpenTimestamps calendars (the stamp job: one 32-byte hash of a manifest per run, at most every `stamp.everyHours`; the calendars see your IP address and the timing, never content, subjects or addresses; off with `otsBin: null` or `"ots": false`). `record()`, `check()`, `verify()` and every read never contact the calendars. The full table is in the README.
+
 ## The `mailproof` command
 
 `mailproof` (`bin/mailproof.js`, on `PATH` after `npm i -g mailproof`) is the whole library from a terminal. With no arguments on a terminal it shows a menu; every menu item is also a subcommand, and both run the same code. `mailproof help` lists the commands, `mailproof help <command>` describes one (the text is the library's own JSDoc). SPEC B11 is the contract.
 
 **1. Describe your mailbox once.** `mailproof config add-account` asks for the account name, IMAP user and host, folders, where the trail lives, and where the password comes from, with a hint and a default for each (`?` shows the hint). It shows the account JSON and writes `~/.config/mailproof/config.json` (mode 0600) only after you answer yes; other accounts in the file are kept, and an existing name is replaced only after a confirmation. It never asks for the password: you name a command that prints it (`pass show mailproof/personal`), a file whose first line is it (owned by you, mode 0600, or it is refused), or a command that prints an OAuth2 token. `mailproof config template` prints an example; `mailproof config validate` checks the file without reading any secret. The file must be owned by you and mode 0600 or no command runs (exit 77); unknown keys and a plaintext `password` key are refused (exit 64).
 
-**2. Capture.** `mailproof sync --account personal` reads the mailbox read-only, records every message, runs the content sweep and, with `"ots": true`, upgrades pending OpenTimestamps stamps. With one account `--account` is optional; with several it is always required (nothing runs on "all accounts"; only `status` lists them all). `mailproof watch` repeats that every `--interval` (default 5 minutes, minimum 30 s) in the foreground: transient errors back off (doubling, up to 1 hour), a refused login stops it (exit 77), Ctrl-C or SIGTERM finishes the sync in progress and exits 0. There is no daemon; let your init system run it.
+**2. Capture.** `mailproof sync --account personal` reads the mailbox read-only, records every message, runs the content sweep and, unless `"ots": false`, the stamp job when it is due (every `stamp.everyHours`, default 6): one manifest of file hashes, one OpenTimestamps stamp, and the upgrade of older pending proofs (`mailproof stamp` runs it now; a trail filled only by the Postfix pipe should run `mailproof stamp` from cron). With one account `--account` is optional; with several it is always required (nothing runs on "all accounts"; only `status` lists them all). `mailproof watch` repeats that every `--interval` (default 5 minutes, minimum 30 s) in the foreground: transient errors back off (doubling, up to 1 hour), a refused login stops it (exit 77), Ctrl-C or SIGTERM finishes the sync in progress and exits 0. There is no daemon; let your init system run it.
 
 systemd (`~/.config/systemd/user/mailproof-watch@.service`; then `systemctl --user enable --now mailproof-watch@personal`, and `loginctl enable-linger $USER` to keep it running when you are logged out):
 

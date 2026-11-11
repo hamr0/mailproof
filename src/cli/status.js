@@ -11,6 +11,8 @@ import { printable as p } from './printable.js';
 import { readState, stateDir } from './state.js';
 import { pidAlive, headOf, trailIndexFile } from '../proof/trail.js';
 import { countPendingStamps } from '../proof/ots-upgrade.js';
+import { sealStatus } from '../proof/stamp.js';
+import { STAMP_EVERY_HOURS } from '../proof/limits.js';
 import { indexOverview } from '../proof/index-db.js';
 
 /** @param {string} dir @returns {Promise<{ files: number, bytes: number }>} */
@@ -52,10 +54,28 @@ async function statusOf(account, ctx) {
     }
     out.index = ov ? ov.state : head === null ? 'absent' : 'unknown';
     out.pendingStamps = account.otsBin && head !== null ? await countPendingStamps(mp.root, mp.trail) : null;
+    out.seal = await sealStatus({ root: mp.root, trail: mp.trail, stamp: { mode: account.stamp.mode ?? 'batch', everyHours: account.stamp.everyHours ?? STAMP_EVERY_HOURS }, enabled: account.otsBin !== null }).catch(() => null);
     out.lastBackup = st.lastBackup;
     out.watch = st.lastWatch && st.lastWatch.state === 'running' && pidAlive(st.lastWatch.pid) ? { running: true, pid: st.lastWatch.pid } : { running: false };
     return out;
   } finally { await mp.close(); }
+}
+
+/**
+ * The seal line (SPEC B13.1.12): mode, last and next due, manifests and those without a proof, proofs not yet anchored.
+ * @param {Record<string, any> | null} z
+ * @returns {string}
+ */
+function sealText(z) {
+  if (!z) return 'unknown';
+  if (!z.enabled) return 'off (ots: false)';
+  if (z.chain !== 'ok') return `chain broken at seq ${z.chain.brokenAt}: ${p(z.chain.why)}`;
+  const when = z.last ? `last ${p(z.last.replace(/\.\d+Z$/, 'Z'))}, next due ${p(z.nextDue.replace(/\.\d+Z$/, 'Z'))}` : 'never run (due at the next sync or `mailproof stamp`)';
+  const parts = [`${z.mode} every ${z.everyHours}h`, when];
+  if (z.mode === 'batch') parts.push(`${z.manifests} manifests (${z.unstamped} without a proof)`);
+  parts.push(`${z.pending} proofs not yet anchored`);
+  if (z.error) parts.push(`last run: ${p(z.error)}`);
+  return parts.join('; ');
 }
 
 /** @param {Record<string, any>} s @returns {string} */
@@ -74,7 +94,7 @@ function statusText(s) {
     `  last sync     ${s.lastSync ? `${p(s.lastSync.at)}${s.lastSync.complete ? '' : ' (not complete)'}${s.lastSync.error ? ` error ${p(s.lastSync.error)}` : ''}` : 'never'}`,
     `  content       ${c}`,
     `  index         ${s.index}`,
-    `  ots pending   ${s.pendingStamps === null ? '-' : s.pendingStamps}`,
+    `  seal          ${sealText(s.seal)}`,
     `  last backup   ${s.lastBackup ? `${p(s.lastBackup.at)}  ${p(s.lastBackup.path)}` : 'never'}`,
     `  watch         ${s.watch.running ? `running (pid ${s.watch.pid})` : 'not running'}`,
   ].join('\n');

@@ -10,7 +10,7 @@ import { printable as p } from './printable.js';
 /**
  * @typedef {Object} SyncOnce
  * @property {import('../proof/sync.js').SyncResult} result
- * @property {{ upgraded: number, pending: number, error?: string } | null} ots  null: OpenTimestamps is off for this account.
+ * @property {import('../proof/stamp.js').StampResult | null} ots  The automatic stamp job's result (SPEC B13.1.12; a superset of the 3.3.0 `{ upgraded, pending, error? }`); null: OpenTimestamps is off for this account.
  * @property {{ folder: string, code: string, message: string } | null} folderError  The first folder that carries an error.
  * @property {number} exit  The exit code of the run (B4.1): 0 for a complete or capped run.
  */
@@ -28,12 +28,7 @@ export async function syncOnce(s, ctx, over = {}) {
     const auth = await resolveAuth(account.secret);   // re-resolved every run: a fresh token, the command re-run
     const opts = { host: account.host, port: account.port, user: account.user, auth, folders: over.folders ?? account.folders, sent: over.sent ?? account.sent, ...(over.maxMessages ? { maxMessages: over.maxMessages } : {}) };
     const result = await (ctx.deps.sync ? ctx.deps.sync(mp, opts) : mp.sync(opts));
-    /** @type {SyncOnce['ots']} */
-    let ots = null;
-    if (account.otsBin) {
-      const u = await mp.upgradeStamps().catch((e) => ({ enabled: true, upgraded: 0, pending: 0, error: String(e?.message ?? e).slice(0, 200) }));
-      ots = { upgraded: u.upgraded, pending: u.pending, ...(u.error ? { error: u.error } : {}) };
-    }
+    const ots = result.stamp ?? null;   // the library ran the job at the end of the run; the CLI no longer upgrades by itself
     const bad = result.folders.find((f) => f.error);
     await updateState(s.state, account.name, {
       lastSync: { at: stamp(now()), complete: result.complete, recorded: result.folders.reduce((n, f) => n + f.recorded, 0), error: bad?.error?.code ?? null },
@@ -58,6 +53,23 @@ export function syncText(r) {
     return `${p(f.folder).padEnd(24)} ${f.direction === 'out' ? 'sent' : 'in  '}  seen ${f.seen}  recorded ${f.recorded}  duplicate ${f.duplicate}${f.over_limit ? `  over-limit ${f.over_limit}` : ''}${tail}`;
   });
   lines.push(r.result.complete ? 'complete' : 'not complete: the next run continues from the saved cursor');
-  if (r.ots) lines.push(`ots: ${r.ots.upgraded} upgraded, ${r.ots.pending} pending${r.ots.error ? ` (${p(r.ots.error)})` : ''}`);
+  if (r.ots) lines.push(`ots: ${r.ots.ran ? 'sealed' : `skipped (${r.ots.skipped})`}${r.ots.manifests.length ? `, ${r.ots.manifests.reduce((n, m) => n + m.records + m.replies, 0)} files listed` : ''}, ${r.ots.upgraded} upgraded, ${r.ots.pending} pending${r.ots.error ? ` (${p(r.ots.error)})` : ''}`);
+  return lines.join('\n');
+}
+
+/**
+ * The text of a stamp result.
+ * @param {import('../proof/stamp.js').StampResult} r
+ * @returns {string}
+ */
+export function stampText(r) {
+  if (!r.enabled) return 'ots is off for this account';
+  const lines = [];
+  for (const m of r.manifests) lines.push(`manifest ${m.seq}: ${m.records} records, ${m.replies} replies listed`);
+  if (!r.manifests.length) lines.push('nothing new to seal');
+  lines.push(r.stamped === null ? 'no new proof made' : `stamped manifest ${r.stamped}`);
+  lines.push(`${r.upgraded} upgraded, ${r.pending} pending, ${r.unstamped} manifests without a proof, ${r.unsealed} files not yet sealed`);
+  if (r.skipped) lines.push(`skipped (${r.skipped})`);
+  if (r.error) lines.push(`error: ${p(r.error)}`);
   return lines.join('\n');
 }

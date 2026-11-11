@@ -8,7 +8,7 @@ import { renderList, renderCommand } from './help.js';
 import { print, warn } from './session.js';
 import { printable as p } from './printable.js';
 import { listCmd, showCmd, verifyCmd, repliesCmd, checkCmd, forgetCmd, pruneCmd } from './ops.js';
-import { syncCmd, updateCmd, configCmd, exportCmd, mcpCmd, version } from './misc.js';
+import { syncCmd, updateCmd, configCmd, exportCmd, mcpCmd, stampCmd, version } from './misc.js';
 import { watchCmd } from './watch.js';
 import { backupCmd } from './backup.js';
 import { statusCmd } from './status.js';
@@ -30,7 +30,7 @@ async function helpCmd(a, ctx) {
 /** @type {Record<string, (a: Args, ctx: Ctx) => Promise<number>>} */
 const HANDLERS = {
   sync: syncCmd, watch: watchCmd, list: listCmd, show: showCmd, verify: verifyCmd, replies: repliesCmd, check: checkCmd, forget: forgetCmd, prune: pruneCmd,
-  backup: backupCmd, status: statusCmd, update: updateCmd, config: configCmd, export: exportCmd, mcp: mcpCmd, help: helpCmd,
+  backup: backupCmd, stamp: stampCmd, status: statusCmd, update: updateCmd, config: configCmd, export: exportCmd, mcp: mcpCmd, help: helpCmd,
 };
 
 /** The commands that have a handler (a test checks the table and the handlers name the same ones). */

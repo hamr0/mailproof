@@ -79,7 +79,7 @@ export async function addAccountWizard(a, ctx, file) {
     const store = (await ask({ label: 'Keep the raw emails in the local content store', example: 'y/n', def: 'y', validate: yn })) === 'y';
     const attachments = store ? (await ask({ label: 'Keep attachments too', example: 'y/n', def: 'y', validate: yn })) === 'y' : true;
     const days = store ? await ask({ label: 'Days to keep stored content', def: '730', validate: (s) => { if (!/^[1-9]\d*$/.test(s)) throw new UsageError('a positive whole number'); return s; } }) : '730';
-    const ots = (await ask({ label: 'Timestamp records with OpenTimestamps (needs the ots binary)', example: 'y/n', def: 'n', validate: yn })) === 'y';
+    const ots = (await ask({ label: 'Seal records with OpenTimestamps (sends one 32-byte hash per run to public calendars, never content or addresses; needs the ots binary)', example: 'y/n', def: 'y', validate: yn })) === 'y';
     const remote = await ask({ label: 'Backup remote for "backup --push"', example: 'a git URL, empty = none', optional: true });
 
     /** @type {Record<string, unknown>} */
@@ -96,7 +96,7 @@ export async function addAccountWizard(a, ctx, file) {
     if (store && !attachments) content.attachments = false;
     if (store && days !== '730') content.days = Number(days);
     if (Object.keys(content).length) acct.content = content;
-    if (ots) acct.ots = true;
+    if (!ots) acct.ots = false;   // on is the default (SPEC B13.1.1): only the off switch is written
     if (remote) acct.backupRemote = remote;
 
     const next = { ...base, v: 1, accounts: { ...base.accounts, [name]: acct } };

@@ -30,12 +30,12 @@ test('a fresh config: the file and its directory are created 0700/0600 with the 
 test('every field: the prompts show label, example and default; non-default answers land in the account', async () => {
   const w = makeWorld({ config: null });
   const r = await w.run(['config', 'add-account'], {
-    input: script(['biz', 'ana@corp.example.net', 'imap.corp.example.net', '1143', 'INBOX, Archive', '[Gmail]/Sent Mail', '/srv/mp/biz', 'main', '3', 'oauth-token --account biz', 'y', 'n', '90', 'y', 'git@git.example.org:ana/biz.git', 'y']),
+    input: script(['biz', 'ana@corp.example.net', 'imap.corp.example.net', '1143', 'INBOX, Archive', '[Gmail]/Sent Mail', '/srv/mp/biz', 'main', '3', 'oauth-token --account biz', 'y', 'n', '90', 'n', 'git@git.example.org:ana/biz.git', 'y']),
   });
   assert.equal(r.code, 0, r.stderr);
   assert.deepEqual(read(w).accounts.biz, {
     user: 'ana@corp.example.net', host: 'imap.corp.example.net', port: 1143, folders: ['INBOX', 'Archive'], sent: '[Gmail]/Sent Mail', trailDir: '/srv/mp/biz', trail: 'main',
-    accessTokenCommand: 'oauth-token --account biz', content: { attachments: false, days: 90 }, ots: true, backupRemote: 'git@git.example.org:ana/biz.git',
+    accessTokenCommand: 'oauth-token --account biz', content: { attachments: false, days: 90 }, ots: false, backupRemote: 'git@git.example.org:ana/biz.git',
   });
   for (const hint of ['Account name (letters, digits', 'IMAP host [imap.gmail.com]', 'Port [993]', 'Folders to read (comma separated) [INBOX]', 'Trail directory [~/mailproof/biz]', 'Where does the password come from (1 = a command, 2 = a file, 3 = an OAuth2 token command) [1]']) {
     assert.ok(r.stdout.includes(hint), hint);

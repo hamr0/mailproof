@@ -19,13 +19,26 @@ test('a minimal account gets the documented defaults; the template validates', (
   const { config } = validateConfig(cfg({ personal: acct() }), env);
   assert.deepEqual(config.accounts.personal, {
     name: 'personal', user: 'a@b.example', host: 'imap.gmail.com', port: 993, folders: ['INBOX'], sent: true, trailDir: '/t/one', trail: 'default',
-    secret: { passCommand: 'pass show x' }, content: {}, otsBin: null, backupRemote: null,
+    secret: { passCommand: 'pass show x' }, content: {}, otsBin: 'ots', stamp: {}, backupRemote: null,
   });
   assert.deepEqual(validateConfig(TEMPLATE, env).problems, []);
   assert.equal(validateConfig(TEMPLATE, env).config.accounts.personal.otsBin, 'ots');
-  assert.deepEqual(mailproofOptions(config.accounts.personal), { trailDir: '/t/one', trail: 'default' });
+  assert.deepEqual(mailproofOptions(config.accounts.personal), { trailDir: '/t/one', trail: 'default', otsBin: 'ots' }, 'ots is on by default');
   const full = validateConfig(TEMPLATE, env).config.accounts.personal;
   assert.deepEqual(mailproofOptions(full), { trailDir: '/home/ana/mailproof/personal', trail: 'default', otsBin: 'ots', content: { store: true, attachments: true, days: 730, sweepDays: 7 } });
+});
+
+test('ots and stamp (SPEC B13.1.1): ots false is the off switch (otsBin null is passed on), stamp is validated', () => {
+  const a = (extra) => validateConfig(cfg({ a: acct(extra) }), env);
+  assert.equal(a({ ots: false }).config.accounts.a.otsBin, null);
+  assert.deepEqual(mailproofOptions(a({ ots: false }).config.accounts.a), { trailDir: '/t/one', trail: 'default', otsBin: null });
+  assert.equal(a({ ots: true }).config.accounts.a.otsBin, 'ots');
+  assert.deepEqual(a({ stamp: { mode: 'record', everyHours: 12 } }).config.accounts.a.stamp, { mode: 'record', everyHours: 12 });
+  assert.deepEqual(mailproofOptions(a({ stamp: { everyHours: 1 } }).config.accounts.a).stamp, { everyHours: 1 });
+  assert.ok(problems(cfg({ a: acct({ stamp: { nope: 1 } }) })).includes('accounts.a.stamp.nope: unknown key'));
+  assert.ok(problems(cfg({ a: acct({ stamp: { mode: 'x' }, }) })).includes('accounts.a.stamp.mode: must be "batch" or "record"'));
+  for (const h of [0, 721, 1.5, '6']) assert.ok(problems(cfg({ a: acct({ stamp: { everyHours: h } }) })).some((p) => p.startsWith('accounts.a.stamp.everyHours:')), String(h));
+  assert.ok(problems(cfg({ a: acct({ stamp: 'batch' }) })).includes('accounts.a.stamp: must be an object'));
 });
 
 test('strict: unknown keys at every level, wrong types, bad names, a missing v, no accounts: each names its JSON path', () => {

@@ -7,6 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { UsageError, PermError } from './errors.js';
 import { TRAIL_NAME_RE } from '../proof/trail.js';
+import { STAMP_EVERY_HOURS_MIN, STAMP_EVERY_HOURS_MAX } from '../proof/limits.js';
 
 /**
  * @typedef {Object} Account
@@ -20,7 +21,8 @@ import { TRAIL_NAME_RE } from '../proof/trail.js';
  * @property {string} trail
  * @property {{ passCommand?: string, passFile?: string, accessTokenCommand?: string }} secret  Exactly one key.
  * @property {{ store?: boolean, attachments?: boolean, days?: number, sweepDays?: number }} content
- * @property {string | null} otsBin
+ * @property {string | null} otsBin  `ots` (the default: OpenTimestamps on), an absolute path, or null (`ots: false`: the seal is off).
+ * @property {{ mode?: 'batch' | 'record', everyHours?: number }} stamp  The seal options (SPEC B13.1.1); empty: the library defaults.
  * @property {string | null} backupRemote
  */
 /**
@@ -35,7 +37,8 @@ import { TRAIL_NAME_RE } from '../proof/trail.js';
 
 export const ACCOUNT_NAME_RE = /^[a-z0-9][a-z0-9_-]{0,31}$/;
 const PLAINTEXT_KEYS = new Set(['pass', 'password', 'secret']);
-const ACCOUNT_KEYS = new Set(['user', 'host', 'port', 'folders', 'sent', 'trailDir', 'trail', 'passCommand', 'passFile', 'accessTokenCommand', 'content', 'ots', 'backupRemote']);
+const ACCOUNT_KEYS = new Set(['user', 'host', 'port', 'folders', 'sent', 'trailDir', 'trail', 'passCommand', 'passFile', 'accessTokenCommand', 'content', 'ots', 'stamp', 'backupRemote']);
+const STAMP_KEYS = new Set(['mode', 'everyHours']);
 const CONTENT_KEYS = new Set(['store', 'attachments', 'days', 'sweepDays']);
 const MCP_KEYS = new Set(['inputDirs', 'outputDir', 'maxResponseBytes', 'maxBinaryBytes']);
 export const MCP_DEFAULTS = Object.freeze({ maxResponseBytes: 524288, maxBinaryBytes: 1048576 });
@@ -212,12 +215,26 @@ export function validateConfig(json, env) {
       }
     }
     /** @type {string | null} */
-    let otsBin = null;
+    let otsBin = 'ots';   // M4 (SPEC B13.1.1): on by default
     if (raw.ots !== undefined) {
       if (raw.ots === true) otsBin = 'ots';
       else if (raw.ots === false) otsBin = null;
       else if (typeof raw.ots === 'string' && path.isAbsolute(raw.ots)) otsBin = raw.ots;
       else problems.push(`${at}.ots: must be true, false or an absolute path to the ots binary`);
+    }
+    /** @type {Account['stamp']} */
+    const stamp = {};
+    if (raw.stamp !== undefined) {
+      if (!isObj(raw.stamp)) problems.push(`${at}.stamp: must be an object`);
+      else {
+        for (const [k, v] of Object.entries(raw.stamp)) {
+          if (!STAMP_KEYS.has(k)) problems.push(`${at}.stamp.${k}: unknown key`);
+          else if (k === 'mode') {
+            if (v !== 'batch' && v !== 'record') problems.push(`${at}.stamp.mode: must be "batch" or "record"`); else stamp.mode = v;
+          } else if (!Number.isInteger(v) || /** @type {number} */ (v) < STAMP_EVERY_HOURS_MIN || /** @type {number} */ (v) > STAMP_EVERY_HOURS_MAX) problems.push(`${at}.stamp.everyHours: must be an integer from ${STAMP_EVERY_HOURS_MIN} to ${STAMP_EVERY_HOURS_MAX}`);
+          else stamp.everyHours = /** @type {number} */ (v);
+        }
+      }
     }
     /** @type {string | null} */
     let backupRemote = null;
@@ -237,7 +254,7 @@ export function validateConfig(json, env) {
       else trails.set(key, name);
     }
     if (problems.length === before && userOk && hostOk) {
-      accounts[name] = { name, user: /** @type {string} */ (raw.user), host: /** @type {string} */ (raw.host ?? 'imap.gmail.com'), port, folders, sent, trailDir, trail, secret, content, otsBin, backupRemote };
+      accounts[name] = { name, user: /** @type {string} */ (raw.user), host: /** @type {string} */ (raw.host ?? 'imap.gmail.com'), port, folders, sent, trailDir, trail, secret, content, otsBin, stamp, backupRemote };
     }
   }
   if (Object.keys(json.accounts).length === 0) problems.push('accounts: at least one account is required');
@@ -359,10 +376,10 @@ export function selectAccount(config, flag) {
 /**
  * The `Mailproof` constructor options of an account.
  * @param {Account} a
- * @returns {{ trailDir: string, trail: string, otsBin?: string, content?: Account['content'] }}
+ * @returns {{ trailDir: string, trail: string, otsBin: string | null, stamp?: Account['stamp'], content?: Account['content'] }}
  */
 export function mailproofOptions(a) {
-  return { trailDir: a.trailDir, trail: a.trail, ...(a.otsBin ? { otsBin: a.otsBin } : {}), ...(Object.keys(a.content).length ? { content: a.content } : {}) };
+  return { trailDir: a.trailDir, trail: a.trail, otsBin: a.otsBin, ...(Object.keys(a.stamp).length ? { stamp: a.stamp } : {}), ...(Object.keys(a.content).length ? { content: a.content } : {}) };
 }
 
 /**

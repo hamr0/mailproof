@@ -7,6 +7,9 @@ import { parseDate, parseAddress, parseLimit, parseChoice, resolveId, messageIdO
 import { loadProfile } from './config.js';
 import { withAccount, print, warn, printJson } from './session.js';
 import { printable as p } from './printable.js';
+import path from 'node:path';
+import { readAnchored } from '../proof/ots-upgrade.js';
+import { manifestOtsPath } from '../proof/layout.js';
 
 /** @typedef {import('./session.js').Ctx} Ctx */
 /** @typedef {import('./session.js').Args} Args */
@@ -49,6 +52,23 @@ export async function listCmd(a, ctx) {
   });
 }
 
+/**
+ * The `sealed:` line of `show` (SPEC B13.1.12), from `findSeal`: read-only, no lock; `ots info` (local) only for the block number.
+ * @param {import('./session.js').Session['mp']} mp @param {string} id
+ * @returns {Promise<{ text: string | null, data: unknown }>}  text null: the seal is off for this account.
+ */
+async function sealLine(mp, id) {
+  if (!mp.otsBin) return { text: null, data: null };
+  const seal = await mp._findSeal(id).catch(() => null);
+  if (!seal) return { text: 'unsealed', data: null };
+  if (seal.via === 'record') return { text: `own stamp ${p(seal.stamp)}`, data: seal };
+  if (!seal.stamp) return { text: `manifest ${seal.seq}, not stamped yet`, data: seal };
+  const anchored = (await readAnchored(mp.root, mp.trail)).manifests.has(seal.stamp.seq);
+  let block = null;
+  if (anchored && mp.jobOts) block = await mp.jobOts.readBlockHeight(path.join(mp.root, manifestOtsPath(seal.stamp.seq))).catch(() => null);
+  return { text: `manifest ${seal.seq}, stamped by manifest ${seal.stamp.seq} (${anchored ? `anchored${block ? `, block ${block}` : ''}` : 'pending'})`, data: { ...seal, anchored, block } };
+}
+
 /** @param {Args} a @param {Ctx} ctx @returns {Promise<number>} */
 export async function showCmd(a, ctx) {
   if (a.values.raw && a.values.json) throw new UsageError('--raw prints bytes: it cannot be combined with --json');
@@ -64,7 +84,8 @@ export async function showCmd(a, ctx) {
     if (!rec) { warn(ctx, `mailproof: no record ${short(id)}`); return EX_ERR; }
     const parts = await mp.proofParts(rec);
     const links = await mp.linked(id);
-    if (a.values.json) { printJson(ctx, { record: rec, proof: parts, links }); return EX_OK; }
+    const seal = await sealLine(mp, id);
+    if (a.values.json) { printJson(ctx, { record: rec, proof: parts, links, seal: seal.data }); return EX_OK; }
     const m = rec.message ?? {};
     /** @type {Array<[string, string]>} */
     const rows = [
@@ -75,6 +96,7 @@ export async function showCmd(a, ctx) {
       ['signatures', String(rec.signatures?.length ?? 0)],
     ];
     for (const r of rows) print(ctx, `${r[0].padEnd(11)} ${r[1]}`);
+    if (seal.text) print(ctx, `sealed      ${seal.text}`);
     for (const x of parts?.attachments ?? []) print(ctx, `attachment   ${p(x.filename ?? '(no name)')}  stored ${x.stored ? 'yes' : 'no'}${x.match === null ? '' : x.match ? '  matches' : '  DIFFERS'}`);
     if (links) {
       for (const par of links.parents) print(ctx, `parent       ${p(par.message_id)}  ${p(par.strength)}${par.id ? `  ${short(par.id)}` : '  (not recorded)'}`);

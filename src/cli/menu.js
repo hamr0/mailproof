@@ -17,7 +17,7 @@ import { stateDir } from './state.js';
 const ITEMS = [
   ['1', 'sync', 'Sync now'], ['2', 'watch', 'Watch'], ['3', 'list', 'List emails'], ['4', 'show', 'Show one email'], ['5', 'verify', 'Verify one email'],
   ['6', 'replies', 'Replies to a message'], ['7', 'check', 'Check against profile'], ['8', 'forget', 'Forget'], ['9', 'prune', 'Prune'], ['10', 'backup', 'Backup'],
-  ['11', 'status', 'Status'], ['12', 'update', 'Update mailproof'], ['13', 'config', 'Config'], ['14', 'export', 'Export'],
+  ['11', 'status', 'Status'], ['12', 'update', 'Update mailproof'], ['13', 'config', 'Config'], ['14', 'export', 'Export'], ['15', 'stamp', 'Seal now'],
 ];
 
 /** @param {string} s @returns {string} */
@@ -152,6 +152,7 @@ export async function runMenu(ctx, exec, opts = {}) {
         await go(['config', action]);
       },
       export: async () => { await go(['export']); },
+      stamp: async () => { await go(['stamp']); },
     };
 
     for (;;) {

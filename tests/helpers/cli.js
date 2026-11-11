@@ -8,6 +8,11 @@ import { Readable } from 'node:stream';
 import { run } from '../../src/cli/run.js';
 import { makeTmpDir } from './tmp.js';
 
+// OpenTimestamps is on by default (SPEC B13.1.1), so a CLI test that syncs would run the job and the machine's real `ots`
+// would reach the public calendars. Every world's PATH starts with a stub `ots` that only fails: no test touches the network.
+const stubDir = makeTmpDir('mp-cli-ots-stub-');
+fs.writeFileSync(path.join(stubDir, 'ots'), '#!/bin/sh\nexit 3\n', { mode: 0o755 });
+
 export const BIN = path.resolve(import.meta.dirname, '../../bin/mailproof.js');
 
 /**
@@ -19,7 +24,7 @@ export function makeWorld({ accounts, config } = {}) {
   const cfgDir = path.join(root, 'cfg');
   const state = path.join(root, 'state');
   fs.mkdirSync(home, { recursive: true });
-  const env = { HOME: home, XDG_CONFIG_HOME: cfgDir, XDG_STATE_HOME: state, PATH: process.env.PATH };
+  const env = { HOME: home, XDG_CONFIG_HOME: cfgDir, XDG_STATE_HOME: state, PATH: `${stubDir}${path.delimiter}${process.env.PATH}` };
   const configFile = path.join(cfgDir, 'mailproof', 'config.json');
   const write = (json, mode = 0o600) => {
     fs.mkdirSync(path.dirname(configFile), { recursive: true });
