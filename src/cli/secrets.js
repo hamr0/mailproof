@@ -6,6 +6,19 @@ import { execFile } from 'node:child_process';
 import fs from 'node:fs/promises';
 import { UsageError, PermError } from './errors.js';
 
+/**
+ * The `MAILPROOF_OTS` setting (SPEC B13.1.14), shared by `mailproof-sync` and `verify-bundle`: `off` (also `false`, `0`, `no`, any case)
+ * turns OpenTimestamps off (`otsBin: null`), an absolute path names the binary, unset or anything else keeps the default (`ots` from PATH).
+ * @param {Record<string, string | undefined>} env
+ * @returns {{ otsBin?: string | null }}
+ */
+export function otsOptionFromEnv(env) {
+  const v = env.MAILPROOF_OTS;
+  if (v === undefined || v === '') return {};
+  if (['off', 'false', '0', 'no'].includes(v.toLowerCase())) return { otsBin: null };
+  return v.startsWith('/') ? { otsBin: v } : {};
+}
+
 const GOOGLE_APP_PASSWORD_SHAPE = /^[a-z]{4}( [a-z]{4}){3}$/;
 
 /**

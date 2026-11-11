@@ -154,6 +154,23 @@ function readRaw(dir, id) {
 }
 
 /**
+ * Does the store hold the raw email of `id` and each attachment `hexes`? A stat only: nothing is read or re-hashed (a bundle of
+ * thousands must not read gigabytes), so a corrupted stored file still counts as stored. The one place besides `readRaw` and
+ * `readAttachment` that knows the store layout (SPEC B13.2.4).
+ * @param {string} dir
+ * @param {string} id
+ * @param {string[]} hexes  Attachment sha256s, bare hex (a malformed one is not stored).
+ * @returns {Promise<{ raw: boolean, attachments: boolean[] }>}
+ */
+async function storedStatus(dir, id, hexes) {
+  const isFile = (/** @type {string} */ abs) => fs.stat(abs).then((st) => st.isFile(), () => false);
+  return {
+    raw: typeof id === 'string' && RECORD_ID_RE.test(id) ? await isFile(rawPathOf(dir, id)) : false,
+    attachments: await Promise.all(hexes.map((h) => (SHA_HEX_RE.test(h) ? isFile(attPathOf(dir, h)) : false))),
+  };
+}
+
+/**
  * An attachment by sha256 (`sha256:<hex>` or bare hex), re-hashed on read.
  * @param {string} dir
  * @param {string} sha
@@ -479,6 +496,6 @@ function toMs(v, what, who = 'forget') {
 }
 
 export {
-  DAY_MS, parseContentOptions, contentDirOf, rawPathOf, attPathOf, sha256Of, storeContent, readRaw, readAttachment,
+  DAY_MS, parseContentOptions, contentDirOf, rawPathOf, attPathOf, sha256Of, storeContent, readRaw, readAttachment, storedStatus,
   storedIds, expireStore, forgetIds, sweepOrphans, idsWith, toMs, exists,
 };

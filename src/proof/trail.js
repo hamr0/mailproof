@@ -11,10 +11,9 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { git, GIT_IDENTITY } from './git.js';
-import { DKIM_LABEL_RE } from './keys.js';
 import { withMutex } from './mutex.js';
 import { GIT_LISTING_MAX_BYTES } from './limits.js';
-import { recordPath, parseRecordPath, parseManifestPath, isReplyPath, recordIdsFromPaths, assertTrailLayout } from './layout.js';
+import { recordPath, parseRecordPath, parseManifestPath, parseKeyPath, isReplyPath, recordIdsFromPaths, assertTrailLayout } from './layout.js';
 
 /** @typedef {import('./types.js').MpRecord} MpRecord */
 
@@ -352,12 +351,7 @@ async function ensureTrail(root, name, createdIso) {
  */
 function isLibraryFile(rel) {
   if (parseRecordPath(rel) !== null || isReplyPath(rel) || parseManifestPath(rel) !== null) return true;
-  const parts = rel.split('/');
-  if (parts[0] === 'keys' && parts.length === 4) {
-    const label = (/** @type {string} */ l) => DKIM_LABEL_RE.test(l) && l === l.toLowerCase() && !l.startsWith('.') && !l.includes('..');
-    return label(parts[1]) && label(parts[2]) && /^[0-9a-f]{16}\.json$/.test(parts[3]);
-  }
-  return false;
+  return parseKeyPath(rel) !== null;
 }
 
 /**

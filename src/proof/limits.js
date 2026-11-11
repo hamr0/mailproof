@@ -169,3 +169,44 @@ export const STAMP_OTS_TIMEOUT_MS = 30_000;
 
 /** The upgrade pass of a job stops here; the next job continues. */
 export const STAMP_JOB_MAX_MS = 600_000;
+
+// ---- PAIR BUNDLE (SPEC B13.2.8): `export` and `verify-bundle` read the same constants. ----
+
+/** `with` entries of one export. */
+export const EXPORT_MAX_ADDRESSES = 20;
+
+/** Selected records in one bundle; more is `ERR_EXPORT_TOO_BIG` (narrow with dates). A bundle is a pair's exchange, not the trail. */
+export const EXPORT_MAX_RECORDS = 10_000;
+
+/** Files in a bundle. */
+export const BUNDLE_MAX_FILES = 100_000;
+
+/** All files of a bundle together (export stops as it passes this; the verifier refuses a bigger directory without reading it). */
+export const BUNDLE_MAX_BYTES = 256 * 1024 * 1024;
+
+/** One record file (a hostile bundle can name any size). */
+export const BUNDLE_MAX_RECORD_BYTES = 4 * 1024 * 1024;
+
+/** One manifest (`STAMP_MAX_ENTRIES` x about 120 bytes is 2.4 MB). */
+export const BUNDLE_MAX_MANIFEST_BYTES = 4 * 1024 * 1024;
+
+/** One `.ots` proof (real ones are a few KB). */
+export const BUNDLE_MAX_OTS_BYTES = 1024 * 1024;
+
+/** One reply-text or key file. */
+export const BUNDLE_MAX_SMALL_BYTES = 256 * 1024;
+
+/** `bundle.json`. */
+export const BUNDLE_MAX_JSON_BYTES = 64 * 1024 * 1024;
+
+/** `README.txt` (about 2 KiB a record at most; long fields are cut). */
+export const BUNDLE_MAX_README_BYTES = 32 * 1024 * 1024;
+
+/** One `ots info` call of `verify-bundle`. */
+export const BUNDLE_OTS_TIMEOUT_MS = 10_000;
+
+/** All `ots info` calls of one `verify-bundle` run; the proofs after it are reported `unchecked`. */
+export const BUNDLE_OTS_MAX_MS = 300_000;
+
+/** `ots info` output read per call. */
+export const BUNDLE_OTS_OUTPUT_BYTES = 65_536;

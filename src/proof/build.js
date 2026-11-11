@@ -2,11 +2,11 @@
 // and no lock, so it can run anywhere: on the main thread, or in a worker thread under a deadline (pool.js),
 // which is why a killed run leaves nothing behind. Everything it needs comes in as arguments.
 
-import crypto from 'node:crypto';
 import { authenticateMessage, parseMessage } from './parse.js';
 import { fetchDkimKey } from './keys.js';
 import { splitMessage, parseTags } from './signed-headers.js';
 import { MAX_INNER } from './limits.js';
+import { keyPath } from './layout.js';
 import { admit } from './admit.js';
 import { addressesOf } from './participants.js';
 import { overLimitRecord } from './over-limit.js';
@@ -31,9 +31,6 @@ import { verifyRecord } from './recheck.js';
  */
 
 /** @typedef {import('./over-limit.js').Built} Built */
-
-/** @param {Buffer | string} raw @returns {string} */
-const sha256hex = (raw) => crypto.createHash('sha256').update(raw).digest('hex');
 
 /**
  * Build the record for a message (nothing is written). A message over an input limit (admit.js) gets
@@ -127,7 +124,7 @@ async function signaturesOf(rows, body, arc, budget, resolver) {
     let key_file = null;
     if (k.base64) {
       key = { k: k.k || 'rsa', p: k.base64 };
-      key_file = `keys/${t.d.toLowerCase()}/${t.s.toLowerCase()}/${sha256hex(k.base64).slice(0, 16)}.json`;
+      key_file = keyPath(t.d, t.s, k.base64);
       keyFiles.push({
         rel: key_file,
         json: { v: 2, domain: t.d.toLowerCase(), selector: t.s.toLowerCase(), k: key.k, p: key.p, txt: k.txt, lookup: k.lookup, first_fetched: k.fetched_at },

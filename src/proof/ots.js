@@ -74,6 +74,69 @@ function parseOtsBlockHeight(stdout) {
   return null;
 }
 
+const OTS_DIGEST_RE = /^File sha256 hash: ([0-9a-f]{64})\s*$/;
+const OTS_BLOCK_RE = /^[\s>-]*verify BitcoinBlockHeaderAttestation\((\d+)\)\s*$/;
+const OTS_ROOT_RE = /^[\s>-]*# Bitcoin block merkle root ([0-9a-f]{64})\s*$/;
+const OTS_PENDING_RE = /^[\s>-]*verify PendingAttestation\(/;
+
+/**
+ * Parse `ots info <file.ots>` stdout (SPEC B13.3.4): the digest the proof commits to and its attestations. The one place that
+ * reads this output for `verify-bundle`. Line-anchored per line (a leading tree indent or `->` is tolerated: a proof with
+ * several branches prints its attestations indented). `anchored` wins over `pending` when both are present (an upgraded proof
+ * keeps its calendar path). Null when there is no digest line or no attestation line. Pure; never throws.
+ * @param {string | null} stdout
+ * @returns {{ digest: string, block: number | null, merkleRoot: string | null, pending: boolean } | null}
+ */
+function parseOtsInfo(stdout) {
+  if (!stdout) return null;
+  /** @type {string | null} */
+  let digest = null;
+  /** @type {number | null} */
+  let block = null;
+  /** @type {string | null} */
+  let merkleRoot = null;
+  let pending = false;
+  for (const line of stdout.split('\n')) {
+    const d = OTS_DIGEST_RE.exec(line);
+    if (d) { if (digest === null) digest = d[1]; continue; }
+    const b = OTS_BLOCK_RE.exec(line);
+    if (b) { if (block === null) { const n = Number(b[1]); if (Number.isSafeInteger(n) && n > 0) block = n; } continue; }
+    const r = OTS_ROOT_RE.exec(line);
+    if (r) { if (merkleRoot === null) merkleRoot = r[1]; continue; }
+    if (OTS_PENDING_RE.test(line)) pending = true;
+  }
+  if (digest === null || (block === null && !pending)) return null;
+  return { digest, block, merkleRoot: block === null ? null : merkleRoot, pending: block === null && pending };
+}
+
+/**
+ * `ots info <proof>` as `verify-bundle` runs it (SPEC B13.3.2): an argument vector (no shell), a time limit, output capped; a
+ * parse of the proof on this machine, no network. Never throws: every outcome is a field.
+ * @param {string} bin
+ * @param {string} proofPath
+ * @param {{ timeoutMs: number, maxBytes: number }} limits
+ * @returns {Promise<{ info: ReturnType<typeof parseOtsInfo> } | { error: 'ots not found' | 'ots timeout' | 'ots output over limit' | string }>}
+ */
+function infoProof(bin, proofPath, { timeoutMs, maxBytes }) {
+  return new Promise((resolve) => {
+    /** @type {Buffer[]} */
+    const out = [];
+    let size = 0;
+    let done = false;
+    /** @param {Parameters<typeof resolve>[0]} v */
+    const finish = (v) => { if (!done) { done = true; clearTimeout(timer); resolve(v); } };
+    const proc = spawn(bin, ['info', proofPath], { stdio: ['ignore', 'pipe', 'ignore'] });
+    const timer = setTimeout(() => { proc.kill('SIGKILL'); finish({ error: 'ots timeout' }); }, timeoutMs);
+    proc.stdout.on('data', (c) => {
+      size += c.length;
+      if (size > maxBytes) { proc.kill('SIGKILL'); finish({ error: 'ots output over limit' }); return; }
+      out.push(c);
+    });
+    proc.on('error', (err) => finish({ error: /** @type {any} */ (err).code === 'ENOENT' ? 'ots not found' : err.message }));
+    proc.on('close', (code) => finish(code === 0 ? { info: parseOtsInfo(Buffer.concat(out).toString('utf8')) } : { info: null }));
+  });
+}
+
 // sha256 of a file's bytes, or null if it can't be read. Used to detect whether
 // `ots upgrade` rewrote the proof (= merged the Bitcoin attestation).
 /**
@@ -199,4 +262,4 @@ function createOts({ otsBin, timeoutMs = DEFAULT_OTS_TIMEOUT_MS } = {}) {
 /** The one plain message for a missing `ots` binary (StampResult.error, CLI output): capture is never blocked by it. */
 const OTS_MISSING_MESSAGE = 'ots not installed: records are not sealed; install opentimestamps-client or set ots: false';
 
-export { OTS_MISSING_MESSAGE, DEFAULT_OTS_TIMEOUT_MS, createOts, parseOtsBlockHeight };
+export { OTS_MISSING_MESSAGE, DEFAULT_OTS_TIMEOUT_MS, createOts, parseOtsBlockHeight, parseOtsInfo, infoProof };

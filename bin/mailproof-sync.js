@@ -7,7 +7,7 @@ import { parseArgs } from 'node:util';
 import { Mailproof } from '../src/index.js';
 import { UsageError, EX_USAGE, exitFor, exitForError } from '../src/cli/errors.js';
 import { printable } from '../src/cli/printable.js';
-import { runSecretCommand, readSecretFile, passwordAuth, tokenAuth } from '../src/cli/secrets.js';
+import { runSecretCommand, readSecretFile, passwordAuth, tokenAuth, otsOptionFromEnv } from '../src/cli/secrets.js';
 
 const USAGE = `Usage: mailproof-sync --trail-dir <dir> --user <user> [options]
 
@@ -90,8 +90,7 @@ async function main() {
   if (passCmd && passFile) throw new UsageError('give --pass-command or --pass-file, not both');
 
   const mp = (() => {
-    const ots = env.MAILPROOF_OTS;
-    const otsOpt = ots === undefined || ots === '' ? {} : ['off', 'false', '0', 'no'].includes(ots.toLowerCase()) ? { otsBin: null } : ots.startsWith('/') ? { otsBin: ots } : {};
+    const otsOpt = otsOptionFromEnv(env);
     try { return new Mailproof({ trailDir, trail: v.trail ?? env.MAILPROOF_TRAIL, ...otsOpt }); }
     catch (e) { throw new UsageError(/** @type {Error} */ (e).message); }
   })();

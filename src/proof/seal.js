@@ -4,87 +4,15 @@
 // `serialiseManifest`), reading and verifying the chain at a commit, the "unsealed set" (B13.1.4) and `findSeal` (B13.1.10).
 // The job that writes and stamps them is stamp.js. Nothing here takes a lock or runs `ots`: every read is of a commit.
 
-import crypto from 'node:crypto';
 import { git, gitLines } from './git.js';
 import { catFile } from './prune-stream.js';
 import { manifestPath, manifestOtsPath, parseManifestPath, parseRecordPath, parseReplyPath, recordPath, recordOtsPath, replyPath } from './layout.js';
 import { parseNotice } from './prune.js';
+import { sha256Hex, chainError, serialiseManifest, parseManifest, decideSeal } from './seal-core.js';
 
-/** @typedef {{ v: 1, seq: number, previous_sha256: string | null, created: string, records: Array<[string, string]>, replies: Array<[string, string, string]> }} Manifest */
+/** @typedef {import('./seal-core.js').Manifest} Manifest */
 /** @typedef {{ seq: number, blob: string | null, ots: boolean }} ManifestFile */
 /** @typedef {{ via: 'record', stamp: string } | { via: 'manifest', seq: number, listed: string, stamp: { seq: number, own: boolean } | null }} Seal */
-
-const HEX64 = /^[0-9a-f]{64}$/;
-const HEX32 = /^[0-9a-f]{32}$/;
-const SLUG = /^[a-z0-9-]+$/;
-const MANIFEST_KEYS = ['v', 'seq', 'previous_sha256', 'created', 'records', 'replies'];
-
-/** @param {Buffer | string} b @returns {string} */
-const sha256Hex = (b) => crypto.createHash('sha256').update(b).digest('hex');
-
-/**
- * `ERR_STAMP_CHAIN`: the committed manifest chain is broken; a stamp job must not extend it.
- * @param {number} seq
- * @param {string} why
- * @returns {Error & { code: 'ERR_STAMP_CHAIN', seq: number }}
- */
-const chainError = (seq, why) => Object.assign(new Error(`stamp chain broken at seq ${seq}: ${why}`), { code: /** @type {const} */ ('ERR_STAMP_CHAIN'), seq });
-
-/**
- * The manifest file, exactly (SPEC B13.1.3): UTF-8, LF, fixed key order, two-space indent, one entry per line, a final
- * newline. The hash of a manifest is the hash of these bytes as stored; a verifier never re-serialises.
- * @param {Manifest} m
- * @returns {string}
- */
-function serialiseManifest(m) {
-  const entry = (/** @type {string[]} */ e) => `    [${e.map((x) => JSON.stringify(x)).join(', ')}]`;
-  const list = (/** @type {string[][]} */ es) => (es.length ? `[\n${es.map(entry).join(',\n')}\n  ]` : '[]');
-  return [
-    '{',
-    `  "v": ${m.v},`,
-    `  "seq": ${m.seq},`,
-    `  "previous_sha256": ${JSON.stringify(m.previous_sha256)},`,
-    `  "created": ${JSON.stringify(m.created)},`,
-    `  "records": ${list(m.records)},`,
-    `  "replies": ${list(m.replies)}`,
-    '}',
-  ].join('\n') + '\n';
-}
-
-/**
- * Parse manifest bytes strictly: only the schema's keys, `v` 1, `seq` the file name's, entries of the right shape, sorted
- * strictly ascending (records by id, replies by id then slug). The previous-hash link is checked by the chain, not here.
- * @param {Buffer} bytes
- * @param {number} seq  The number in the file name.
- * @returns {{ ok: true, manifest: Manifest } | { ok: false, why: string }}
- */
-function parseManifest(bytes, seq) {
-  /** @type {any} */
-  let j;
-  try { j = JSON.parse(bytes.toString('utf8')); } catch { return { ok: false, why: 'does not parse' }; }
-  if (!j || typeof j !== 'object' || Array.isArray(j)) return { ok: false, why: 'not an object' };
-  const keys = Object.keys(j);
-  if (keys.length !== MANIFEST_KEYS.length || !MANIFEST_KEYS.every((k) => keys.includes(k))) return { ok: false, why: 'fields are not the manifest schema' };
-  if (j.v !== 1) return { ok: false, why: `unknown version ${JSON.stringify(j.v)}` };
-  if (j.seq !== seq) return { ok: false, why: `seq ${JSON.stringify(j.seq)} is not its file name` };
-  if (j.previous_sha256 !== null && !(typeof j.previous_sha256 === 'string' && HEX64.test(j.previous_sha256))) return { ok: false, why: 'bad previous_sha256' };
-  if (typeof j.created !== 'string') return { ok: false, why: 'bad created' };
-  if (!Array.isArray(j.records) || !Array.isArray(j.replies)) return { ok: false, why: 'records and replies must be lists' };
-  let last = '';
-  for (const e of j.records) {
-    if (!Array.isArray(e) || e.length !== 2 || typeof e[0] !== 'string' || typeof e[1] !== 'string' || !HEX32.test(e[0]) || !HEX64.test(e[1])) return { ok: false, why: 'bad record entry' };
-    if (e[0] <= last) return { ok: false, why: 'record entries are not in ascending order' };
-    last = e[0];
-  }
-  last = '';
-  for (const e of j.replies) {
-    if (!Array.isArray(e) || e.length !== 3 || typeof e[0] !== 'string' || typeof e[1] !== 'string' || typeof e[2] !== 'string' || !HEX32.test(e[0]) || !SLUG.test(e[1]) || !HEX64.test(e[2])) return { ok: false, why: 'bad reply entry' };
-    const k = `${e[0]}.${e[1]}`;
-    if (k <= last) return { ok: false, why: 'reply entries are not in ascending order' };
-    last = k;
-  }
-  return { ok: true, manifest: j };
-}
 
 /**
  * The manifests (and which have a proof) committed at `rev`, oldest first. One streamed `git ls-tree`.
@@ -229,12 +157,12 @@ async function findSeal(root, id, opts = {}) {
     const listed = sha256Hex(file);
     const files = await listManifests(root, rev);
     const bySeq = new Map(files.map((f) => [f.seq, f]));
-    /** @param {number} seq @returns {Promise<{ bytes: Buffer, m: Manifest } | null>} */
+    /** @param {number} seq @returns {Promise<import('./seal-core.js').LoadedManifest | null>} */
     const load = async (seq) => {
       const f = bySeq.get(seq);
       const bytes = f?.blob ? await cat.get(f.blob) : null;
       const p = bytes ? parseManifest(bytes, seq) : null;
-      return bytes && p && p.ok ? { bytes, m: p.manifest } : null;
+      return bytes && p && p.ok ? { m: p.manifest, sha256: sha256Hex(bytes), ots: f?.ots === true } : null;
     };
     /** @param {Manifest} m */
     const lists = (m) => (slug === null ? m.records.some((e) => e[0] === id && e[1] === listed) : m.replies.some((e) => e[0] === id && e[1] === slug && e[2] === listed));
@@ -245,27 +173,8 @@ async function findSeal(root, id, opts = {}) {
       if (Array.isArray(h)) order = h.filter((s) => Number.isInteger(s) && bySeq.has(s));
     } catch { /* a failing hint is no hint */ }
     const rest = files.map((f) => f.seq).reverse().filter((s) => !order.includes(s));
-    let found = -1;
-    for (const seq of [...order, ...rest]) {
-      const x = await load(seq);
-      if (x && lists(x.m)) { found = seq; break; }
-    }
-    if (found < 0) return null;
-    // the stamp: its own proof, else the nearest later manifest that has one, each link verified
-    let at = bySeq.get(found);
-    if (at?.ots) return { via: 'manifest', seq: found, listed, stamp: { seq: found, own: true } };
-    let prev = await load(found);
-    while (prev) {
-      const nextSeq = (at?.seq ?? 0) + 1;
-      const next = bySeq.get(nextSeq);
-      if (!next) break;
-      const cur = await load(nextSeq);
-      if (!cur || cur.m.previous_sha256 !== sha256Hex(prev.bytes)) break;
-      if (next.ots) return { via: 'manifest', seq: found, listed, stamp: { seq: nextSeq, own: false } };
-      prev = cur;
-      at = next;
-    }
-    return { via: 'manifest', seq: found, listed, stamp: null };
+    const d = await decideSeal({ order: [...order, ...rest], load, lists });
+    return d && d.via === 'manifest' ? { via: 'manifest', seq: d.seq, listed, stamp: d.stamp } : null;
   } finally { cat.close(); }
 }
 
