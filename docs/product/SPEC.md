@@ -115,6 +115,7 @@ Trust levels `verified`, `forwarded`, `authorized`, `unverified` (PRD §3).
   trail.json               {v:2, name, created}
   records/<id[0:2]>/<id>.json        (+ <id>.json.ots beside it when OTS is on)
   replies/<id[0:2]>/<id>.<stripper slug>.json   (reply-text records, B6)
+  manifests/<seq>.json (+ .json.ots)   (stamp manifests, M4, B13.1; not built in 3.3.0)
   keys/<domain>/<selector>/<sha256(p)[0:16]>.json   {v:2, domain, selector, k, p, txt, lookup, first_fetched}
 ```
 - **Sharded layout (M3, findings F24).** `<id[0:2]>` is the first two lowercase hex characters of the record id (256 directories, `00`-`ff`). A flat `records/` makes every commit write a tree object with one entry per record (O(N) bytes per commit); a shard keeps each commit's tree write small. There is one layout and no reader, migrator or compatibility path for the earlier flat one (`records/<id>.json`, 2.2.x and before): a trail that still has `records/<32 hex>.json` files directly under `records/` fails every write and every read (`record`, `replyText`, `get`, `list`, `copies`, `counterparties`, `linked`, `expireContent`, `forget`) with `code: 'ERR_TRAIL_LAYOUT'`; it must be re-created. The check stops at the first flat file, and a sharded trail has at most 256 entries to look at. Every path is built and parsed in `src/proof/layout.js` and nowhere else (`recordPath`, `recordOtsPath`, `replyPath`, `parseRecordPath`).
@@ -129,7 +130,7 @@ Trust levels `verified`, `forwarded`, `authorized`, `unverified` (PRD §3).
 - A lock is taken over only when `host` equals this machine's hostname AND the pid is dead (`kill(pid, 0)` gives `ESRCH`; `EPERM` means alive). An unparseable lock counts as stale only once its mtime is older than `lockTimeoutMs`. A live or other-host lock is never taken over. Takeover goes through a break lock: a waiter that judges the lock stale first creates `<trailDir>/.<trail>.lock.break` with `O_EXCL` (contents `{pid, host, started}`); a waiter that does not get it leaves the main lock alone and backs off. The holder re-reads the main lock, unlinks it only if it still holds the content judged stale, releases the break lock in `finally` (only if it still holds its own content), then everyone retries the `O_EXCL` open. This is safe because, while the main lock belongs to a dead owner, only a break-lock holder may remove it (the dead owner never releases; a live writer's release removes only its own lock; acquirers need the file absent), so the main lock cannot change between the holder's re-read and its unlink. For the same reason a writer's own read-then-unlink on release is safe: its pid is alive, so its lock is never judged stale. A break lock is held for milliseconds, so it counts as stale when it is same-host with a dead pid, or older than `max(lockTimeoutMs, 10000)` ms by mtime; a stale break lock is removed by a plain unlink and never taken over through another lock.
 - On failure a writer removes only the files it newly created and that git does not track; it never deletes a committed file.
 - The OTS stamp runs inside the lock, so it is cut off after `clamp(floor(lockTimeoutMs / 3), 5000, 30000)` ms (reported as `ots: {error: 'ots timeout'}`; the record is still committed), so a hanging calendar cannot make every waiting writer hit `ERR_TRAIL_LOCKED`. A short `lockTimeoutMs` therefore shortens the stamp, with a 5000 ms floor; writers that wait less than that can still hit `ERR_TRAIL_LOCKED` behind a slow stamp.
-- **M4 note:** OTS moves out of the trail lock into a batch stamp job on by default; see B13.
+- **M4 note (B13.1, not built yet: the text above is 3.3.0):** OTS is on by default and moves out of the trail lock into a batch stamp job. `record()` stops stamping (`stamp.mode: 'record'` keeps this in-lock stamp as an option); the job adds `manifests/<seq>.json` and `.json.ots` to the layout, a stamp lock `.<trail>.stamp.lock`, a cadence marker `.<trail>.stamp.json` and a scratch directory `.<trail>.stamp/` beside the trail; `upgradeStamps()` stops holding the trail lock over `ots upgrade`; `isLibraryFile` learns `manifests/<8 digits>.json(.ots)`.
 - **`upgradeStamps()`** (M3 step 5): `Promise<{ enabled, upgraded, pending, error? }>`. A fresh stamp is calendar-pending; this runs `ots upgrade` on each committed `records/<id[0:2]>/<id>.json.ots` not yet known to be anchored, **one trail-lock window per stamp** (the `ots` timeout above applies to each), and commits a rewritten proof as its own commit `ots upgrade <id[0:12]>` (the `.bak` the client leaves is removed; a failed commit restores the file). `ots upgrade` exiting non-zero for an unfinished stamp is normal: it stays pending. Anchored ids are remembered in `<trailDir>/.<trail>.ots-state.json` (`{ "v": 1, "anchored": [ids] }`, beside the trail, not in git, written atomically): a cache, so a lost file only repeats the questions. No `otsBin`: `{ enabled: false, upgraded: 0, pending: 0 }`, nothing touched. A missing or hanging binary does not throw: the pass stops and `error` names it (`ots not found`, `ots timeout`), `pending` still counts every stamp not anchored. `countPendingStamps` (internal, read-only, no lock) feeds the CLI `status`.
 - Local filesystems only: `O_EXCL` is not reliable on NFS.
 - `records/`, `replies/` and `keys/` are library-managed. At the start of every write (under the lock) the writer runs `git reset -q`, then deletes the untracked files under them that match the library's own paths, and nothing else: `records/<2hex>/<32 lowercase hex>.json`, `records/<2hex>/<32 lowercase hex>.json.ots`, `replies/<2hex>/<32 lowercase hex>.<slug>.json` (slug `[a-z0-9-]+`; in each, `<2hex>` must be the first two characters of the id), `keys/<domain>/<selector>/<16 hex>.json` (domain and selector lowercase, characters `[a-z0-9._-]`, no `..`, no leading `.`). The shard and key directories this pass emptied (and the ones a rolled-back write created) are removed; `records/` and `replies/` themselves stay. Any other file there is left alone (so `git status` may show it), but a trail is not a place for your own files.
@@ -245,7 +246,7 @@ Caller options `maxMessages` / `maxBytes` take the **smaller** of the option and
 - **Prune (B9).** A prune takes the sync lock (same order: sync lock, then trail lock) only for its short append-and-swap phase and **waits** for it (up to the 30-minute sync cap plus a minute) instead of failing: a `sync` already running finishes first, a `sync` started meanwhile fails fast with `ERR_SYNC_LOCKED` as usual. The build before it holds neither lock.
 - **Different trails, or accounts.** Different trails never share a lock or a cursor file. One trail with two accounts is allowed: the cursor file keys by account, calls are serialised by the sync lock, the caller loops over accounts (multi-account orchestration is not in M1).
 - **Worker.** Each message is one `record()` call, so the worker pool is used exactly as for a pipe message (one build at a time per `sync`). While a build runs the IMAP connection is idle (bounded by `SYNC_SOCKET_MS`). One message is in memory at a time on the main thread, plus one in the worker. `worker.size: 0` works too.
-- **OTS.** `record()` stamps each record when `otsBin` is set, inside the trail lock, so a 1,000-message backfill with OTS on makes 1,000 sequential stamps. M1 changes nothing (per email, as `record()` does today); recommended: leave OTS off for backfills. Decided (PRD §12 Q8): per record; docs advise OTS off for backfills. **M4 changes this** (on by default, per batch, outside the lock): see B13.1.
+- **OTS.** `record()` stamps each record when `otsBin` is set, inside the trail lock, so a 1,000-message backfill with OTS on makes 1,000 sequential stamps. M1 changes nothing (per email, as `record()` does today); recommended: leave OTS off for backfills. Decided (PRD §12 Q8): per record; docs advise OTS off for backfills. **M4 changes this** (on by default, per batch, outside the lock; the advice is withdrawn, B13.1.12): see B13.1. The stamp job takes a third lock, `.<trail>.stamp.lock`, in the order sync lock, stamp lock, trail lock (B13.1.5).
 
 ### B4.6 Dependency and wrapper
 
@@ -323,7 +324,7 @@ Owner decisions on the six forks; rationale in [decisions-log](decisions-log.md)
 - **First run:** the whole folder history over capped runs. The folder is a deliberate choice.
 - **Cursor:** sidecar beside the trail, stamped with the trail's HEAD so a restored trail is detected. Simple; keeps one commit per record.
 - **`captured`:** the fetch time, no new field. The age evidence is the signed `Date`/`t=`.
-- **OTS:** per record as today; advise OTS off for backfills. No new proof type.
+- **OTS:** per record as today; advise OTS off for backfills. No new proof type. *(Superseded by M4: on by default, per batch, B13.1.)*
 - **IMAP:** in core as the third dependency (F16). One library, one entry point.
 
 ## B5. Trail index (`list`, `copies`, `counterparties`, `linked`)
@@ -335,6 +336,7 @@ Owner decisions on the six forks; rationale in [decisions-log](decisions-log.md)
 - **What the extra tables are built from.** The record alone (never the content store, which may be off, expired or forgotten), by `src/proof/participants.js`: the record's `addresses` field (B1); a record without it (captured before M3) falls back to the header lines each signature covers (`signatures[].signed_headers`) plus `message.from` of an unsigned record. Thread links come from the parsed `message.in_reply_to` / `message.references`. Addresses come from one linear address-list parser (display names, quoted strings, comments, groups and routes skipped: `"ceo@bank.example" <evil@x.example>` is `evil@x.example`). `signed` is true when some signature's `h=` covers a line that names the address. A link is `signed` only when a signature covers the In-Reply-To / References line that names the id AND that signature verifies offline and aligns with the From domain (`verifyRecord(...).passing`, run only for records that have such a line, so most records pay nothing); otherwise `unsigned`. Per record the index takes at most 500 participant rows and 200 links (the last References ids, the nearest ancestors), bounds in `limits.js`.
 - **Gaps (what a record cannot show).** A record captured since M3 carries every From/To/Cc/Reply-To address, each marked `signed`, so an unsigned Cc is found by `list({ with })` and `counterparties()` and is `signed: false` there (a Gmail-signed mail covers To and Cc; a Microsoft-signed one often does not cover Cc or Reply-To). Two gaps remain: a record captured BEFORE M3 has only the signed lines and an unsigned record's `message.from` (no migration rewrites a record; re-recording the same bytes is a duplicate), and an over-limit record has no `addresses` at all (it is never parsed). Bcc is never in a received header. The record does not say which address is the trail's owner, so the owner appears as a counterparty on every record; there is no reliable way to exclude them from `direction` alone (an `in` mail names the owner somewhere in To/Cc/Bcc, which cannot be told apart from other recipients).
 - **HEAD check.** `meta.head` is the trail git HEAD the index reflects. Every `list`/`copies` compares it with `git rev-parse HEAD` first. Equal: use it. Stored HEAD is an ancestor of HEAD: **catch up** from the records `git diff --name-only --no-renames -z <stored> HEAD -- records` names (added, changed or deleted; the `records/<id[0:2]>/<id>.json` paths are parsed by `parseRecordPath` in `layout.js`, which ignores `.ots` files and any path whose shard is not the id's own), in one transaction. Anything else (restore to an older commit, rewritten history, no index, damaged file, other `schema`): **rebuild** from every record committed in HEAD (one `git ls-tree -r` over `records`, the same parser), in one transaction. Every `list`/`copies`/`counterparties`/`linked` also runs the B3 layout check first, so an old flat trail answers `ERR_TRAIL_LAYOUT` instead of an empty index. Records are read in batches of 500 and written as each batch arrives (the transaction stays open across the reads; any throw rolls it back, so the old rows and old head stay), so peak memory does not grow with the trail (F19, note 2026-11-08). Catch-up and rebuild run under the trail lock (B3), so they never see a half-written commit; a waiting `list` can therefore throw `ERR_TRAIL_LOCKED` after `lockTimeoutMs`.
+- **Seal table (M4, schema 5, B13.1.10).** `seal(kind, id, slug, seq)` from the stamp manifests, built and caught up like the other tables (the catch-up diff also covers `manifests/`); a cache that only says which manifest to read, never proof.
 - **Record commits.** `record()` never touches the index. The new commit moves the trail HEAD, and the next `list`/`copies` catches up from it (one code path, so a failed or skipped index write cannot lose anything).
 - **Answers.** Identical to the former full read: `list` newest `captured` first (with the B8 filters, the same order), `copies` oldest first; records with equal `captured` come in ascending id order (the full read left that to the file system). Only records whose `id` equals their file name are indexed.
 - **Addon.** `better-sqlite3` (native addon, prebuilt for darwin/linux/win32 x64+arm64, linux musl; no install script) is imported only by `src/proof/index-db.js`, on the first `list`/`copies`. If it cannot load, those two reject with `code: 'ERR_INDEX_UNAVAILABLE'`; there is no fallback to a full read. A rebuild lists the committed record ids with one `git ls-tree` call and each record's adding commit with one `git log --diff-filter=A --name-only` call; a catch-up lists the changed paths with one `git diff`. All three are streamed line by line (`gitLines` in `git.js`), never buffered whole, so there is no output-size limit and no trail-size error (F27); memory holds one batch of 500 records plus the id-to-commit map. `record`, `check`, `get`, `verify`, `matchBody`, `matchFile` and `sync` never load it, so proof does not depend on it.
@@ -544,7 +546,8 @@ Result `{ ok, failed: [{ rule, want, got }], record, rules }`. Every rule is eva
 - **Stragglers.** Commit order is capture order unless a clock stepped back. A record captured before `before` but committed after the boundary is **kept** and reported in `stragglers` (removing it would delete a range in the middle, which the PRD calls tampering).
 - **Removed.** Every record whose commit is in the prefix, its `.ots`, and every reply-text record (B6) of such a record, wherever it was committed. A kept-range commit that then touches only removed records (the reply-text commit for a removed record) is **dropped**, not replayed empty; `dropped` counts them.
 - **Archived keys** (`keys/**`). A key first committed in the prefix stays only when some kept record's `signatures[].key_file` names it (it is then in the notice commit); a key first committed in the kept range always stays. (A forward's inner signature key is committed but not named by the record; it is never needed offline, so it follows the same rule.)
-- **Everything else in the trail** that is not a record, reply or key (today only `trail.json`) stays and is carried in the notice commit.
+- **Manifests (M4, B13.1.11).** A stamp manifest and its `.ots` committed in the prefix are removed with the records they list, except the newest manifest of the prefix, which is carried with its `.ots` so the manifest chain stays connected; kept-range manifests stay byte-identical; a kept-range commit that touches only removed manifests' proofs is dropped.
+- **Everything else in the trail** that is not a record, reply, key or manifest (today only `trail.json`) stays and is carried in the notice commit.
 - **Cutoffs.** One that removes nothing (no record before the boundary, including a trail that does not exist yet) is a **no-op** (`noop: true`: no rewrite, no backup). One after the last record would leave an empty trail and is refused (`ERR_PRUNE_CUTOFF`).
 - **Kept.** Every kept commit keeps its message, author, author date, committer and committer date; every kept file is byte-identical (blob ids equal). Only commit ids change.
 
@@ -611,7 +614,7 @@ After the swap the old HEAD is not an ancestor of the new one, so B4.2's "restor
 
 ### B9.7 Result
 
-`{ cutoff, noop, dryRun, previousHead, head, removed, kept, stragglers: [ids], dropped, keysCarried, reverify: { ok, failed: [ids] }, backup, content: { removed, attachments, error? }, timing: { planMs, buildMs, lockMs, totalMs } }`. `previousHead` is the old trail's HEAD at the swap (the backup's HEAD; the notice's `previous-head` is the snapshot, B9.2). `kept` includes records appended during the build. `reverify`: `verifyRecord` over every kept record, offline: `ok` is how many verify, `failed` the ids that do not. The prune cannot have caused a failure (the files are byte-identical), and a record that fails DKIM is a legitimate record (accept-with-flag), so a failure is reported and never stops the prune. OTS stamps are left byte-identical; `ots` is never run. `lockMs` is how long the trail lock was held. `backup` is null for a no-op or after `deleteBackup`. **`dryRun: true`** (option, default false; M3 step 5): runs the plan and the kept-record re-check, returns this same shape with `dryRun: true`, `head: null`, `content` zero, `timing.buildMs`/`lockMs` 0 and `backup` the path a real prune would use; it builds, swaps and writes nothing (HEAD, tree, content store and sync cursor unchanged; it takes the prune lock like a real prune, and finishes an unfinished earlier swap like any trail-lock holder, but removes no crashed build).
+`{ cutoff, noop, dryRun, previousHead, head, removed, kept, stragglers: [ids], dropped, keysCarried, manifestsRemoved (M4, B13.1.11; 0 before), reverify: { ok, failed: [ids] }, backup, content: { removed, attachments, error? }, timing: { planMs, buildMs, lockMs, totalMs } }`. `previousHead` is the old trail's HEAD at the swap (the backup's HEAD; the notice's `previous-head` is the snapshot, B9.2). `kept` includes records appended during the build. `reverify`: `verifyRecord` over every kept record, offline: `ok` is how many verify, `failed` the ids that do not. The prune cannot have caused a failure (the files are byte-identical), and a record that fails DKIM is a legitimate record (accept-with-flag), so a failure is reported and never stops the prune. OTS stamps are left byte-identical; `ots` is never run. `lockMs` is how long the trail lock was held. `backup` is null for a no-op or after `deleteBackup`. **`dryRun: true`** (option, default false; M3 step 5): runs the plan and the kept-record re-check, returns this same shape with `dryRun: true`, `head: null`, `content` zero, `timing.buildMs`/`lockMs` 0 and `backup` the path a real prune would use; it builds, swaps and writes nothing (HEAD, tree, content store and sync cursor unchanged; it takes the prune lock like a real prune, and finishes an unfinished earlier swap like any trail-lock holder, but removes no crashed build).
 
 Errors: `TypeError` (bad options), `ERR_PRUNE_RUNNING`, `ERR_SYNC_LOCKED`, `ERR_TRAIL_LOCKED`, `ERR_PRUNE_CUTOFF`, `ERR_PRUNE_REWRITTEN`, `ERR_PRUNE_VERIFY`, `ERR_PRUNE_JOURNAL`, `ERR_TRAIL_LAYOUT`; every one raised before the swap changes nothing.
 
@@ -729,7 +732,8 @@ Path: `--config <path>`, else `$XDG_CONFIG_HOME/mailproof/config.json`, else `~/
 | `trail` | `"default"` | trail name inside `trailDir`. |
 | `passCommand` \| `passFile` \| `accessTokenCommand` | (exactly one) | the secret source, same semantics as `mailproof-sync` (command split into argv, `execFile`, no shell, first stdout line; file first line; XOAUTH2 token command). A `passFile` (and `mailproof-sync --pass-file`) is checked like the config: it must be owned by the effective uid with no group or other bits, else it is refused unread (exit 77, `chmod 600`). **There is no password field and no stdin source**: a key named `pass`, `password` or `secret` anywhere in an account is refused (exit 64, "put the password in your password manager and use passCommand"). |
 | `content` | `{}` | the `content` constructor option (B7.2): `store`, `attachments`, `days` (730), `sweepDays` (7). |
-| `ots` | `false` | `true`: set `otsBin` to `ots` from `PATH` (an absolute path string is also accepted). |
+| `ots` | `false` (**M4, B13.1.1: `true`**) | `true`: set `otsBin` to `ots` from `PATH` (an absolute path string is also accepted); `false` turns the seal off. |
+| `stamp` | (M4) `{}` | `{ "mode": "batch"\|"record", "everyHours": 6 }` (B13.1.1); unknown keys refused. |
 | `backupRemote` | (none) | a git remote URL, used only by `backup --push` (B11.6). Secrets by reference only: a URL carrying credentials (`https://user:token@host/...`, or any `scheme://user@host` other than `ssh://`) fails validation (exit 64); use a git credential helper or an ssh key (`git@host:path`, `ssh://git@host/path`). |
 
 - **Validation.** An unknown key (top level, account, or `content`), a wrong type or an invalid name is exit 64 naming the JSON path (`accounts.personal.port`). `v` is required and must be `1`. Account names are unique by being object keys; two accounts must not share the same `trailDir` + `trail` (exit 64).
@@ -790,7 +794,7 @@ Account-scoped unless noted. `[id]` is a record id (32 hex) or a unique prefix o
 
 | Command | Flags | Library call | Notes |
 |---|---|---|---|
-| `sync` | `--folders <a,b>`, `--sent <on\|off\|path>` (override the account for this run) | `sync` (B4.1) | "Sync now": reads Inbox (+ `folders`) and Sent read-only, records proofs, runs the content sweep (B7.5), then upgrades pending OTS stamps when `ots` is on (B11.12). Output: the sync result plus `ots: { upgraded, pending }`. A capped run is exit 0 (B4.1). |
+| `sync` | `--folders <a,b>`, `--sent <on\|off\|path>` (override the account for this run) | `sync` (B4.1) | "Sync now": reads Inbox (+ `folders`) and Sent read-only, records proofs, runs the content sweep (B7.5), then upgrades pending OTS stamps when `ots` is on (B11.12). Output: the sync result plus `ots: { upgraded, pending }`. **M4 (B13.1.12):** the run ends with the automatic stamp job when due (library `sync`), `ots` becomes the job's `StampResult` (a superset), and the CLI no longer calls `upgradeStamps()` itself. A capped run is exit 0 (B4.1). |
 | `watch` | `--interval <dur>` (default `5m`; `30s`, `5m`, `1h`; minimum `30s`) | `sync` in a loop | Foreground, long-running; B11.9. |
 | `list` | `--with <address>`, `--role from\|to\|cc\|reply-to`, `--direction in\|out`, `--before <date>`, `--after <date>`, `--limit <n>` (default 50, `--limit 0` = no cap) | `list` | Dates `YYYY-MM-DD` (UTC midnight) or full ISO-8601. Human: one line per record: short id, captured, direction, live/portable verdicts, message id. |
 | `show <id>` | | `get`, `proofParts`, `linked` | The record fields, the graded proof per part and the thread links. `--raw` prints the stored raw email to stdout (`rawEmail`; exit 1 if the content store no longer holds it). |
@@ -800,9 +804,10 @@ Account-scoped unless noted. `[id]` is a record id (32 hex) or a unique prefix o
 | `forget` | `[id ...]` or `--with <address>` with optional `--before`/`--after`; `--yes`, `--dry-run` | `forget` (after `list`) | Content only (B7.6); proofs stay. See safety below. |
 | `prune` | `--before <date>` required; `--yes`, `--dry-run`, `--delete-backup` | `prune` | Rewrites history (B9); keeps `<trail>.pre-prune-<date>` unless `--delete-backup`. |
 | `backup` | `--out <path>`, `--with-content`, `--push`, `--yes` | git, `tar` | B11.6. |
-| `status` | | `indexOverview` (read-only), git, fs | Per account: records (in/out), newest and oldest `captured` (in/out and the dates are null and shown as unknown unless the index is `present`), last sync (from `state.json`), content store size and file count (or `off`), index state (`present`/`absent`/`stale`/`unreadable`/`unknown`, from the cache file and HEAD), pending OTS stamps (count of `.json.ots` not yet anchored; `-` when `ots` is off), last backup, whether a `watch` is recorded as running. Never writes the index or the trail; never opens IMAP; never takes the writer lock; never builds or catches up the index. |
+| `status` | | `indexOverview` (read-only), git, fs | Per account: records (in/out), newest and oldest `captured` (in/out and the dates are null and shown as unknown unless the index is `present`), last sync (from `state.json`), content store size and file count (or `off`), index state (`present`/`absent`/`stale`/`unreadable`/`unknown`, from the cache file and HEAD), pending OTS stamps (count of `.json.ots` not yet anchored; `-` when `ots` is off; **M4, B13.1.12:** the seal line: mode, last and next due, manifests and those without a proof, proofs not yet anchored), last backup, whether a `watch` is recorded as running. Never writes the index or the trail; never opens IMAP; never takes the writer lock; never builds or catches up the index. |
 | `update` | `--run` | `npm` | B11.10. |
 | `config` | `path` \| `validate` \| `template` \| `add-account` | none | `path` prints the resolved path; `validate` runs B11.2 validation and the permission check, prints `ok` or the errors, exit 0/64/77, and resolves no secrets; `template` prints the example JSON of B11.2; `add-account` is the wizard of B11.12 item 6 (it reads answers from stdin, a terminal or piped). `config` works with no config file present (except `validate`). |
+| `stamp` | (M4, B13.1.12) | `stamp` | Runs the stamp job now (manifest, stamp, upgrade). Exit 0, 1 on an `ots` error, 75 when locked. Not built in 3.3.0. |
 | `export` | | none | Prints `export needs M6 (the proof bundle); not available in this version` and exits 64. Listed in help and the menu as "not available until M4 (B13)". **M4 replaces this** with the pair export (B13.2). |
 | `mcp` | | none | The stdio MCP server (B12): `mailproof mcp [--account <name>] [--log <file>]`. Run on a terminal (stdin is a TTY) it prints a hint and exits 64; a bad config ends 64 or 77 before anything is read. |
 | `help [command]` | | none | B11.11. |
@@ -1069,18 +1074,190 @@ JSON carries strings, not bytes, and the record `id` is the sha256 of the **exac
 - A `sync` call needs a per-call bound: the library default is unbounded for a first backfill, so the tool passes the account's folders and a `maxMessages` cap (the tool gains the argument) (to be measured against client timeouts), and the agent loops while `complete` is false, as the method already documents.
 - Library surface awkward for MCP (found while specifying): `Buffer`/`Uint8Array` params (`check`, `record`, `matchBody`, `matchFile`, `rawEmail`/`attachment` results) are not JSON-shaped (hence B12.6); `forget(target)` is a union (`string | string[] | { with, before?, after? }`), flattened to `ids` / `with` / `before` / `after` with the server enforcing "one of"; `Date | number | string` params become ISO strings only; `record`'s `ctx` and `matchBody`'s optional `raw` need their own arguments; `forget` had no `dryRun` (added, B12.5); `prune({ dryRun })` is not free (it re-verifies every kept record, takes the prune lock and finishes an earlier unfinished swap, so it can write, B9.7); the `@when`/`@fails` texts are long and speak of the library, not of a tool.
 
-## B13. Seal and pair export (M4) — OUTLINE, to be specified at build
+## B13. Seal and pair export (M4)
 
-Decided 2026-11-11 (decisions-log "M4: drop appointments; seal and pair export", PRD §7 M4). This is an outline, not a spec: each subsection is filled in when its build step lands. B3, B4.5 and B11 `export` describe the shipped 3.3.0 behaviour that M4 changes.
+Decided 2026-11-11 (decisions-log "M4: drop appointments; seal and pair export", PRD §7 M4). **B13.1 is specified (build step 1); B13.2 and B13.3 are outlines**, filled in when their build step lands. B3, B4.5 and B11 describe the shipped 3.3.0 behaviour (per-record stamp inside the trail lock, `ots` off by default) that B13.1 changes; each carries a pointer here, and they are rewritten when step 1 is built.
 
-### B13.1 Stamp job and manifest chain
+### B13.1 Stamp job and manifest chain (M4 part a)
 
-- OTS is on by default, stamped per batch. Capture (`record`, `sync`, `watch`) no longer stamps inside the trail lock; a missing `ots` binary never blocks capture (record and flag).
-- A stamp job writes a sha256 manifest of the records added since the last stamp plus the previous manifest's hash (a chain), commits it, OTS-stamps the manifest once, and in the same pass upgrades older pending stamps (today's `upgradeStamps`, B3).
-- Cadence: due every 6 hours (configurable, for example 12). `sync` and `watch` run it when the last stamp is at least that old (the pattern of the content sweep, B7.5: no timer); `mailproof stamp` and a library method always run it.
-- A record finds its `.ots` through the manifest that lists it. A manifest shows other records only as hashes.
-- OTS time is "no later than", up to the cadence after capture; the git commit keeps the exact capture time. Per-record stamping stays an option.
-- To be specified: manifest format and path, chain rule, state marker, the legacy per-record `.ots` files, locking, config keys, result shape, errors, test plan.
+A **seal** is an OpenTimestamps proof that some bytes existed no later than a Bitcoin block. Instead of one proof per record taken inside the trail lock, a **stamp job** writes a **manifest** (a sha256 list of the files added since the last manifest, plus the hash of the previous manifest: a chain), commits it, stamps it once, and in the same pass upgrades older pending stamps. Capture never stamps and never waits for the network.
+
+#### B13.1.1 Options and modes
+
+| Setting | Meaning |
+|---|---|
+| `otsBin` (constructor) | Absent: **on**, binary `ots` from `PATH` (the default since M4; 3.3.0 and before: off). A string: on, that binary. `null`: **off**: no manifest, no stamp, nothing touched, `record()` reports `ots: 'off'`. |
+| `stamp.mode` | `'batch'` (default): this section. `'record'`: the 3.3.0 behaviour, kept as an option: `record()` stamps each record inside the trail lock (cut off after `clamp(floor(lockTimeoutMs / 3), 5000, 30000)` ms, B3) and commits `records/<2hex>/<id>.json.ots` with it; no manifests are made. |
+| `stamp.everyHours` | Cadence of the automatic run, a positive integer 1..720 (`STAMP_EVERY_HOURS_MIN/MAX`), default 6 (`STAMP_EVERY_HOURS`). |
+
+`stamp` is validated at construction like `content` (B7.2): a non-object, an unknown key, a `mode` other than the two, or an `everyHours` that is not an integer in range throws. **CLI config (B11.2):** the account's `ots` key is `true` (the new default), `false` (= `otsBin: null`) or an absolute path (= `otsBin`); a new optional account key `stamp` is the same object (`{ "mode": "batch", "everyHours": 6 }`). `record()`'s result field `ots` is `'off'` (off), `'queued'` (batch mode, on: the next stamp job seals it; the new value) or, in `record` mode, `'pending'` / `{ error }` as before.
+
+#### B13.1.2 Layout (all paths in `layout.js`)
+
+```
+manifests/<seq>.json         the manifest; <seq> is 8 digits, zero-padded, from 00000001
+manifests/<seq>.json.ots     its OpenTimestamps proof (present once stamped, B13.1.6)
+```
+
+`layout.js` gains `manifestPath(seq)`, `manifestOtsPath(seq)` and `parseManifestPath(rel)` (`/^manifests\/(\d{8})\.json(\.ots)?$/`, seq 1..99,999,999); nothing else spells them. The directory is flat and not sharded: a name sorts in chain order, and the count is small (6-hour default: 1,460 a year; the 1-hour floor: 8,760), so a commit that touches `manifests/` writes a tree of tens of bytes per entry (F24's O(N) tree cost needs the record-sized N of `records/`). Only stamp commits touch it. `isLibraryFile` (B3, start-of-write cleanup) and prune's `classify` (B9) both learn the path, so a crashed job's untracked manifest is cleared like any other library file and prune handles it (B13.1.11). `.ots` files left by `ots` beside a manifest are never written inside the trail except by the job's own commit (B13.1.5).
+
+#### B13.1.3 The manifest
+
+Exactly this layout, UTF-8, LF line ends, a final newline (the writer is `serialiseManifest` in `src/proof/seal.js`, fixed key order, two-space indent, one entry per line; entries are not pretty-printed further):
+
+```
+{
+  "v": 1,
+  "seq": 12,
+  "previous_sha256": "<64 hex>" | null,
+  "created": "2026-11-11T12:00:00.000Z",
+  "records": [
+    ["<record id, 32 hex>", "<64 hex: sha256 of the record file's bytes>"],
+    ...
+  ],
+  "replies": [
+    ["<record id, 32 hex>", "<slug>", "<64 hex: sha256 of the reply-text file's bytes>"],
+    ...
+  ]
+}
+```
+
+- **Which files.** The record files (`records/<2hex>/<id>.json`) and the reply-text files (`replies/<2hex>/<id>.<slug>.json`, B6). Not archived keys (the record file carries the key's `k` and `p`, so a sealed record seals its key; the key file is only the archive copy), not `trail.json`, not a `.ots`, not a manifest (the chain covers those). Both kinds are write-once, so the hash of a committed file never changes.
+- **Hash.** The sha256 of the committed file's bytes, as git stores them (`git cat-file`, the working tree is never the source). It is not the `raw_sha256` of the email.
+- **Other records only as hashes.** An entry holds the id (the first 32 hex of the sha256 of the raw email, B1) and the file hash: two hashes, no address, subject, date, direction or verdict. A reader who has the raw email can recompute its id and see that it is listed, nothing more; a pair export (B13.2) therefore shows the recipient how many other records were sealed in each batch, when (`created`), and nothing about them. Batch sizes and times are visible; this is the whole disclosure.
+- **Order and uniqueness.** `records` sorted ascending by id, `replies` by (id, slug), bytewise; an entry appears once in the whole chain (B13.1.4). `created` is the instance clock at the job; it is informational and never trusted (the stamp is the time evidence, the git commit date the exact capture time).
+- **Chain.** `previous_sha256` is the sha256 of the previous manifest's **file bytes** (`seq - 1`), `null` for `seq` 1 and for nothing else. The hash of a manifest is therefore the hash of the file as stored: **verifiers hash the bytes they are given and never re-serialise**; the layout above only makes the writer deterministic. A manifest that does not parse, has an unknown `v`, a `seq` that is not its file name, an entry that is not the shape above or is out of order, or a `previous_sha256` that differs from the hash of the file before it is a broken link (B13.3 reports it; the stamp job refuses to extend it, B13.1.5).
+- **What is stamped.** The manifest file's bytes: `ots stamp` commits to their sha256. The proof is `manifests/<seq>.json.ots`. Because each manifest contains the hash of the one before, a stamp on manifest N also bounds the time of every earlier manifest and so of every record they list.
+
+#### B13.1.4 "Added since the last stamp" (the unsealed set)
+
+The unsealed set at a commit H is: every record file and reply-text file committed at H, minus every entry of every manifest committed at H, minus every record that already has its own committed `records/<2hex>/<id>.json.ots` (a per-record stamp from 3.3.0 or `record` mode keeps its own seal; it is never listed). It is defined by content, not by commit position, so a record committed while a job was running (after its snapshot, before its manifest commit) is not lost: it is simply unsealed at the next job. Empty set: **no manifest** (a job with nothing to seal and nothing to retry writes no commit). Records of every kind are sealed, including `unverified` and over-limit ones (accept-with-flag).
+
+Within one job the unsealed files are taken in ascending path order, at most `STAMP_MAX_ENTRIES` (20,000, records and replies together, about 2 MB of manifest) to a manifest, at most `STAMP_MAX_MANIFESTS` (10) manifests to a job; a larger backlog is `unsealed > 0` in the result and the next job takes the rest. (A sync run is capped at 1,000 messages a folder, B4.3, so only a bulk `record()` loop followed by `stamp()` gets there.) The manifests of one job are chained in order and made in the same job, so their order within a job is not time evidence.
+
+Computing the set is O(files at HEAD): one streamed `git ls-tree` (`gitLines`) plus one read of the manifests, outside every lock (B13.1.5). Measured at build, like F25.
+
+#### B13.1.5 The job, and what holds which lock
+
+`stamp()` (library method, B13.1.9), run by `sync` (when due) and `watch` through `sync`, and by `mailproof stamp`. Lock order: **sync lock, stamp lock, trail lock**, never the reverse (prune takes prune, sync, trail; no path takes the stamp lock while holding the trail lock).
+
+1. **Stamp lock** `<trailDir>/.<trail>.stamp.lock`: the B4.5 mechanism (`O_EXCL`, `{pid, host, started}`, dead-pid takeover through a break lock; `withTrailLock` takes the file name), fail-fast. A second job gets `ERR_STAMP_LOCKED` at once; the automatic run inside `sync` treats it as "skipped (locked)". Held for the whole job, including the `ots` calls. Then the stale scratch directory `<trailDir>/.<trail>.stamp/` (beside the trail, outside git, mode 0700) is emptied.
+2. **Snapshot, no trail lock.** Read HEAD (`scanHead`; no HEAD: nothing to do). Read the manifests at `scanHead`, check the chain end to end (a broken chain is `ERR_STAMP_CHAIN`, nothing written), take the latest `seq` and its file hash, compute the unsealed set and the entry hashes (`git cat-file --batch`), build the manifest files in memory.
+3. **Commit the manifests, short trail lock** (`ERR_TRAIL_LOCKED` after `lockTimeoutMs`: nothing written, the call rejects). Under the lock, like every writer: `ensureTrail`, `assertTrailLayout`, `clearLeftovers`. Then revalidate the snapshot: HEAD must be `scanHead` or a descendant (`git merge-base --is-ancestor`, as B7.8), and the latest manifest at HEAD must still be the one the snapshot saw; otherwise (a prune swapped the history, B9) the job writes nothing this round and returns `skipped: 'rewritten'`. Records committed since `scanHead` are not in these manifests (they are unsealed at the next job); that is correct, not a race. Then write the manifest files, `git add`, one commit for the whole job: `stamp manifest <seq>` (or `<first>-<last>`); never record text in the message. A failing commit removes only the files this call created (the B3 rollback). **The lock is held for file writes and one commit, not for hashing or the network.**
+4. **Stamp the newest manifest, no trail lock.** If the newest manifest at HEAD has no `.ots` (made in step 3, or left by an earlier failed job), its committed bytes are copied to the scratch directory and `ots stamp <scratch file>` runs there (timeout `STAMP_OTS_TIMEOUT_MS`, 30,000 ms, not clamped by `lockTimeoutMs`: nothing waits on it). Stamping happens in the scratch directory, never inside the trail: a stray untracked `.ots` in `manifests/` would be deleted by another writer's `clearLeftovers`. At most one `ots stamp` per job: older manifests without a proof are covered by this one through the chain (B13.1.10). A stamp error ends the stamping and the upgrade pass (a missing binary or a hung calendar fails the next call the same way) and is returned in `error`.
+5. **Commit the seal, short trail lock.** Revalidate: the manifest is still committed at HEAD with the same bytes (a prune may have removed it), else the proof is discarded (`skipped: 'rewritten'`). Copy the scratch `.ots` to `manifests/<seq>.json.ots`, `git add`, commit `stamp seal <seq>`. A failing commit restores the tree (the file is removed) and the proof is discarded; the next job stamps again.
+6. **Upgrade, one proof at a time.** Every committed `.ots` not yet known to be anchored (the manifests' and, for a 3.3.0 trail, `records/<2hex>/<id>.json.ots`; B13.1.8), except the one just made, oldest first: copy the proof to scratch, `ots upgrade` the copy **without a lock** (`ots upgrade` needs the `.ots` alone), and only if it changed: short trail lock, confirm the committed proof is still byte-identical to the copy made (else someone else upgraded it: skip), replace it, remove the `.bak`, commit `ots upgrade manifest <seq>` / `ots upgrade <id[0:12]>` (a failed commit restores the file, as `upgradeStamps` does today). `ots upgrade` exiting non-zero for a proof the calendars have not finished is normal: it stays pending. The pass stops at the first `ots` error or after `STAMP_JOB_MAX_MS` (10 minutes: the rest waits for the next job, `pending` says how many).
+7. **Marker and release** (B13.1.7), scratch removed, lock released.
+
+The trail lock is thus taken for steps 3, 5 and each changed upgrade, each for a few file operations and a commit; the network calls (`ots stamp`, `ots upgrade`) never hold it. In `record` mode (B13.1.1) steps 2-5 do not exist; only step 6 runs.
+
+#### B13.1.6 Failure, crash, idempotence
+
+| Situation | Result |
+|---|---|
+| `ots` not on `PATH` / bad path | `error: 'ots not found'`. Manifests are committed and chained, without a proof; the next job (or an explicit `stamp()`) stamps the newest one. Capture is unaffected, `record()` never ran `ots`. |
+| Calendar down, hang | `error: 'ots timeout'` or `'ots exit N: ...'`; same as above. |
+| Killed after step 3 | A committed manifest with no `.ots`: step 4 of the next job. |
+| Killed during step 3 | An untracked manifest file: removed by the next writer's `clearLeftovers`; or a complete commit. Never half a commit. |
+| Killed after `ots stamp`, before step 5 | The scratch proof is lost; stamped again (one more calendar submission, harmless). |
+| Killed during an upgrade | The scratch copy is lost; the committed proof is untouched. |
+| Prune during a job | `skipped: 'rewritten'`; nothing the job made survives the swap except what the prune kept (B13.1.11). |
+| Run twice | The second finds an empty unsealed set, a stamped newest manifest and nothing pending: no commit (idempotent). |
+| Two jobs at once | `ERR_STAMP_LOCKED` for the second. |
+
+A failed `ots` call never throws: it is `error` in the result (accept-with-flag). Things that are wrong with the trail itself throw: `ERR_TRAIL_LOCKED`, `ERR_TRAIL_LAYOUT`, `ERR_STAMP_CHAIN` (the committed chain is broken: a job must not extend it; `status` shows it), a git failure.
+
+#### B13.1.7 Cadence and the marker (as the content sweep, B7.5)
+
+The marker `<trailDir>/.<trail>.stamp.json`, `{ "last": ISO, "error"?: string }`, beside the trail, not in git, written atomically (temp file and rename) by the instance clock after a completed job; `error` is the job's `ots` error when it had one (advisory, for `status`). A completed job is one that reached step 7: a job with an `ots` error completes (so a missing binary costs one spawn per cadence, not one per `sync`); one that threw (`ERR_TRAIL_LOCKED`, `ERR_STAMP_LOCKED`) or was `skipped: 'rewritten'` does not, and leaves the marker alone. A missing, unreadable or future-dated marker means **due**; otherwise due when `last` is `stamp.everyHours` hours old or more. With no trail yet (no HEAD) nothing runs and nothing is written. There is no timer.
+
+- **`sync()`** calls the automatic job at the end of a run (after the content sweep, inside the sync lock, outside the run's failure reporting: a stamp error never fails a run), only when due, and returns it as `SyncResult.stamp` (`null` when it did not run). `watch` is `sync` in a loop, so each tick checks. A record therefore waits from capture until the first sync, watch tick, or `stamp()` after `last + everyHours`: **at most the cadence plus the gap between syncs**. A consumer that captures through the Postfix pipe and never runs `sync` must schedule `mailproof stamp` (cron) itself.
+- **`stamp()` and `mailproof stamp`** always run and refresh the marker.
+- In `record` mode the automatic run is step 6 only (it replaces the upgrade the CLI ran after every `sync` in 3.3.0).
+
+#### B13.1.8 Upgrade, legacy stamps, no conversion
+
+`upgradeStamps()` stays, as the upgrade half of the job (step 6 on its own), independent of the marker; it takes the stamp lock (fail-fast, `ERR_STAMP_LOCKED`) so it cannot interleave with a job. Same result shape as before. The "anchored" cache `<trailDir>/.<trail>.ots-state.json` becomes `{ "v": 1, "anchored": [record ids], "manifests": [seq numbers] }` (the second key is new and additive; an old reader ignores it; still a cache: a lost file only repeats the questions). Anchored means the `ots upgrade` run changed the proof, as today.
+
+A 3.3.0 trail needs nothing done: its `records/<2hex>/<id>.json.ots` files stay where they are, keep being upgraded, and are the seal of their records (B13.1.10). They are not listed in any manifest (B13.1.4); records of such a trail that were captured with `ots` off, or whose stamp failed, are sealed by the first manifest. Nothing is converted, rewritten or removed, and the new upgrade method (scratch copy, no lock held over the network) replaces the old one (a lock window per `ots upgrade` call) for both kinds.
+
+#### B13.1.9 Library surface and result
+
+`Mailproof#stamp() => Promise<StampResult>`, public (one more entry of `primitives.json`, the help table and the MCP tool table; the MCP decision is made with B13.2).
+
+```
+StampResult = {
+  enabled: boolean,                // false: otsBin null. Nothing was done, nothing touched.
+  mode: 'batch' | 'record',
+  ran: boolean,                    // false only for the automatic run (not due, or locked)
+  skipped?: 'not due' | 'locked' | 'rewritten',
+  manifests: Array<{ seq: number, records: number, replies: number, sha256: string, commit: string }>,   // made by this call
+  stamped: number | null,          // the seq stamped by this call, else null
+  unstamped: number,               // committed manifests without an .ots after the call (covered by a later one, B13.1.10)
+  unsealed: number,                // files not in any manifest after the call (a backlog beyond the caps, or committed after the snapshot)
+  upgraded: number, pending: number,   // as upgradeStamps(): proofs rewritten in this call; proofs not yet anchored after it
+  error?: string                   // ots not found | ots timeout | ots exit N: ...
+}
+```
+
+Rejects with `ERR_STAMP_LOCKED`, `ERR_TRAIL_LOCKED`, `ERR_TRAIL_LAYOUT`, `ERR_STAMP_CHAIN` or a git error. With `enabled: false` the other fields are `0`/`[]`/`null`. `SyncResult.stamp` is this object for the automatic run. The CLI prints it as `ots` (B13.1.12). `countPendingStamps` (read-only, no lock, no `ots`) counts both kinds of proof for `status`.
+
+#### B13.1.10 Finding a record's seal (lookup)
+
+`findSeal(root, id)` (internal, `src/proof/seal.js`; `export` and `verify-bundle` use it, so do `show` and `status`):
+
+1. The record's own proof: `records/<2hex>/<id>.json.ots` committed at HEAD gives `{ via: 'record', stamp: <that path> }` (a 3.3.0 or `record`-mode stamp).
+2. Else the manifest that lists the record (the record file's sha256 must equal the listed hash, else the entry does not count): `{ via: 'manifest', seq, listed: <sha256> }`; then the **stamp**: that manifest's own `.ots`, else the nearest later manifest that has one, reached by the chain (each link verified: `previous_sha256` equals the hash of the file before it): `stamp: { seq, own: boolean }`. No stamped manifest yet: `{ stamp: null }` (sealed in a manifest, no time evidence yet). Reply-text files are found the same way.
+3. Else `null`: unsealed.
+
+The manifest that lists a record is found through the trail index (B5, **schema 5**): a table `seal(kind, id, slug, seq)` built from the manifests exactly like the other tables (rebuild from every manifest at HEAD; catch-up from `git diff` over `manifests/` added to the paths it already diffs; a manifest is immutable once committed, so only additions matter, and a prune rebuilds as for any history rewrite). The index is a cache and never proof: `findSeal` uses the hint only to know **which** manifest to read, reads that manifest from the trail, and checks that it lists the id with the current file hash; a missing, wrong or unavailable index falls back to reading the manifests newest to oldest (cost: the manifests, about 100 bytes a record). Whoever can write the index can slow a lookup, never change an answer. Old caches rebuild on first use, as with schema 4.
+
+What a seal proves, for B13.2/B13.3 and the README of a bundle: the `.ots` proves that the manifest's hash (so the listed record file, so the signed headers and the key it contains) existed **no later than** a Bitcoin block (up to the cadence plus the sync gap after capture; the git commit keeps the exact capture time, locally and unattested). Checking that the `.ots` really commits to the manifest and ends in a Bitcoin attestation is `ots verify` / `ots info` (the library reads the block height from `ots info`, local, as `readBlockHeight` does); B13.3 specifies what `verify-bundle` does without a node.
+
+#### B13.1.11 Prune (B9)
+
+A manifest names removed records by hash, which is all the proof they keep. Rules, consistent with "kept files are byte-identical" (B9.1):
+
+- A manifest and its `.ots` committed **in the pruned prefix** are removed with the records they list (every record such a manifest lists was committed earlier, so it is in the prefix too), **except the newest manifest of the prefix** (highest `seq`) and its `.ots`, which are carried in the notice commit like `trail.json`. It lists only removed records and so exposes hashes of things that no longer exist, a few KB; keeping it keeps the chain connected (the next manifest's `previous_sha256` still resolves, the next `seq` and the next previous-hash stay known even when no later manifest existed yet).
+- Manifests committed in the kept range stay, byte-identical, listing removed records by hash. A kept-range commit that touches only removed manifests' proofs (an `ots upgrade` of one) is dropped like the reply-text commit of a removed record (B9.1, `dropped`).
+- The prune notice (B9.2) is unchanged; the result (B9.7) gains `manifestsRemoved`. `classify` returns `{ kind: 'manifest', seq }` and a manifest `.ots` is classified with its manifest. A stamp job that was running during the swap ends `skipped: 'rewritten'` (B13.1.5).
+- After a prune the oldest manifest kept (or carried) has a `previous_sha256` that names a removed manifest. That is **not** a broken link: a verifier checks `previous_sha256` only between manifests it has, and treats the first of a contiguous run as the start. (A trail with a gap in `seq` and no prune notice is a broken chain.) Records kept after the prune keep their seals; a record whose manifest was removed is itself removed.
+
+#### B13.1.12 Default-on consequences, CLI
+
+- **No `ots` binary.** Capture, `sync` and `watch` work exactly as before. The trail fills with manifests without proofs and every run reports `error: 'ots not found'`; installing `ots` later stamps the newest manifest, which covers the earlier ones through the chain (a late seal: "no later than" the stamp, not the capture; it can never claim an earlier time). `ots: false` in the account config (or `otsBin: null`) turns the whole mechanism off; then there are no manifests, and an old trail's existing ones stay as they are.
+- **First sync backfill.** The run records its capped batch, then the automatic job runs (never stamped before: due): one manifest of up to `STAMP_MAX_ENTRIES` entries and one `ots stamp`. A 100,000-message backfill is about 100 capped runs and one stamp per due run, not 100,000 stamps and not a stamp inside any lock (3.3.0 advice "leave OTS off for backfills" is withdrawn).
+- **`mailproof stamp --account <name>`** (new command, library `stamp()`): runs the job now, prints the result, `--json` the object. Exit `0` when the job completed without an `ots` error (including `enabled: false`, printed as `ots is off for this account`), `1` when `ots` failed (the manifest is still committed; message names the error), `75` for `ERR_TRAIL_LOCKED` / `ERR_STAMP_LOCKED`. Listed in help and the menu.
+- **`sync` / `watch`.** The run's `ots` output is the `StampResult` of the automatic job (`null` when `ots` is off; `{ ran: false, skipped: 'not due', upgraded: 0, pending: N, ... }` when not due); `upgraded` and `pending` keep their meaning, so a 3.3.0 consumer keeps working. The CLI no longer calls `upgradeStamps()` after every sync.
+- **`status`.** Replaces "ots pending" with: `off`, or the mode and cadence, `last` and `next due` (from the marker, with its `error`), the number of manifests and of those without a proof, the number of proofs not yet anchored. It never runs `ots`, never takes a lock, never computes the unsealed set (that costs a trail listing); `ERR_STAMP_CHAIN` shows as `chain broken at seq N`.
+- **`show <id>`** adds one line from `findSeal`: `sealed: manifest 12, stamped by manifest 12 (pending)` / `(anchored, block N)` / `unsealed`.
+- Docs and primitives follow the build: README and usage guide (OTS is on by default; schedule `mailproof stamp` for pipe-only use), `primitives.json`, `help.generated.js`, the MCP tool table.
+
+#### B13.1.13 Bounds (`src/proof/limits.js`, one place)
+
+| Constant | Value | Why |
+|---|---|---|
+| `STAMP_EVERY_HOURS` / `_MIN` / `_MAX` | 6 / 1 / 720 | Default cadence and the accepted range of `stamp.everyHours`. |
+| `STAMP_MAX_ENTRIES` | 20,000 | Entries (records and replies) in one manifest: about 2 MB, one `ots stamp` hashes it in milliseconds. |
+| `STAMP_MAX_MANIFESTS` | 10 | Manifests in one job: at most 200,000 entries, the rest waits. |
+| `STAMP_OTS_TIMEOUT_MS` | 30,000 | One `ots stamp` / `ots upgrade` call outside the lock. `record` mode keeps the in-lock clamp (B3). |
+| `STAMP_JOB_MAX_MS` | 600,000 | The upgrade pass stops here; the next job continues. |
+
+The B1 admission limits, the sync caps (B4.3) and the prune bounds are unchanged.
+
+#### B13.1.14 Test plan
+
+`tests/integration/stamp.test.js` with a fake `ots` binary (a script that writes `<file>.ots`, fails, hangs or "upgrades" on demand, as the existing OTS tests do) and a moving clock:
+- **Manifest.** Bytes of the layout (golden file); sorted entries; record and reply hashes equal `sha256` of the committed file; `previous_sha256` chain over three jobs; `seq` and names; no field beyond the schema; byte-identical when the same set is built twice; a changed byte breaks the hash the next manifest holds.
+- **Unsealed set.** Records added between jobs only; empty set: no commit, no manifest, a second run idempotent; a record committed after the snapshot (hook) is in the next job; legacy `.json.ots` records are not listed; reply-text files listed; over-limit and unverified records listed; caps (`STAMP_MAX_ENTRIES` lowered) split into chained manifests and one stamp; `STAMP_MAX_MANIFESTS` leaves `unsealed > 0`.
+- **Locks.** `record()` during the `ots stamp` call is not blocked (the fake hangs, a record commits meanwhile); trail-lock hold time is a commit, not the network call; `ERR_STAMP_LOCKED` for a second job and "skipped (locked)" for the automatic one; `ERR_TRAIL_LOCKED` writes nothing; lock order (a `sync` holding the sync lock runs the job).
+- **Failure and crash.** `ots` missing: manifest committed, no `.ots`, `error: 'ots not found'`, capture unaffected, next job stamps the newest; `ots` hang; child killed (SIGKILL, `prune-proc.js` style) after step 3, after `ots stamp`, during step 3 and during an upgrade: the tree is clean and the next job finishes; untracked manifest cleared by `clearLeftovers`; a failing commit rolls back only its own files; `ERR_STAMP_CHAIN` for a corrupted or gapped chain, nothing written.
+- **Cadence.** Marker absent, unreadable, future-dated: due; 5 h 59 min: not due, 6 h: due; `everyHours` honoured and validated; a job with an `ots` error completes and writes `error`; a thrown job leaves the marker; `sync` runs it at the end and returns `SyncResult.stamp`; an expiry error and a stamp error never fail the run; `stamp()` ignores the marker and refreshes it; no trail: nothing runs, nothing written.
+- **Modes.** Default on with no option; `otsBin: null` off (no manifest, `ots: 'off'`); `record` mode stamps in the lock as before (3.3.0 tests kept) and writes no manifest; `record()` returns `'queued'` in batch mode.
+- **Upgrade and legacy.** A 3.3.0-shaped trail (per-record `.json.ots`, no manifests): `upgradeStamps()` and the job upgrade them, no manifest lists them, records without a stamp are sealed by the first manifest; `ots-state.json` with and without `manifests`; an upgrade racing another upgrade (hook) skips; upgraded proof committed as `ots upgrade ...`; pass stops at the first `ots` error and at `STAMP_JOB_MAX_MS`.
+- **Lookup.** `findSeal` for a record with its own proof, in a stamped manifest, in an unstamped manifest covered by a later stamp (`own: false`), in an unstamped chain (`stamp: null`), unsealed, with a reply-text file; the index hint is ignored when wrong, missing or corrupt (same answer as without it); schema 5 rebuild of a schema-4 cache; the index never decides an answer.
+- **Prune.** Manifests in the prefix are removed except the newest, which is carried with its `.ots`; kept-range manifests byte-identical; a dropped upgrade commit of a removed manifest; `previous_sha256` of the first kept manifest resolves to the carried one; a job after a prune continues the `seq` and chain; a job straddling the swap ends `skipped: 'rewritten'`; `manifestsRemoved`; the checker of `tests/helpers/prune-check.js` learns the path.
+- **CLI.** `stamp` exit codes, `--json`, `ots is off`; `sync --json` `ots` shape (superset of 3.3.0's); `status` fields and `chain broken`; config `ots`/`stamp` validation; `show` seal line; help and primitives checks pass (`check:primitives`, `check:cli-help`, `check:mcp-tools`).
 
 ### B13.2 `export`
 
