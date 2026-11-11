@@ -13,8 +13,13 @@ const recordPath = (id) => `records/${id.slice(0, 2)}/${id}.json`;
 const recordOtsPath = (id) => `${recordPath(id)}.ots`;
 /** @param {string} id @param {string} slug  The stripper version with `/` as `-`. @returns {string} */
 const replyPath = (id, slug) => `replies/${id.slice(0, 2)}/${id}.${slug}.json`;
+/** @param {number} seq  1..99,999,999. @returns {string} The stamp manifest (SPEC B13.1.2): flat directory, names sort in chain order. */
+const manifestPath = (seq) => `manifests/${String(seq).padStart(8, '0')}.json`;
+/** @param {number} seq @returns {string} The OpenTimestamps proof of a manifest. */
+const manifestOtsPath = (seq) => `${manifestPath(seq)}.ots`;
+const MANIFEST_FILE_RE = /^manifests\/(\d{8})\.json(\.ots)?$/;
 const RECORD_FILE_RE = /^records\/([0-9a-f]{2})\/([0-9a-f]{32})\.json(\.ots)?$/;
-const REPLY_FILE_RE = /^replies\/([0-9a-f]{2})\/([0-9a-f]{32})\.[a-z0-9-]+\.json$/;
+const REPLY_FILE_RE = /^replies\/([0-9a-f]{2})\/([0-9a-f]{32})\.([a-z0-9-]+)\.json$/;
 
 /**
  * Parse a trail-relative record path (`records/<2hex>/<32hex>.json` or `.json.ots`; the shard must be the id's own).
@@ -27,13 +32,25 @@ function parseRecordPath(rel) {
 }
 
 /**
+ * Parse a trail-relative manifest path (`manifests/<8 digits>.json` or `.json.ots`; seq 1..99,999,999).
+ * @param {string} rel
+ * @returns {{ seq: number, ots: boolean } | null}
+ */
+function parseManifestPath(rel) {
+  const m = MANIFEST_FILE_RE.exec(rel);
+  if (!m) return null;
+  const seq = Number(m[1]);
+  return seq >= 1 ? { seq, ots: m[2] !== undefined } : null;
+}
+
+/**
  * Parse a trail-relative reply-text path (`replies/<2hex>/<32hex>.<slug>.json`; the shard must be the id's own).
  * @param {string} rel
- * @returns {{ id: string } | null}
+ * @returns {{ id: string, slug: string } | null}
  */
 function parseReplyPath(rel) {
   const m = REPLY_FILE_RE.exec(rel);
-  return m && m[2].startsWith(m[1]) ? { id: m[2] } : null;
+  return m && m[2].startsWith(m[1]) ? { id: m[2], slug: m[3] } : null;
 }
 
 /** @param {string} rel @returns {boolean}  Is it a reply-text path (see parseReplyPath)? */
@@ -73,4 +90,4 @@ async function assertTrailLayout(root) {
   } finally { await dir.close().catch(() => {}); }
 }
 
-export { recordPath, recordOtsPath, replyPath, parseRecordPath, parseReplyPath, isReplyPath, recordIdsFromPaths, assertTrailLayout };
+export { recordPath, recordOtsPath, replyPath, manifestPath, manifestOtsPath, parseManifestPath, parseRecordPath, parseReplyPath, isReplyPath, recordIdsFromPaths, assertTrailLayout };

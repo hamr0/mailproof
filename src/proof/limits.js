@@ -150,3 +150,22 @@ export const PRUNE_JOURNAL_LIVE_MS = 60 * 60 * 1000;
 
 /** The most direct replies `replyFacts` returns for one Message-ID; more rejects with `ERR_TOO_MANY_REPLIES` (never a silent cut). */
 export const REPLY_FACTS_MAX = 200;
+
+// ---- STAMP JOB (SPEC B13.1.13): the batch OpenTimestamps seal. ----
+
+/** Default cadence of the automatic stamp job, in hours, and the range `stamp.everyHours` accepts. */
+export const STAMP_EVERY_HOURS = 6;
+export const STAMP_EVERY_HOURS_MIN = 1;
+export const STAMP_EVERY_HOURS_MAX = 720;
+
+/** Entries (records and replies together) in one manifest: about 2 MB; one `ots stamp` hashes it in milliseconds. */
+export const STAMP_MAX_ENTRIES = 20_000;
+
+/** Manifests one job makes (at most 200,000 entries); the rest of a backlog waits for the next job. */
+export const STAMP_MAX_MANIFESTS = 10;
+
+/** One `ots stamp` / `ots upgrade` call outside the trail lock. `record` mode keeps the in-lock clamp (SPEC B3). */
+export const STAMP_OTS_TIMEOUT_MS = 30_000;
+
+/** The upgrade pass of a job stops here; the next job continues. */
+export const STAMP_JOB_MAX_MS = 600_000;

@@ -14,7 +14,7 @@ import { git, GIT_IDENTITY } from './git.js';
 import { DKIM_LABEL_RE } from './keys.js';
 import { withMutex } from './mutex.js';
 import { GIT_LISTING_MAX_BYTES } from './limits.js';
-import { recordPath, parseRecordPath, isReplyPath, recordIdsFromPaths, assertTrailLayout } from './layout.js';
+import { recordPath, parseRecordPath, parseManifestPath, isReplyPath, recordIdsFromPaths, assertTrailLayout } from './layout.js';
 
 /** @typedef {import('./types.js').MpRecord} MpRecord */
 
@@ -151,6 +151,13 @@ const trailIndexFile = (/** @type {string} */ name) => `.${name}.index.sqlite`;
 /** Lock-file name of the sync lock (SPEC B4.5), beside the repo. */
 const syncLockFile = (/** @type {string} */ name) => `.${name}.sync.lock`;
 
+/** Lock-file name of the stamp job's lock (SPEC B13.1.5), beside the repo: one stamp job at a time. */
+const stampLockFile = (/** @type {string} */ name) => `.${name}.stamp.lock`;
+/** File name of the stamp cadence marker `{ last, error? }` (SPEC B13.1.7), beside the repo and outside git. */
+const stampMarkerFile = (/** @type {string} */ name) => `.${name}.stamp.json`;
+/** Directory name of the stamp job's scratch space (SPEC B13.1.5), beside the repo: `ots` runs here, never inside the trail. */
+const stampScratchDir = (/** @type {string} */ name) => `.${name}.stamp`;
+
 /** Lock-file name of the prune lock (SPEC B9), beside the repo: one prune at a time. */
 const pruneLockFile = (/** @type {string} */ name) => `.${name}.prune.lock`;
 /** File name of the prune journal (SPEC B9.4), beside the repo and outside git. Present only while a swap is unfinished. */
@@ -164,6 +171,8 @@ const SYNC_LOCK = Object.freeze({ code: 'ERR_SYNC_LOCKED', failFast: true, what:
 
 /** @type {LockKind} The sync lock taken by a prune: the same file, but it waits (a prune must not be lost to a sync that happens to be running). */
 const SYNC_LOCK_WAIT = Object.freeze({ code: 'ERR_SYNC_LOCKED', failFast: false, what: 'sync of trail' });
+/** @type {LockKind} The stamp lock (SPEC B13.1.5): fail-fast; a second job is refused at once. Order: sync lock, stamp lock, trail lock. */
+const STAMP_LOCK = Object.freeze({ code: 'ERR_STAMP_LOCKED', failFast: true, what: 'stamp job of trail' });
 /** @type {LockKind} The prune lock: fail-fast, a second prune on the same trail is refused at once. */
 const PRUNE_LOCK = Object.freeze({ code: 'ERR_PRUNE_RUNNING', failFast: true, what: 'prune of trail' });
 
@@ -335,13 +344,14 @@ async function ensureTrail(root, name, createdIso) {
  *   records/<2hex>/<32 lowercase hex>.json      the record (the shard is the first two chars of the id)
  *   records/<2hex>/<32 lowercase hex>.json.ots  its OpenTimestamps proof
  *   replies/<2hex>/<32 lowercase hex>.<slug>.json  a reply-text record (slug: the stripper version, [a-z0-9-]+)
+ *   manifests/<8 digits>.json(.ots)         a stamp manifest and its proof (SPEC B13.1)
  *   keys/<domain>/<selector>/<16 hex>.json  an archived DKIM key (domain and selector
  *                                           lowercase, the characters fetchDkimKey allows)
  * @param {string} rel
  * @returns {boolean}
  */
 function isLibraryFile(rel) {
-  if (parseRecordPath(rel) !== null || isReplyPath(rel)) return true;
+  if (parseRecordPath(rel) !== null || isReplyPath(rel) || parseManifestPath(rel) !== null) return true;
   const parts = rel.split('/');
   if (parts[0] === 'keys' && parts.length === 4) {
     const label = (/** @type {string} */ l) => DKIM_LABEL_RE.test(l) && l === l.toLowerCase() && !l.startsWith('.') && !l.includes('..');
@@ -379,7 +389,7 @@ async function rmEmptyDirs(root, rels) {
  */
 async function clearLeftovers(root) {
   await git(root, ['reset', '-q']);
-  const untracked = (await git(root, ['ls-files', '--others', '--exclude-standard', '-z', '--', 'records', 'keys', 'replies'])).split('\0').filter(Boolean);
+  const untracked = (await git(root, ['ls-files', '--others', '--exclude-standard', '-z', '--', 'records', 'keys', 'replies', 'manifests'])).split('\0').filter(Boolean);
   /** @type {string[]} */
   const cleared = [];
   for (const rel of untracked) {
@@ -506,4 +516,4 @@ async function commitRecord(root, name, { record, ...rest }) {
   return commitFiles(root, name, { rel: recordPath(record.id), json: record, ...rest });
 }
 
-export { TRAIL_NAME_RE, RECORD_ID_RE, DEFAULT_LOCK_TIMEOUT_MS, TRAIL_LOCK, SYNC_LOCK, SYNC_LOCK_WAIT, PRUNE_LOCK, trailLockFile, trailIndexFile, syncLockFile, pruneLockFile, pruneJournalFile, pidAlive, withTrailLock, serialise, ensureTrail, readRecord, listIds, commitRecord, commitFiles, headOf, isAncestor, recordIdsSince, idsAt };
+export { TRAIL_NAME_RE, RECORD_ID_RE, DEFAULT_LOCK_TIMEOUT_MS, TRAIL_LOCK, SYNC_LOCK, SYNC_LOCK_WAIT, PRUNE_LOCK, STAMP_LOCK, stampLockFile, stampMarkerFile, stampScratchDir, clearLeftovers, isTracked, inHead, hasHead, exists, trailLockFile, trailIndexFile, syncLockFile, pruneLockFile, pruneJournalFile, pidAlive, withTrailLock, serialise, ensureTrail, readRecord, listIds, commitRecord, commitFiles, headOf, isAncestor, recordIdsSince, idsAt };

@@ -27,7 +27,7 @@ test('the parsers accept only the library\'s own paths (shard must be the id\'s 
     assert.equal(parseRecordPath(bad), null, bad);
   }
   assert.equal(isReplyPath(`replies/ab/${ID}.mailproof-quote-1.json`), true);
-  assert.deepEqual(parseReplyPath(`replies/ab/${ID}.mailproof-quote-1.json`), { id: ID });
+  assert.deepEqual(parseReplyPath(`replies/ab/${ID}.mailproof-quote-1.json`), { id: ID, slug: 'mailproof-quote-1' });
   assert.equal(parseReplyPath(`replies/cd/${ID}.mailproof-quote-1.json`), null);
   for (const bad of [`replies/${ID}.q-1.json`, `replies/cd/${ID}.q-1.json`, `replies/ab/${ID}.Q.json`, `replies/ab/${ID}.json`]) assert.equal(isReplyPath(bad), false, bad);
   // ids of record files only: the .ots, a wrong shard and a flat path are not ids
