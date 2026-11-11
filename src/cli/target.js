@@ -5,7 +5,7 @@
 import { UsageError } from './errors.js';
 import { parseAddress } from './parse.js';
 import { participantsOf, signedHeaderValue } from '../proof/participants.js';
-import { asText } from '../proof/bundle-readme.js';
+import { headerText } from '../proof/header-text.js';
 
 /** @typedef {import('../proof/types.js').MpRecord} MpRecord */
 /** @typedef {{ kind: 'id', value: string } | { kind: 'address', value: string } | { kind: 'message-id', value: string }} Target */
@@ -77,7 +77,7 @@ export function factsOfRecord(rec) {
   return {
     id: rec.id, captured: rec.captured, direction: rec.direction,
     live: rec.verdicts?.live?.trust ?? '-', portable: rec.verdicts?.portable?.trust ?? '-',
-    other, subject: subject === null ? null : asText(subject),
+    other, subject: subject === null ? null : headerText(subject),
     body: rec.body_status ?? '-', attachments: Array.isArray(rec.attachments) ? rec.attachments.length : 0,
   };
 }

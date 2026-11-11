@@ -3,9 +3,8 @@
 // the seal), `render` turns them into lines. The compact form (the per-record block of `show <address>`) is the same lines minus
 // the long-tail facts and with the body cut. No DNS and no network: everything is the record, the content store and the trail.
 
-import { participantsOf, signedHeaderValue } from '../proof/participants.js';
+import { participantsOf, signedHeaderValue, addressCoverage } from '../proof/participants.js';
 import { claimedHeader, headerText } from '../proof/header-text.js';
-import { asText } from '../proof/bundle-readme.js';
 import { bodyText } from '../proof/body-text.js';
 import { verifyRecord } from '../proof/recheck.js';
 import { printable as p } from './printable.js';
@@ -34,13 +33,20 @@ export function whyNot(rec, v) {
   const why = [];
   const sigs = Array.isArray(rec.signatures) ? rec.signatures : [];
   if (!sigs.length) why.push('there is no DKIM signature on this email');
+  /** Signatures with a recorded key-lookup error: that error is the fact, so the hedged inference is left out for them. */
+  const lookup = new Map(sigs.filter((s) => s.key_error).map((s) => [`${s.tags?.d}\0${s.tags?.s}`, String(s.key_error)]));
   for (const d of Array.isArray(live?.dkim) ? live.dkim : []) {
     if (!d.d && !d.s) continue;   // mailauth's placeholder for "no signature"
     const where = `${d.s ?? '?'}._domainkey.${d.d ?? '?'}`;
-    if (d.result !== 'pass') why.push(`DKIM ${d.result}${d.result === 'neutral' || d.result === 'none' ? ` (typically no public key is published at ${where})` : ` for ${where}`}`);
+    if (d.result !== 'pass') why.push(`DKIM ${d.result}${lookup.has(`${d.d}\0${d.s}`) ? '' : d.result === 'neutral' || d.result === 'none' ? ` (typically no public key is published at ${where})` : ` for ${where}`}`);
     else if (!d.aligned) why.push(`DKIM passed for ${d.d} but that is not the From domain (not aligned)`);
   }
-  for (const s of sigs) if (s.key_error) why.push(`the public key for ${s.tags?.s ?? '?'}._domainkey.${s.tags?.d ?? '?'} was not archived (${s.key_error})`);
+  for (const s of sigs) {
+    if (!s.key_error) continue;
+    const where = `${s.tags?.s ?? '?'}._domainkey.${s.tags?.d ?? '?'}`;
+    const err = String(s.key_error);
+    why.push(/ENODATA|ENOTFOUND|NXDOMAIN|no record|no key/i.test(err) ? `no public key published at ${where} at capture (DNS: ${err})` : `the public key at ${where} could not be fetched at capture (DNS: ${err})`);
+  }
   if (live?.dmarc?.published && live.dmarc.result !== 'pass') why.push(`DMARC ${live.dmarc.result} (policy ${live.dmarc.policy ?? 'none'})`);
   if (live?.arc && live.arc.result !== 'pass') why.push(`ARC ${live.arc.result}`);
   if (!v.ok) for (const s of v.signatures) if (!s.ok) why.push(`offline re-check of ${s.d ?? '?'}: ${s.why ?? s.reason ?? 'does not verify'}`);
@@ -62,14 +68,19 @@ export async function gather(mp, account, rec, opts = {}) {
   ]);
   const passing = verifyRecord(rec).passing;
   const roles = participantsOf(rec);
-  /** @param {string} role */
-  const addrs = (role) => roles.filter((x) => x.role === role).map((x) => ({ address: x.raw, signed: x.signed }));
+  const cover = addressCoverage(rec, passing);
+  /** "signed" only when a verifying, aligned signature covers the header; `failing` when only signatures that do not verify do. @param {string} role */
+  const addrs = (role) => roles.map((x) => ({ x, c: cover.get(`${x.role}\0${x.address}`) })).filter(({ x }) => x.role === role)
+    .map(({ x, c }) => ({ address: x.raw, signed: c === 'signed', coverage: /** @type {'signed' | 'failing' | 'none'} */ (c ?? 'none') }));
   /** A header: the value a passing signature covers (signed), else the one in the stored raw email (claimed), else absent. @param {string} name @param {(s: string) => string} dec */
   const header = (name, dec) => {
+    /** @typedef {'signed' | 'failing' | 'claimed' | null} Basis */
     const s = passing.length ? signedHeaderValue(rec, name, passing) : null;
-    if (s !== null) return { value: asText(s), basis: /** @type {'signed' | 'claimed' | null} */ ('signed') };
+    if (s !== null) return { value: dec(s), basis: /** @type {Basis} */ ('signed') };
+    const f = signedHeaderValue(rec, name);   // covered, but only by signatures that do not verify
+    if (f !== null) return { value: dec(f), basis: /** @type {Basis} */ ('failing') };
     const c = raw ? claimedHeader(raw, name) : null;
-    return c !== null ? { value: dec(c), basis: /** @type {'signed' | 'claimed' | null} */ ('claimed') } : { value: null, basis: /** @type {'signed' | 'claimed' | null} */ (null) };
+    return c !== null ? { value: dec(c), basis: /** @type {Basis} */ ('claimed') } : { value: null, basis: /** @type {Basis} */ (null) };
   };
   const bcc = raw ? claimedHeader(raw, 'bcc') : null;
   const live = /** @type {Record<string, any>} */ (rec.verdicts?.live ?? {});
@@ -115,10 +126,12 @@ export async function gather(mp, account, rec, opts = {}) {
 
 /** @typedef {Awaited<ReturnType<typeof gather>>} Facts */
 
+/** One rule for every header line: `signed` only when a verifying signature covers it. */
+const COVER = { signed: 'signed', failing: 'covered by a signature that does not verify', none: 'not signed' };
 /** @param {Facts['from']} l @returns {string} */
-const addrText = (l) => (l.length ? l.map((x) => `${p(x.address)} (${x.signed ? 'signed' : 'not signed'})`).join(', ') : NA);
+const addrText = (l) => (l.length ? l.map((x) => `${p(x.address)} (${COVER[x.coverage]})`).join(', ') : NA);
 /** @param {{ value: string | null, basis: string | null }} h @returns {string} */
-const headText = (h, max = 300) => (h.value === null ? NA : `${p(h.value, { max })} (${h.basis === 'signed' ? 'signed' : 'claimed, not signed'})`);
+const headText = (h, max = 300) => (h.value === null ? NA : `${p(h.value, { max })} (${h.basis === 'signed' ? 'signed' : h.basis === 'failing' ? COVER.failing : 'claimed, not signed'})`);
 /** @param {string | null} s @returns {string} */
 const link = (s) => (s ? `, link ${s}` : ', link not recorded');
 

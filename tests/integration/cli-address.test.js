@@ -208,3 +208,60 @@ test('menu: People lists them, picks one, then Show / Verify run the same code; 
   const ex = await w.run([], { interactive: true, input: keys('16', BOB, 'export', '', '', '/nonexistent-dir/xx', '', 'q') });
   assert.match(ex.stdout, /Write the bundle to/);
 });
+
+// ---- owner's real-trail follow-ups: RFC 2047 subjects, "signed" only when a verifying signature covers it, the recorded DNS error ----
+import { Mailproof } from '../../src/proof/mailproof.js';
+import { signedMail, stubResolver } from '../helpers/proof.js';
+import { makeTmpDir } from '../helpers/tmp.js';
+
+const subjB = `=?utf-8?B?${Buffer.from('weekly — stats', 'utf8').toString('base64')}?=`;
+const subjQ = '=?utf-8?Q?weekly_=E2=80=94_stats?=';
+const dirX = makeTmpDir('mp-cli-addr2-');
+const mpX = new Mailproof({ trailDir: dirX, worker: { size: 0 }, now: () => new Date('2026-11-05T10:00:00Z') });
+const hdr = ['from', 'to', 'subject', 'date', 'message-id'];
+const good = await signedMail({ domain: 'ok.example', from: 'ann@ok.example', to: 'me@owner.example', subject: subjB, headerList: hdr, signTime: new Date('2026-11-05T09:00:00Z') });
+const goodQ = await signedMail({ domain: 'ok.example', from: 'ann@ok.example', to: 'me@owner.example', subject: subjQ, headerList: hdr, signTime: new Date('2026-11-05T09:00:00Z') });
+const nokey = await signedMail({ domain: 'late.example', selector: 'sel9', from: 'noreply@late.example', to: 'me@owner.example', subject: subjQ, headerList: hdr, signTime: new Date('2026-11-05T09:00:00Z') });
+const rGood = (await new Mailproof({ trailDir: dirX, worker: { size: 0 }, resolver: good.resolver, now: () => new Date('2026-11-05T10:01:00Z') }).record(good.raw, { direction: 'in', source: 'test' })).record;
+const rGoodQ = (await new Mailproof({ trailDir: dirX, worker: { size: 0 }, resolver: goodQ.resolver, now: () => new Date('2026-11-05T10:02:00Z') }).record(goodQ.raw, { direction: 'in', source: 'test' })).record;
+const rNoKey = (await new Mailproof({ trailDir: dirX, worker: { size: 0 }, resolver: stubResolver({}), now: () => new Date('2026-11-05T10:03:00Z') }).record(nokey.raw, { direction: 'in', source: 'test' })).record;
+await mpX.close();
+const w2 = makeWorld({ accounts: { x: account(dirX) } });
+
+test('RFC 2047 subjects (B and Q, utf-8, an em dash) are decoded in list, show <id>, show <address>', async () => {
+  const l = await w2.run(['list']);
+  assert.equal([...l.stdout.matchAll(/weekly — stats/g)].length, 3, l.stdout);
+  assert.ok(!l.stdout.includes('=?utf-8'), l.stdout);
+  for (const rec of [rGood, rGoodQ]) {
+    assert.match((await w2.run(['show', rec.id])).stdout, /^subject +weekly — stats \(signed\)$/m);
+  }
+  const a = await w2.run(['show', 'ann@ok.example']);
+  assert.equal([...a.stdout.matchAll(/^subject +weekly — stats \(signed\)$/gm)].length, 2);
+});
+
+test('a header covered only by a signature that does not verify is not shown as signed; one rule for every header line', async () => {
+  const r = await w2.run(['show', rNoKey.id]);
+  assert.match(r.stdout, /^from +noreply@late\.example \(covered by a signature that does not verify\)$/m);
+  assert.match(r.stdout, /^to +me@owner\.example \(covered by a signature that does not verify\)$/m);
+  assert.match(r.stdout, /^subject +weekly — stats \(covered by a signature that does not verify\)$/m);
+  assert.ok(!/\(signed\)/.test(r.stdout.split('\n').filter((l) => /^(from|to|cc|date|subject) /.test(l)).join('\n')), r.stdout);
+  const ok = await w2.run(['show', rGood.id]);
+  assert.match(ok.stdout, /^from +ann@ok\.example \(signed\)$/m);
+  assert.match(ok.stdout, /^cc +N\/A$/m);
+  const j = JSON.parse((await w2.run(['show', rNoKey.id, '--json'])).stdout);
+  assert.deepEqual([j.facts.from[0].signed, j.facts.from[0].coverage], [false, 'failing']);
+  assert.equal(j.record.addresses[0].signed, true, 'the record keeps "some signature covers it"');
+  // the unsigned fixture stays "not signed"
+  assert.match((await w.run(['show', id('plain')])).stdout, /^from +zed@zed\.example \(not signed\)$/m);
+});
+
+test('why: a recorded key-lookup error is stated as the fact, the inference stays only without one', async () => {
+  const r = await w2.run(['show', rNoKey.id]);
+  const why = /^why +(.*)$/m.exec(r.stdout)[1];
+  assert.match(why, /no public key published at sel9\._domainkey\.late\.example at capture \(DNS: /, why);
+  assert.ok(!/typically/.test(why), why);
+  // no recorded error: a neutral result keeps the hedged inference (a hand-made record)
+  const { whyNot } = await import('../../src/cli/detail.js');
+  const rec = { v: 2, signatures: [{ tags: { d: 'a.example', s: 'k' }, key_error: null }], verdicts: { live: { trust: 'unverified', dkim: [{ d: 'a.example', s: 'k', result: 'neutral', aligned: false }] } } };
+  assert.match(whyNot(rec, { ok: false, signatures: [] }), /DKIM neutral \(typically no public key is published at k\._domainkey\.a\.example\)/);
+});
