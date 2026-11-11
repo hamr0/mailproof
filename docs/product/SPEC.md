@@ -448,7 +448,7 @@ The raw email and its attachments, kept locally beside the trail so the read pri
 
 ### B7.2 Options
 
-Constructor option `content: { store?: boolean, attachments?: boolean, days?: number, sweepDays?: number }`; validated at construction (non-object, unknown key, non-boolean flag, `days` or `sweepDays` not a positive integer all throw). `sweepDays` (default 7) is the cadence of the automatic sweep (B7.7).
+Constructor option `content: { store?: boolean, attachments?: boolean, days?: number, sweepDays?: number }`; validated at construction (non-object, unknown key, non-boolean flag, `days` or `sweepDays` not a positive integer all throw). `sweepDays` (default 7) is the cadence of the automatic sweep (B7.5).
 
 | Option | Default | Meaning |
 |---|---|---|
@@ -774,7 +774,7 @@ mailproof 3.x   account: personal  [b: change]
 11) Status                counts, last sync, storage
 12) Update mailproof      show the upgrade command
 13) Config                show path, validate, template
-14) Export                needs M6 (not available yet)
+14) Export                not available until M4 (B13)
  h) Help      q) Quit
 >
 ```
@@ -790,7 +790,7 @@ Account-scoped unless noted. `[id]` is a record id (32 hex) or a unique prefix o
 
 | Command | Flags | Library call | Notes |
 |---|---|---|---|
-| `sync` | `--folders <a,b>`, `--sent <on\|off\|path>` (override the account for this run) | `sync` (B4.1) | "Sync now": reads Inbox (+ `folders`) and Sent read-only, records proofs, runs the content sweep (B7.7), then upgrades pending OTS stamps when `ots` is on (B11.12). Output: the sync result plus `ots: { upgraded, pending }`. A capped run is exit 0 (B4.1). |
+| `sync` | `--folders <a,b>`, `--sent <on\|off\|path>` (override the account for this run) | `sync` (B4.1) | "Sync now": reads Inbox (+ `folders`) and Sent read-only, records proofs, runs the content sweep (B7.5), then upgrades pending OTS stamps when `ots` is on (B11.12). Output: the sync result plus `ots: { upgraded, pending }`. A capped run is exit 0 (B4.1). |
 | `watch` | `--interval <dur>` (default `5m`; `30s`, `5m`, `1h`; minimum `30s`) | `sync` in a loop | Foreground, long-running; B11.9. |
 | `list` | `--with <address>`, `--role from\|to\|cc\|reply-to`, `--direction in\|out`, `--before <date>`, `--after <date>`, `--limit <n>` (default 50, `--limit 0` = no cap) | `list` | Dates `YYYY-MM-DD` (UTC midnight) or full ISO-8601. Human: one line per record: short id, captured, direction, live/portable verdicts, message id. |
 | `show <id>` | | `get`, `proofParts`, `linked` | The record fields, the graded proof per part and the thread links. `--raw` prints the stored raw email to stdout (`rawEmail`; exit 1 if the content store no longer holds it). |
@@ -803,7 +803,7 @@ Account-scoped unless noted. `[id]` is a record id (32 hex) or a unique prefix o
 | `status` | | `indexOverview` (read-only), git, fs | Per account: records (in/out), newest and oldest `captured` (in/out and the dates are null and shown as unknown unless the index is `present`), last sync (from `state.json`), content store size and file count (or `off`), index state (`present`/`absent`/`stale`/`unreadable`/`unknown`, from the cache file and HEAD), pending OTS stamps (count of `.json.ots` not yet anchored; `-` when `ots` is off), last backup, whether a `watch` is recorded as running. Never writes the index or the trail; never opens IMAP; never takes the writer lock; never builds or catches up the index. |
 | `update` | `--run` | `npm` | B11.10. |
 | `config` | `path` \| `validate` \| `template` \| `add-account` | none | `path` prints the resolved path; `validate` runs B11.2 validation and the permission check, prints `ok` or the errors, exit 0/64/77, and resolves no secrets; `template` prints the example JSON of B11.2; `add-account` is the wizard of B11.12 item 6 (it reads answers from stdin, a terminal or piped). `config` works with no config file present (except `validate`). |
-| `export` | | none | Prints `export needs M6 (the proof bundle); not available in this version` and exits 64. Listed in help and the menu as "needs M6". **M4 replaces this** with the pair export (B13.2). |
+| `export` | | none | Prints `export needs M6 (the proof bundle); not available in this version` and exits 64. Listed in help and the menu as "not available until M4 (B13)". **M4 replaces this** with the pair export (B13.2). |
 | `mcp` | | none | The stdio MCP server (B12): `mailproof mcp [--account <name>] [--log <file>]`. Run on a terminal (stdin is a TTY) it prints a hint and exits 64; a bad config ends 64 or 77 before anything is read. |
 | `help [command]` | | none | B11.11. |
 
@@ -981,7 +981,7 @@ Included: 22 tools (16 read, 4 write, 2 destructive), always all listed. **Not i
 | `new Mailproof(...)`, `TRUST_LEVELS`, `RULES_VERSION` | construction and constants: the server and `initialize.serverInfo` own them. |
 | `prune`'s `deleteBackup` and `now` options, `record`'s `envelope`, `sync`'s `host`/`user`/`auth`/`tls` | not exposed. `deleteBackup` makes a prune final and stays a human CLI act (B9, B11.5); `now` is a test seam; `envelope` is the SMTP envelope an agent does not have (SPF is then not evaluated, B1); connection details and secrets come from the account config only, never from an argument. |
 
-Neither an MCP `export` nor `backup` is offered (`export` is M6; `backup` writes bundles and pushes to a remote, a human act, B11.6).
+Neither an MCP `export` nor `backup` is offered (`export` is M4, B13; `backup` writes bundles and pushes to a remote, a human act, B11.6).
 
 **Measured (F30): Claude Code 2.1.322 in `-p` mode does not act on the hints.** It refuses every MCP tool that is not in `--allowedTools`, `readOnlyHint` tools included, and runs `forget` with no extra gate once it is allowed. The hints are in `tools/list` for clients that implement a policy; with Claude Code, scope by tool name (`mcp__mailproof__list`, ...) or by server name.
 
@@ -1077,7 +1077,7 @@ Decided 2026-11-11 (decisions-log "M4: drop appointments; seal and pair export",
 
 - OTS is on by default, stamped per batch. Capture (`record`, `sync`, `watch`) no longer stamps inside the trail lock; a missing `ots` binary never blocks capture (record and flag).
 - A stamp job writes a sha256 manifest of the records added since the last stamp plus the previous manifest's hash (a chain), commits it, OTS-stamps the manifest once, and in the same pass upgrades older pending stamps (today's `upgradeStamps`, B3).
-- Cadence: due every 6 hours (configurable, for example 12). `sync` and `watch` run it when the last stamp is at least that old (the pattern of the content sweep, B7.7: no timer); `mailproof stamp` and a library method always run it.
+- Cadence: due every 6 hours (configurable, for example 12). `sync` and `watch` run it when the last stamp is at least that old (the pattern of the content sweep, B7.5: no timer); `mailproof stamp` and a library method always run it.
 - A record finds its `.ots` through the manifest that lists it. A manifest shows other records only as hashes.
 - OTS time is "no later than", up to the cadence after capture; the git commit keeps the exact capture time. Per-record stamping stays an option.
 - To be specified: manifest format and path, chain rule, state marker, the legacy per-record `.ots` files, locking, config keys, result shape, errors, test plan.

@@ -197,7 +197,7 @@ exported via Thunderbird has altered bodies, so M1 is Gmail-first (F4).
 
 - Stripping is **deterministic and versioned** (e.g. `mailproof-quote/1`): anyone with the raw email re-runs it and gets the same text byte for byte.
 - Only quoted history is stripped. **Signatures are not stripped**: it is text the sender wrote, and detecting it is another fragile heuristic. The consumer can ignore it.
-- **Out of mailproof, the consumer's job** (§10): the strict-keyword interpreter, the calendar-reply interpreter and the LLM hook that earlier drafts listed here. Interpreting the text (approve/decline, any language, an LLM) is guardrail policy and belongs to bareguard. A calendar reply is not dropped as a concept; if needed it belongs with M4.
+- **Out of mailproof, the consumer's job** (§10): the strict-keyword interpreter, the calendar-reply interpreter and the LLM hook that earlier drafts listed here. Interpreting the text (approve/decline, any language, an LLM) is guardrail policy and belongs to bareguard. Calendar replies are dropped along with the old M4 appointments module (decisions-log, 2026-11-11).
 
 **Honest limits, built into the output**
 
@@ -420,7 +420,7 @@ unproven (M0, M1, M2), not for modules whose mechanism exists and is tested.
 | Fate | Modules (lines) |
 |---|---|
 | Move mostly as-is (proof core + send) | `parse` (156), `classifier` (41, rule change per §3), `dkim-archive` (122), `verifier` (268, reshaped to record-based re-check), `notary` (109), `ots` (182), `outbound` (194), `dsn` (255), `envelope` (32), `prefilter` (74), `event-mutex` (46) |
-| Reshape for M3/M4 | `completion` (249), `sweep` (216), `templates` (236), `notify` (100), `proof-anchor` (152), `router` (131, cut down) |
+| Reshape for M3 (M4 is now seal + export, not appointments) | `completion` (249), `sweep` (216), `templates` (236), `notify` (100), `proof-anchor` (152), `router` (131, cut down) |
 | Reshape (shared types) | `types` (170): keep and extend the typedefs v2 reuses (trust level, DKIM/auth result shapes, envelope); replace the event/commit-ledger types with the new record and verdict types; drop types that only served dropped modules (crypto sign-off, plus-address command grammar) |
 | Rewrite | `gitrepo` (853; every function takes an `eventId`, the ledger's unit is an "event", so a single received email cannot be recorded on its own; v2's unit is the record), `ingest` (708; mixes proof, coordination and gitdone's command grammar), `event-store` (680), `create` (291), `index` (134; the v1 barrel re-exporting about 60 symbols; replaced by per-layer entry points matching the subpath exports, e.g. `mailproof` for the proof core, `mailproof/coordinate`, `mailproof/send`; exports only what is a primitive in `primitives.json` or deliberately public, enforced by the completeness test) |
 | Drop / leave to gitdone | `crypto` (205; thresholds/N signers); the reopen/complete lifecycle pair; plus-address command grammar (initiator commands, stats replies, attest+); `verify+`/`reverify+` email endpoints unless M3 revives them |
