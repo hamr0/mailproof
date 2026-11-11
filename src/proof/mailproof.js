@@ -23,6 +23,7 @@ import { REPLY_FACTS_MAX } from './limits.js';
 import { hashDocument } from './hash.js';
 import { runPrune } from './prune.js';
 import { runUpgradeStamps } from './ots-upgrade.js';
+import { runExport } from './bundle-export.js';
 
 const OTS_MIN_TIMEOUT_MS = 5000; // floor for the `ots` timeout, however short lockTimeoutMs is
 
@@ -101,6 +102,8 @@ class Mailproof {
     this.jobOts = this.otsBin ? createOts({ otsBin: this.otsBin, timeoutMs: STAMP_OTS_TIMEOUT_MS }) : null;
     /** Internal (tests): the seams of the stamp job. @type {import('./stamp.js').StampHooks} */
     this._stampHooks = {};
+    /** Internal (tests): the seams and lowered bounds of `export`. @type {{ hooks: NonNullable<import('./bundle-export.js').ExportCtx['hooks']>, limits: NonNullable<import('./bundle-export.js').ExportCtx['limits']> }} */
+    this._exportSeams = { hooks: {}, limits: {} };
     this.check = this.check.bind(this);
     this.record = this.record.bind(this);
     this.verify = this.verify.bind(this);
@@ -122,6 +125,7 @@ class Mailproof {
     this.forget = this.forget.bind(this);
     this.prune = this.prune.bind(this);
     this.upgradeStamps = this.upgradeStamps.bind(this);
+    this.export = this.export.bind(this);
     this.stamp = this.stamp.bind(this);
     this.close = this.close.bind(this);
   }
@@ -554,7 +558,7 @@ class Mailproof {
    * @when Use on a trail created with `otsBin`, some hours after the records were captured: a fresh stamp only says "submitted to the calendars", and `ots upgrade` merges the Bitcoin attestation once it exists, so the proof then holds offline. Each stamp that gained it is committed as its own small commit; `sync` consumers call this at the end of a run, a `record()`-only consumer calls it from its own schedule. It asks only about stamps not yet known to be anchored (remembered in a sidecar file beside the trail, a cache), so the cost follows the pending ones.
    * @category verify
    * @signature mp.upgradeStamps() => Promise<{ enabled: boolean, upgraded: number, pending: number, error?: string }>
-   * @fails With no `otsBin` it does nothing and returns `{ enabled: false, upgraded: 0, pending: 0 }`. A missing or hanging `ots` binary does not throw: the pass stops and the result carries `error` (`ots not found`, `ots timeout`, ...), with `pending` counting every stamp still not anchored. `ots upgrade` exiting non-zero for a stamp the calendars have not finished is normal (it stays pending). Rejects with `ERR_TRAIL_LOCKED` when a writer held the trail longer than `lockTimeoutMs` (retry later), `ERR_TRAIL_LAYOUT` for a flat pre-M3 trail, or a git error if a changed proof cannot be committed (the file is restored). One trail-lock window per stamp, at most `clamp(floor(lockTimeoutMs / 3), 5000, 30000)` ms each (the `ots` timeout). Idempotent.
+   * @fails With no `otsBin` it does nothing and returns `{ enabled: false, upgraded: 0, pending: 0 }`. A missing or hanging `ots` binary does not throw: the pass stops and the result carries `error` (`ots not found`, `ots timeout`, ...), with `pending` counting every stamp still not anchored. `ots upgrade` exiting non-zero for a stamp the calendars have not finished is normal (it stays pending). It runs under the stamp lock, which is fail-fast: it rejects at once with `ERR_STAMP_LOCKED` when a stamp job or another upgrade is running. `ots` runs on a scratch copy of each proof with no trail lock held (at most 30 s per proof, `STAMP_OTS_TIMEOUT_MS`; the pass stops after 10 minutes and the next call continues); the trail lock is taken only to commit a proof that changed (one short window per changed proof, waiting up to `lockTimeoutMs`), so it rejects with `ERR_TRAIL_LOCKED` only when a writer held the trail longer than that (retry later). Also rejects with `ERR_TRAIL_LAYOUT` for a flat pre-M3 trail, or a git error if a changed proof cannot be committed (the file is restored). Idempotent.
    * @example
    * const { upgraded, pending } = await mp.upgradeStamps();
    */
@@ -577,6 +581,23 @@ class Mailproof {
    */
   async stamp() {
     return runStamp(this._stampCtx());
+  }
+
+  /**
+   * Make a pair bundle (SPEC B13.2): a directory of proof records about the emails that name any of the given addresses, for a counterparty
+   * to check with `verifyBundle` on their own machine.
+   * @param {{ with: string[], after?: Date | number | string, before?: Date | number | string, out: string, tar?: boolean }} opts
+   * @returns {Promise<import('./bundle-export.js').ExportResult>}
+   * @name Mailproof#export
+   * @when Use to hand a counterparty the proof of what you exchanged with them (or with several of their addresses): a directory of the signed headers, signatures, archived keys and seals of every email that names one of `with` on From, To, Cc or Reply-To (a union), optionally within `after` (inclusive) and `before` (exclusive) capture time. Not the emails: no bodies or attachments. The recipient runs `verifyBundle` (or `mailproof verify-bundle`) with nothing of yours. It proves each record's signatures and seal, NOT completeness: you chose what to include. Run `stamp()` first so the seals are anchored; it never stamps or runs `ots` itself. Tell the recipient `bundle_sha256` by another channel so they can pass `--expect`.
+   * @category verify
+   * @signature mp.export(opts: { with: string[], after?: Date|number|string, before?: Date|number|string, out: string, tar?: boolean }) => Promise<{ out, bytes, files, head, bundle_sha256, records, replies, keys, manifests, seals: { anchored, pending, unstamped, unsealed }, content: { stored, absent } }>
+   * @fails Rejects with `ERR_EXPORT_EMPTY` (nothing matches; nothing written), `ERR_EXPORT_TOO_BIG` (over 10,000 records or 256 MiB: narrow with `after`/`before`), `ERR_EXPORT_EXISTS` (`out` exists and is not an empty directory you own, or is inside the trail, the content store or another bundle; an export never overwrites), `ERR_EXPORT_REWRITTEN` (the trail was pruned or restored while it read: retry), `ERR_EXPORT_SELF_CHECK` (the bundle did not verify, so it was not delivered: the trail is damaged), `ERR_EXPORT_TAR` (`tar` missing or failed), `ERR_STAMP_CHAIN` (a manifest chain that cannot be walked), `ERR_TRAIL_LOCKED` or `ERR_INDEX_UNAVAILABLE` (from the index catch-up), `ERR_TRAIL_LAYOUT`, or a `TypeError` for a bad option (including an `out` whose parent directory does not exist). Read-only on the trail: it holds no lock while reading, makes no commit, runs no `ots` and uses no network; the bundle is built in a private temp directory next to `out` (mode 0700/0600) and moved into place, so a failure leaves nothing at `out`.
+   * @example
+   * const r = await mp.export({ with: ['bob@example.org'], out: './bundle-bob' });   // r.bundle_sha256, r.seals, r.records
+   */
+  async export(opts) {
+    return runExport({ root: this.root, trail: this.trail, contentDir: this.contentDir, lockTimeoutMs: this.lockTimeoutMs, now: this.now, indexCfg: this._indexCfg(), ...this._exportSeams }, opts);
   }
 
   /**

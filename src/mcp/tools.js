@@ -155,7 +155,9 @@ export const TOOLS = {
 export const EXCLUDED = {
   'Mailproof': 'construction: the server builds one instance per account from the config.',
   'Mailproof#close': 'lifecycle: the server owns it; an agent calling it would end its own worker.',
-  'Mailproof#stamp': 'deferred (SPEC B13.1.9): the MCP decision is made with the pair export (B13.2); sync already runs the seal when due.',
+  'Mailproof#stamp': 'deferred (SPEC B13.1.9): sync already runs the seal when due, and the pair export (B13.2) is deliberately not an MCP tool either; an owner who wants stamp in MCP adds one row to the table.',
+  'Mailproof#export': 'a human act (SPEC B13.2): it hands another person a directory with the addresses and subjects of a whole exchange, and writes it to a path the owner chooses; an agent that could do that unasked is a leak. Deliberately not offered over MCP.',
+  'verifyBundle': 'the recipient\'s check of a bundle someone else made (SPEC B13.3): account-free, so it has no trail to serve; the CLI and the library cover it (a bundle path is an agent-supplied input the MCP input policy, B12.6, would have to gate, and nothing needs it).',
   'Mailproof#expireContent': 'policy, not an agent need: sync enforces retention every sweepDays and forget is the on-demand tool.',
   'hashDocument': 'a pure helper; matchFile answers the real question and a model cannot usefully hand it bytes.',
   'checkProfile': 'the method of the same name covers it by id: one tool per name.',
