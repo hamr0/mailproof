@@ -4,7 +4,7 @@
 
 import { execFile } from 'node:child_process';
 import fs from 'node:fs/promises';
-import { UsageError } from './errors.js';
+import { UsageError, PermError } from './errors.js';
 
 const GOOGLE_APP_PASSWORD_SHAPE = /^[a-z]{4}( [a-z]{4}){3}$/;
 
@@ -57,14 +57,27 @@ export function runSecretCommand(cmd, what) {
 }
 
 /**
- * First line of a file.
+ * First line of a file. Same rule as the config: owned by the effective uid, no group or other bits.
  * @param {string} file
  * @param {string} flag  Names the source in errors.
  * @returns {Promise<string>}
  */
 export async function readSecretFile(file, flag) {
-  try { return (await fs.readFile(file, 'utf8')).split('\n')[0]; }
+  /** @type {import('node:fs/promises').FileHandle | null} */
+  let fh = null;
+  try { fh = await fs.open(file, 'r'); }
   catch (e) { throw new UsageError(`cannot read ${flag}: ${/** @type {any} */ (e).code ?? 'error'}`); }
+  try {
+    const st = await fh.stat();   // check and read the same open file
+    const me = typeof process.geteuid === 'function' ? process.geteuid() : null;
+    if ((me !== null && st.uid !== me) || (st.mode & 0o077) !== 0) {
+      throw new PermError(`${flag} ${file} must be owned by you and mode 0600 (chmod 600 ${file})`);
+    }
+    return (await fh.readFile('utf8')).split('\n')[0];
+  } catch (e) {
+    if (e instanceof PermError) throw e;
+    throw new UsageError(`cannot read ${flag}: ${/** @type {any} */ (e).code ?? 'error'}`);
+  } finally { await fh.close(); }
 }
 
 /**

@@ -501,3 +501,20 @@ test('forget by counterparty: an Reply-To is matched; a record of an old trail (
   assert.notEqual(await mp.rawEmail(r1.id), null);
   assert.deepEqual(await mp.forget({ with: 'rt@rt.example' }), { removed: 1, attachments: 0 });
 });
+
+test('expireContent removes a stray attachment temp file a crashed write left, and touches no real attachment', async () => {
+  const m = await signedMail({ signTime: T0, body: 'one\r\n', attachment: { filename: 'c.pdf', bytes: PDF } });
+  const { mp, cdir } = setup(m, { content: { days: 365000 } });
+  await mp.record(m.raw, { direction: 'in' });
+  const real = attFile(cdir, sha(PDF));
+  assert.ok(fs.existsSync(real), 'the real attachment is stored');
+  const stray = `${real}.tmp-4242-deadbeef`;
+  fs.writeFileSync(stray, 'partial bytes');
+  const strayRaw = path.join(cdir, 'raw', 'ab', `${'ab'.repeat(16)}.eml.tmp-4242-deadbeef`);
+  fs.mkdirSync(path.dirname(strayRaw), { recursive: true });
+  fs.writeFileSync(strayRaw, 'partial raw');
+  await mp.expireContent();
+  assert.ok(!fs.existsSync(stray), 'the att temp file is gone');
+  assert.ok(!fs.existsSync(strayRaw), 'the raw temp file is gone (already so)');
+  assert.deepEqual(fs.readFileSync(real), PDF, 'the real attachment is untouched');
+});

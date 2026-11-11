@@ -155,3 +155,23 @@ test('status: a garbage index file is unreadable, counted from git', async () =>
   await T.mp.list();
   assert.equal((await statusOf(T.dir)).index, 'present', 'list rebuilds a corrupt index in a writable directory');
 });
+
+test('status: an index whose SQLite add-on cannot load is unknown, and the hint says so (not "run mailproof list")', async () => {
+  const T = await buildThread();
+  await T.mp.list();
+  await T.mp.close();
+  // a loader hook that makes `import('better-sqlite3')` fail in the spawned child only
+  const hookDir = makeTmpDir('mp-cli-nosqlite-');
+  fs.writeFileSync(path.join(hookDir, 'loader.mjs'), "export async function resolve(s, c, n) { if (s === 'better-sqlite3') throw new Error('add-on blocked by test'); return n(s, c); }\n");
+  fs.writeFileSync(path.join(hookDir, 'hook.mjs'), "import { register } from 'node:module';\nregister('./loader.mjs', import.meta.url);\n");
+  const env = { NODE_OPTIONS: `--import ${path.join(hookDir, 'hook.mjs')}` };
+  const w = makeWorld({ accounts: { test: account(T.dir) } });
+  const j = await w.spawn(['status', '--json'], { env });
+  assert.equal(j.code, 0, j.stderr);
+  assert.equal(JSON.parse(j.stdout).test.index, 'unknown');
+  const text = await w.spawn(['status'], { env });
+  assert.match(text.stdout, /index +unknown/);
+  assert.match(text.stdout, /better-sqlite3/);
+  assert.match(text.stdout, /reinstall or rebuild/);
+  assert.doesNotMatch(text.stdout, /index stale/);
+});

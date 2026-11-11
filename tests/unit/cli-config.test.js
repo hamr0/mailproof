@@ -149,3 +149,14 @@ test('writeConfigAtomic: mode 0600, directory 0700, no temp file left, the old f
   await assert.rejects(writeConfigAtomic(d, cfg({ a: acct() })));
   assert.deepEqual(fs.readdirSync(dir).sort(), ['isdir', 'new']);
 });
+
+test('backupRemote: credentials in the URL are refused (secrets by reference); ssh and scp-style remotes pass', () => {
+  for (const bad of ['https://ana:tok3n@git.example.org/x.git', 'https://ghp_secret@git.example.org/x.git', 'ssh://ana:pw@git.example.org/x.git']) {
+    const p = problems(cfg({ a: acct({ backupRemote: bad }) }));
+    assert.ok(p.some((x) => x.startsWith('accounts.a.backupRemote:') && /credential helper or an ssh key/.test(x)), bad);
+    assert.ok(!JSON.stringify(p).includes('tok3n') && !JSON.stringify(p).includes('ghp_secret') && !JSON.stringify(p).includes('ana:pw'), 'the secret is never echoed');
+  }
+  for (const ok of ['git@git.example.org:ana/x.git', 'ssh://git@git.example.org/ana/x.git', 'https://git.example.org/ana/x.git', '/srv/backup/x.git']) {
+    assert.deepEqual(problems(cfg({ a: acct({ backupRemote: ok }) })), [], ok);
+  }
+});

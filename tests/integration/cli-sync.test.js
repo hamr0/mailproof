@@ -77,7 +77,7 @@ test('--pass-file and stdin also work', async () => {
   const srv = await serve(1);
   const trailDir = makeTmpDir('mp-cli-trail-');
   const pf = path.join(work, 'pw');
-  fs.writeFileSync(pf, SECRET + '\n');
+  fs.writeFileSync(pf, SECRET + '\n', { mode: 0o600 });
   const a = await run([...base(srv, trailDir), '--pass-file', pf]);
   assert.equal(a.code, 0, a.stderr);
   assert.equal(JSON.parse(a.stdout).folders[0].recorded, 1);
@@ -97,7 +97,7 @@ test('passwords: only Google\'s grouped app-password shape loses its spaces; any
   for (const [name, written, expected] of cases) {
     const srv = await serve(1, { creds: { pass: expected } });
     const pf = path.join(work, 'pw-shape');
-    fs.writeFileSync(pf, written + '\n');
+    fs.writeFileSync(pf, written + '\n', { mode: 0o600 });
     const r = await run([...base(srv, makeTmpDir('mp-cli-trail-')), '--pass-file', pf]);
     assert.equal(r.code, 0, `${name}: ${r.stderr}`);
     assert.ok(srv.log.some((l) => l.line === 'plain ok'), `${name}: the server received ${JSON.stringify(expected)}`);
@@ -126,7 +126,7 @@ test('login refused is exit 77, without the secret', async () => {
   const srv = await serve(1);
   const trailDir = makeTmpDir('mp-cli-trail-');
   const bad = path.join(work, 'bad-pw');
-  fs.writeFileSync(bad, 'wrong-' + SECRET);
+  fs.writeFileSync(bad, 'wrong-' + SECRET, { mode: 0o600 });
   const r = await run([...base(srv, trailDir), '--pass-file', bad]);
   assert.equal(r.code, 77);
   assert.match(r.stderr, /ERR_IMAP_AUTH/);
@@ -197,7 +197,7 @@ test('F28: a folder error line (the folder name comes from argv) is escaped on s
   const srv = await serve(1);
   const trailDir = makeTmpDir('mp-cli-trail-');
   const pf = path.join(work, 'pw-f28');
-  fs.writeFileSync(pf, SECRET + '\n');
+  fs.writeFileSync(pf, SECRET + '\n', { mode: 0o600 });
   const r = await run([...base(srv, trailDir), '--folders', 'No\u001b[2K\u009b2J\u202epe\u2800', '--pass-file', pf]);
   assert.notEqual(r.code, 0);
   noForbidden(r.stderr.replace(/\n$/, ''));

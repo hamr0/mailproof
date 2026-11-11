@@ -88,20 +88,36 @@ export async function backupCmd(a, ctx) {
       if (!(await exists(path.dirname(out)))) throw new UsageError(`--out: the directory ${p(path.dirname(out))} does not exist`);
     } else await fs.mkdir(path.dirname(out), { recursive: true, mode: 0o700 });
     if (await exists(out)) throw new UsageError(`--out: ${p(out)} already exists; a backup is never overwritten`);
+    const tarPath = out.replace(/\.bundle$/, '') + '.content.tar';
+    if (v['with-content'] && (await exists(tarPath))) throw new UsageError(`${p(tarPath)} already exists; a backup is never overwritten`);
 
-    // under the trail lock, so it cannot run during a prune swap
-    await withTrailLock(mp.root, trailLockFile(mp.trail), mp.lockTimeoutMs, async () => {
-      try { await run('git', ['bundle', 'create', out, '--all'], { cwd: mp.root }); }
-      catch (e) { throw Object.assign(new Error(`git bundle failed: ${String(/** @type {any} */ (e).stderr ?? e).trim().slice(0, 300)}`), { code: 'EX_BACKUP' }); }
-    });
-    try { await run('git', ['bundle', 'verify', out], { cwd: mp.root }); }
-    catch (e) {
-      await fs.rm(out, { force: true });
-      warn(ctx, `mailproof: the bundle did not verify and was removed: ${p(String(/** @type {any} */ (e).stderr ?? e).trim().slice(0, 300), { keepNewline: true })}`);
-      return EX_ERR;
+    // written and verified in a private 0700 directory next to `out`, then linked into place without overwriting:
+    // other people's mail-derived data is never readable by others while the bundle is made
+    const tmpDir = await fs.mkdtemp(path.join(path.dirname(out), '.mailproof-bundle-'));
+    let bundleBytes = 0;
+    try {
+      await fs.chmod(tmpDir, 0o700);
+      const tmpFile = path.join(tmpDir, path.basename(out));
+      // under the trail lock, so it cannot run during a prune swap
+      await withTrailLock(mp.root, trailLockFile(mp.trail), mp.lockTimeoutMs, async () => {
+        try { await run('git', ['bundle', 'create', tmpFile, '--all'], { cwd: mp.root }); }
+        catch (e) { throw Object.assign(new Error(`git bundle failed: ${String(/** @type {any} */ (e).stderr ?? e).trim().slice(0, 300)}`), { code: 'EX_BACKUP' }); }
+      });
+      try { await run('git', ['bundle', 'verify', tmpFile], { cwd: mp.root }); }
+      catch (e) {
+        warn(ctx, `mailproof: the bundle did not verify and was removed: ${p(String(/** @type {any} */ (e).stderr ?? e).trim().slice(0, 300), { keepNewline: true })}`);
+        return EX_ERR;
+      }
+      await fs.chmod(tmpFile, 0o600);
+      try { await fs.link(tmpFile, out); }
+      catch (e) {
+        if (/** @type {any} */ (e)?.code === 'EEXIST') throw new UsageError(`--out: ${p(out)} already exists; a backup is never overwritten`);
+        throw e;
+      }
+      bundleBytes = (await fs.stat(out)).size;
+    } finally {
+      await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
     }
-    const bundleBytes = (await fs.stat(out)).size;
-    await fs.chmod(out, 0o600).catch(() => {});
 
     /** @type {{ path: string, bytes: number } | null} */
     let content = null;
@@ -112,10 +128,14 @@ export async function backupCmd(a, ctx) {
     if (v['with-content']) {
       if (!(await exists(mp.contentDir)) || (await countFiles(mp.contentDir)) === 0) contentNote = 'the content store is off or empty: no content archive written';
       else {
-        const tarPath = out.replace(/\.bundle$/, '') + '.content.tar';
+        // created 0600 and exclusive before tar writes to it: other people's mail is never readable while it grows
+        try { await (await fs.open(tarPath, 'wx', 0o600)).close(); }
+        catch (e) {
+          if (/** @type {any} */ (e)?.code === 'EEXIST') throw new UsageError(`${p(tarPath)} already exists; a backup is never overwritten`);
+          throw e;
+        }
         try {
           await run('tar', ['-C', mp.contentDir, '-cf', tarPath, '.']);
-          await fs.chmod(tarPath, 0o600).catch(() => {});
           content = { path: tarPath, bytes: (await fs.stat(tarPath)).size };
         } catch (e) {
           await fs.rm(tarPath, { force: true }).catch(() => {});

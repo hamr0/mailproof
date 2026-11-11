@@ -330,14 +330,15 @@ async function query(cfg, fn, empty) {
   const { root, trail, lockTimeoutMs } = cfg;
   const file = path.join(path.dirname(root), trailIndexFile(trail));
   for (let attempt = 0; ; attempt++) {
-    if ((await headOf(root)) === null) return empty;
+    const head = await headOf(root);   // read once: the caught-up check below compares against it (the lock path re-reads)
+    if (head === null) return empty;
     await assertTrailLayout(root);
     /** @type {Db | null} */
     let d = null;
     try {
       d = await openFile(cfg, file);
       const s = session(d);
-      if (s.meta('head') !== (await headOf(root)) || s.meta('schema') !== String(SCHEMA)) {
+      if (s.meta('head') !== head || s.meta('schema') !== String(SCHEMA)) {
         await withTrailLock(root, trailLockFile(trail), lockTimeoutMs, async () => {
           const h = await headOf(root); // re-read under the lock: a writer may have moved it
           if (h !== null) await reconcile(s, cfg, h);

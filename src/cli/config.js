@@ -210,7 +210,15 @@ export function validateConfig(json, env) {
     }
     /** @type {string | null} */
     let backupRemote = null;
-    if (raw.backupRemote !== undefined && typed('backupRemote', 'string')) backupRemote = /** @type {string} */ (raw.backupRemote).trim();
+    if (raw.backupRemote !== undefined && typed('backupRemote', 'string')) {
+      backupRemote = /** @type {string} */ (raw.backupRemote).trim();
+      // secrets by reference only: a token or password in the URL sits in the config and in git's argv; ssh://git@host (a login name) is fine
+      const m = /^([a-z][a-z0-9+.-]*):\/\/([^/@\s]*)@/i.exec(backupRemote);
+      if (m && (m[2].includes(':') || !/^(git\+)?ssh$/i.test(m[1]))) {
+        problems.push(`${at}.backupRemote: must not carry credentials; use a git credential helper or an ssh key (git@host:path, ssh://git@host/path)`);
+        backupRemote = null;
+      }
+    }
     if (trailDir) {
       const key = `${path.resolve(trailDir)}\0${trail}`;
       const other = trails.get(key);

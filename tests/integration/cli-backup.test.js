@@ -155,14 +155,78 @@ test('after a prune the push is rejected, mailproof never forces, the remote kee
   assert.equal(jr.stdout, '');
 });
 
-test('a push to an unreachable remote is 75; a credential in the URL never reaches the output', async () => {
+test('a push to an unreachable remote is 75 (a config with a credential in the URL no longer loads, see cli-config.test.js)', async () => {
   const T = await buildThread();
-  const w = makeWorld({ accounts: { acme: account(T.dir, { backupRemote: 'https://ana:tok3n-secret@127.0.0.1:1/nope.git' }) } });
+  const w = makeWorld({ accounts: { acme: account(T.dir, { backupRemote: 'https://127.0.0.1:1/nope.git' }) } });
   const no = await w.run(['backup', '--push', '--out', path.join(makeTmpDir('mp-cli-net-'), '1.bundle')]);
   assert.equal(no.code, 64);
-  assert.ok(!no.stderr.includes('tok3n-secret'));
-  assert.match(no.stderr, /https:\/\/\*\*\*@127\.0\.0\.1:1\/nope\.git/);
+  assert.match(no.stderr, /https:\/\/127\.0\.0\.1:1\/nope\.git/);
   const r = await w.run(['backup', '--push', '--yes', '--out', path.join(makeTmpDir('mp-cli-net-'), '2.bundle')]);
   assert.equal(r.code, 75, r.stderr);
-  for (const out of [r.stdout, r.stderr]) assert.ok(!out.includes('tok3n-secret'), 'no credential in the output');
+});
+
+test('--with-content: an existing <out>.content.tar is refused and left intact; the new tar exists 0600 before tar writes to it', async () => {
+  const T = await buildThread();
+  const w = makeWorld({ accounts: { acme: account(T.dir) } });
+  const dir = makeTmpDir('mp-cli-tarwx-');
+  const out = path.join(dir, 'b.bundle');
+  const tarPath = path.join(dir, 'b.content.tar');
+  fs.writeFileSync(tarPath, 'older backup');
+  const r = await w.run(['backup', '--out', out, '--with-content']);
+  assert.equal(r.code, 64, r.stderr);
+  assert.match(r.stderr, /a backup is never overwritten/);
+  assert.equal(fs.readFileSync(tarPath, 'utf8'), 'older backup', 'left intact');
+
+  // a tar shim records the mode of the target file at the moment tar starts
+  const bin = makeTmpDir('mp-cli-tarshim-');
+  fs.symlinkSync(execFileSync('which', ['git'], { encoding: 'utf8' }).trim(), path.join(bin, 'git'));
+  const realTar = execFileSync('which', ['tar'], { encoding: 'utf8' }).trim();
+  const seen = path.join(bin, 'seen');
+  const realStat = execFileSync('which', ['stat'], { encoding: 'utf8' }).trim();
+  fs.writeFileSync(path.join(bin, 'tar'), `#!/bin/sh\n("${realStat}" -c %a "$4" 2>/dev/null || echo none) > "${seen}"\nexec "${realTar}" "$@"\n`, { mode: 0o755 });
+  const out2 = path.join(makeTmpDir('mp-cli-tarmode-'), 'b.bundle');
+  const ok = await w.spawn(['backup', '--out', out2, '--with-content'], { env: { PATH: bin } });
+  assert.equal(ok.code, 0, ok.stderr);
+  assert.equal(fs.readFileSync(seen, 'utf8').trim(), '600', 'created 0600 before tar writes');
+  assert.equal(fs.statSync(out2.replace(/\.bundle$/, '.content.tar')).mode & 0o777, 0o600);
+});
+
+test('the bundle is written in a private 0700 directory next to --out and moved into place 0600; no temp dir is left, on success or failure', async () => {
+  const T = await buildThread();
+  const w = makeWorld({ accounts: { acme: account(T.dir) } });
+  const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
+  const realStat = execFileSync('which', ['stat'], { encoding: 'utf8' }).trim();
+  const leftovers = (d) => fs.readdirSync(d).filter((n) => n.startsWith('.mailproof-bundle-'));
+
+  // a git shim records the mode of the directory the bundle is created in, then runs the real git
+  const bin = makeTmpDir('mp-cli-gitshim-');
+  const seen = path.join(bin, 'seen');
+  fs.writeFileSync(path.join(bin, 'git'), `#!/bin/sh\nif [ "$1" = bundle ] && [ "$2" = create ]; then\n  "${realStat}" -c %a "$(dirname "$3")" > "${seen}"\nfi\nexec "${realGit}" "$@"\n`, { mode: 0o755 });
+  const dir = makeTmpDir('mp-cli-bundledir-');
+  fs.chmodSync(dir, 0o755); // a shared directory: the bundle must still never be readable by others
+  const out = path.join(dir, 'b.bundle');
+  const ok = await w.spawn(['backup', '--out', out], { env: { PATH: `${bin}:${process.env.PATH}` } });
+  assert.equal(ok.code, 0, ok.stderr);
+  assert.equal(fs.readFileSync(seen, 'utf8').trim(), '700', 'the bundle directory is private while it is written');
+  assert.equal(fs.statSync(out).mode & 0o777, 0o600);
+  assert.deepEqual(leftovers(dir), []);
+
+  // a failing `bundle create`: the same exit code and message as before, and no temp dir left
+  const bad = makeTmpDir('mp-cli-gitfail-');
+  fs.writeFileSync(path.join(bad, 'git'), `#!/bin/sh\nif [ "$1" = bundle ] && [ "$2" = create ]; then echo boom >&2; exit 1; fi\nexec "${realGit}" "$@"\n`, { mode: 0o755 });
+  const dir2 = makeTmpDir('mp-cli-bundlefail-');
+  const out2 = path.join(dir2, 'b.bundle');
+  const r = await w.spawn(['backup', '--out', out2], { env: { PATH: `${bad}:${process.env.PATH}` } });
+  assert.equal(r.code, 1, r.stderr);
+  assert.match(r.stderr, /git bundle failed: .*boom/);
+  assert.deepEqual(fs.readdirSync(dir2), [], 'nothing left behind');
+
+  // a failing `bundle verify`: removed, same warning, no temp dir left
+  const badv = makeTmpDir('mp-cli-gitverify-');
+  fs.writeFileSync(path.join(badv, 'git'), `#!/bin/sh\nif [ "$1" = bundle ] && [ "$2" = verify ]; then echo nope >&2; exit 1; fi\nexec "${realGit}" "$@"\n`, { mode: 0o755 });
+  const dir3 = makeTmpDir('mp-cli-verifyfail-');
+  const r3 = await w.spawn(['backup', '--out', path.join(dir3, 'b.bundle')], { env: { PATH: `${badv}:${process.env.PATH}` } });
+  assert.equal(r3.code, 1, r3.stderr);
+  assert.match(r3.stderr, /the bundle did not verify and was removed: nope/);
+  assert.deepEqual(fs.readdirSync(dir3), []);
 });
