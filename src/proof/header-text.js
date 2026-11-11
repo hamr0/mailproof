@@ -72,4 +72,18 @@ function claimedHeader(raw, name) {
   return null;
 }
 
-export { decodeWords, headerText, claimedHeader };
+/**
+ * The decoded Subject of the front of a raw email, as the sender wrote it (a claim). Null when there is none or when `head` was
+ * cut before the end of the header block (a partial header is never read).
+ * @param {Buffer} head  The first bytes of a raw email.
+ * @param {boolean} cut  True when `head` is only a prefix of the email.
+ * @returns {string | null}
+ */
+function claimedSubject(head, cut) {
+  const s = head.toString('latin1');
+  if (cut && !/\r?\n\r?\n/.test(s)) return null;
+  const v = claimedHeader(head, 'subject');
+  return v === null ? null : headerText(v);
+}
+
+export { decodeWords, headerText, claimedHeader, claimedSubject };

@@ -63,3 +63,15 @@ test('every tool schema property has a description, and the descriptions are not
     for (const [k, v] of Object.entries(t.properties)) assert.ok(v.description, `${t.name}.${k}`);
   }
 });
+
+test('descriptions steer the model right: verifyRecord vs verify, and what addresses[].signed means', () => {
+  const d = (n) => GENERATED_TOOLS.find((t) => t.name === n).description;
+  assert.ok(d('verifyRecord').startsWith('For a record in your own trail use `verify` with its id; `verifyRecord` is for a record JSON someone sent you (e.g. a file in an export bundle)'));
+  assert.match(d('verify'), /by id; find ids with `list\(\{ with \}\)`/);
+  assert.match(d('get'), /`addresses\[\]\.signed` means covered by some signature, not that it verified; use the verdicts or `coverage`/);
+  assert.match(d('list'), /coverage/);
+  assert.match(d('counterparties'), /verified/);
+  assert.match(d('sync'), /`ots` is a deprecated alias of `stamp`/);
+  const ctx = fs.readFileSync(new URL('../../mailproof.context.md', import.meta.url), 'utf8');
+  assert.ok(ctx.includes('`addresses[].signed` means covered by some signature, not that it verified; use the verdicts or `coverage`'));
+});

@@ -15,11 +15,12 @@ import { STAMP_OTS_TIMEOUT_MS } from './limits.js';
 import { verifyRecord, matchBodyRecord, matchFileRecord } from './recheck.js';
 import { checkProfile } from './profile.js';
 import { TRAIL_NAME_RE, RECORD_ID_RE, DEFAULT_LOCK_TIMEOUT_MS, commitRecord, commitFiles, readRecord, withTrailLock, trailLockFile } from './trail.js';
-import { parseContentOptions, contentDirOf, storeContent, readRaw, readAttachment, expireStore, forgetIds, idsWith, exists, toMs, DAY_MS } from './content.js';
+import { parseContentOptions, contentDirOf, storeContent, readRaw, readRawHead, readAttachment, expireStore, forgetIds, idsWith, exists, toMs, DAY_MS } from './content.js';
 import { recordPath, recordOtsPath, assertTrailLayout } from './layout.js';
 import { STRIPPER, replyTextPath, extractReplyText, replyTextRecord } from './reply-text.js';
 import { replyBundle } from './reply-facts.js';
-import { REPLY_FACTS_MAX } from './limits.js';
+import { REPLY_FACTS_MAX, LIST_CLAIMED_MAX, CLAIMED_HEAD_BYTES, INDEX_MAX_SUBJECT } from './limits.js';
+import { claimedSubject } from './header-text.js';
 import { hashDocument } from './hash.js';
 import { runPrune } from './prune.js';
 import { runUpgradeStamps } from './ots-upgrade.js';
@@ -629,6 +630,7 @@ class Mailproof {
     }
   }
 
+  /** @mcp Mailproof#verify Re-check one recorded email offline, by id; find ids with `list({ with })`. Uses the record alone (no DNS) and judges `x=`/`t=` as of capture time; pass `at` only to ask "was it valid at T?". An unknown id, a tampered record or a bad capture time is `ok: false` (fail closed), never an error. `trust` is the portable level recomputed now. */
   /**
    * Offline re-check from the record alone (no DNS, no raw email). `at`
    * defaults to the record's capture time; a bad capture time fails closed.
@@ -698,12 +700,13 @@ class Mailproof {
     return matchFileRecord(rec, bytes);
   }
 
+  /** @mcp Mailproof#get Read one stored record (the exact JSON, nothing added) by id; use `list` first if you have no id. `addresses[].signed` means covered by some signature, not that it verified; use the verdicts or `coverage` (on the rows of `list`). Returns `{ found: false }` for an unknown id. Fails with `ERR_TRAIL_LAYOUT`. */
   /**
    * Read one record from the trail.
    * @param {string} id  32 hex chars.
    * @returns {Promise<MpRecord | null>}
    * @name Mailproof#get
-   * @when Use to read one stored record (to export it, or to hand to `verifyRecord`). Use `list()` first if you do not have an id.
+   * @when Use to read one stored record (to export it, or to hand to `verifyRecord`). Use `list()` first if you do not have an id. In `addresses[]`, `signed: true` means some signature covers that header line, decided at capture; it does NOT mean the signature verified (read the verdicts, or the `coverage` of the `list()` rows).
    * @category read
    * @signature mp.get(id: string) => Promise<Record|null>
    * @fails Returns null for an unknown id or anything that is not 32 hex characters. Rejects only for a trail still in the pre-M3 flat layout (`records/<id>.json`): `err.code === 'ERR_TRAIL_LAYOUT'`, the trail must be re-created.
@@ -733,32 +736,53 @@ class Mailproof {
     return copiesIndex(this._indexCfg(), idOrKey);
   }
 
-  /** @mcp Mailproof#list List recorded emails, newest capture first (default 50, at most 500 per call; `limit` narrows). Filter by `direction`, or by counterparty `with` (one exact address, case-insensitive, seen on From, To, Cc or Reply-To; `role` narrows it to one of them) and by `after` (inclusive) and `before` (exclusive) capture time. Returns summaries; use `get` for the full record. Fails with `ERR_INDEX_UNAVAILABLE`, `ERR_TRAIL_LOCKED` (retry) or `ERR_TRAIL_LAYOUT`. */
+  /** @mcp Mailproof#list List recorded emails, newest capture first (default 50, at most 500; `limit` narrows). Filter by `direction`, counterparty `with` (one exact address, case-insensitive, on From, To, Cc or Reply-To; `role` narrows it) and `after` (inclusive) / `before` (exclusive) capture time. Rows say who and what: `from`, `to[]`, `subject` with `subjectSource` (`signed`: a verifying signature covers it; `claimed`: only the sender's word; null) and `addresses[]` with `signed` (some signature covers the line) and `coverage` (`signed` verifies, `failing`, `none`: trust `coverage`). `get` has the full record. Fails with `ERR_INDEX_UNAVAILABLE`, `ERR_TRAIL_LOCKED` (retry) or `ERR_TRAIL_LAYOUT`. */
   /**
    * List records, newest capture first.
    * @param {{ limit?: number, direction?: 'in' | 'out', with?: string, role?: 'from' | 'to' | 'cc' | 'reply-to', before?: Date | number | string, after?: Date | number | string }} [opts]
-   * @returns {Promise<Array<{ id: string, captured: string, direction: string, live: string, portable: string, message_id: string | null }>>}
+   * @returns {Promise<Array<import('./index-db.js').ListRow>>}
    * @name Mailproof#list
-   * @when Use to find recorded emails, newest capture first, optionally by direction or by counterparty: `with` is one exact email address (case-insensitive, no grouping: bob@gmail.com is not bob@company.com) seen on the From, To, Cc or Reply-To of the record (`role` narrows it to one of them), `after` (inclusive) and `before` (exclusive) bound the capture time. It returns summaries; use `get(id)` for the full record.
+   * @when Use to find recorded emails, newest capture first, optionally by direction or by counterparty: `with` is one exact email address (case-insensitive, no grouping: bob@gmail.com is not bob@company.com) seen on the From, To, Cc or Reply-To of the record (`role` narrows it to one of them), `after` (inclusive) and `before` (exclusive) bound the capture time. It returns summaries; use `get(id)` for the full record. Each row also says who and what (SPEC B5): `from` (the first From address, lower case, or null), `to` (every To address, header order), `subject` (decoded text) with `subjectSource`: `'signed'` when a signature that verifies offline and aligns covers the Subject line, `'claimed'` when only the sender's word is there (a signature that does not verify covers it, or, for mail with no covering signature, the Subject read from the stored raw email, which is not proof), null when there is none; and `addresses[]` (`{ role, address, signed, coverage }`, header order). `signed` keeps the record's meaning (some signature covers that header line, decided at capture); `coverage` is the strict reading: `'signed'` a verifying signature covers it, `'failing'` only signatures that do not verify cover it, `'none'` no signature covers it. Show "signed" to a person only for `coverage: 'signed'`.
    * @category read
-   * @signature mp.list(opts?: { limit?: number, direction?: 'in'|'out', with?: string, role?: 'from'|'to'|'cc'|'reply-to', before?: Date|number|string, after?: Date|number|string }) => Promise<Array<{ id, captured, direction, live, portable, message_id }>>
+   * @signature mp.list(opts?: { limit?: number, direction?: 'in'|'out', with?: string, role?: 'from'|'to'|'cc'|'reply-to', before?: Date|number|string, after?: Date|number|string }) => Promise<Array<{ id, captured, direction, live, portable, message_id, from, to, subject, subjectSource, addresses }>>
    * @fails Rejects with `err.code === 'ERR_INDEX_UNAVAILABLE'` when the `better-sqlite3` native addon cannot load on this platform (there is no fallback; `record`, `get` and `verify` do not need it), or `ERR_TRAIL_LOCKED` when bringing the trail index up to date had to wait for a writer longer than `lockTimeoutMs`, or `ERR_TRAIL_LAYOUT` for a trail still in the pre-M3 flat layout (not converted: re-create it). A wrong type for `with`, `role` (it needs `with`), `before` or `after` throws a TypeError. Otherwise never throws. An empty or missing trail returns `[]`. Records captured in the same instant come in ascending id order. Only addresses the record itself shows count: a signed record shows the headers its DKIM signatures cover (an unsigned Cc is not visible), an unsigned one only its From (SPEC B8). Answers come from the trail index (SPEC B5), a cache beside the trail that is opened and closed inside each call (nothing stays open, so `close()` has nothing to wait for): whoever can write that file can change this answer, never `get` or `verify`.
    * @example
    * const recent = await mp.list({ limit: 10 });
    */
   async list({ limit, direction, with: who, role, before, after } = {}) {
     const { listIndex } = await import('./index-db.js');
-    return listIndex(this._indexCfg(), { limit, direction, with: who, role, before, after });
+    const rows = await listIndex(this._indexCfg(), { limit, direction, with: who, role, before, after });
+    await this._claimSubjects(rows);
+    return rows;
+  }
+
+  /** @mcp Mailproof#counterparties List every exact address the trail has seen (one row per lower-cased address, most recently seen first): `records` = records naming it on From, To, Cc or Reply-To, `verified` = how many of those are RECEIVED emails whose live trust is `verified`, `first`/`last` = earliest and latest capture. The account owner is in the list too. Then `list({ with })` for the emails. Answers come from a cache, not proof. Fails with `ERR_INDEX_UNAVAILABLE` or `ERR_TRAIL_LOCKED` (retry). */
+  /**
+   * Fill `subject` (`subjectSource: 'claimed'`) of the rows the index could give none for, from the front of the stored raw email
+   * (not re-hashed: a claim, never proof). At most LIST_CLAIMED_MAX rows per call; nothing when the content store holds no file.
+   * @param {Array<import('./index-db.js').ListRow>} rows
+   * @returns {Promise<void>}
+   */
+  async _claimSubjects(rows) {
+    if (!this.content.store) return;
+    const need = rows.filter((r) => r.subject === null).slice(0, LIST_CLAIMED_MAX);
+    for (let i = 0; i < need.length; i += 25) {
+      await Promise.all(need.slice(i, i + 25).map(async (r) => {
+        const head = await readRawHead(this.contentDir, r.id, CLAIMED_HEAD_BYTES);
+        const s = head ? claimedSubject(head, head.length >= CLAIMED_HEAD_BYTES) : null;
+        if (s !== null) { r.subject = s.length > INDEX_MAX_SUBJECT ? [...s].slice(0, INDEX_MAX_SUBJECT).join('') : s; r.subjectSource = 'claimed'; }
+      }));
+    }
   }
 
   /**
    * Every exact email address the trail has seen, with how many records name it.
    * @param {{ limit?: number }} [opts]
-   * @returns {Promise<Array<{ address: string, records: number, first: string, last: string }>>}
+   * @returns {Promise<Array<{ address: string, records: number, first: string, last: string, verified: number }>>}
    * @name Mailproof#counterparties
-   * @when Use to see who is in this trail: one row per exact lower-cased address (bob@gmail.com and bob@company.com are two rows; DKIM proves an address or a domain, not a person), most recently seen first. `records` counts the records that name the address on From, To, Cc or Reply-To; `first`/`last` are the earliest and latest `captured`. The trail's own owner appears too, on every record: a record does not say which address is yours. Then `list({ with })` for the emails.
+   * @when Use to see who is in this trail: one row per exact lower-cased address (bob@gmail.com and bob@company.com are two rows; DKIM proves an address or a domain, not a person), most recently seen first. `records` counts the records that name the address on From, To, Cc or Reply-To; `verified` counts the RECEIVED (`direction: 'in'`) ones among them whose live trust is `verified`; `first`/`last` are the earliest and latest `captured`. The trail's own owner appears too, on every record: a record does not say which address is yours. Then `list({ with })` for the emails.
    * @category read
-   * @signature mp.counterparties(opts?: { limit?: number }) => Promise<Array<{ address, records, first, last }>>
+   * @signature mp.counterparties(opts?: { limit?: number }) => Promise<Array<{ address, records, first, last, verified }>>
    * @fails Rejects with `ERR_INDEX_UNAVAILABLE` or `ERR_TRAIL_LOCKED` exactly like `list()`, and with a TypeError for a `limit` that is not a positive number. An empty or missing trail returns `[]`. Only addresses a record shows count (SPEC B8). Answers come from the trail index, a cache: not proof.
    * @example
    * const people = await mp.counterparties({ limit: 20 });
@@ -843,7 +867,7 @@ class Mailproof {
     return { root: this.root, trail: this.trail, lockTimeoutMs: this.lockTimeoutMs };
   }
 
-  /** @mcp Mailproof#sync Read new mail from the account's mailbox (read-only: nothing is marked, moved or deleted) and record it. At most `maxMessages` per folder per call: call again while `complete` is false. `folders` and `sent` override the account's settings for this call. A problem in one folder is in that folder's `error`; the run goes on. Fails with `ERR_IMAP_AUTH` (login refused: the user must fix the account config; do not retry), `ERR_IMAP_CONNECT` or `ERR_SYNC_LOCKED` (retry later). */
+  /** @mcp Mailproof#sync Read new mail from the account's mailbox (read-only: nothing is marked, moved or deleted) and record it. At most `maxMessages` per folder per call: call again while `complete` is false. `folders` and `sent` override the account's settings for this call. A problem in one folder is in that folder's `error`; the run goes on. The seal's outcome is `stamp` (`ots` is a deprecated alias of `stamp`). Fails with `ERR_IMAP_AUTH` (login refused: the user must fix the account config; do not retry), `ERR_IMAP_CONNECT` or `ERR_SYNC_LOCKED` (retry later). */
   /**
    * Capture mail over IMAP: read one mailbox, read-only, and `record()` every message in it (inbox folders as
    * `in`, the Sent folder as `out`). A resume cursor (a sidecar file beside the trail, not in git) makes the next

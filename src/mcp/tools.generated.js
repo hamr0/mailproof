@@ -29,7 +29,7 @@ export const GENERATED_TOOLS = Object.freeze(/** @type {GeneratedTool[]} */ (/**
       "idempotentHint": true,
       "openWorldHint": false
     },
-    "description": "List recorded emails, newest capture first (default 50, at most 500 per call; `limit` narrows). Filter by `direction`, or by counterparty `with` (one exact address, case-insensitive, seen on From, To, Cc or Reply-To; `role` narrows it to one of them) and by `after` (inclusive) and `before` (exclusive) capture time. Returns summaries; use `get` for the full record. Fails with `ERR_INDEX_UNAVAILABLE`, `ERR_TRAIL_LOCKED` (retry) or `ERR_TRAIL_LAYOUT`.",
+    "description": "List recorded emails, newest capture first (default 50, at most 500; `limit` narrows). Filter by `direction`, counterparty `with` (one exact address, case-insensitive, on From, To, Cc or Reply-To; `role` narrows it) and `after` (inclusive) / `before` (exclusive) capture time. Rows say who and what: `from`, `to[]`, `subject` with `subjectSource` (`signed`: a verifying signature covers it; `claimed`: only the sender's word; null) and `addresses[]` with `signed` (some signature covers the line) and `coverage` (`signed` verifies, `failing`, `none`: trust `coverage`). `get` has the full record. Fails with `ERR_INDEX_UNAVAILABLE`, `ERR_TRAIL_LOCKED` (retry) or `ERR_TRAIL_LAYOUT`.",
     "noAccount": false,
     "required": [],
     "properties": {
@@ -82,7 +82,7 @@ export const GENERATED_TOOLS = Object.freeze(/** @type {GeneratedTool[]} */ (/**
       "idempotentHint": true,
       "openWorldHint": false
     },
-    "description": "Use to read one stored record (to export it, or to hand to `verifyRecord`). Use `list()` first if you do not have an id. Returns null for an unknown id or anything that is not 32 hex characters. Rejects only for a trail still in the pre-M3 flat layout (`records/<id>.json`): `err.code === 'ERR_TRAIL_LAYOUT'`, the trail must be re-created.",
+    "description": "Read one stored record (the exact JSON, nothing added) by id; use `list` first if you have no id. `addresses[].signed` means covered by some signature, not that it verified; use the verdicts or `coverage` (on the rows of `list`). Returns `{ found: false }` for an unknown id. Fails with `ERR_TRAIL_LAYOUT`.",
     "noAccount": false,
     "required": [
       "id"
@@ -128,7 +128,7 @@ export const GENERATED_TOOLS = Object.freeze(/** @type {GeneratedTool[]} */ (/**
       "idempotentHint": true,
       "openWorldHint": false
     },
-    "description": "Use to see who is in this trail: one row per exact lower-cased address (bob@gmail.com and bob@company.com are two rows; DKIM proves an address or a domain, not a person), most recently seen first. `records` counts the records that name the address on From, To, Cc or Reply-To; `first`/`last` are the earliest and latest `captured`. The trail's own owner appears too, on every record: a record does not say which address is yours. Then `list({ with })` for the emails. Rejects with `ERR_INDEX_UNAVAILABLE` or `ERR_TRAIL_LOCKED` exactly like `list()`, and with a TypeError for a `limit` that is not a positive number. An empty or missing trail returns `[]`. Only addresses a record shows count (SPEC B8). Answers come from the trail index, a cache: not proof.",
+    "description": "List every exact address the trail has seen (one row per lower-cased address, most recently seen first): `records` = records naming it on From, To, Cc or Reply-To, `verified` = how many of those are RECEIVED emails whose live trust is `verified`, `first`/`last` = earliest and latest capture. The account owner is in the list too. Then `list({ with })` for the emails. Answers come from a cache, not proof. Fails with `ERR_INDEX_UNAVAILABLE` or `ERR_TRAIL_LOCKED` (retry).",
     "noAccount": false,
     "required": [],
     "properties": {
@@ -179,7 +179,7 @@ export const GENERATED_TOOLS = Object.freeze(/** @type {GeneratedTool[]} */ (/**
       "idempotentHint": true,
       "openWorldHint": false
     },
-    "description": "Use to re-check a recorded email later, offline, from the record alone (no DNS, no raw email). It judges `x=`/`t=` as of capture time, so a valid record stays valid after the signature's expiry. Pass `at` only to ask \"was it valid at T?\". Never throws. An unknown id, junk input, a tampered record or a missing or garbled `captured` comes back `ok: false` (fail closed). `ok` means at least one signature verifies; `trust` is the portable level recomputed now.",
+    "description": "Re-check one recorded email offline, by id; find ids with `list({ with })`. Uses the record alone (no DNS) and judges `x=`/`t=` as of capture time; pass `at` only to ask \"was it valid at T?\". An unknown id, a tampered record or a bad capture time is `ok: false` (fail closed), never an error. `trust` is the portable level recomputed now.",
     "noAccount": false,
     "required": [
       "id"
@@ -206,7 +206,7 @@ export const GENERATED_TOOLS = Object.freeze(/** @type {GeneratedTool[]} */ (/**
       "idempotentHint": true,
       "openWorldHint": false
     },
-    "description": "Use to verify an exported record with no trail and no instance: a pure, synchronous, offline re-check from the record alone. Reach for `mp.verify(id)` instead when the record lives in your trail. Never throws. A record that is not version 2, junk JSON, a tampered signature, a swapped key or a missing or garbled `captured` returns `ok: false`.",
+    "description": "For a record in your own trail use `verify` with its id; `verifyRecord` is for a record JSON someone sent you (e.g. a file in an export bundle): pass `record` or `path`. Offline, no trail, no DNS. Junk, a tampered record or a bad capture time is `ok: false`, never an error.",
     "noAccount": true,
     "required": [],
     "properties": {
@@ -523,7 +523,7 @@ export const GENERATED_TOOLS = Object.freeze(/** @type {GeneratedTool[]} */ (/**
       "idempotentHint": false,
       "openWorldHint": true
     },
-    "description": "Read new mail from the account's mailbox (read-only: nothing is marked, moved or deleted) and record it. At most `maxMessages` per folder per call: call again while `complete` is false. `folders` and `sent` override the account's settings for this call. A problem in one folder is in that folder's `error`; the run goes on. Fails with `ERR_IMAP_AUTH` (login refused: the user must fix the account config; do not retry), `ERR_IMAP_CONNECT` or `ERR_SYNC_LOCKED` (retry later).",
+    "description": "Read new mail from the account's mailbox (read-only: nothing is marked, moved or deleted) and record it. At most `maxMessages` per folder per call: call again while `complete` is false. `folders` and `sent` override the account's settings for this call. A problem in one folder is in that folder's `error`; the run goes on. The seal's outcome is `stamp` (`ots` is a deprecated alias of `stamp`). Fails with `ERR_IMAP_AUTH` (login refused: the user must fix the account config; do not retry), `ERR_IMAP_CONNECT` or `ERR_SYNC_LOCKED` (retry later).",
     "noAccount": false,
     "required": [],
     "properties": {

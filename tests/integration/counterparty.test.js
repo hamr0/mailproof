@@ -44,7 +44,7 @@ test('list({ with }): exact, case-insensitive, no grouping across domains or loo
   assert.deepEqual(ids(await mp.list({ with: '@beta.example' })), []);
   assert.deepEqual(ids(await mp.list({ with: 'zed@zed.example' })), [r.plain.id]);
   // rows keep the existing summary shape
-  assert.deepEqual(Object.keys((await mp.list({ with: 'bob@beta.example' }))[0]), ['id', 'captured', 'direction', 'live', 'portable', 'message_id']);
+  assert.deepEqual(Object.keys((await mp.list({ with: 'bob@beta.example' }))[0]), ['id', 'captured', 'direction', 'live', 'portable', 'message_id', 'from', 'to', 'subject', 'subjectSource', 'addresses']);
 });
 
 test('list({ with, role, before, after, direction, limit }) combine; existing ordering and options unchanged', async () => {
@@ -74,8 +74,8 @@ test('counterparties: one row per exact address with counts, first and last; the
   const { mp, r } = await buildThread();
   const rows = await mp.counterparties();
   const by = Object.fromEntries(rows.map((x) => [x.address, x]));
-  assert.deepEqual(by['bob@beta.example'], { address: 'bob@beta.example', records: 4, first: r.req.captured, last: r.grand.captured });
-  assert.deepEqual(by['me@owner.example'], { address: 'me@owner.example', records: 5, first: r.req.captured, last: r.plain.captured });
+  assert.deepEqual(by['bob@beta.example'], { address: 'bob@beta.example', records: 4, first: r.req.captured, last: r.grand.captured, verified: 2 });
+  assert.deepEqual(by['me@owner.example'], { address: 'me@owner.example', records: 5, first: r.req.captured, last: r.plain.captured, verified: 2 });
   assert.equal(by['carol@gamma.example'].records, 2);       // cc on req, from on unsigned
   assert.equal(by['zed@zed.example'].records, 1);
   assert.equal(by['dave@delta.example'].records, 1);         // an unsigned Cc is counted too
@@ -154,7 +154,7 @@ test('an index of the old schema rebuilds on its own (participants and links app
   assert.deepEqual(peek(dir, 'SELECT COUNT(*) AS n FROM participants'), [{ n: 0 }]);
   assert.deepEqual(ids(await mp.list({ with: 'zed@zed.example' })), [r.plain.id]);   // the query itself triggers the rebuild
   assert.ok(peek(dir, 'SELECT COUNT(*) AS n FROM links')[0].n > 0);
-  assert.deepEqual(peek(dir, "SELECT v FROM meta WHERE k = 'schema'"), [{ v: '5' }]);
+  assert.deepEqual(peek(dir, "SELECT v FROM meta WHERE k = 'schema'"), [{ v: '6' }]);
   // a schema-1 file that has none of the new tables at all is created and filled too
   const e = new Database(file);
   e.exec("DROP TABLE participants; DROP TABLE links; UPDATE meta SET v = '1' WHERE k = 'schema';");

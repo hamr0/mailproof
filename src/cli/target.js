@@ -64,15 +64,25 @@ export async function targetRecords(mp, t, o) {
 }
 
 /**
+ * The other party of an email: the From of a received one, the first To (else Cc) of a sent one. The one definition, used by
+ * `list` rows and by `factsOfRecord`.
+ * @param {string} direction
+ * @param {Array<{ role: string, address: string }>} addresses  In header order.
+ * @returns {string | null}
+ */
+export function otherParty(direction, addresses) {
+  const first = (/** @type {string} */ role) => addresses.find((p) => p.role === role)?.address ?? null;
+  return direction === 'out' ? (first('to') ?? first('cc')) : first('from');
+}
+
+/**
  * What a text line needs from one record: the other party (From of a received email, first To of a sent one), the signed
  * subject (an unsigned record keeps no subject: SPEC B1), attachments, trust. Never throws on a malformed record.
  * @param {MpRecord} rec
  * @returns {{ id: string, captured: string, direction: string, live: string, portable: string, other: string | null, subject: string | null, body: string, attachments: number }}
  */
 export function factsOfRecord(rec) {
-  const parts = participantsOf(rec);
-  const first = (/** @type {string} */ role) => parts.find((p) => p.role === role)?.address ?? null;
-  const other = rec.direction === 'out' ? (first('to') ?? first('cc')) : first('from');
+  const other = otherParty(rec.direction, participantsOf(rec));
   const subject = signedHeaderValue(rec, 'subject');
   return {
     id: rec.id, captured: rec.captured, direction: rec.direction,

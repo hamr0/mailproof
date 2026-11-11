@@ -8,7 +8,7 @@ import { loadProfile } from './config.js';
 import { withAccount, print, warn, printJson } from './session.js';
 import { printable as p } from './printable.js';
 import { gather, render } from './detail.js';
-import { classifyTarget, factsOfRecord, minute } from './target.js';
+import { classifyTarget, otherParty, minute } from './target.js';
 import { showMany, verifyMany, peopleRun } from './by-person.js';
 
 /** @typedef {import('./session.js').Ctx} Ctx */
@@ -47,17 +47,16 @@ export async function listCmd(a, ctx) {
     const rows = await mp.list({ ...f, ...(limit > 0 ? { limit } : {}) });
     if (a.values.json) { printJson(ctx, rows); return EX_OK; }
     if (!rows.length) { print(ctx, 'no emails recorded'); return EX_OK; }
-    // date, in/out, live trust, the other party, subject, short id last (SPEC B11.5): the party and subject come from each record
-    const recs = [];
-    for (let i = 0; i < rows.length; i += 25) recs.push(...await Promise.all(rows.slice(i, i + 25).map((r) => mp.get(r.id))));
+    // date, in/out, live trust, the other party, subject, short id last (SPEC B11.5): party and subject are the fields of the
+    // library's list rows (one definition, SPEC B5); a subject that is only the sender's word is marked `~`
     const width = Math.max(60, Number(/** @type {any} */ (ctx.stdout).columns) || 110);
-    rows.forEach((r, i) => {
-      const x = recs[i] ? factsOfRecord(recs[i]) : null;
-      const who = p(x?.other ?? '-', { max: 24 }).padEnd(24);
+    for (const r of rows) {
+      const who = p(otherParty(r.direction, r.addresses) ?? '-', { max: 24 }).padEnd(24);
       const head = `${minute(r.captured)}  ${p(r.direction).padEnd(3)}  ${p(r.live ?? '-').padEnd(10)}  ${who}  `;
       const room = Math.max(10, width - head.length - 14);
-      print(ctx, `${head}${p(x?.subject ?? '(none recorded)', { max: room }).padEnd(room)}  ${short(r.id)}`);
-    });
+      const subject = r.subject === null ? '(none recorded)' : r.subjectSource === 'claimed' ? `~ ${r.subject}` : r.subject;
+      print(ctx, `${head}${p(subject, { max: room }).padEnd(room)}  ${short(r.id)}`);
+    }
     return EX_OK;
   });
 }

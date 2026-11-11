@@ -136,10 +136,7 @@ export async function peopleRun(a, ctx, s) {
   const me = String(s.account.user ?? '').trim().toLowerCase();
   const rows = await s.mp.counterparties(limit > 0 ? { limit } : {});
   const people = [];
-  for (const r of rows) {
-    const inbound = await s.mp.list({ with: r.address, direction: 'in' });
-    people.push({ address: r.address, emails: r.records, verified: inbound.filter((x) => x.live === 'verified').length, first: r.first, last: r.last, you: r.address === me });
-  }
+  for (const r of rows) people.push({ address: r.address, emails: r.records, verified: r.verified, first: r.first, last: r.last, you: r.address === me });
   if (a.values.json) { printJson(ctx, people); return EX_OK; }
   if (!people.length) { print(ctx, 'no emails recorded'); return EX_OK; }
   const name = people.map((x) => `${p(x.address)}${x.you ? ' (you)' : ''}`);

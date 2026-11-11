@@ -154,6 +154,25 @@ function readRaw(dir, id) {
 }
 
 /**
+ * The first `max` bytes of the stored raw email of `id`, NOT re-hashed (a claim read for a `list()` row, never proof). Null for an
+ * unknown id or a missing file.
+ * @param {string} dir
+ * @param {string} id
+ * @param {number} max
+ * @returns {Promise<Buffer | null>}
+ */
+async function readRawHead(dir, id, max) {
+  if (typeof id !== 'string' || !RECORD_ID_RE.test(id)) return null;
+  let fh;
+  try {
+    fh = await fs.open(rawPathOf(dir, id), 'r');
+    const buf = Buffer.alloc(max);
+    const { bytesRead } = await fh.read(buf, 0, max, 0);
+    return buf.subarray(0, bytesRead);
+  } catch { return null; } finally { await fh?.close().catch(() => {}); }
+}
+
+/**
  * Does the store hold the raw email of `id` and each attachment `hexes`? A stat only: nothing is read or re-hashed (a bundle of
  * thousands must not read gigabytes), so a corrupted stored file still counts as stored. The one place besides `readRaw` and
  * `readAttachment` that knows the store layout (SPEC B13.2.4).
@@ -496,6 +515,6 @@ function toMs(v, what, who = 'forget') {
 }
 
 export {
-  DAY_MS, parseContentOptions, contentDirOf, rawPathOf, attPathOf, sha256Of, storeContent, readRaw, readAttachment, storedStatus,
+  DAY_MS, parseContentOptions, contentDirOf, rawPathOf, attPathOf, sha256Of, storeContent, readRaw, readRawHead, readAttachment, storedStatus,
   storedIds, expireStore, forgetIds, sweepOrphans, idsWith, toMs, exists,
 };

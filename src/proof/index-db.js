@@ -27,18 +27,20 @@ import { git, gitLines } from './git.js';
 import { parseRecordPath, parseManifestPath, assertTrailLayout } from './layout.js';
 import { readChain, readManifestAt } from './seal.js';
 import { RECORD_ID_RE, readRecord, withTrailLock, trailLockFile, trailIndexFile, headOf } from './trail.js';
-import { LINKED_CHILDREN_DEFAULT, REPLY_FACTS_MAX } from './limits.js';
-import { participantsOf, linksOf, directParents, hasSignedThreading, ROLES } from './participants.js';
+import { LINKED_CHILDREN_DEFAULT, REPLY_FACTS_MAX, INDEX_MAX_SUBJECT } from './limits.js';
+import { headerText } from './header-text.js';
+import { participantsOf, linksOf, directParents, ROLES, addressCoverage, signedHeaderValue } from './participants.js';
 import { verifyRecord } from './recheck.js';
 
 /** @typedef {import('./types.js').MpRecord} MpRecord */
 /** @typedef {{ run: (...p: any[]) => any, get: (...p: any[]) => any, all: (...p: any[]) => any[] }} Stmt */
 /** @typedef {{ exec: (sql: string) => any, prepare: (sql: string) => Stmt, close: () => void, open: boolean, transaction: <F extends (...a: any[]) => any>(f: F) => F & { immediate: F } }} Db */
-/** @typedef {{ id: string, captured: string, direction: string, live: string, portable: string, message_id: string | null }} ListRow */
+/** @typedef {{ role: 'from' | 'to' | 'cc' | 'reply-to', address: string, signed: boolean, coverage: 'signed' | 'failing' | 'none' }} ListAddress */
+/** @typedef {{ id: string, captured: string, direction: string, live: string, portable: string, message_id: string | null, from: string | null, to: string[], subject: string | null, subjectSource: 'signed' | 'claimed' | null, addresses: ListAddress[] }} ListRow */
 /** @typedef {{ id: string, captured: string, direction: string, copy: string, body_status: string, live: string, portable: string }} CopyRow */
 
 /** Bump when the table layout or what a column holds changes: an index of another version is rebuilt. */
-const SCHEMA = 5;
+const SCHEMA = 6;
 const READ_BATCH = 500;
 const BUSY_TIMEOUT_MS = 10000;
 
@@ -46,10 +48,10 @@ const DDL = `
 CREATE TABLE IF NOT EXISTS meta(k TEXT PRIMARY KEY, v TEXT) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS rec(
   id TEXT PRIMARY KEY, captured TEXT NOT NULL, direction TEXT, live TEXT, portable TEXT,
-  message_id TEXT, message_key TEXT, copy_kind TEXT, body_status TEXT, commit_id TEXT) WITHOUT ROWID;
+  message_id TEXT, message_key TEXT, copy_kind TEXT, body_status TEXT, commit_id TEXT, subject TEXT, subject_src TEXT) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS att(att_key TEXT NOT NULL, rec_id TEXT NOT NULL, PRIMARY KEY(att_key, rec_id)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS participants(
-  rec_id TEXT NOT NULL, address TEXT NOT NULL, raw TEXT NOT NULL, role TEXT NOT NULL, signed INTEGER NOT NULL,
+  rec_id TEXT NOT NULL, address TEXT NOT NULL, raw TEXT NOT NULL, role TEXT NOT NULL, signed INTEGER NOT NULL, coverage TEXT NOT NULL DEFAULT 'none', pos INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY(rec_id, role, address)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS links(
   rec_id TEXT NOT NULL, mid TEXT NOT NULL, via TEXT NOT NULL, strength TEXT NOT NULL, pos INTEGER NOT NULL, direct INTEGER NOT NULL,
@@ -78,6 +80,9 @@ function unavailable(cause) {
 /** @param {unknown} e @returns {boolean} A damaged index file (rebuilt from the records), as opposed to any other failure. */
 const isCorrupt = (e) => typeof e === 'object' && e !== null && 'code' in e && typeof e.code === 'string' && /^SQLITE_(CORRUPT|NOTADB)/.test(e.code);
 
+/** @param {string} s @returns {string} At most INDEX_MAX_SUBJECT code points. */
+const cut = (s) => (s.length <= INDEX_MAX_SUBJECT ? s : [...s].slice(0, INDEX_MAX_SUBJECT).join(''));
+
 /**
  * Index row for a record, or null when it is not a usable record (not an object, or its `id` is not its file name).
  * Every column is a string or null, so one odd record can never make a bind fail and sink a rebuild.
@@ -92,15 +97,19 @@ function rowOf(id, r, commit) {
   /** @type {string[]} */
   const att = [];
   if (Array.isArray(evidence)) for (const o of evidence) { const k = o && typeof o === 'object' ? str(o.message_key) : null; if (k) att.push(k); }
-  // The DKIM re-check (which signatures verify and align) is paid only by a record that has a signed In-Reply-To or
-  // References line to grade; the other records never run it.
-  const passing = hasSignedThreading(r) ? verifyRecord(r).passing : [];
+  // The DKIM re-check (which signatures verify and align) is paid by every record that carries a signature: it grades the
+  // thread links, the address coverage and the subject (schema 6); an unsigned record never runs it.
+  const passing = Array.isArray(r.signatures) && r.signatures.length ? verifyRecord(r).passing : [];
   const directs = directParents(r);
+  const cover = addressCoverage(r, passing);
+  const sv = passing.length ? signedHeaderValue(r, 'subject', passing) : null;
+  const any = sv ?? signedHeaderValue(r, 'subject');   // covered only by a signature that does not verify: a claim
   return {
     row: [id, str(r.captured) ?? '', str(r.direction), str(r.verdicts?.live?.trust), str(r.verdicts?.portable?.trust),
-      str(r.message?.message_id), str(r.message_key), str(r.copy?.kind), str(r.body_status), commit],
+      str(r.message?.message_id), str(r.message_key), str(r.copy?.kind), str(r.body_status), commit,
+      any === null ? null : cut(headerText(any)), sv !== null ? 'signed' : any !== null ? 'claimed' : null],
     att,
-    parts: participantsOf(r).map((p) => [id, p.address, p.raw, p.role, p.signed ? 1 : 0]),
+    parts: participantsOf(r).map((p, i) => [id, p.address, p.raw, p.role, p.signed ? 1 : 0, cover.get(`${p.role}\0${p.address}`) ?? 'none', i]),
     links: linksOf(r, passing).map((l, i) => [id, l.mid, l.via, l.strength, i, directs.has(l.mid) ? 1 : 0]),
   };
 }
@@ -204,13 +213,13 @@ function session(d) {
   const st = {
     getMeta: d.prepare('SELECT v FROM meta WHERE k = ?'),
     setMeta: d.prepare('INSERT OR REPLACE INTO meta VALUES (?,?)'),
-    putRec: d.prepare('INSERT OR REPLACE INTO rec VALUES (?,?,?,?,?,?,?,?,?,?)'),
+    putRec: d.prepare('INSERT OR REPLACE INTO rec VALUES (?,?,?,?,?,?,?,?,?,?,?,?)'),
     getCommit: d.prepare('SELECT commit_id FROM rec WHERE id = ?'),
     delRec: d.prepare('DELETE FROM rec WHERE id = ?'),
     delAtt: d.prepare('DELETE FROM att WHERE rec_id = ?'),
     putAtt: d.prepare('INSERT OR IGNORE INTO att VALUES (?,?)'),
     delPart: d.prepare('DELETE FROM participants WHERE rec_id = ?'),
-    putPart: d.prepare('INSERT OR IGNORE INTO participants VALUES (?,?,?,?,?)'),
+    putPart: d.prepare('INSERT OR IGNORE INTO participants VALUES (?,?,?,?,?,?,?)'),
     delLink: d.prepare('DELETE FROM links WHERE rec_id = ?'),
     putLink: d.prepare('INSERT OR IGNORE INTO links VALUES (?,?,?,?,?,?)'),
     putSeal: d.prepare('INSERT OR IGNORE INTO seal VALUES (?,?,?,?)'),
@@ -243,12 +252,13 @@ function session(d) {
 
 /**
  * A file made by an older schema has the old shape of `rec` and `links` (CREATE TABLE IF NOT EXISTS keeps them): add the
- * columns schema 4 appended, so the statements prepare; the rows are rebuilt by the schema mismatch. Idempotent and
+ * columns later schemas appended (4: commit_id, direct; 6: subject, coverage, pos), so the statements prepare; the rows are rebuilt by the schema mismatch. Idempotent and
  * safe against a concurrent opener (a duplicate column is ignored).
  * @param {Db} d
  */
 function addColumns(d) {
-  for (const [table, col, def] of [['rec', 'commit_id', 'TEXT'], ['links', 'direct', 'INTEGER NOT NULL DEFAULT 0']]) {
+  for (const [table, col, def] of [['rec', 'commit_id', 'TEXT'], ['rec', 'subject', 'TEXT'], ['rec', 'subject_src', 'TEXT'], ['links', 'direct', 'INTEGER NOT NULL DEFAULT 0'],
+    ['participants', 'coverage', "TEXT NOT NULL DEFAULT 'none'"], ['participants', 'pos', 'INTEGER NOT NULL DEFAULT 0']]) {
     if (d.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === col)) continue;
     try { d.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`); } catch (e) { if (!/duplicate column/i.test(String(/** @type {any} */ (e)?.message))) throw e; }
   }
@@ -462,13 +472,30 @@ export async function listIndex(cfg, { limit, direction, with: who, role, before
   if (lo !== null) { where.push('captured >= ?'); args.push(lo); }
   if (hi !== null) { where.push('captured < ?'); args.push(hi); }
   return query(cfg, (d) => {
-    const cols = 'rec.id AS id, captured, direction, live, portable, message_id';
+    const cols = 'rec.id AS id, captured, direction, live, portable, message_id, subject, subject_src';
     // newest capture first; equal captures in ascending id order (the old full read left that to the file system)
     const rows = d.prepare(`SELECT ${cols} FROM ${from} ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY captured DESC, rec.id LIMIT ?`).all(...pre, ...args, n);
-    return (limit && !sql ? rows.slice(0, /** @type {any} */ (limit)) : rows).map((r) => ({
-      id: r.id, captured: r.captured, direction: r.direction,
-      live: r.live ?? undefined, portable: r.portable ?? undefined, message_id: r.message_id ?? null,
-    }));
+    const kept = limit && !sql ? rows.slice(0, /** @type {any} */ (limit)) : rows;
+    // the addresses of every returned row, in header order (`pos`), read in chunks under SQLite's variable limit
+    /** @type {Map<string, ListAddress[]>} */
+    const addrs = new Map();
+    for (let i = 0; i < kept.length; i += 400) {
+      const ids = kept.slice(i, i + 400).map((r) => r.id);
+      for (const a of d.prepare(`SELECT rec_id, role, address, signed, coverage FROM participants WHERE rec_id IN (${ids.map(() => '?').join(',')}) ORDER BY rec_id, pos`).all(...ids)) {
+        const list = addrs.get(a.rec_id) ?? [];
+        list.push({ role: a.role, address: a.address, signed: a.signed === 1, coverage: a.coverage });
+        addrs.set(a.rec_id, list);
+      }
+    }
+    return kept.map((r) => {
+      const addresses = addrs.get(r.id) ?? [];
+      return {
+        id: r.id, captured: r.captured, direction: r.direction,
+        live: r.live ?? undefined, portable: r.portable ?? undefined, message_id: r.message_id ?? null,
+        from: addresses.find((a) => a.role === 'from')?.address ?? null, to: addresses.filter((a) => a.role === 'to').map((a) => a.address),
+        subject: r.subject ?? null, subjectSource: r.subject_src ?? null, addresses,
+      };
+    });
   }, []);
 }
 
@@ -476,15 +503,16 @@ export async function listIndex(cfg, { limit, direction, with: who, role, before
  * `Mailproof#counterparties` from the index: one row per exact address.
  * @param {IndexCfg} cfg
  * @param {{ limit?: number }} [opts]
- * @returns {Promise<Array<{ address: string, records: number, first: string, last: string }>>}
+ * @returns {Promise<Array<{ address: string, records: number, first: string, last: string, verified: number }>>}
  */
 export async function counterpartiesIndex(cfg, { limit } = {}) {
   if (limit !== undefined && (typeof limit !== 'number' || !Number.isFinite(limit) || limit < 1)) throw new TypeError('counterparties: limit must be a positive number');
   const n = limit === undefined ? -1 : Math.floor(limit);
   return query(cfg, (d) => d.prepare(
-    `SELECT p.address AS address, COUNT(DISTINCT p.rec_id) AS records, MIN(r.captured) AS first, MAX(r.captured) AS last
+    `SELECT p.address AS address, COUNT(DISTINCT p.rec_id) AS records, MIN(r.captured) AS first, MAX(r.captured) AS last,
+            COUNT(DISTINCT CASE WHEN r.direction = 'in' AND r.live = 'verified' THEN p.rec_id END) AS verified
        FROM participants p JOIN rec r ON r.id = p.rec_id GROUP BY p.address ORDER BY last DESC, address LIMIT ?`,
-  ).all(n).map((r) => ({ address: r.address, records: r.records, first: r.first, last: r.last })), []);
+  ).all(n).map((r) => ({ address: r.address, records: r.records, first: r.first, last: r.last, verified: r.verified })), []);
 }
 
 /**

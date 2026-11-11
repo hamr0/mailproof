@@ -45,7 +45,7 @@ test('--version, help, help <command>, <command> --help; unknown command and fla
 test('list: text, filters, --json is one array; a bad date, address or role is 64', async () => {
   const all = json(await sp(['list', '--json']));
   assert.equal(all.length, 6);
-  assert.deepEqual(Object.keys(all[0]).sort(), ['captured', 'direction', 'id', 'live', 'message_id', 'portable']);
+  assert.deepEqual(Object.keys(all[0]).sort(), ['addresses', 'captured', 'direction', 'from', 'id', 'live', 'message_id', 'portable', 'subject', 'subjectSource', 'to']);
   const text = await sp(['list']);
   assert.equal(text.code, 0);
   assert.equal(text.stdout.trim().split('\n').length, 6);

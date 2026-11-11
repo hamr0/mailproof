@@ -176,13 +176,15 @@ test('people: one line per address with emails, received verified, first and las
   assert.equal((await w.run(['people', '--limit', 'x'])).code, 64);
 });
 
-test('list (text): date, in/out, live trust, other party, subject, short id last; --json unchanged', async () => {
+test('list (text): date, in/out, live trust, other party, subject, short id last; --json is the library rows', async () => {
   const r = await w.run(['list']);
   const line = r.stdout.split('\n').find((l) => l.includes(id('signed').slice(0, 12)));
   assert.match(line, /^2026-11-01T10:02Z  in   verified +bob@beta\.example +Re: please sign +[0-9a-f]{12}$/);
   const out = r.stdout.split('\n').find((l) => l.includes(id('req').slice(0, 12)));
   assert.match(out, /^2026-11-01T10:01Z  out  .* +bob@beta\.example +Approve\? +[0-9a-f]{12}$/);
-  assert.deepEqual(Object.keys(JSON.parse((await w.run(['list', '--json'])).stdout)[0]).sort(), ['captured', 'direction', 'id', 'live', 'message_id', 'portable']);
+  assert.deepEqual(Object.keys(JSON.parse((await w.run(['list', '--json'])).stdout)[0]).sort(), ['addresses', 'captured', 'direction', 'from', 'id', 'live', 'message_id', 'portable', 'subject', 'subjectSource', 'to']);
+  const plain = (await w.run(['list', '--json'])).stdout;
+  assert.ok(JSON.parse(plain).every((x) => Array.isArray(x.addresses)));
 });
 
 test('id hints: a flag-looking or too-short id says ids are positional and shows the address form', async () => {

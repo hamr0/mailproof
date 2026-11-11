@@ -10,7 +10,7 @@ import { printable as p } from './printable.js';
 /**
  * @typedef {Object} SyncOnce
  * @property {import('../proof/sync.js').SyncResult} result
- * @property {import('../proof/stamp.js').StampResult | null} ots  The automatic stamp job's result (SPEC B13.1.12; a superset of the 3.3.0 `{ upgraded, pending, error? }`); null: OpenTimestamps is off for this account.
+ * @property {import('../proof/stamp.js').StampResult | null} ots  DEPRECATED ALIAS of `result.stamp` (the same object), kept because 3.3.0 documented `ots` in the CLI `--json` and MCP `sync` output; new consumers read `stamp`. The automatic stamp job's result (SPEC B13.1.12; a superset of the 3.3.0 `{ upgraded, pending, error? }`); null: OpenTimestamps is off for this account.
  * @property {{ folder: string, code: string, message: string } | null} folderError  The first folder that carries an error.
  * @property {number} exit  The exit code of the run (B4.1): 0 for a complete or capped run.
  */

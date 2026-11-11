@@ -220,7 +220,7 @@ test('commit is the commit that recorded the reply (matches git), from the index
   d.close();
   await check();
   const d2 = new Database(file, { readonly: true });
-  assert.equal(d2.prepare("SELECT v FROM meta WHERE k = 'schema'").get().v, '5');
+  assert.equal(d2.prepare("SELECT v FROM meta WHERE k = 'schema'").get().v, '6');
   assert.equal(d2.prepare('SELECT COUNT(*) AS n FROM rec WHERE commit_id IS NULL').get().n, 0);
   d2.close();
 });

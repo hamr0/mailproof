@@ -76,9 +76,9 @@
     {
       "name": "Mailproof#counterparties",
       "category": "read",
-      "when": "Use to see who is in this trail: one row per exact lower-cased address (bob@gmail.com and bob@company.com are two rows; DKIM proves an address or a domain, not a person), most recently seen first. `records` counts the records that name the address on From, To, Cc or Reply-To; `first`/`last` are the earliest and latest `captured`. The trail's own owner appears too, on every record: a record does not say which address is yours. Then `list({ with })` for the emails.",
+      "when": "Use to see who is in this trail: one row per exact lower-cased address (bob@gmail.com and bob@company.com are two rows; DKIM proves an address or a domain, not a person), most recently seen first. `records` counts the records that name the address on From, To, Cc or Reply-To; `verified` counts the RECEIVED (`direction: 'in'`) ones among them whose live trust is `verified`; `first`/`last` are the earliest and latest `captured`. The trail's own owner appears too, on every record: a record does not say which address is yours. Then `list({ with })` for the emails.",
       "import": "import { Mailproof } from 'mailproof'",
-      "signature": "mp.counterparties(opts?: { limit?: number }) => Promise<Array<{ address, records, first, last }>>",
+      "signature": "mp.counterparties(opts?: { limit?: number }) => Promise<Array<{ address, records, first, last, verified }>>",
       "fails": "Rejects with `ERR_INDEX_UNAVAILABLE` or `ERR_TRAIL_LOCKED` exactly like `list()`, and with a TypeError for a `limit` that is not a positive number. An empty or missing trail returns `[]`. Only addresses a record shows count (SPEC B8). Answers come from the trail index, a cache: not proof.",
       "example": "const people = await mp.counterparties({ limit: 20 });"
     },
@@ -112,7 +112,7 @@
     {
       "name": "Mailproof#get",
       "category": "read",
-      "when": "Use to read one stored record (to export it, or to hand to `verifyRecord`). Use `list()` first if you do not have an id.",
+      "when": "Use to read one stored record (to export it, or to hand to `verifyRecord`). Use `list()` first if you do not have an id. In `addresses[]`, `signed: true` means some signature covers that header line, decided at capture; it does NOT mean the signature verified (read the verdicts, or the `coverage` of the `list()` rows).",
       "import": "import { Mailproof } from 'mailproof'",
       "signature": "mp.get(id: string) => Promise<Record|null>",
       "fails": "Returns null for an unknown id or anything that is not 32 hex characters. Rejects only for a trail still in the pre-M3 flat layout (`records/<id>.json`): `err.code === 'ERR_TRAIL_LAYOUT'`, the trail must be re-created.",
@@ -130,9 +130,9 @@
     {
       "name": "Mailproof#list",
       "category": "read",
-      "when": "Use to find recorded emails, newest capture first, optionally by direction or by counterparty: `with` is one exact email address (case-insensitive, no grouping: bob@gmail.com is not bob@company.com) seen on the From, To, Cc or Reply-To of the record (`role` narrows it to one of them), `after` (inclusive) and `before` (exclusive) bound the capture time. It returns summaries; use `get(id)` for the full record.",
+      "when": "Use to find recorded emails, newest capture first, optionally by direction or by counterparty: `with` is one exact email address (case-insensitive, no grouping: bob@gmail.com is not bob@company.com) seen on the From, To, Cc or Reply-To of the record (`role` narrows it to one of them), `after` (inclusive) and `before` (exclusive) bound the capture time. It returns summaries; use `get(id)` for the full record. Each row also says who and what (SPEC B5): `from` (the first From address, lower case, or null), `to` (every To address, header order), `subject` (decoded text) with `subjectSource`: `'signed'` when a signature that verifies offline and aligns covers the Subject line, `'claimed'` when only the sender's word is there (a signature that does not verify covers it, or, for mail with no covering signature, the Subject read from the stored raw email, which is not proof), null when there is none; and `addresses[]` (`{ role, address, signed, coverage }`, header order). `signed` keeps the record's meaning (some signature covers that header line, decided at capture); `coverage` is the strict reading: `'signed'` a verifying signature covers it, `'failing'` only signatures that do not verify cover it, `'none'` no signature covers it. Show \"signed\" to a person only for `coverage: 'signed'`.",
       "import": "import { Mailproof } from 'mailproof'",
-      "signature": "mp.list(opts?: { limit?: number, direction?: 'in'|'out', with?: string, role?: 'from'|'to'|'cc'|'reply-to', before?: Date|number|string, after?: Date|number|string }) => Promise<Array<{ id, captured, direction, live, portable, message_id }>>",
+      "signature": "mp.list(opts?: { limit?: number, direction?: 'in'|'out', with?: string, role?: 'from'|'to'|'cc'|'reply-to', before?: Date|number|string, after?: Date|number|string }) => Promise<Array<{ id, captured, direction, live, portable, message_id, from, to, subject, subjectSource, addresses }>>",
       "fails": "Rejects with `err.code === 'ERR_INDEX_UNAVAILABLE'` when the `better-sqlite3` native addon cannot load on this platform (there is no fallback; `record`, `get` and `verify` do not need it), or `ERR_TRAIL_LOCKED` when bringing the trail index up to date had to wait for a writer longer than `lockTimeoutMs`, or `ERR_TRAIL_LAYOUT` for a trail still in the pre-M3 flat layout (not converted: re-create it). A wrong type for `with`, `role` (it needs `with`), `before` or `after` throws a TypeError. Otherwise never throws. An empty or missing trail returns `[]`. Records captured in the same instant come in ascending id order. Only addresses the record itself shows count: a signed record shows the headers its DKIM signatures cover (an unsigned Cc is not visible), an unsigned one only its From (SPEC B8). Answers come from the trail index (SPEC B5), a cache beside the trail that is opened and closed inside each call (nothing stays open, so `close()` has nothing to wait for): whoever can write that file can change this answer, never `get` or `verify`.",
       "example": "const recent = await mp.list({ limit: 10 });"
     },

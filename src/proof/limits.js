@@ -131,6 +131,15 @@ export const INDEX_MAX_ADDRESS = 254;
 /** Thread-link rows the index takes from one record: In-Reply-To, then the LAST References ids (the nearest ancestors). */
 export const INDEX_MAX_LINKS = 200;
 
+/** Longest subject (code points) the index keeps per record; a longer one is cut (the record still holds the whole header). */
+export const INDEX_MAX_SUBJECT = 500;
+
+/** Rows of one `list()` call whose subject is read from the content store (a claimed subject, SPEC B5): the cost of that read is bounded; later rows keep `subject: null`. */
+export const LIST_CLAIMED_MAX = 500;
+
+/** Bytes read from the front of a stored raw email to find its claimed Subject (no hash check: the value is a claim, never proof). */
+export const CLAIMED_HEAD_BYTES = 65_536;
+
 /** Children `linked()` returns by default (a popular Message-ID can be named by any number of records); `{ limit }` overrides. */
 export const LINKED_CHILDREN_DEFAULT = 1000;
 
