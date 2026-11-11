@@ -14,7 +14,7 @@ mailproof records a re-checkable proof of each email in a **two-party (A to B) e
 
 - One-off verdict on an email, nothing written -> `check(raw)`.
 - Record mail your own pipeline receives (for example a Postfix pipe) -> `record(raw, { direction, source, envelope })`; map `ERR_TRAIL_LOCKED` to exit 75.
-- Capture a mailbox over IMAP -> `sync(...)`, the `mailproof` CLI (`mailproof sync`, `mailproof watch`), or `mailproof-sync` under cron or a systemd timer.
+- Capture a mailbox over IMAP -> `sync(...)`, the `mailproof` CLI (`mailproof sync`, `mailproof watch`; read it by person: `mailproof people`, `mailproof show b@example.com`, `mailproof verify b@example.com`), or `mailproof-sync` under cron or a systemd timer.
 - Re-check later or elsewhere, offline -> `verify(id)`, or `verifyRecord(record)` with no trail.
 - Read what a sender newly wrote in a recorded reply -> `replyText(raw)`, then apply the decision rule in "Reading a reply" below.
 - Learn what the people you wrote to answered (an approval, an acknowledgement) -> `replyFacts({ messageId })` (the Message-ID of your request), then apply the rule in "Approvals" below.

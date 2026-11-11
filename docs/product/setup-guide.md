@@ -176,16 +176,21 @@ Exit codes for `sync`: **0** done (even partial), **75** try again later (anothe
 
 ## 6. Look around
 
-An id is 32 hex characters; a unique prefix of at least 8 is enough.
+Start from the person, not from an id. `show` and `verify` take a **target**: an address (`b@example.com`), a Message-ID in angle brackets (`<abc@mail.example>`), or a record id (32 hex characters, or a unique prefix of at least 8; kept for scripts).
 
 | Command | Use when |
 |---|---|
 | `mailproof status` | at a glance: records (in/out), oldest/newest, last sync, content size, pending seals, last backup, whether a watch runs |
-| `mailproof list [--with ana@example.com] [--role from\|to\|cc\|reply-to] [--direction in\|out] [--after 2026-01-01] [--before 2026-07-01] [--limit n]` | find emails, newest first. `--with` is one exact address. Dates are `YYYY-MM-DD` UTC or a full ISO time. Default 50 rows, `--limit 0` for all |
-| `mailproof show <id>` (`--raw`) | read one record; `--raw` prints the stored raw email (exit 1 if the content store no longer has it) |
-| `mailproof verify <id>` (`--at <date>`) | re-check offline from the record alone. Exit **0** verifies, **2** the check ran and the answer is no |
+| `mailproof people [--limit n]` | who is in the trail: one line per exact address with emails, received emails that verified, first and last date. Your own address is marked `(you)` |
+| `mailproof show b@example.com [--after 2026-01-01] [--before 2026-07-01] [--limit n] [--full]` | every email naming that exact address (From, To, Cc or Reply-To), newest first. Each block has the same labelled lines, always in the same order, `N/A` where something does not exist: account, direction, date, captured, from/to/cc/reply-to/bcc (each marked signed or not signed), subject, trust, why it is not verified, body proof, the body text (first 10 lines; `--full` for all), attachments, seal, message-id, id |
+| `mailproof verify b@example.com [--all] [--at <date>]` | re-check each of those emails offline. One line per email, then `received: N verified, M not`. Exit **0** when every RECEIVED email verifies, **2** when one does not (or none was received). Your own Sent copies are normally unsigned by the provider, so they are listed and counted apart and do not decide the exit code unless you add `--all` |
+| `mailproof show <abc@mail.example>` / `verify <abc@mail.example>` | the same for every copy of one Message-ID |
+| `mailproof show 3f2a9c1d` (`--raw`) | one record in full: every recorded fact (DKIM per signature, DMARC, SPF, ARC, thread links, content store) and the whole body; `--raw` prints the stored raw email (exit 1 if the content store no longer has it) |
+| `mailproof list [--with ana@example.com] [--role from\|to\|cc\|reply-to] [--direction in\|out] [--after 2026-01-01] [--before 2026-07-01] [--limit n]` | a table, newest first: date, in/out, trust, the other party, subject, short id last. `--with` is one exact address. Dates are `YYYY-MM-DD` UTC or a full ISO time. Default 50 rows, `--limit 0` for all |
 | `mailproof replies <messageId>` | what people answered to an email you sent (by its Message-ID), as facts, not interpreted |
 | `mailproof check <id> --profile <file\|name> [--parent <messageId>]` | gate an email against a trust profile (allowed senders, required checks, body level, link strength). A name is looked up as `~/.config/mailproof/profiles/<name>.json`. Exit 0 pass, 2 fail with the failed rules |
+
+An address with no recorded email is exit 1 (`no email with b@example.com in this trail`). A bare word or an id shorter than 8 characters is exit 64 with the three accepted forms. In the menu, **People** (item 16) lists them and lets you pick one, then Show, Verify or Export.
 
 Trust levels (both a live verdict at capture and a portable one recomputed offline):
 
@@ -230,7 +235,11 @@ Exit 75 from an overlapping or unreachable run is normal; the next run continues
 
 ## 9. Export a proof and verify it
 
+Start with the person: `mailproof people`, then `mailproof verify bob@example.com` to see for yourself what verifies, then export.
+
 ```bash
+mailproof people --account gmail
+mailproof verify bob@example.com --account gmail
 mailproof stamp --account gmail
 mailproof export --account gmail --with bob@example.com,bob@work.example \
     --after 2026-01-01 --before 2027-01-01 --out ~/proof-for-bob --tar

@@ -768,8 +768,8 @@ mailproof 3.x   account: personal  [b: change]
  1) Sync now              fetch new mail (Inbox + Sent), record proofs
  2) Watch                 sync every 5 min until Ctrl-C
  3) List emails           newest first; filter by person or date
- 4) Show one email        record details
- 5) Verify one email      re-check offline
+ 4) Show emails           by address, Message-ID or id
+ 5) Verify emails         re-check offline, by address
  6) Replies to a message  what people answered (by Message-ID)
  7) Check against profile trust profile pass/fail
  8) Forget                delete stored mail content          (destructive)
@@ -779,6 +779,8 @@ mailproof 3.x   account: personal  [b: change]
 12) Update mailproof      show the upgrade command
 13) Config                show path, validate, template
 14) Export                proof bundle for a counterparty
+15) Seal now              seal new mail now (OpenTimestamps)
+16) People                who is in this trail; then show, verify or export one
  h) Help      q) Quit
 >
 ```
@@ -790,15 +792,16 @@ mailproof 3.x   account: personal  [b: change]
 
 ### B11.5 Commands
 
-Account-scoped unless noted. `[id]` is a record id (32 hex) or a unique prefix of at least 8 hex (ambiguous = exit 64 listing matches).
+Account-scoped unless noted. `[id]` is a record id (32 hex) or a unique prefix of at least 8 hex (ambiguous = exit 64 listing matches). **`show` and `verify` are address-first (B11.5a)**: their `<target>` is an address, a Message-ID or an id; the commands that act on one record by id (`check`, `forget`) still take ids.
 
 | Command | Flags | Library call | Notes |
 |---|---|---|---|
 | `sync` | `--folders <a,b>`, `--sent <on\|off\|path>` (override the account for this run) | `sync` (B4.1) | "Sync now": reads Inbox (+ `folders`) and Sent read-only, records proofs, runs the content sweep (B7.5), then the automatic stamp job when it is due (library `sync`, B13.1.7). Output: the sync result plus `ots`, the job's `StampResult` (B13.1.9, a superset of the 3.3.0 `{ upgraded, pending }`; `null` when `ots` is off). The CLI does not call `upgradeStamps()` itself. A capped run is exit 0 (B4.1). |
 | `watch` | `--interval <dur>` (default `5m`; `30s`, `5m`, `1h`; minimum `30s`) | `sync` in a loop | Foreground, long-running; B11.9. |
-| `list` | `--with <address>`, `--role from\|to\|cc\|reply-to`, `--direction in\|out`, `--before <date>`, `--after <date>`, `--limit <n>` (default 50, `--limit 0` = no cap) | `list` | Dates `YYYY-MM-DD` (UTC midnight) or full ISO-8601. Human: one line per record: short id, captured, direction, live/portable verdicts, message id. |
-| `show <id>` | | `get`, `proofParts`, `linked` | The record fields, the graded proof per part and the thread links. `--raw` prints the stored raw email to stdout (`rawEmail`; exit 1 if the content store no longer holds it). |
-| `verify <id>` | `--at <date>` | `get` + `verify` | Exit 0 when `ok`, **2** when the record does not verify (so scripts can branch), 1 on error. |
+| `list` | `--with <address>`, `--role from\|to\|cc\|reply-to`, `--direction in\|out`, `--before <date>`, `--after <date>`, `--limit <n>` (default 50, `--limit 0` = no cap) | `list` | Dates `YYYY-MM-DD` (UTC midnight) or full ISO-8601. Human: one line per record, columns in this order: captured (`YYYY-MM-DDTHH:MMZ`), `in`/`out`, the live trust, the other party (the From of a received email, the first To of a sent one), the signed subject (cut to the line; `(none recorded)` when no signature covers it), and the short id (12 hex) LAST. The Message-ID is no longer a column (use `show` or `--json`). `--json` is unchanged. |
+| `people` | `--limit <n>` (default 50, `--limit 0` = no cap) | `counterparties` + `list({ with, direction: 'in' })` | One line per exact address, most recently seen first: address, emails (records naming it), verified (RECEIVED emails naming it whose live trust is `verified`), first and last capture date. The trail owner's own address is in the list (B5 gap) and is marked `(you)` when it equals the account's `user`. Nothing is excluded. `--json`: an array of `{ address, emails, verified, first, last, you }`. |
+| `show <target>` | `--after <date>`, `--before <date>`, `--limit <n>` (default 50, 0 = all), `--full`, `--raw` (id only) | `list`/`copies`/`get`/`proofParts`/`linked`/`rawEmail` | B11.5a: by address, Message-ID or id. |
+| `verify <target>` | `--at <date>`, `--all`, `--after`, `--before`, `--limit` (default 0 = all) | `list`/`copies`/`get` + `verify` | B11.5a: by address, Message-ID or id. Exit 0 when every counted email verifies, **2** when any does not, 1 when nothing is found. |
 | `replies <messageId>` | | `replyFacts` | Prints the flat bundles (B10.3), earliest first; none = "no replies recorded". With `--json` the array. `<messageId>` is the request's Message-ID, with or without angle brackets. |
 | `check <id> --profile <file\|name>` | `--profile` required | `get` + `checkProfile` | A file path (JSON profile, B8.2) or a name looked up as `<configDir>/profiles/<name>.json` (same 0600 rule is NOT required: profiles hold no secrets). Exit 0 pass, **2** fail (the failed rules are printed). |
 | `forget` | `[id ...]` or `--with <address>` with optional `--before`/`--after`; `--yes`, `--dry-run` | `forget` (after `list`) | Content only (B7.6); proofs stay. See safety below. |
@@ -818,6 +821,27 @@ Account-scoped unless noted. `[id]` is a record id (32 hex) or a unique prefix o
 2. Subcommand: without `--yes` it prints the summary and exits **64** with `add --yes to proceed`; `--dry-run` prints only the summary and exits 0. With `--yes` it prints the summary and proceeds. No interactive prompt in a subcommand, ever.
 3. Menu: the summary, then type the account name (B11.4).
 4. Nothing destructive is ever reachable without naming the account (B11.3) and its explicit target (`id`, `--with` or `--before`). `forget` with no target is exit 64: there is no "forget everything" flag; `--with` is the broadest form.
+
+### B11.5a Address-first `show` and `verify` (owner feedback, 2026-11-11)
+
+A person does not know record ids; they know who they wrote to. `show` and `verify` take one **target**, resolved by its shape in one place (`src/cli/target.js`, shared by the subcommands and the menu):
+
+| Shape | Meaning | Resolves to |
+|---|---|---|
+| starts with `<` and ends with `>` | a Message-ID | every recorded copy of that Message-ID (`list` rows with that `message_id`, plus `copies()` of the first, so copies of one signed message are included), newest first |
+| contains `@` | one exact address (lower-cased) | every record naming it on From, To, Cc or Reply-To: exactly `list({ with })`, so the one definition of "an email names this address" (`participantsOf`, B8), newest first |
+| 8 to 32 hex characters | a record id or unique prefix | one record, the full view (kept for scripts) |
+| anything else | | exit 64: `"<arg>" is not something mailproof can look up. Give an address (b@example.com), a Message-ID in angle brackets (<abc@mail.example>), or a record id (8 to 32 hex characters).` A hex string shorter than 8 and a value starting with `-` get `ids are positional: mailproof show ea1fda2a (8+ characters), or use an address: mailproof show b@example.com`; an unknown flag that looks like hex (`show --ea1fda2`) gets the same hint appended |
+
+A Message-ID needs its angle brackets (without them it contains `@` and is an address). `--after` (inclusive), `--before` (exclusive) and `--limit` apply to address and Message-ID targets. **Nothing recorded** for an address or Message-ID: exit **1** with `no email with <address> in this trail` on stderr (the same class as an unknown id: nothing was checked, so it is not the "check ran, answer is no" of exit 2).
+
+**`show` layout.** Every field has its own labelled line, ALWAYS printed, in one fixed order, with `N/A` where a value does not exist, so the layout never shifts; mail-derived text is escaped (B11.7). Labels, in order: `account` (the config `user` and, in parentheses, the account name), `direction` (received or sent, with the record's `source`), `date`, `captured`, `from`, `to`, `cc`, `reply-to`, `bcc`, `subject`, `in-reply-to`, `references` (with the link strength signed/unsigned), `children`, `copy`, `dkim` (one line per signature: domain, selector, algorithm, live result, aligned, offline re-check, body status, key archived), `dmarc`, `spf`, `arc`, `trust` (live, portable, rules version, re-check), `why` (the reason in plain words when not verified, derived from the recorded DKIM/DMARC/ARC results and the offline re-check; no DNS), `body proof` (`matched`, `partial`, or `not proven (<body_status>)`), `body` (the text, indented), `attachments` (one line each: filename, size, sha256, stored, match), `content` (whether the raw email is in the content store), `seal`, `message-key`, `message-id`, `id` (last). `from`/`to`/`cc`/`reply-to` come from the record's `addresses` (or `participantsOf`'s fallback for a record without them) and each address is marked `signed` or `not signed`. `date` and `subject` are `(signed)` when a signature that verifies covers the header, else `(claimed, not signed)` from the stored raw email, else `N/A`. `bcc` exists only in the own copy: it is read from the stored raw email and labelled `not signed, own copy`. The body is the text/plain part of the stored raw email, or a plain-text rendering of its text/html part when that is all there is (`src/proof/body-text.js`, built on the B6 MIME and charset code, no new dependency; the raw is gated by `admit` again); `N/A (not stored: ...)` when the content store has no raw. The record view (`show <id>`) shows all of it and the whole body. The block of `show <address>` is the compact form: it leaves out `in-reply-to`, `references`, `children`, `copy`, `dkim`, `dmarc`, `spf`, `arc`, `content` and `message-key`, and cuts the body to 10 lines (`... N more lines, use show <short id> --full`; `--full` shows every line). Blocks are numbered `#n of m`, newest first; the first line says how many emails matched and, when `--limit` cut the list, how many more exist.
+
+`--json` stays machine data: `show <id>` keeps `record`, `proof`, `links`, `seal` and adds `facts` (every labelled value as data; `facts.body` has `stored`, `source` and the `text` only with `--full`); `show <address>` prints `{ target, total, shown, records: [{ id, captured, direction, live, portable, other, subject, body, attachments, seal, facts, record }] }`. `show --raw` is unchanged (bytes, id only).
+
+**`verify <address|Message-ID>`.** Each record is re-checked offline (`verify`, the portable verdict, `--at` as for an id). Output: one line per record (captured, received/sent, `ok`/`NOT OK`, trust, short id, the reason when it fails) and a summary: `received: N verified, M not`, `sent: ...`, and a closing sentence. **Exit code, decided:** it follows the RECEIVED records only. A provider's own Sent copy is normally unsigned (F3), so counting it would make every pair of mail "fail" for a reason that says nothing about the other party; sent copies are listed, counted apart (`sent: K verified, L not (not counted ...)`) and marked `(sent copy, not counted)`, and `--all` counts them. Exit **0** when every counted record verifies; **2** when any counted record does not, and also when there is nothing counted (no received email names the address: nothing proves anything, and a script must not read that as success; the output says `nothing to verify`); **1** when no record matches the target at all. `verify` checks every matching record by default (`--limit` is opt-in), because a partial check that exits 0 would mislead. `--json`: `{ target, ok, total, checked, inbound: { verified, failed }, outbound: { verified, failed }, all, results: [{ id, captured, direction, ok, trust, reason, counted }] }`.
+
+**Menu.** Items 4 and 5 ask for a target (address, Message-ID or id); item 16, People, runs `people`, lets the user pick a person by number or address, then Show, Verify or Export for that address, through the same dispatcher.
 
 ### B11.6 `backup`
 
@@ -845,7 +869,7 @@ As `mailproof-sync` (B4.1), plus one:
 | `64` | bad usage: unknown command/flag, missing value, bad config, missing `--account`, missing `--yes`, unconfigured `backupRemote`, `export` with an existing or misplaced `out`, `mcp` run on a terminal |
 | `75` | try again later: `ERR_SYNC_LOCKED`, `ERR_TRAIL_LOCKED`, `ERR_IMAP_CONNECT`, timeout, throttled, UIDVALIDITY change, secret command failed, push network/auth failure |
 | `77` | permission: config not owned by you or group/world-readable, `ERR_IMAP_AUTH` |
-| `2` | a check ran and the answer is "no": `verify` not ok, `check` profile failed. Not an error: the output is the result |
+| `2` | a check ran and the answer is "no": `verify` not ok (for an address: any received email does not verify, or none was received, B11.5a), `check` profile failed. Not an error: the output is the result |
 | `1` | anything else (record write failure, missing content, `tar` missing, bundle verify failed) |
 
 When a sync folder carries an error the output is still printed and the code follows B4.1.

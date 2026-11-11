@@ -84,7 +84,10 @@ mailproof config add-account     # asks a few questions, shows the result, write
 mailproof                        # the menu: sync, list, show, verify, backup, ...
 mailproof sync --account personal
 mailproof list --with bob@example.org --after 2026-01-01
-mailproof verify 3f2a9c1d        # an id prefix of 8+ characters is enough; exit 2 means "does not verify"
+mailproof people                 # who is in your trail
+mailproof show b@example.com     # every email with that address: signed headers, trust, body, attachments
+mailproof verify b@example.com   # re-check them offline; exit 2 means a received email does not verify
+mailproof show 3f2a9c1d          # a record id (8+ characters) still works, for scripts
 mailproof watch                  # sync every 5 minutes in the foreground (run it under systemd --user)
 mailproof backup --with-content  # a git bundle of the proofs, plus a tar of the stored mail
 ```
