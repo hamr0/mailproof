@@ -22,13 +22,15 @@
     "test": "node --test 'tests/unit/**/*.test.js' 'tests/integration/**/*.test.js' tests/primitives-core.test.mjs tests/primitives-completeness.test.js",
     "typecheck": "tsc --noEmit",
     "build:types": "node -e \"require('node:fs').rmSync('types',{recursive:true,force:true})\" && tsc -p tsconfig.build.json",
-    "prepack": "npm run build:primitives && npm run build:cli-help && npm run build:types",
+    "prepack": "npm run build:primitives && npm run build:cli-help && npm run build:mcp-tools && npm run build:types",
     "check:lockfile": "node scripts/check-lockfile.mjs",
     "check:types": "node scripts/check-types.mjs",
     "build:primitives": "node scripts/gen-primitives.mjs",
     "check:primitives": "node scripts/gen-primitives.mjs --check",
     "build:cli-help": "node scripts/gen-cli-help.mjs",
-    "check:cli-help": "node scripts/gen-cli-help.mjs --check"
+    "check:cli-help": "node scripts/gen-cli-help.mjs --check",
+    "build:mcp-tools": "node scripts/gen-mcp-tools.mjs",
+    "check:mcp-tools": "node scripts/gen-mcp-tools.mjs --check"
   },
   "keywords": [
     "email",
@@ -65,6 +67,7 @@
     "bin/",
     "src/proof/",
     "src/cli/",
+    "src/mcp/",
     "primitives.json",
     "types/",
     "README.md",

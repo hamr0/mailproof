@@ -1,4 +1,4 @@
-# Push / PR gate: npm ci -> typecheck -> check:primitives -> check:cli-help -> build:types -> check:lockfile -> test.
+# Push / PR gate: npm ci -> typecheck -> check:primitives -> check:cli-help -> check:mcp-tools -> build:types -> check:lockfile -> test.
 # Follows the suite CI template (CI_TEMPLATE.md, core job + JS-library variant).
 # No lint step (tsc checkJs + strictNullChecks covers it). Tests are hermetic and
 # token-free: each builds its own tmp git repos with the runner's `git`, so no
@@ -33,6 +33,7 @@ jobs:
       # The `mailproof` CLI's help table (src/cli/help.generated.js) is generated from
       # primitives.json and the command table; the committed file must match.
       - run: npm run check:cli-help
+      - run: npm run check:mcp-tools
 
       # The shipped .d.ts are generated from the JSDoc and never committed
       # (git-ignored, built on pack/publish via prepack). Build them here so a
