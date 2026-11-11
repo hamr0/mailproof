@@ -518,3 +518,19 @@ POC script: [`poc/m0-header-recheck.js`](../../poc/m0-header-recheck.js) (throwa
 - **Deviations from B12 as written** (SPEC amended): `@mcp` is a separate block (above); `get`, `linked`, `proofParts` for an unknown id return `{ found: false }` as a normal result, like `rawEmail`; a folder-level `sync` error stays in that folder's `error` of a normal result (the library's own contract), only a thrown error is `isError`; `UsageError` is `ERR_BAD_ARGUMENT`; the `sync` result carries `ots` as the CLI's does; `verify` reads the record first (like the CLI), so an unknown id is `found: false`.
 - **Recommendation.** Ship as built. Tell adopters plainly: allow tools by name in the client, and do not rely on the hints to gate `forget` and `prune`.
 - **Affects:** SPEC B12 (status, B12.3 note, B12.4, B12.12), PRD §7 M3, usage guide, `mailproof.context.md`.
+
+## F31 — M4 step 1: what the stamp job costs (measured 2026-11-11)
+
+- **Question.** B13.1.4 left the cost of the unsealed-set scan and of a job "measured at build, like F25". Does the batch stamp job stay cheap enough to run inside `sync` every cadence, and does the suite ever reach a calendar?
+- **Setup.** A synthetic trail, `Mailproof#stamp()` on the built job (`src/proof/stamp.js`, `seal.js`), a spy `ots` binary.
+- **Measured.**
+
+  | Records in trail | Unsealed-set scan | First job (everything unsealed) | Second job (nothing new) |
+  |---|---|---|---|
+  | 5,000 | 30 ms | 1.6 s | 180 ms |
+  | 20,000 | 50 ms | 4.7 s | 325 ms |
+
+  The scan is one streamed `git ls-tree` plus one read of the manifests, outside every lock. The first job is dominated by hashing the files through one `git cat-file --batch` (about 0.2-0.3 ms a record). A second job with nothing new still reads the tree and the manifest chain, so it grows with the trail (180 ms to 325 ms) but writes no commit.
+- **Calendars.** The whole suite (829 tests) ran with a spy `ots` first on `PATH` that records each call and exits without a network call: the suite made no calendar call.
+- **Consequence.** The cost is a few seconds once per backlog and a few hundred milliseconds per cadence for a trail of tens of thousands of records, with the trail lock held only for file writes and a commit (B13.1.5). No change to the design; the caps `STAMP_MAX_ENTRIES` / `STAMP_MAX_MANIFESTS` stay.
+- **Affects:** SPEC B13.1.4, B13.1.14.
