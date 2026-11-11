@@ -835,7 +835,7 @@ As `mailproof-sync` (B4.1), plus one:
 | Code | Meaning |
 |---|---|
 | `0` | done (a capped or partial sync is still 0: `complete: false` in the output) |
-| `64` | bad usage: unknown command/flag, missing value, bad config, missing `--account`, missing `--yes`, unconfigured `backupRemote`, `export`/`mcp` not available |
+| `64` | bad usage: unknown command/flag, missing value, bad config, missing `--account`, missing `--yes`, unconfigured `backupRemote`, `export` not available, `mcp` run on a terminal |
 | `75` | try again later: `ERR_SYNC_LOCKED`, `ERR_TRAIL_LOCKED`, `ERR_IMAP_CONNECT`, timeout, throttled, UIDVALIDITY change, secret command failed, push network/auth failure |
 | `77` | permission: config not owned by you or group/world-readable, `ERR_IMAP_AUTH` |
 | `2` | a check ran and the answer is "no": `verify` not ok, `check` profile failed. Not an error: the output is the result |
