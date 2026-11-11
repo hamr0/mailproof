@@ -13,6 +13,9 @@ import { withTrailLock, trailLockFile, headOf } from '../proof/trail.js';
 
 const run = promisify(execFile);
 
+/** fs.link errors that mean "this filesystem has no hard links" (or no more of them): fall back to a copy. */
+const NO_HARD_LINKS = new Set(['EPERM', 'ENOTSUP', 'ENOSYS', 'EXDEV', 'EMLINK']);
+
 export const PUSH_WARNING = 'Proof records contain the signed headers of your mail: sender and recipient addresses, subjects, dates, and Message-IDs (never message bodies). Push only to a remote you trust to hold that.';
 
 /**
@@ -88,20 +91,44 @@ export async function backupCmd(a, ctx) {
       if (!(await exists(path.dirname(out)))) throw new UsageError(`--out: the directory ${p(path.dirname(out))} does not exist`);
     } else await fs.mkdir(path.dirname(out), { recursive: true, mode: 0o700 });
     if (await exists(out)) throw new UsageError(`--out: ${p(out)} already exists; a backup is never overwritten`);
+    const tarPath = out.replace(/\.bundle$/, '') + '.content.tar';
+    if (v['with-content'] && (await exists(tarPath))) throw new UsageError(`${p(tarPath)} already exists; a backup is never overwritten`);
 
-    // under the trail lock, so it cannot run during a prune swap
-    await withTrailLock(mp.root, trailLockFile(mp.trail), mp.lockTimeoutMs, async () => {
-      try { await run('git', ['bundle', 'create', out, '--all'], { cwd: mp.root }); }
-      catch (e) { throw Object.assign(new Error(`git bundle failed: ${String(/** @type {any} */ (e).stderr ?? e).trim().slice(0, 300)}`), { code: 'EX_BACKUP' }); }
-    });
-    try { await run('git', ['bundle', 'verify', out], { cwd: mp.root }); }
-    catch (e) {
-      await fs.rm(out, { force: true });
-      warn(ctx, `mailproof: the bundle did not verify and was removed: ${p(String(/** @type {any} */ (e).stderr ?? e).trim().slice(0, 300), { keepNewline: true })}`);
-      return EX_ERR;
+    // written and verified in a private 0700 directory next to `out`, then linked into place without overwriting:
+    // other people's mail-derived data is never readable by others while the bundle is made
+    const tmpDir = await fs.mkdtemp(path.join(path.dirname(out), '.mailproof-bundle-'));
+    let bundleBytes = 0;
+    try {
+      await fs.chmod(tmpDir, 0o700);
+      const tmpFile = path.join(tmpDir, path.basename(out));
+      // under the trail lock, so it cannot run during a prune swap
+      await withTrailLock(mp.root, trailLockFile(mp.trail), mp.lockTimeoutMs, async () => {
+        try { await run('git', ['bundle', 'create', tmpFile, '--all'], { cwd: mp.root }); }
+        catch (e) { throw Object.assign(new Error(`git bundle failed: ${String(/** @type {any} */ (e).stderr ?? e).trim().slice(0, 300)}`), { code: 'EX_BACKUP' }); }
+      });
+      try { await run('git', ['bundle', 'verify', tmpFile], { cwd: mp.root }); }
+      catch (e) {
+        warn(ctx, `mailproof: the bundle did not verify and was removed: ${p(String(/** @type {any} */ (e).stderr ?? e).trim().slice(0, 300), { keepNewline: true })}`);
+        return EX_ERR;
+      }
+      await fs.chmod(tmpFile, 0o600);
+      try { await fs.link(tmpFile, out); }
+      catch (e) {
+        const code = /** @type {any} */ (e)?.code;
+        if (code === 'EEXIST') throw new UsageError(`--out: ${p(out)} already exists; a backup is never overwritten`);
+        if (!NO_HARD_LINKS.has(code)) throw e;
+        // FAT/exFAT and some network mounts have no hard links: copy instead, still never overwriting
+        try { await fs.copyFile(tmpFile, out, fs.constants.COPYFILE_EXCL); }
+        catch (e2) {
+          if (/** @type {any} */ (e2)?.code === 'EEXIST') throw new UsageError(`--out: ${p(out)} already exists; a backup is never overwritten`);
+          throw e2;
+        }
+        await fs.chmod(out, 0o600).catch(() => {});   // FAT has no modes
+      }
+      bundleBytes = (await fs.stat(out)).size;
+    } finally {
+      await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
     }
-    const bundleBytes = (await fs.stat(out)).size;
-    await fs.chmod(out, 0o600).catch(() => {});
 
     /** @type {{ path: string, bytes: number } | null} */
     let content = null;
@@ -112,10 +139,14 @@ export async function backupCmd(a, ctx) {
     if (v['with-content']) {
       if (!(await exists(mp.contentDir)) || (await countFiles(mp.contentDir)) === 0) contentNote = 'the content store is off or empty: no content archive written';
       else {
-        const tarPath = out.replace(/\.bundle$/, '') + '.content.tar';
+        // created 0600 and exclusive before tar writes to it: other people's mail is never readable while it grows
+        try { await (await fs.open(tarPath, 'wx', 0o600)).close(); }
+        catch (e) {
+          if (/** @type {any} */ (e)?.code === 'EEXIST') throw new UsageError(`${p(tarPath)} already exists; a backup is never overwritten`);
+          throw e;
+        }
         try {
           await run('tar', ['-C', mp.contentDir, '-cf', tarPath, '.']);
-          await fs.chmod(tarPath, 0o600).catch(() => {});
           content = { path: tarPath, bytes: (await fs.stat(tarPath)).size };
         } catch (e) {
           await fs.rm(tarPath, { force: true }).catch(() => {});
@@ -133,14 +164,14 @@ export async function backupCmd(a, ctx) {
       const remote = /** @type {string} */ (account.backupRemote);
       try {
         const env = { ...process.env, GIT_TERMINAL_PROMPT: '0' };
-        const all = await run('git', ['push', '--porcelain', '--all', remote], { cwd: mp.root, env });
-        const tags = await run('git', ['push', '--porcelain', '--tags', remote], { cwd: mp.root, env });
+        const all = await run('git', ['push', '--porcelain', '--all', '--', remote], { cwd: mp.root, env });
+        const tags = await run('git', ['push', '--porcelain', '--tags', '--', remote], { cwd: mp.root, env });
         const refs = `${all.stdout}\n${tags.stdout}`.split('\n').filter((l) => /^[ +\-*=!]\t/.test(l)).map((l) => l.split('\t')[1]);
         pushed = { remote: redactUrl(remote), refs };
       } catch (e) {
         const err = String(/** @type {any} */ (e).stderr ?? /** @type {any} */ (e).message ?? e).trim();
         const kind = classifyPush(err);
-        warn(ctx, p(err.replace(/(https?:\/\/)[^/@\s]*@/gi, '$1***@'), { keepNewline: true }));
+        warn(ctx, p(err.replace(/([a-z][a-z0-9+.-]*:\/\/)[^/@\s]*@/gi, '$1***@'), { keepNewline: true }));
         if (kind === 'rejected') {
           warn(ctx, `mailproof: the remote refused the push (it holds history this trail no longer has, for example from before a prune). mailproof never forces a push. The remote keeps its history as an archive; push to a new remote, or force it yourself outside mailproof if you mean to replace it. The bundle ${p(out)} was written.`);
           code = EX_ERR;

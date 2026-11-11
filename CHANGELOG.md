@@ -21,6 +21,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > the first free clean minor, `1.3.0`.) See
 > [`archive/v1/docs/DESIGN.md`](archive/v1/docs/DESIGN.md) for the phasing.
 
+## [3.2.0] - 2026-11-11
+
+> **Upgrading from 3.1.0.** Configs that worked before are now refused: a `backupRemote` with credentials in the URL fails config validation, and a loose-mode `passFile` or `--pass-file` (group or other bits, or a foreign owner) is refused unread (exit 77). Fix with a git credential helper or ssh key, and `chmod 600` the password file. `backup --with-content` also refuses an existing `<out>.content.tar`.
+
+### Security
+- `backupRemote` with credentials in the URL (`https://user:token@host/...`) now fails config validation: a pasted token sat in the config and in git's argv. Use a git credential helper or an ssh key; `git@host:path` and `ssh://git@host/path` are unchanged.
+- A `passFile` (config) or `--pass-file` (`mailproof-sync`) with group or other permission bits, or owned by someone else, is now refused unread (exit 77), like the config file. Existing loose-mode password files need `chmod 600`.
+- `backup --with-content` creates `<out>.content.tar` with mode 0600 before `tar` writes to it (it was readable by others until the archive finished) and refuses an existing `<out>.content.tar` instead of overwriting or deleting it.
+- `backup` writes and verifies the git bundle in a private 0700 temp directory next to `--out` and links it into place 0600 (never overwriting), so it is never readable by others while it is written either.
+
+### Changed
+- `backup --push` masks credentials in git's stderr for every URL scheme, not only `https`.
+- The `forget` help text now says From, To, Cc or Reply-To (what SPEC B7.7 always said).
+- `list()` and `copies()` read the trail HEAD once per caught-up call instead of twice (one less `git rev-parse`).
+
+### Fixed
+- `backup --out` on a filesystem without hard links (FAT/exFAT, some network mounts) falls back to an exclusive copy (still never overwriting, 0600) instead of failing; `backupRemote` is passed to `git push` after `--`, so a value starting with `-` can never be read as an option.
+- `expireContent()` now also removes stray temp files in `att/` that a crashed attachment write left (SPEC B7 already promised this).
+- `mailproof status` with an unloadable SQLite add-on (`index unknown`) says to reinstall or rebuild better-sqlite3 instead of the stale "run `mailproof list`" hint.
+
 ## [3.1.0] - 2026-11-10
 
 ### Added

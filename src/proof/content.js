@@ -166,7 +166,7 @@ function readAttachment(dir, sha) {
 }
 
 /**
- * Ids that have a raw file in the store (also clears temp files a crashed writer left; caller holds the trail lock).
+ * Ids that have a raw file in the store (also clears raw/ and att/ temp files a crashed writer left; caller holds the trail lock).
  * @param {string} dir
  * @param {{ sweepTemp?: boolean }} [opts]
  * @returns {Promise<string[]>}
@@ -174,6 +174,15 @@ function readAttachment(dir, sha) {
 async function storedIds(dir, { sweepTemp = false } = {}) {
   /** @type {string[]} */
   const ids = [];
+  if (sweepTemp) {
+    let attShards = [];
+    try { attShards = await fs.readdir(path.join(dir, 'att')); } catch { /* no attachments yet */ }
+    for (const s of attShards) {
+      let files = [];
+      try { files = await fs.readdir(path.join(dir, 'att', s)); } catch { continue; }
+      for (const f of files) if (f.includes(TMP_MARK)) await fs.rm(path.join(dir, 'att', s, f), { force: true });
+    }
+  }
   let shards;
   try { shards = await fs.readdir(path.join(dir, 'raw')); } catch { return ids; }
   for (const s of shards) {

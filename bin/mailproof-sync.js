@@ -5,7 +5,7 @@
 
 import { parseArgs } from 'node:util';
 import { Mailproof } from '../src/index.js';
-import { UsageError, EX_USAGE, exitFor } from '../src/cli/errors.js';
+import { UsageError, EX_USAGE, exitFor, exitForError } from '../src/cli/errors.js';
 import { printable } from '../src/cli/printable.js';
 import { runSecretCommand, readSecretFile, passwordAuth, tokenAuth } from '../src/cli/secrets.js';
 
@@ -126,6 +126,6 @@ main().then((c) => { process.exitCode = c; }, (e) => {
     process.exitCode = EX_USAGE;
   } else {
     process.stderr.write(printable(`mailproof-sync: ${e?.code ? e.code + ': ' : ''}${e?.message ?? e}`) + '\n');
-    process.exitCode = exitFor(e?.code);
+    process.exitCode = exitForError(e);
   }
 });

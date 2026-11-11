@@ -25,7 +25,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { git, gitLines } from './git.js';
 import { parseRecordPath, assertTrailLayout } from './layout.js';
-import { RECORD_ID_RE, readRecord, withTrailLock, trailLockFile, trailIndexFile } from './trail.js';
+import { RECORD_ID_RE, readRecord, withTrailLock, trailLockFile, trailIndexFile, headOf } from './trail.js';
 import { LINKED_CHILDREN_DEFAULT, REPLY_FACTS_MAX } from './limits.js';
 import { participantsOf, linksOf, directParents, hasSignedThreading, ROLES } from './participants.js';
 import { verifyRecord } from './recheck.js';
@@ -75,18 +75,6 @@ function unavailable(cause) {
 
 /** @param {unknown} e @returns {boolean} A damaged index file (rebuilt from the records), as opposed to any other failure. */
 const isCorrupt = (e) => typeof e === 'object' && e !== null && 'code' in e && typeof e.code === 'string' && /^SQLITE_(CORRUPT|NOTADB)/.test(e.code);
-
-/**
- * The HEAD commit of the trail repo, or null when the trail does not exist yet (no repo, no commit). Never throws.
- * @param {string} root
- * @returns {Promise<string | null>}
- */
-async function headOf(root) {
-  try {
-    await fs.access(path.join(root, '.git')); // a trail dir inside some other repo must not resolve that repo's HEAD
-    return await git(root, ['rev-parse', '--verify', '-q', 'HEAD']);
-  } catch { return null; }
-}
 
 /**
  * Index row for a record, or null when it is not a usable record (not an object, or its `id` is not its file name).
@@ -342,14 +330,15 @@ async function query(cfg, fn, empty) {
   const { root, trail, lockTimeoutMs } = cfg;
   const file = path.join(path.dirname(root), trailIndexFile(trail));
   for (let attempt = 0; ; attempt++) {
-    if ((await headOf(root)) === null) return empty;
+    const head = await headOf(root);   // read once: the caught-up check below compares against it (the lock path re-reads)
+    if (head === null) return empty;
     await assertTrailLayout(root);
     /** @type {Db | null} */
     let d = null;
     try {
       d = await openFile(cfg, file);
       const s = session(d);
-      if (s.meta('head') !== (await headOf(root)) || s.meta('schema') !== String(SCHEMA)) {
+      if (s.meta('head') !== head || s.meta('schema') !== String(SCHEMA)) {
         await withTrailLock(root, trailLockFile(trail), lockTimeoutMs, async () => {
           const h = await headOf(root); // re-read under the lock: a writer may have moved it
           if (h !== null) await reconcile(s, cfg, h);

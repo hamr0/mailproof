@@ -310,7 +310,8 @@ async function capTrail() {
   await mp.record(a.raw, { direction: 'in', source: 'test' });
   return { dir, mp, cfg: { root: path.join(dir, 'default'), trail: 'default', lockTimeoutMs: 5000 } };
 }
-test('a rebuild and a catch-up stream git listings: no output cap, same rows', async () => {
+// The "no output cap" proof is tests/unit/git-lines.test.js (a listing past 16 MB); this pins the rows of both paths.
+test('a rebuild and a catch-up read through the streamed git listings and give the same rows', async () => {
   const { dir, mp, cfg } = await capTrail();
   const { listIndex } = await import('../../src/proof/index-db.js');
   assert.equal((await listIndex(cfg)).length, 1);
@@ -398,8 +399,24 @@ test('better-sqlite3 is imported by src/proof/index-db.js and by nothing else in
   const hits = [];
   const walk = (d) => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, e.name); if (e.isDirectory()) walk(p); else if (e.name.endsWith('.js') && /better-sqlite3/.test(fs.readFileSync(p, 'utf8'))) hits.push(path.relative(src, p)); } };
   walk(src);
-  // mailproof.js and the generated CLI help only quote the name in documentation text (the JSDoc `@fails` of list())
-  assert.deepEqual(hits.filter((h) => h !== path.join('proof', 'index-db.js') && h !== path.join('proof', 'mailproof.js') && h !== path.join('cli', 'help.generated.js')), []);
+  // mailproof.js, the generated CLI help and the status hint only quote the name in text (the JSDoc `@fails` of list(); the `unknown` index hint)
+  assert.deepEqual(hits.filter((h) => h !== path.join('proof', 'index-db.js') && h !== path.join('proof', 'mailproof.js') && h !== path.join('cli', 'help.generated.js') && h !== path.join('cli', 'status.js')), []);
   const importing = hits.filter((h) => /(?:from\s+|import\()\s*['"]better-sqlite3['"]/.test(fs.readFileSync(path.join(src, h), 'utf8')));
   assert.deepEqual(importing, [path.join('proof', 'index-db.js')]);
+});
+
+test('a caught-up list() reads the trail HEAD once (one rev-parse spawn), not twice', async () => {
+  const dir = makeTmpDir('mp-ix-');
+  const { mp } = await buildTrail(dir);
+  await mp.list();   // the index is built and caught up
+  const bin = makeTmpDir('mp-ix-gitshim-');
+  const log = path.join(bin, 'calls.log');
+  const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
+  fs.writeFileSync(path.join(bin, 'git'), `#!/bin/sh\necho "$1" >> "${log}"\nexec "${realGit}" "$@"\n`, { mode: 0o755 });
+  const oldPath = process.env.PATH;
+  process.env.PATH = `${bin}:${oldPath}`;
+  try { await mp.list({ limit: 1 }); } finally { process.env.PATH = oldPath; }
+  const calls = fs.existsSync(log) ? fs.readFileSync(log, 'utf8').split('\n').filter(Boolean) : [];
+  assert.equal(calls.filter((c) => c === 'rev-parse').length, 1, `git calls: ${calls.join(',')}`);
+  await mp.close();
 });

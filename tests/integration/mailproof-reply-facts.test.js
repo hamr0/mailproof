@@ -82,6 +82,17 @@ test('direct reply rule: the LAST References entry counts (no In-Reply-To), an e
   assert.deepEqual(ids(await mp.replyFacts({ messageId: '<other@owner.example>' })), [(await mp.list()).find((x) => x.message_id === '<early@beta.example>').id]);
 });
 
+test('dual match: In-Reply-To names Y and the last References entry names the request; replyFacts of each returns the reply once', async () => {
+  const { mp, rec, mk } = await buildThread();
+  const sign = ['from', 'to', 'subject', 'date', 'message-id', 'in-reply-to', 'references'];
+  const dual = await mk('beta.example', { from: 'bob@beta.example', messageId: '<dual@beta.example>', inReplyTo: '<y@owner.example>', references: '<old@owner.example> <req@owner.example>', headerList: sign });
+  const d = await rec('dual', dual.raw, 'in', 7);
+  const viaRequest = await mp.replyFacts({ messageId: REQ });
+  const viaY = await mp.replyFacts({ messageId: '<y@owner.example>' });
+  assert.equal(viaRequest.filter((x) => x.recordId === d.id).length, 1);
+  assert.deepEqual(ids(viaY), [d.id]);
+});
+
 test('copies of one reply are separate bundles with the same messageKey; ties on captured go by id', async () => {
   const { mp, rec, mails, r } = await buildThread();
   const relayed = await rec('relay', Buffer.concat([Buffer.from('X-Relay: hop1\r\n'), mails.signed.raw]), 'in', 7);

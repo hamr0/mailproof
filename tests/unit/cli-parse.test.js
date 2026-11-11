@@ -84,7 +84,7 @@ test('secrets: Google app-password spaces removed, any other password only trimm
   assert.deepEqual(passwordAuth('  p4ss word  '), { pass: 'p4ss word' });
   assert.throws(() => passwordAuth('  '), UsageError);
   const dir = makeTmpDir('mp-cli-sec-');
-  fs.writeFileSync(path.join(dir, 'pw'), 'from-file\nsecond\n');
+  fs.writeFileSync(path.join(dir, 'pw'), 'from-file\nsecond\n', { mode: 0o600 });
   assert.deepEqual(await resolveAuth({ passFile: path.join(dir, 'pw') }), { pass: 'from-file' });
   assert.deepEqual(await resolveAuth({ passCommand: `${process.execPath} -e "console.log('from-cmd'); console.log('x')"` }), { pass: 'from-cmd' });
   assert.deepEqual(await resolveAuth({ accessTokenCommand: `${process.execPath} -e "console.log('tok')"` }), { accessToken: 'tok' });
@@ -118,4 +118,16 @@ test('backup helpers: credentials in a URL are hidden, a failed push is classifi
   assert.equal(classifyPush('git@host: Permission denied (publickey).\nfatal: Could not read from remote repository.'), 'network');
   assert.equal(classifyPush('fatal: something else'), 'other');
   assert.equal(defaultBundlePath('/s', 'personal', new Date('2026-11-10T10:15:30.123Z')), path.join('/s', 'backups', 'personal', 'personal-20261110T101530Z.bundle'));
+});
+
+test('passFile: a file with group or other bits is refused with a PermError (not read); mode 0600 is read', async () => {
+  const dir = makeTmpDir('mp-cli-secmode-');
+  const f = path.join(dir, 'pw');
+  fs.writeFileSync(f, 'hunter2-file\n', { mode: 0o600 });
+  fs.chmodSync(f, 0o644);
+  await assert.rejects(resolveAuth({ passFile: f }), (e) => e instanceof PermError && /mode 0600/.test(e.message) && !/hunter2/.test(e.message));
+  fs.chmodSync(f, 0o640);
+  await assert.rejects(resolveAuth({ passFile: f }), PermError);
+  fs.chmodSync(f, 0o600);
+  assert.deepEqual(await resolveAuth({ passFile: f }), { pass: 'hunter2-file' });
 });

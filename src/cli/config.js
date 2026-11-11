@@ -210,7 +210,15 @@ export function validateConfig(json, env) {
     }
     /** @type {string | null} */
     let backupRemote = null;
-    if (raw.backupRemote !== undefined && typed('backupRemote', 'string')) backupRemote = /** @type {string} */ (raw.backupRemote).trim();
+    if (raw.backupRemote !== undefined && typed('backupRemote', 'string')) {
+      backupRemote = /** @type {string} */ (raw.backupRemote).trim();
+      // secrets by reference only: a token or password in the URL sits in the config and in git's argv; ssh://git@host (a login name) is fine
+      const m = /^([a-z][a-z0-9+.-]*):\/\/([^/@\s]*)@/i.exec(backupRemote);
+      if (m && (m[2].includes(':') || !/^(git\+)?ssh$/i.test(m[1]))) {
+        problems.push(`${at}.backupRemote: must not carry credentials; use a git credential helper or an ssh key (git@host:path, ssh://git@host/path)`);
+        backupRemote = null;
+      }
+    }
     if (trailDir) {
       const key = `${path.resolve(trailDir)}\0${trail}`;
       const other = trails.get(key);
@@ -235,12 +243,15 @@ export async function readTrustedFile(file, { euid } = {}) {
   let real;
   try { real = await fs.realpath(file); }
   catch { throw new UsageError(`no config file at ${file}; create one with "mailproof config add-account" or see "mailproof config template"`); }
-  const st = await fs.stat(real);
-  const me = euid === undefined ? (typeof process.geteuid === 'function' ? process.geteuid() : null) : euid;
-  if ((me !== null && st.uid !== me) || (st.mode & 0o077) !== 0) {
-    throw new PermError(`config ${file} must be owned by you and mode 0600 (chmod 600 ${file})`);
-  }
-  return fs.readFile(real, 'utf8');
+  const fh = await fs.open(real, 'r');   // check and read the same open file: a swap between the two cannot slip past
+  try {
+    const st = await fh.stat();
+    const me = euid === undefined ? (typeof process.geteuid === 'function' ? process.geteuid() : null) : euid;
+    if ((me !== null && st.uid !== me) || (st.mode & 0o077) !== 0) {
+      throw new PermError(`config ${file} must be owned by you and mode 0600 (chmod 600 ${file})`);
+    }
+    return await fh.readFile('utf8');
+  } finally { await fh.close(); }
 }
 
 /**

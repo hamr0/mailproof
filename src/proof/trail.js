@@ -264,12 +264,15 @@ async function inHead(root, rel) {
 }
 
 /**
- * The trail's HEAD commit, or null when there is no repo or no commit. Never throws.
+ * The trail's own HEAD commit, or null when there is no repo of its own or no commit. Never throws. The one definition (index, sync, content, prune use it).
  * @param {string} root
  * @returns {Promise<string | null>}
  */
 async function headOf(root) {
-  try { return (await git(root, ['rev-parse', '--verify', '-q', 'HEAD'])) || null; } catch { return null; }
+  try {
+    await fs.access(path.join(root, '.git')); // a trail dir inside some other repo must not resolve that repo's HEAD
+    return (await git(root, ['rev-parse', '--verify', '-q', 'HEAD'])) || null;
+  } catch { return null; }
 }
 
 /**

@@ -31,7 +31,7 @@ const STRIPPER = 'mailproof-quote/1';
  */
 /** @typedef {{ ok: true, stripped: Stripped } | { ok: false, limit: string }} Extracted */
 
-/** The reply-text path for a stripper version (the `/` of the version string becomes `-`): see `replyPath` in trail.js. */
+/** The reply-text path for a stripper version (the `/` of the version string becomes `-`): see `replyPath` in layout.js. */
 const replyTextPath = (/** @type {string} */ id, stripper = STRIPPER) => replyPath(id, stripper.replace('/', '-'));
 
 // ---- minimal header / MIME parsing (the message is a Latin-1 string: one char per byte) ------------------------

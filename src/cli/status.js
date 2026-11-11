@@ -61,7 +61,9 @@ async function statusOf(account, ctx) {
 /** @param {Record<string, any>} s @returns {string} */
 function statusText(s) {
   const r = s.records;
-  const hint = s.index === 'unreadable' ? 'the index cannot be opened: check permissions on the trail directory; if it is writable, `mailproof list` rebuilds it' : 'index stale; run `mailproof list` for in/out and dates';
+  const hint = s.index === 'unreadable' ? 'the index cannot be opened: check permissions on the trail directory; if it is writable, `mailproof list` rebuilds it'
+    : s.index === 'unknown' ? 'the SQLite add-on (better-sqlite3) cannot load, so `mailproof list` fails too: reinstall or rebuild it (npm rebuild better-sqlite3)'
+      : 'index stale; run `mailproof list` for in/out and dates';
   const rec = r === null ? 'no trail yet' : r.error ? `unavailable (${p(r.error)})`
     : r.totalSource === 'git' ? `${r.total} files at HEAD (${s.index === 'absent' ? 'no index yet; run `mailproof list` for in/out and dates' : hint})`
       : `${r.total} (${r.in} in, ${r.out} out), oldest ${r.oldest?.slice(0, 10) ?? '-'}, newest ${r.newest?.slice(0, 10) ?? '-'}`;

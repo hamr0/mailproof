@@ -11,7 +11,7 @@ import {
   MAX_TOTAL_BYTES, SYNC_UID_WINDOW, SYNC_MAX_MESSAGES, SYNC_MAX_BYTES, SYNC_MAX_MESSAGE_BYTES, SYNC_MAX_MS,
   SYNC_CONNECT_MS, SYNC_SOCKET_MS, SYNC_FETCH_MS, SYNC_MAX_RECONNECTS, SYNC_RECONNECT_BACKOFF_MS,
 } from './limits.js';
-import { withTrailLock, syncLockFile, SYNC_LOCK, serialise } from './trail.js';
+import { withTrailLock, syncLockFile, SYNC_LOCK, serialise, headOf } from './trail.js';
 import { git } from './git.js';
 
 /** Empty UID windows between cursor writes (each write spawns git and fsyncs). */
@@ -177,16 +177,6 @@ async function readCursorFile(file) {
 }
 
 /**
- * The trail's git HEAD, or null when it has no commits (or is not initialised yet).
- * @param {string} root
- * @returns {Promise<string | null>}
- */
-async function trailHead(root) {
-  try { await fs.access(path.join(root, '.git')); } catch { return null; } // never pick up an enclosing repo's HEAD
-  try { return await git(root, ['rev-parse', '--verify', '-q', 'HEAD']) || null; } catch { return null; }
-}
-
-/**
  * Is the cursor file consistent with the trail? False when the trail was restored from an older backup or replaced
  * (the file's `head` is not the current HEAD or an ancestor of it) or is now empty: the cursor could then be ahead
  * of the trail. A file written while the trail had no commits (`head: null`) is consistent with any trail.
@@ -195,7 +185,7 @@ async function trailHead(root) {
  * @returns {Promise<boolean>}
  */
 async function cursorMatchesTrail(root, data) {
-  const now = await trailHead(root);
+  const now = await headOf(root);
   if (data.head === null) return true; // written while the trail had no commits: nothing it points at can be missing
   if (now === null || typeof data.head !== 'string' || !/^[0-9a-f]{40,64}$/.test(data.head)) return false;
   try { await git(root, ['merge-base', '--is-ancestor', data.head, now]); return true; } catch { return false; }
@@ -402,7 +392,7 @@ async function runSync(host, rawOpts, deps) {
       const acct = (cur.data.accounts[account] ??= {});
       acct[folder] = { uidvalidity, last_uid: lastUid, updated: new Date(clock()).toISOString() };
       /** @type {CursorFile} */
-      const out = { v: 1, head: await trailHead(host.root), accounts: {} };
+      const out = { v: 1, head: await headOf(host.root), accounts: {} };
       for (const [a, folders] of Object.entries(cur.data.accounts)) out.accounts[a] = folders;
       try { await writeFile(file, serialise(out)); }
       catch (err) { throw new TrailFailure(typeof (/** @type {any} */ (err))?.code === 'string' ? /** @type {any} */ (err).code : 'ERR_SYNC_CURSOR', clean(/** @type {any} */ (err)?.message)); }
