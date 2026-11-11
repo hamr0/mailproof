@@ -328,7 +328,7 @@ The final field list and the closed sets are in [SPEC B10.3](SPEC.md). In short:
 - **Library** (exists).
 - **One `mailproof` CLI** (SPEC B11). Run with no arguments it shows a readline menu (stdlib, no TUI framework) that prompts for each action's parameters; every menu action is also a subcommand with flags for scripts and cron: `sync`, `watch` (a foreground command, no daemon; run it under systemd --user or cron), `list`, `show`, `verify`, `replies`, `check`, `forget`, `prune`, `backup`, `status`, `update`, `config`, `export`, `mcp`. With more than one account every command needs `--account`; `forget` and `prune` need `--yes` (menu: type the account name). `export` depends on M6's proof bundle (§7 M6). The existing `mailproof-sync` bin keeps working.
 - **Config:** one JSON file, `~/.config/mailproof/config.json` (XDG; JSON so there is no new dependency), with `accounts` keyed by account name. Per-account fields such as `user`, `host`, `trailDir`, `trail`, `passCommand` | `passFile` | `accessTokenCommand` (never a plain password), `content` (`store`, `attachments`, `days` 730), `ots`, `backupRemote`. Refused unless owned by the user and mode 0600. Runtime state (last runs, logs, backups) lives in `~/.local/state/mailproof/`, never in the config.
-- **MCP server inside the same package** (`mailproof mcp`): stdio JSON-RPC written with the stdlib, no MCP SDK dependency. Proven first by a POC against a real MCP client (Claude Code). Switch to the SDK only if the protocol work proves larger; that needs the dependency checklist and an owner decision. Full toolset with tool annotations, tool names = library method names, one account per server, and the human gate for the destructive tools: [SPEC B12](SPEC.md), decisions-log "M3 MCP: stdlib, method names, full toolset with annotations" (2026-11-11; supersedes "starts read-only"). No export or send through MCP.
+- **MCP server inside the same package** (`mailproof mcp`): stdio JSON-RPC written with the stdlib, no MCP SDK dependency. Proven first by a POC against a real MCP client (Claude Code). Switch to the SDK only if the protocol work proves larger; that needs the dependency checklist and an owner decision. Full toolset, all always listed, with tool annotations the client scopes by; tool names = library method names; one server for all accounts (an `account` argument); preview-then-`confirm` for the destructive tools: [SPEC B12](SPEC.md), decisions-log "M3 MCP: stdlib, method names, full toolset with annotations" (2026-11-11; supersedes "starts read-only"). No export or send through MCP.
 - **One source of truth:** CLI help, MCP tool descriptions and `primitives.json` all come from the same JSDoc.
 - **No new runtime dependency for M3.**
 
@@ -347,7 +347,7 @@ POC first where the mechanism is unproven: `replyFacts` on real replies, the std
 
 #### Open (not decided)
 
-- **MCP forks** (default tier, destructive gate, file inputs): SPEC B12.10; the write tools and their gate are decided there.
+- **MCP:** decided (SPEC B12, 2026-11-11); only confirmations remain (hint choices, B12.10). Elicitation as a real human gate is a later POC.
 - **`watch` mechanism:** interval vs IMAP IDLE. A mechanism choice, decided at build.
 - **Pair/thread export:** whether a minimal one ships in M3 or waits for M6.
 - **Provider sampling (evidence task, not done):** sample one reply each from Yahoo, iCloud, Proton and Fastmail to see whether they sign In-Reply-To/References. Signing is per-provider configuration; only Gmail and Microsoft are measured.
