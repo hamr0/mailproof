@@ -106,13 +106,6 @@ export async function configCmd(a, ctx) {
 }
 
 /** @param {Args} a @param {Ctx} ctx @returns {Promise<number>} */
-export async function exportCmd(a, ctx) {
-  void a;
-  warn(ctx, 'mailproof: export needs M6 (the proof bundle); not available in this version');
-  return EX_USAGE;
-}
-
-/** @param {Args} a @param {Ctx} ctx @returns {Promise<number>} */
 export async function mcpCmd(a, ctx) {
   const stdin = ctx.stdin;
   if (!stdin || /** @type {{ isTTY?: boolean }} */ (stdin).isTTY) {

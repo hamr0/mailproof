@@ -128,8 +128,21 @@ export const COMMANDS = {
     primitive: 'Mailproof#stamp', summary: 'seal new mail now (OpenTimestamps)', account: true, positional: '', min: 0, max: 0, flags: {},
   },
   export: {
-    summary: 'needs M6 (not available yet)', account: false, positional: '', min: 0, max: 0, flags: {},
-    when: 'Reserved for the proof bundle (M6). Not available in this version.', fails: 'Always exits 64.',
+    primitive: 'Mailproof#export', summary: 'proof bundle for a counterparty', account: true, positional: '', min: 0, max: 0,
+    flags: {
+      with: { type: 'string', arg: '<a,b>', help: 'required: the exact addresses, comma separated; an email is included when it names any of them' },
+      after: { type: 'string', arg: '<date>', help: 'captured on or after this date' },
+      before: { type: 'string', arg: '<date>', help: 'captured before this date' },
+      out: { type: 'string', arg: '<path>', help: 'the new directory (default ./mailproof-bundle-<account>-<UTC date and time>; with --tar, the .tar file)' },
+      tar: { type: 'boolean', help: 'also pack the bundle into one .tar file for mailing (the tar binary)' },
+    },
+  },
+  'verify-bundle': {
+    primitive: 'verifyBundle', summary: 'check a bundle you were sent', account: false, positional: '<dir>', min: 1, max: 1,
+    flags: {
+      expect: { type: 'string', arg: '<sha256>', help: 'the bundle sha256 its owner told you by another channel: fails when bundle.json is not the one they made' },
+      strict: { type: 'boolean', help: 'also fail unless every email is DKIM-verified and every seal is anchored (also fails when ots is missing)' },
+    },
   },
   mcp: {
     summary: 'serve the trail to an MCP client (stdio)', account: false, positional: '', min: 0, max: 0,

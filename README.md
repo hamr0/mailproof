@@ -69,9 +69,9 @@ mailproof reads mail and writes proofs locally. Everything that goes over the ne
 
 ## Five ways to use it
 
-1. **Library**: `check`, `record`, `verify`, `matchBody`, `matchFile`, `list`, `copies`, `replyText`, `replyFacts`, `counterparties`, `linked`, `checkProfile`, `proofParts`, `rawEmail`, `attachment`, `expireContent`, `forget`, `prune`, `upgradeStamps`. Use it in your own pipeline, for example a Postfix pipe.
+1. **Library**: `check`, `record`, `verify`, `matchBody`, `matchFile`, `list`, `copies`, `replyText`, `replyFacts`, `counterparties`, `linked`, `checkProfile`, `proofParts`, `rawEmail`, `attachment`, `expireContent`, `forget`, `prune`, `upgradeStamps`, `stamp`, `export`, plus the standalone `verifyRecord` and `verifyBundle`. Use it in your own pipeline, for example a Postfix pipe.
 2. **IMAP capture**: `mp.sync({...})` reads a mailbox (Gmail first) read-only and records every message. Run it again to pick up new mail.
-3. **The `mailproof` command**: run it for a menu, or use its subcommands (`sync`, `watch`, `list`, `show`, `verify`, `replies`, `check`, `forget`, `prune`, `backup`, `status`, `stamp`, ...) in scripts. Your mailboxes live in one config file and the password is always read from a command or a file you name, never typed or stored. `mailproof-sync` stays for one sync run under cron or a systemd timer.
+3. **The `mailproof` command**: run it for a menu, or use its subcommands (`sync`, `watch`, `list`, `show`, `verify`, `replies`, `check`, `forget`, `prune`, `backup`, `status`, `stamp`, `export`, `verify-bundle`, ...) in scripts. Your mailboxes live in one config file and the password is always read from a command or a file you name, never typed or stored. `mailproof-sync` stays for one sync run under cron or a systemd timer.
 4. **MCP server**: `mailproof mcp` gives Claude Code or any MCP client 22 tools over your accounts (`claude mcp add mailproof -- mailproof mcp`). Known limit: the read-only/destructive hints are advisory and Claude Code does not act on them, so scope by tool name (or one server per account with `--account`); `forget` and `prune` only preview until called with `confirm`, the only server-side guard. [Usage guide](docs/product/usage-guide.md#ai-agents-the-mcp-server-mailproof-mcp).
 5. **AI agents**: `primitives.json` is a machine-readable menu of every verb (`when`, `import`, `signature`, `fails`, `example`), generated from source. Also on unpkg: `unpkg.com/mailproof/primitives.json`. Hand your assistant `mailproof.context.md` for the full contract.
 
@@ -88,6 +88,23 @@ mailproof backup --with-content  # a git bundle of the proofs, plus a tar of the
 ```
 
 `mailproof help` lists everything. How-to, systemd and cron examples, restoring a backup: [usage guide](docs/product/usage-guide.md#the-mailproof-command).
+
+### Handing a counterparty the proof (`export`, `verify-bundle`)
+
+```bash
+mailproof stamp --account personal                       # seal and upgrade first, so the proofs are as far along as they can be
+mailproof export --account personal --with bob@example.org --after 2026-01-01
+#   wrote ./mailproof-bundle-personal-20261112-093000 (41 records, ...)
+#   bundle sha256 3f2a...  (tell the recipient this out of band)
+mailproof verify-bundle ./mailproof-bundle-personal-20261112-093000 --expect 3f2a...   # on the other side, with no account
+```
+
+`export` writes a directory (`--tar` also packs it into one file) of the signed headers, signatures, archived keys and seals of every email that names any of the addresses you give, on From, To, Cc or Reply-To. It holds no email bodies and no attachments. `verify-bundle` re-checks every signature offline, that the files are the ones listed, the chain of seal manifests, and each seal with `ots info` (it never contacts a calendar or a Bitcoin node). Be clear about what that proves:
+
+- **It proves**, per email, that the sender's domain signed those header lines, and that the record existed no later than its seal. **Anchored** means the proof is for exactly these bytes and carries a Bitcoin block attestation; the block header is *not* checked against Bitcoin (run `ots verify` yourself for that). **Pending** means the seal is not in a block yet; `mailproof stamp` and export again.
+- **It does not prove completeness.** You chose the selection; nothing shows that no other email between you exists. The seal manifests list other records as bare hashes, so a recipient who holds an email you left out can notice if it was sealed in a batch the bundle shows. That is evidence, not a guarantee.
+- **Privacy.** A bundle names every person you wrote to or heard from in it, and the subjects. Its manifests also reveal that other records exist (how many, and when each batch was sealed), never what they were. It is written 0700/0600; sharing it is your act.
+- `verify-bundle` is lenient by default (an unsigned email or a pending seal is reported, not a failure); `--strict` fails unless every email is DKIM-verified and every seal is anchored. `--expect <sha256>` also fails when `bundle.json` is not the one you were told about.
 
 ## What you can rely on
 

@@ -279,12 +279,62 @@ export const HELP = Object.freeze({
       "flags": []
     },
     "export": {
-      "usage": "mailproof export",
-      "summary": "needs M6 (not available yet)",
-      "when": "Reserved for the proof bundle (M6). Not available in this version.",
-      "fails": "Always exits 64.",
+      "usage": "mailproof export [flags]",
+      "summary": "proof bundle for a counterparty",
+      "when": "Use to hand a counterparty the proof of what you exchanged with them (or with several of their addresses): a directory of the signed headers, signatures, archived keys and seals of every email that names one of `with` on From, To, Cc or Reply-To (a union), optionally within `after` (inclusive) and `before` (exclusive) capture time. Not the emails: no bodies or attachments. The recipient runs `verifyBundle` (or `mailproof verify-bundle`) with nothing of yours. It proves each record's signatures and seal, NOT completeness: you chose what to include. Run `stamp()` first so the seals are anchored; it never stamps or runs `ots` itself. Tell the recipient `bundle_sha256` by another channel so they can pass `--expect`.",
+      "fails": "Rejects with `ERR_EXPORT_EMPTY` (nothing matches; nothing written), `ERR_EXPORT_TOO_BIG` (over 10,000 records or 256 MiB: narrow with `after`/`before`), `ERR_EXPORT_EXISTS` (`out` exists and is not an empty directory you own, or is inside the trail, the content store or another bundle; an export never overwrites), `ERR_EXPORT_REWRITTEN` (the trail was pruned or restored while it read: retry), `ERR_EXPORT_SELF_CHECK` (the bundle did not verify, so it was not delivered: the trail is damaged), `ERR_EXPORT_TAR` (`tar` missing or failed), `ERR_STAMP_CHAIN` (a manifest chain that cannot be walked), `ERR_TRAIL_LOCKED` or `ERR_INDEX_UNAVAILABLE` (from the index catch-up), `ERR_TRAIL_LAYOUT`, or a `TypeError` for a bad option (including an `out` whose parent directory does not exist). Read-only on the trail: it holds no lock while reading, makes no commit, runs no `ots` and uses no network; the bundle is built in a private temp directory next to `out` (mode 0700/0600) and moved into place, so a failure leaves nothing at `out`.",
+      "account": true,
+      "flags": [
+        {
+          "name": "with",
+          "type": "string",
+          "arg": "<a,b>",
+          "help": "required: the exact addresses, comma separated; an email is included when it names any of them"
+        },
+        {
+          "name": "after",
+          "type": "string",
+          "arg": "<date>",
+          "help": "captured on or after this date"
+        },
+        {
+          "name": "before",
+          "type": "string",
+          "arg": "<date>",
+          "help": "captured before this date"
+        },
+        {
+          "name": "out",
+          "type": "string",
+          "arg": "<path>",
+          "help": "the new directory (default ./mailproof-bundle-<account>-<UTC date and time>; with --tar, the .tar file)"
+        },
+        {
+          "name": "tar",
+          "type": "boolean",
+          "help": "also pack the bundle into one .tar file for mailing (the tar binary)"
+        }
+      ]
+    },
+    "verify-bundle": {
+      "usage": "mailproof verify-bundle <dir> [flags]",
+      "summary": "check a bundle you were sent",
+      "when": "Use on the recipient's side to check a pair bundle made by `mp.export()` with no trail, index, content store, account or network: it re-checks every record's DKIM signature offline from the record and its archived key, that the files are the ones the bundle lists, the manifest chain and each OpenTimestamps seal (`ots info`, local). `anchored` means the proof is for these bytes and carries a Bitcoin block attestation; the block header is NOT checked against Bitcoin (run `ots verify` for that). It never proves completeness: the owner chose what is in the bundle.",
+      "fails": "Resolves for every bundle it can examine (a missing, damaged, tampered or hostile bundle is `ok: false` with the failed checks named, never a rejection); rejects with a `TypeError` for a `dir` that is not a string or not an existing directory, or a bad `expect`/`opts`. Writes nothing; never runs `ots upgrade` or `ots verify`; no network.",
       "account": false,
-      "flags": []
+      "flags": [
+        {
+          "name": "expect",
+          "type": "string",
+          "arg": "<sha256>",
+          "help": "the bundle sha256 its owner told you by another channel: fails when bundle.json is not the one they made"
+        },
+        {
+          "name": "strict",
+          "type": "boolean",
+          "help": "also fail unless every email is DKIM-verified and every seal is anchored (also fails when ots is missing)"
+        }
+      ]
     },
     "mcp": {
       "usage": "mailproof mcp [flags]",

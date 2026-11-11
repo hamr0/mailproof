@@ -229,10 +229,10 @@ test('update: prints the command and never runs npm without --run; --run runs ex
   assert.equal((await sp(['update', '--run'], { env: { ...env, FAKE_NPM_EXIT: '3' } })).code, 1, 'npm failing is exit 1');
 });
 
-test('export is 64 with its message; mcp needs a stdin stream (64 without), and ends 0 when it closes', async () => {
+test('export needs --with (64); mcp needs a stdin stream (64 without), and ends 0 when it closes', async () => {
   const e = await sp(['export']);
   assert.equal(e.code, 64);
-  assert.match(e.stderr, /export needs M6/);
+  assert.match(e.stderr, /export needs --with/);
   const m = await world.run(['mcp']);   // no stdin at all (in process): not a stdio server run
   assert.equal(m.code, 64);
   assert.match(m.stderr, /mailproof mcp is a stdio server: register it in your MCP client/);

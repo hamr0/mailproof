@@ -9,6 +9,7 @@ import { loadCtxConfig, print, warn } from './session.js';
 import { summaryOf } from './help.js';
 import { defaultBundlePath, PUSH_WARNING, redactUrl } from './backup.js';
 import { version } from './misc.js';
+import { defaultBundleOut } from './bundle.js';
 import { stateDir } from './state.js';
 
 /** @typedef {import('./session.js').Ctx} Ctx */
@@ -151,7 +152,15 @@ export async function runMenu(ctx, exec, opts = {}) {
         const action = await ask({ label: 'Action', example: 'path, validate, template, add-account', def: 'validate', validate: (s) => parseChoice(s, 'Action', 'path', 'validate', 'template', 'add-account') });
         await go(['config', action]);
       },
-      export: async () => { await go(['export']); },
+      export: async () => {
+        const who = await ask({ label: 'With', example: 'exact addresses, comma separated, e.g. bob@example.org,bob@work.example', validate: (s) => { s.split(',').map((x) => parseAddress(x.trim(), 'With')); return s; } });
+        const after = await askDate('After', '--after', 'date, e.g. 2026-01-01, empty = from the beginning');
+        const before = await askDate('Before', '--before', 'date, e.g. 2026-08-19, empty = until now');
+        const dflt = defaultBundleOut(account, (ctx.deps.now ?? (() => new Date()))(), false);
+        const outPath = await ask({ label: 'Write the bundle to', example: 'a new directory', def: dflt });
+        const tar = await confirm(p, 'Also pack it into one .tar file for mailing?');
+        await go(['export', '--with', who, ...(after ? ['--after', after] : []), ...(before ? ['--before', before] : []), ...(outPath === dflt ? [] : ['--out', outPath]), ...(tar ? ['--tar'] : [])]);
+      },
       stamp: async () => { await go(['stamp']); },
     };
 

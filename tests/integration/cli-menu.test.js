@@ -22,7 +22,7 @@ test('the menu lists the 14 items with their descriptions and quits on q; no ter
   assert.equal(r.code, 0);
   assert.match(r.stdout, /^\nmailproof \d+\.\d+\.\d+   account: test\n/);
   for (const [n, label] of [[1, 'Sync now'], [2, 'Watch'], [3, 'List emails'], [8, 'Forget'], [9, 'Prune'], [10, 'Backup'], [12, 'Update mailproof'], [14, 'Export']]) assert.match(r.stdout, new RegExp(`^ ?${n}\\) ${label}`, 'm'));
-  assert.match(r.stdout, /14\) Export +needs M6/);
+  assert.match(r.stdout, /14\) Export +proof bundle for a counterparty/);
   assert.match(r.stdout, / h\) Help      q\) Quit/);
   assert.ok(!r.stdout.includes('[b: change]'), 'one account: nothing to change');
   const noTty = await w.run([], { interactive: false, input: keys('q') });
@@ -83,8 +83,9 @@ test('Show, Verify, Replies, Check, Status run the subcommand code (same output,
   assert.match(chk.stdout, /^pass$/m);
   const st = await menu(w, keys('11', '', 'q'));
   assert.match(st.stdout, /^test\n  trail /m);
-  const ex = await menu(w, keys('14', '', 'q'));
-  assert.match(ex.stderr, /export needs M6/);
+  const ex = await menu(w, keys('14', 'alice@alpha.example', '', '', path.join(makeTmpDir('mp-cli-menu-ex-'), 'b'), 'n', '', 'q'));
+  assert.match(ex.stdout, /^wrote .*\(\d+ records/m);
+  assert.match(ex.stdout, /^bundle sha256 [0-9a-f]{64}/m);
   const h = await menu(w, keys('h', 'q'));
   assert.match(h.stdout, /^Usage: mailproof \[command\]/m);
 });

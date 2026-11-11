@@ -778,7 +778,7 @@ mailproof 3.x   account: personal  [b: change]
 11) Status                counts, last sync, storage
 12) Update mailproof      show the upgrade command
 13) Config                show path, validate, template
-14) Export                not available until M4 (B13)
+14) Export                proof bundle for a counterparty
  h) Help      q) Quit
 >
 ```
@@ -808,8 +808,8 @@ Account-scoped unless noted. `[id]` is a record id (32 hex) or a unique prefix o
 | `update` | `--run` | `npm` | B11.10. |
 | `config` | `path` \| `validate` \| `template` \| `add-account` | none | `path` prints the resolved path; `validate` runs B11.2 validation and the permission check, prints `ok` or the errors, exit 0/64/77, and resolves no secrets; `template` prints the example JSON of B11.2; `add-account` is the wizard of B11.12 item 6 (it reads answers from stdin, a terminal or piped). `config` works with no config file present (except `validate`). |
 | `stamp` | | `stamp` | Runs the stamp job now (manifest, stamp, upgrade; B13.1.12). Exit 0, 1 on an `ots` error, 75 when locked. |
-| `export` | `--with <a,b>` (required), `--after <date>`, `--before <date>`, `--out <path>`, `--tar` | `export` | Today (before M4 step 2 is built) it prints `export needs M6 (the proof bundle); not available in this version` and exits 64, listed in help and the menu as "not available until M4 (B13)". **M4 step 2 replaces this** with the pair export (B13.2.9). |
-| `verify-bundle <dir>` | `--expect <sha256>`, `--strict` | `verifyBundle` | Account-free (no config needed); not built yet (M4 step 3, B13.3): checks a bundle on the recipient's machine; exit 0 ok, 2 a check failed, 64 bad usage. Not in the menu. |
+| `export` | `--with <a,b>` (required), `--after <date>`, `--before <date>`, `--out <path>`, `--tar` | `export` | The pair export (B13.2.9): a new directory (or `.tar`) of proof records about the emails that name any of the addresses; prints the bundle sha256 and the seal counts, warns on stderr when any record is not anchored. Exit 0, 64 (bad usage, `ERR_EXPORT_EXISTS`), 75 (`ERR_TRAIL_LOCKED`, `ERR_EXPORT_REWRITTEN`), 1 (nothing selected, too big, self-check, `tar` missing). |
+| `verify-bundle <dir>` | `--expect <sha256>`, `--strict` | `verifyBundle` | Account-free (no config needed): checks a bundle on the recipient's machine (B13.3); exit 0 ok, 2 a check failed, 64 bad usage. `MAILPROOF_OTS=off` skips the `ots` calls. Not in the menu. |
 | `mcp` | | none | The stdio MCP server (B12): `mailproof mcp [--account <name>] [--log <file>]`. Run on a terminal (stdin is a TTY) it prints a hint and exits 64; a bad config ends 64 or 77 before anything is read. |
 | `help [command]` | | none | B11.11. |
 
@@ -842,7 +842,7 @@ As `mailproof-sync` (B4.1), plus one:
 | Code | Meaning |
 |---|---|
 | `0` | done (a capped or partial sync is still 0: `complete: false` in the output) |
-| `64` | bad usage: unknown command/flag, missing value, bad config, missing `--account`, missing `--yes`, unconfigured `backupRemote`, `export` not available, `mcp` run on a terminal |
+| `64` | bad usage: unknown command/flag, missing value, bad config, missing `--account`, missing `--yes`, unconfigured `backupRemote`, `export` with an existing or misplaced `out`, `mcp` run on a terminal |
 | `75` | try again later: `ERR_SYNC_LOCKED`, `ERR_TRAIL_LOCKED`, `ERR_IMAP_CONNECT`, timeout, throttled, UIDVALIDITY change, secret command failed, push network/auth failure |
 | `77` | permission: config not owned by you or group/world-readable, `ERR_IMAP_AUTH` |
 | `2` | a check ran and the answer is "no": `verify` not ok, `check` profile failed. Not an error: the output is the result |
@@ -1077,7 +1077,7 @@ JSON carries strings, not bytes, and the record `id` is the sha256 of the **exac
 
 ## B13. Seal and pair export (M4)
 
-Decided 2026-11-11 (decisions-log "M4: drop appointments; seal and pair export", PRD §7 M4). **B13.1 is built (step 1: `stamp`, manifests, default-on seal, in the `feat/m4-export` branch, after 3.3.0); B13.2 and B13.3 are fully specified (2026-11-11) and not yet built (steps 2 and 3).** B3, B4.5, B5, B9 and B11 describe the built stamp job.
+Decided 2026-11-11 (decisions-log "M4: drop appointments; seal and pair export", PRD §7 M4). **B13.1 (step 1: `stamp`, manifests, default-on seal), B13.2 (step 2: `export`) and B13.3 (step 3: `verify-bundle`) are built in the `feat/m4-export` branch, after 3.3.0; build outcomes are listed at the end of B13.3.** B3, B4.5, B5, B9 and B11 describe the built stamp job.
 
 ### B13.1 Stamp job and manifest chain (M4 part a)
 
@@ -1422,7 +1422,7 @@ Human output: `wrote <out> (<N> records, <R> replies, <K> keys, <M> manifests, <
 | `77` | config permissions (B11.8) |
 | `1` | `ERR_EXPORT_EMPTY`, `ERR_EXPORT_TOO_BIG`, `ERR_EXPORT_SELF_CHECK`, `tar` missing, `ERR_STAMP_CHAIN`, `ERR_INDEX_UNAVAILABLE`, any other error |
 
-`export` replaces the exit-64 stub of B11.5; B11.8's "`export` not available" disappears with it.
+`export` replaced the exit-64 stub of B11.5.
 
 #### B13.2.10 `README.txt`
 
@@ -1630,7 +1630,17 @@ No `75` or `77`: no lock, no config. Library: `verifyBundle` resolves to a `Bund
 - **CLI.** Exit codes; `--expect` match, mismatch, bad value; no config file and no `HOME` state needed; the command works with `better-sqlite3` made unloadable (the module is not imported); `check:primitives`, `check:cli-help` and `check:mcp-tools` pass (`verifyBundle` and `Mailproof#export` listed as not offered over MCP, with the reason).
 - **Round trip.** Export from a real trail, verify (exit 0); edit the exported README: `files` fails (its hash is listed; nothing in it is trusted); prune the owner's trail afterwards: the old bundle still verifies.
 
-#### B13.3.8 Not here
+#### B13.3.8 Build outcomes (decided while building, 2026-11-12)
+
+- **`unstamped` at export, `unsealed` at the verifier.** A record listed in a manifest with no stamp has no manifest in the bundle (B13.2.4), so the verifier cannot see the listing: it reports that record `unsealed`, while `bundle.json` says `unstamped` (informational, "at export"). The verifier's `unstamped` state occurs only for a bundle that does hold the listing manifest without a stamp (a hand-assembled one, or a chain whose stamp was removed).
+- **Extra `BundleResult` fields.** `problems: [{ check, id, why }]` (every failure with its check, which text mode prints) and, per record, `captured`, `direction` and `problems: string[]`; additive to B13.3.5.
+- **A record file with no `bundle.json` entry** is reported by `files` ("not listed") and is not otherwise examined; a `.ots` for a record that is not in the bundle fails `seals`.
+- **A listing with a different hash** (a manifest lists the record's id with another file hash) is a `bad` seal ("not the file that was sealed"); a record absent from every manifest is `unsealed`.
+- **`ERR_EXPORT_TAR`** (new code): `tar` missing or failing. The CLI exit is 1, as B13.2.9 says; `ERR_EXPORT_EXISTS` maps to 64 in `exitFor`.
+- **Shared parts.** The pure seal decision is `decideSeal` in `src/proof/seal-core.js` (with the manifest bytes, parser and `chainError`), used by `findSeal`, `export` and `verifyBundle`; `seal.js` keeps the git-reading half. `printable()` moved to `src/proof/printable.js` (the README needs it); `src/cli/printable.js` re-exports it. `keyPath`/`parseKeyPath`/`parseBundlePath` are in `layout.js` (`build.js` and `trail.js` use them). `infoProof` and `parseOtsInfo` are in `ots.js`; `otsOptionFromEnv` (`MAILPROOF_OTS`) in `src/cli/secrets.js` is shared by `mailproof-sync` and `verify-bundle`; `storedStatus` is beside `readRaw` in `content.js`.
+- **Test seams.** `Mailproof#_exportSeams` (`hooks.afterSnapshot`, `hooks.beforeMove`, lowered `limits`) and `verifyBundle`'s `opts._limits` lower the bounds so no test needs 10,000 records.
+
+#### B13.3.9 Not here
 
 Opening a `.tar` (extract it yourself); fetching a missing key from DNS (the archive is the point); checking a Bitcoin header (`ots verify`, a node); comparing a bundle with the owner's trail; any claim about completeness (B13.2.11); an MCP tool for either command; a standalone copy of the verifier. A later option, not scheduled: `verify-bundle --raw <file>` to bind one email's bytes to its record (sha256 and `matchBodyRecord`); today the README gives the `sha256sum` check.
 
