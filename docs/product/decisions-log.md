@@ -324,7 +324,7 @@ the [PRD](PRD.md) / [DESIGN](../../archive/v1/docs/DESIGN.md).
 
 ### Decision: M3 MCP: stdlib, method names, full toolset with annotations
 **Date**: 2026-11-11
-**Status**: Accepted (owner: hamr0), including the owner's answers to the review list the same day; specified, not built (SPEC B12)
+**Status**: Accepted (owner: hamr0), including the owner's answers to the review list the same day; built 2026-11-11 on `feat/m3-mcp`, not yet released (SPEC B12, F30)
 **Context**: M3 step 6. The POC (F29) proved a 120-line stdlib stdio server against Claude Code. The PRD said MCP "starts read-only" and has "no forget, export or send without a human gate"; decisions-log "M3 scope" item 10 fixed only "stdlib MCP". The owner decided the shape of the tool surface.
 **Decision**:
 1. **Stdlib, no MCP SDK** (F29). Revisit only if resources, prompts, HTTP transport or OAuth come into scope. Options: the official SDK (a fifth runtime dependency for about 100 lines of protocol code; rejected).
