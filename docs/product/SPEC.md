@@ -983,6 +983,12 @@ Neither an MCP `export` nor `backup` is offered (`export` is M6; `backup` writes
 
 **Measured (F30): Claude Code 2.1.322 in `-p` mode does not act on the hints.** It refuses every MCP tool that is not in `--allowedTools`, `readOnlyHint` tools included, and runs `forget` with no extra gate once it is allowed. The hints are in `tools/list` for clients that implement a policy; with Claude Code, scope by tool name (`mcp__mailproof__list`, ...) or by server name.
 
+**Known limits (owner accepts, 2026-11-11).**
+- Hints are advisory metadata; no current client enforces them (Claude Code 2.1.322 does not, F30). The hint values stand as documented.
+- In Claude Code, scope by per-tool allow rules on tool names (`mcp__mailproof__list`, ...), or run one server per account with `mailproof mcp --account <name>`.
+- The preview-then-`confirm: true` step (B12.5) is the only server-side guard for `forget` and `prune`; a client that allows everything lets a model run both after a preview.
+- `rawEmail` and `attachment` are read-only yet expose other people's mail: gate them by name.
+
 **What the hints cannot say** (for the client's policy): `rawEmail` and `attachment` are `readOnlyHint: true` yet hand over other people's mail, so a policy that must treat them as sensitive has to key on the tool name, not the hint; `check`, `record`, `sync` and `upgradeStamps` are the `openWorldHint: true` set; `sync` and `upgradeStamps` are the non-idempotent writes.
 
 ### B12.4 One source of truth: descriptions and schemas
@@ -1038,7 +1044,7 @@ JSON carries strings, not bytes, and the record `id` is the sha256 of the **exac
 **Resolved 2026-11-11** (the owner answered the first review list; folded into the text above and the decisions-log entry): one server for all accounts with an `account` argument (B12.2); no tier switch, every tool always listed and scoped by the client through the hints (B12.1, B12.3); destructive tools preview by default and need `confirm: true`, `destructiveHint: true` on `forget` and `prune` (B12.5); `forget({ dryRun })` added to the library; `expireContent` excluded; `path` refused until `mcp.inputDirs` is set; `saveTo` only into `mcp.outputDir`, no file written by default; the `mcp` config block with its 512 KiB / 1 MiB caps (B12.2); `sync` gets `maxMessages` (B12.12); elicitation is a later POC; descriptions stay generated from the JSDoc with an `@mcp` shortening tag (B12.4, a mechanism decision).
 
 **Still open (to confirm, not blocking the build):**
-1. **Hint choices that deviate from the obvious** (B12.3): `sync` and `upgradeStamps` are `idempotentHint: false` (a repeat can pick up new mail or upgrade more), `check` is `openWorldHint: true` (DNS). The owner's scoping policy should be checked against these.
+1. **Hint choices that deviate from the obvious** (B12.3): **resolved 2026-11-11**: hints are advisory and no client enforces them yet (F30); the values stand as documented metadata (`sync`/`upgradeStamps` `idempotentHint: false`, `check` `openWorldHint: true`). See "Known limits" in B12.3.
 2. **`rawEmail` / `attachment` sensitivity** cannot be expressed in the four hints (read-only, closed-world, yet other people's mail): a policy that wants to gate them must key on the tool name.
 3. **`sync`'s per-call `maxMessages` default** is a number to measure against client timeouts at build (B12.12), not a fork.
 

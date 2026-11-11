@@ -31,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Notes
 - Claude Code 2.1.322 does not act on the tool annotations: it refuses any MCP tool not in its allow list and runs `forget` without a gate once allowed. Scope by tool name in the client (usage guide).
+- Known limits: the MCP tool annotations are advisory and no current client enforces them; scope by tool name or one server per account; `confirm: true` is the only server-side guard for `forget`/`prune`.
 - `mailproof mcp` with no stdin stream or on a terminal exits 64 (it is a stdio server, not interactive).
 
 ## [3.2.0] - 2026-11-11
