@@ -21,7 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > the first free clean minor, `1.3.0`.) See
 > [`archive/v1/docs/DESIGN.md`](archive/v1/docs/DESIGN.md) for the phasing.
 
-## [Unreleased]
+## [3.3.0] - 2026-11-11
 
 ### Added
 - **`mailproof mcp`: an MCP server** (stdio, no new dependency; SPEC B12). One process serves every configured account to an MCP client (Claude Code, Claude Desktop, ...): 22 tools named after the library methods (`list`, `get`, `verify`, `replyFacts`, `record`, `sync`, `forget`, `prune`, ...), all always listed, each with the four MCP annotations. Every account-bound tool takes `account` (required when two or more are configured; `--account <name>` restricts a server to one). Results are JSON text; `rawEmail` and `attachment` return a blob or save a file (`saveTo`). Failures are `isError` results with the library's error code and a `retryable` flag. `forget` and `prune` only preview until called with `confirm: true`. Write and destructive calls add one line to `<state>/mcp.log`. Everything an email says is marked as untrusted data in every tool description.
@@ -29,6 +29,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Mailproof#forget(target, { dryRun: true })` previews what a `forget` would remove (`{ removed, attachments, dryRun: true, ids }`); the CLI's `forget` summary now uses it.
 - The MCP audit log rotates at server start: a `mcp.log` over 1 MiB is renamed to `mcp.log.1` (replacing any older one) instead of being cut to its last 1 MiB, so the rare `forget`/`prune` lines are not the first lost. `watch.log` is unchanged.
 - `npm run build:mcp-tools` / `check:mcp-tools` (generated tool list, checked in CI).
+- The MCP `sync` tool takes `maxMessages`, the most messages to read per folder in one call (default 100, at most 1,000); call again while `complete` is false. The library's own `sync` caps are unchanged.
+
+### Changed
+- `mailproof-sync --help` now says that exit 77 also covers a `--pass-file` / `MAILPROOF_PASS_FILE` with group or other permission bits or a foreign owner (refused unread; the behaviour itself shipped in 3.2.0).
 
 ### Notes
 - Claude Code 2.1.322 does not act on the tool annotations: it refuses any MCP tool not in its allow list and runs `forget` without a gate once allowed. Scope by tool name in the client (usage guide).

@@ -1,6 +1,6 @@
 {
   "name": "mailproof",
-  "version": "3.2.0",
+  "version": "3.3.0",
   "description": "Re-checkable proof of an email: the signed headers, never the body, recorded in a local git trail and verifiable offline forever. Two verdicts (live, portable), DKIM key archive, optional OpenTimestamps.",
   "type": "module",
   "main": "src/index.js",
