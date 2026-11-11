@@ -31,7 +31,7 @@ const OTS_MIN_TIMEOUT_MS = 5000; // floor for the `ots` timeout, however short l
 /** @typedef {{ id: string, text: string, text_sha256: string, text_bytes: number, quote: 'found' | 'not-found' | 'inline', trailing: boolean, source: 'text/plain' | 'html-only', boundary: string | null, stripper: string, body_status: import('./types.js').BodyStatus, proven: boolean, commit: string, duplicate: boolean }} ReplyText */
 
 /** @typedef {import('./content.js').ContentResult} ContentResult */
-/** @typedef {{ removed: number, attachments: number }} Forgotten */
+/** @typedef {{ removed: number, attachments: number, dryRun?: true, ids?: string[] }} Forgotten  A dry run adds `dryRun: true` and the `ids` it names; `removed` and `attachments` are then what would go. */
 
 /**
  * @typedef {Object} MailproofOptions
@@ -478,17 +478,21 @@ class Mailproof {
   /**
    * Delete the stored content of chosen emails now, keeping their proofs.
    * @param {string | string[] | { with: string, before?: Date | number | string, after?: Date | number | string }} target  A record id, an array of ids, or every stored email with a counterparty: `with` is one exact address on the From, To, Cc or Reply-To line (case-insensitive), `after` (inclusive) and `before` (exclusive) bound the capture time.
+   * @param {{ dryRun?: boolean }} [opts]  `dryRun`: delete nothing and return what would go (default false).
    * @returns {Promise<Forgotten>}
    * @name Mailproof#forget
    * @when Use to erase what you hold of other people's mail earlier than retention would: one email, a list, or everything with one correspondent. Only the raw email and attachment files not needed by any remaining stored email are deleted. The proof stays: headers, verdicts, hashes and archived keys still re-verify offline, and anyone who later produces the raw email (sha256 = the record id) or an attachment gets it re-checked.
    * @category content
-   * @signature mp.forget(target: string|string[]|{ with: string, before?, after? }) => Promise<{ removed: number, attachments: number }>
-   * @fails Throws a TypeError for a malformed id, an empty or non-string `with`, or a bad `before`/`after`; `ERR_TRAIL_LOCKED` and `ERR_TRAIL_LAYOUT` as `expireContent()`. An id with nothing stored is not an error (`removed` counts only what was deleted), so it is idempotent. The counterparty is found from the From/To/Cc/Reply-To lines of the signed headers in the record, of the unsigned record's `from`, and of the stored raw email's header block; the match is exact, `bob@gmail.com` is not `bob@company.com`.
+   * @signature mp.forget(target: string|string[]|{ with: string, before?, after? }, opts?: { dryRun?: boolean }) => Promise<{ removed: number, attachments: number, dryRun?: true, ids?: string[] }>
+   * @fails Throws a TypeError for a malformed id, an empty or non-string `with`, a bad `before`/`after`, or a bad `opts`/`dryRun`; `ERR_TRAIL_LOCKED` and `ERR_TRAIL_LAYOUT` as `expireContent()`. An id with nothing stored is not an error (`removed` counts only what was deleted), so it is idempotent. The counterparty is found from the From/To/Cc/Reply-To lines of the signed headers in the record, of the unsigned record's `from`, and of the stored raw email's header block; the match is exact, `bob@gmail.com` is not `bob@company.com`.
    * @example
    * await mp.forget(id);
    * await mp.forget({ with: 'bob@example.com', before: '2026-01-01' });
+   * const plan = await mp.forget({ with: 'bob@example.com' }, { dryRun: true });   // plan.ids, plan.removed: nothing deleted
    */
-  async forget(target) {
+  async forget(target, opts) {
+    if (opts !== undefined && (opts === null || typeof opts !== 'object' || Array.isArray(opts) || Object.keys(opts).some((k) => k !== 'dryRun') || (opts.dryRun !== undefined && typeof opts.dryRun !== 'boolean'))) throw new TypeError('forget: opts must be { dryRun?: boolean }');
+    const dryRun = opts?.dryRun === true;
     /** @type {string[] | null} */
     let ids = null;
     /** @type {{ with: string, before?: Date | number | string, after?: Date | number | string } | null} */
@@ -501,10 +505,10 @@ class Mailproof {
       query = target;
     } else throw new TypeError('forget: target must be an id, an array of ids, or { with }');
     if (ids) for (const id of ids) if (typeof id !== 'string' || !RECORD_ID_RE.test(id)) throw new TypeError('forget: ids must be 32 hex characters');
-    if (!(await exists(this.contentDir))) return { removed: 0, attachments: 0 };
+    if (!(await exists(this.contentDir))) return dryRun ? { removed: 0, attachments: 0, dryRun: true, ids: ids ? [...new Set(ids)] : [] } : { removed: 0, attachments: 0 };
     await assertTrailLayout(this.root);
     const list = ids ?? await idsWith(this.root, this.contentDir, /** @type {NonNullable<typeof query>} */ (query));   // the scan holds no lock
-    return forgetIds(this.root, this.contentDir, list, (w) => this._lock(w), this._scanHooks);
+    return forgetIds(this.root, this.contentDir, list, (w) => this._lock(w), this._scanHooks, dryRun);
   }
 
   /**

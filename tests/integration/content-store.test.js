@@ -518,3 +518,29 @@ test('expireContent removes a stray attachment temp file a crashed write left, a
   assert.ok(!fs.existsSync(strayRaw), 'the raw temp file is gone (already so)');
   assert.deepEqual(fs.readFileSync(real), PDF, 'the real attachment is untouched');
 });
+
+test('forget({ dryRun }): the preview names ids, counts what would go, and deletes nothing (SPEC B12.5)', async () => {
+  const a = await signedMail({ signTime: T0, body: 'one\r\n', attachment: { filename: 'c.pdf', bytes: PDF } });
+  const b = await signedMail({ signTime: T0, body: 'two\r\n', domain: a.domain, signers: [{ domain: a.domain, selector: 'sel1', key: a.signers[0].key }], attachment: { filename: 'c2.pdf', bytes: PDF } });
+  const { mp, cdir } = setup(a);
+  const [ra, rb] = [await mp.record(a.raw, { direction: 'in' }), await mp.record(b.raw, { direction: 'in' })];
+  const before = files(cdir).sort();
+  assert.deepEqual(await mp.forget(ra.id, { dryRun: true }), { removed: 1, attachments: 0, dryRun: true, ids: [ra.id] }, 'b still references the attachment');
+  assert.deepEqual(await mp.forget([ra.id, rb.id, '1'.repeat(32)], { dryRun: true }), { removed: 2, attachments: 1, dryRun: true, ids: [ra.id, rb.id, '1'.repeat(32)] });
+  assert.deepEqual(files(cdir).sort(), before, 'nothing deleted');
+  assert.deepEqual(await mp.forget([ra.id, rb.id]), { removed: 2, attachments: 1 }, 'the same call for real removes exactly what the preview said');
+  await assert.rejects(mp.forget(ra.id, { dryRun: 'yes' }), TypeError);
+  await assert.rejects(mp.forget(ra.id, { nope: 1 }), TypeError);
+});
+
+test('forget({ dryRun }) by counterparty, and with no content directory', async () => {
+  const m = await signedMail({ signTime: T0, to: 'bob@gmail.com' });
+  const { mp } = setup(m);
+  const r = await mp.record(m.raw, { direction: 'in' });
+  assert.deepEqual(await mp.forget({ with: 'bob@gmail.com' }, { dryRun: true }), { removed: 1, attachments: 0, dryRun: true, ids: [r.id] });
+  assert.ok(await mp.rawEmail(r.id));
+  const dir = makeTmpDir('mp-content-');
+  const none = new Mailproof({ trailDir: path.join(dir, 'nested'), worker: { size: 0 } });
+  assert.deepEqual(await none.forget('a'.repeat(32), { dryRun: true }), { removed: 0, attachments: 0, dryRun: true, ids: ['a'.repeat(32)] });
+  assert.equal(fs.existsSync(path.join(dir, 'nested')), false);
+});

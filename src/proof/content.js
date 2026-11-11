@@ -338,19 +338,28 @@ async function expireStore(root, dir, days, nowMs, withLock, hooks = {}) {
  * @param {string} root
  * @param {string} dir
  * @param {Iterable<string>} ids  Record ids (32 hex).
+ * With `dryRun` only the scan runs (no lock, nothing deleted) and the result says what would go: `removed` stored raw
+ * emails, `attachments` files, and `ids` the records named. This is the one definition of that preview.
  * @param {WithLock} withLock
  * @param {ScanHooks} [hooks]
- * @returns {Promise<{ removed: number, attachments: number }>}
+ * @param {boolean} [dryRun]
+ * @returns {Promise<{ removed: number, attachments: number, dryRun?: true, ids?: string[] }>}
  */
-async function forgetIds(root, dir, ids, withLock, hooks = {}) {
+async function forgetIds(root, dir, ids, withLock, hooks = {}, dryRun = false) {
   const want = new Set(ids);
   /** @type {Set<string>} */
   const candidates = new Set();
+  let stored = 0;
   for (const id of want) {
     if (!(await exists(rawPathOf(dir, id)))) continue;
+    stored++;
     for (const h of attachmentHexes(await readRecord(root, id))) candidates.add(h);
   }
   const pre = candidates.size ? await scanReferenced(root, dir, want) : null;
+  if (dryRun) {
+    const kept = pre ? pre.kept : new Set();
+    return { removed: stored, attachments: [...candidates].filter((h) => !kept.has(h)).length, dryRun: true, ids: [...want] };
+  }
   await hooks.afterScan?.();
   return withLock(async () => {
     /** @type {Set<string>} */

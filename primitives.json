@@ -96,9 +96,9 @@
       "category": "content",
       "when": "Use to erase what you hold of other people's mail earlier than retention would: one email, a list, or everything with one correspondent. Only the raw email and attachment files not needed by any remaining stored email are deleted. The proof stays: headers, verdicts, hashes and archived keys still re-verify offline, and anyone who later produces the raw email (sha256 = the record id) or an attachment gets it re-checked.",
       "import": "import { Mailproof } from 'mailproof'",
-      "signature": "mp.forget(target: string|string[]|{ with: string, before?, after? }) => Promise<{ removed: number, attachments: number }>",
-      "fails": "Throws a TypeError for a malformed id, an empty or non-string `with`, or a bad `before`/`after`; `ERR_TRAIL_LOCKED` and `ERR_TRAIL_LAYOUT` as `expireContent()`. An id with nothing stored is not an error (`removed` counts only what was deleted), so it is idempotent. The counterparty is found from the From/To/Cc/Reply-To lines of the signed headers in the record, of the unsigned record's `from`, and of the stored raw email's header block; the match is exact, `bob@gmail.com` is not `bob@company.com`.",
-      "example": "await mp.forget(id);\nawait mp.forget({ with: 'bob@example.com', before: '2026-01-01' });"
+      "signature": "mp.forget(target: string|string[]|{ with: string, before?, after? }, opts?: { dryRun?: boolean }) => Promise<{ removed: number, attachments: number, dryRun?: true, ids?: string[] }>",
+      "fails": "Throws a TypeError for a malformed id, an empty or non-string `with`, a bad `before`/`after`, or a bad `opts`/`dryRun`; `ERR_TRAIL_LOCKED` and `ERR_TRAIL_LAYOUT` as `expireContent()`. An id with nothing stored is not an error (`removed` counts only what was deleted), so it is idempotent. The counterparty is found from the From/To/Cc/Reply-To lines of the signed headers in the record, of the unsigned record's `from`, and of the stored raw email's header block; the match is exact, `bob@gmail.com` is not `bob@company.com`.",
+      "example": "await mp.forget(id);\nawait mp.forget({ with: 'bob@example.com', before: '2026-01-01' });\nconst plan = await mp.forget({ with: 'bob@example.com' }, { dryRun: true });   // plan.ids, plan.removed: nothing deleted"
     },
     {
       "name": "Mailproof#get",

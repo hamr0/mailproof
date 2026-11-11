@@ -133,21 +133,6 @@ export async function checkCmd(a, ctx) {
 
 const MORE = (/** @type {number} */ n) => `and ${n} more`;
 
-/**
- * Print the dry-run summary of `forget` (B11.5): the records the same filters name, and how many have a stored raw email.
- * @param {Ctx} ctx
- * @param {import('../index.js').Mailproof} mp
- * @param {string[] | null} ids
- * @param {ReturnType<typeof listFilters>} f
- * @returns {Promise<{ ids: string[], stored: number }>}
- */
-async function forgetSummary(ctx, mp, ids, f) {
-  const named = ids ?? (await mp.list({ with: f.with, before: f.before, after: f.after })).map((r) => r.id);
-  let stored = 0;
-  for (const id of named) if (await mp.rawEmail(id)) stored++;
-  return { ids: named, stored };
-}
-
 /** @param {Args} a @param {Ctx} ctx @returns {Promise<number>} */
 export async function forgetCmd(a, ctx) {
   const v = a.values;
@@ -157,7 +142,9 @@ export async function forgetCmd(a, ctx) {
   if (v.with === undefined && (v.before !== undefined || v.after !== undefined)) throw new UsageError('--before and --after go with --with');
   return withAccount(a, ctx, async ({ mp, account }) => {
     const ids = a.positionals.length ? await Promise.all(a.positionals.map((p) => resolveId(p, mp.root))) : null;
-    const sum = await forgetSummary(ctx, mp, ids, f);
+    const target = ids ?? { with: /** @type {string} */ (f.with), ...(f.before ? { before: f.before } : {}), ...(f.after ? { after: f.after } : {}) };
+    const plan = await mp.forget(target, { dryRun: true });   // the library's own preview: one definition (SPEC B12.5)
+    const sum = { ids: plan.ids ?? [], stored: plan.removed };
     const lines = [
       `forget on account ${p(account.name)}: ${sum.ids.length} record(s), ${sum.stored} with a stored raw email (attachment files no other stored email needs go too). Proofs stay.`,
       ...sum.ids.slice(0, 20).map((i) => `  ${short(i)}`),
@@ -169,7 +156,7 @@ export async function forgetCmd(a, ctx) {
     }
     if (!v.yes) { warn(ctx, `${lines.join('\n')}\nadd --yes to proceed`); return EX_USAGE; }
     if (!v.json) print(ctx, lines.join('\n'));
-    const res = await mp.forget(ids ?? { with: /** @type {string} */ (f.with), ...(f.before ? { before: f.before } : {}), ...(f.after ? { after: f.after } : {}) });
+    const res = await mp.forget(target);
     if (v.json) printJson(ctx, res); else print(ctx, `forgot ${res.removed} stored email(s) and ${res.attachments} attachment file(s); the proofs are unchanged`);
     return EX_OK;
   });
