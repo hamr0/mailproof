@@ -198,7 +198,12 @@ export function validateConfig(json, env) {
     const secret = {};
     const named = SECRET_KEYS.filter((k) => raw[k] !== undefined);
     if (named.length !== 1) problems.push(`${at}: give exactly one of ${SECRET_KEYS.join(', ')}${named.length ? ` (found ${named.join(', ')})` : ''}`);
-    for (const k of named) if (typed(k, 'string')) secret[/** @type {keyof Account['secret']} */ (k)] = /** @type {string} */ (raw[k]);
+    for (const k of named) {
+      if (!typed(k, 'string')) continue;
+      const v = /** @type {string} */ (raw[k]);
+      // passFile is the only path-valued secret source; the two commands are argv, never a path (no shell, no ~)
+      secret[/** @type {keyof Account['secret']} */ (k)] = k === 'passFile' ? expandHome(v, env) : v;
+    }
     /** @type {Account['content']} */
     const content = {};
     if (raw.content !== undefined) {

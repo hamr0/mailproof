@@ -72,7 +72,7 @@ export async function addAccountWizard(a, ctx, file) {
     });
     const secretKey = /** @type {const} */ ({ 1: 'passCommand', 2: 'passFile', 3: 'accessTokenCommand' })[/** @type {'1' | '2' | '3'} */ (kind)];
     const secret = await ask({
-      label: secretKey === 'passFile' ? 'Path of the password file' : 'The command (not the password itself)', example: secretKey === 'passFile' ? '/home/ana/.config/mailproof/personal.pass' : secretKey === 'passCommand' ? 'e.g. pass show mailproof/personal' : 'e.g. oauth-token --account personal',
+      label: secretKey === 'passFile' ? 'Path of the password file' : 'The command (not the password itself)', example: secretKey === 'passFile' ? path.join(expandHome('~', ctx.env), '.config', 'mailproof', `${name}.pass`) : secretKey === 'passCommand' ? `e.g. pass show mailproof/${name}` : 'e.g. oauth-token --account personal',
       hint: 'Never type the password here: it would be written into the config. Give the command or file that holds it.',
       validate: (s) => { if (secretKey === 'passFile' && !path.isAbsolute(expandHome(s, ctx.env))) throw new UsageError('give an absolute path (or ~/...)'); return s; },
     });

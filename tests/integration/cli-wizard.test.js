@@ -146,3 +146,10 @@ test('a trail directory already used by another account is refused before anythi
   assert.deepEqual(fs.readFileSync(w.configFile), bytes);
   void makeTmpDir;
 });
+
+test('the password-file prompt shows a copy-pasteable default built from the real home and the account name', async () => {
+  const w = makeWorld({ config: null });
+  const r = await w.run(['config', 'add-account'], { input: script([...ALL_DEFAULTS.slice(0, 8), '2', '~/p.pass', ...ALL_DEFAULTS.slice(10)]) });
+  assert.ok(r.stdout.includes(path.join(w.env.HOME, '.config', 'mailproof', 'personal.pass')), r.stdout);
+  assert.ok(!r.stdout.includes('/home/ana'));
+});

@@ -9,6 +9,7 @@ import {
 } from '../../src/cli/config.js';
 import { UsageError, PermError } from '../../src/cli/errors.js';
 import { makeTmpDir } from '../helpers/tmp.js';
+import { resolveAuth } from '../../src/cli/secrets.js';
 
 const env = { HOME: '/home/ana', XDG_CONFIG_HOME: undefined };
 const acct = (extra = {}) => ({ user: 'a@b.example', trailDir: '/t/one', passCommand: 'pass show x', ...extra });
@@ -172,4 +173,16 @@ test('backupRemote: credentials in the URL are refused (secrets by reference); s
   for (const ok of ['git@git.example.org:ana/x.git', 'ssh://git@git.example.org/ana/x.git', 'https://git.example.org/ana/x.git', '/srv/backup/x.git']) {
     assert.deepEqual(problems(cfg({ a: acct({ backupRemote: ok }) })), [], ok);
   }
+});
+
+test('~ in passFile is expanded against HOME, so the secret is read from there; commands are never expanded', async () => {
+  const home = makeTmpDir('mp-cli-home-');
+  const pf = path.join(home, 'x.pass');
+  fs.writeFileSync(pf, 'abcd efgh ijkl mnop\n', { mode: 0o600 });
+  const e = { HOME: home };
+  const { config } = validateConfig(cfg({ a: acct({ passCommand: undefined, passFile: '~/x.pass' }) }), e);
+  assert.deepEqual(config.accounts.a.secret, { passFile: pf });
+  assert.deepEqual(await resolveAuth(config.accounts.a.secret), { pass: 'abcdefghijklmnop' });
+  const cmd = validateConfig(cfg({ a: acct({ passCommand: '~/bin/p show' }) }), e).config.accounts.a.secret;
+  assert.deepEqual(cmd, { passCommand: '~/bin/p show' });
 });

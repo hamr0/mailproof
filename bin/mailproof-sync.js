@@ -6,6 +6,7 @@
 import { parseArgs } from 'node:util';
 import { Mailproof } from '../src/index.js';
 import { UsageError, EX_USAGE, exitFor, exitForError } from '../src/cli/errors.js';
+import { expandHome } from '../src/cli/config.js';
 import { printable } from '../src/cli/printable.js';
 import { runSecretCommand, readSecretFile, passwordAuth, tokenAuth, otsOptionFromEnv } from '../src/cli/secrets.js';
 
@@ -101,7 +102,7 @@ async function main() {
     else {
       let raw;
       if (passCmd) raw = await runSecretCommand(passCmd, 'pass command');
-      else if (passFile) raw = await readSecretFile(passFile, '--pass-file');
+      else if (passFile) raw = await readSecretFile(expandHome(passFile, env), '--pass-file');
       else if (!process.stdin.isTTY) raw = await readStdin();
       else throw new UsageError('no password source: use --pass-command, --pass-file or pipe it on stdin');
       auth = passwordAuth(raw);

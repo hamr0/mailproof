@@ -724,7 +724,7 @@ Path: `--config <path>`, else `$XDG_CONFIG_HOME/mailproof/config.json`, else `~/
 | Field | Default | Meaning |
 |---|---|---|
 | key of `accounts` | (required) | the account name: `[a-z0-9][a-z0-9_-]{0,31}`. Used by `--account` and in the state dir. |
-| `user`, `trailDir` | (required) | IMAP user; the trail's directory (absolute; `~` is expanded). |
+| `user`, `trailDir` | (required) | IMAP user; the trail's directory (absolute; `~` is expanded, as it is in `passFile`, `outputDir` and `mailproof-sync --pass-file` / `MAILPROOF_PASS_FILE`; the two commands are argv and never expanded). |
 | `host` | `imap.gmail.com` | IMAP host (TLS only, B4.6). |
 | `port` | `993` | |
 | `folders` | `["INBOX"]` | as `mailproof-sync --folders`. |
