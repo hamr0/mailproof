@@ -69,6 +69,8 @@ mailproof reads mail and writes proofs locally. Everything that goes over the ne
 
 `record()`, `check()`, `verify()` and every read never touch the OpenTimestamps calendars: only `sync()` and `stamp()` do. Without the `ots` binary installed nothing breaks: records are kept and listed in manifests, capture is unaffected, and the result says `ots not installed: records are not sealed; install opentimestamps-client or set ots: false`.
 
+Run `mailproof` with no arguments on a terminal for a menu with a live header (records, verified, last sync, seal) and a guided account setup that can test the login before it writes anything; colour and links follow `NO_COLOR` and `MAILPROOF_NO_LINKS`.
+
 ## Five ways to use it
 
 1. **Library**: `check`, `record`, `verify`, `matchBody`, `matchFile`, `list`, `copies`, `replyText`, `replyFacts`, `counterparties`, `linked`, `checkProfile`, `proofParts`, `rawEmail`, `attachment`, `expireContent`, `forget`, `prune`, `upgradeStamps`, `stamp`, `export`, plus the standalone `verifyRecord` and `verifyBundle`. Use it in your own pipeline, for example a Postfix pipe.

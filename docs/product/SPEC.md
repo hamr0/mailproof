@@ -156,6 +156,7 @@ const res = await mp.sync({
   sent: true,                          // true (default): discover the folder with the \Sent special-use flag; a string: that exact path; false: skip. Direction 'out'
   maxMessages: 1000, maxBytes: 536870912,  // optional, per folder per run; can only LOWER the limits.js value (see B4.3)
   tls: { ca: pem },                    // optional: extra CA (private server, tests). Certificate checking is never off
+  onProgress: (p) => {},               // optional: called after each message handled, { folder, direction, done, uid, uidMax }; synchronous, return value ignored, a throw swallowed (a progress line for a terminal; no behaviour change when absent)
 })
 ```
 
@@ -761,34 +762,35 @@ Path: `--config <path>`, else `$XDG_CONFIG_HOME/mailproof/config.json`, else `~/
 
 ### B11.4 Menu
 
-`mailproof` with no arguments (TTY). stdlib `node:readline`, plain text, no colours required (colour only when `NO_COLOR` is unset and stdout is a TTY). Layout:
+`mailproof` with no arguments (TTY). stdlib `node:readline`; styling is B11.7a (colour only on a terminal, never required). One account is chosen before any action (with two or more, the first screen asks `Account (one/two):` and `a` switches); the menu never offers "all". The header is **fast and offline**: it reads `state.json`, the trail HEAD, the index overview (one aggregate query on a present index, else a count of the record files) and the manifest chain; no IMAP, no DNS, no `ots`, no lock, no index build (`headerFacts`, status.js; the verified and unverified split needs a current index and shows `(verified count after the next list)` until a `list` has built it).
 
 ```
-mailproof 3.x   account: personal  [b: change]
- 1) Sync now              fetch new mail (Inbox + Sent), record proofs
- 2) Watch                 sync every 5 min until Ctrl-C
- 3) List emails           newest first; filter by person or date
- 4) Show emails           by address, Message-ID or id
- 5) Verify emails         re-check offline, by address
- 6) Replies to a message  what people answered (by Message-ID)
- 7) Check against profile trust profile pass/fail
- 8) Forget                delete stored mail content          (destructive)
- 9) Prune                 drop old history from the trail     (destructive)
-10) Backup                git bundle of the trail
-11) Status                counts, last sync, storage
-12) Update mailproof      show the upgrade command
-13) Config                show path, validate, template
-14) Export                proof bundle for a counterparty
-15) Seal now              seal new mail now (OpenTimestamps)
-16) People                who is in this trail; then show, verify or export one
- h) Help      q) Quit
+----------------------------------------------------------------
+mailproof 3.x · ana@gmail.com (personal) · trail ✓ · last sync 19:21Z (2 h ago)
+records: 5 · 3 verified · 1 unverified · 1 sent copy · seal pending (next 01:21Z, in 4 h) · watch off
+----------------------------------------------------------------
+1 sync  2 people  3 show  4 verify  5 export  6 seal  7 status  ? more  q quit
 >
 ```
 
-- With one account the header shows it; with more, the first screen asks `Account [personal/business]:` and `b` re-asks. An account is chosen before any action; the menu never offers "all".
+`records` count received emails as verified (live trust `verified`) or unverified, and sent copies apart. `?` lists the rest, numbered 8 to 17: `watch`, `list`, `replies`, `check`, `backup`, `forget`, `prune`, `config`, `update`, `mcp` (`h` prints the full help). An item is chosen by number or by name (`seal` is the `stamp` command).
+
+**First run** (no config file; any other config problem is reported once and exits 64):
+
+```
+----------------------------------------------------------------
+mailproof 3.x · no account yet · config ~/.config/mailproof/config.json (not found)
+mailproof records a re-checkable proof of every email you send and receive.
+----------------------------------------------------------------
+1 set up an account  2 check a .eml file  3 verify a bundle  ? help  q quit
+```
+
+`1` runs the `config add-account` wizard (B11.12 item 6) and then starts the menu; `3` runs `verify-bundle`; `2` is the one menu-only action: it asks for a path and calls the library `check()` on the file (judged now, DNS is asked, nothing is recorded, no account or trail needed; the subcommand `check` is the profile check of B11.5 and is a different thing).
+
 - **Each item prompts for exactly the parameters its subcommand takes**, in the same order, then runs the same code path as the subcommand (the menu builds the argument vector and calls the command function; there is no second implementation). Each prompt shows a label, an example and the default in brackets: `With (email address, e.g. bob@example.org, empty = everyone):`, `Before (date, e.g. 2026-08-19):`, `Interval [5m]:`. Input is validated with the subcommand's own validators; a bad value prints the reason and **re-prompts** (up to 3 times, then back to the menu); an empty answer takes the default, and `?` re-prints the hint. A required value with no default re-prompts on empty.
+- **People** prints the `people` table numbered, then one prompt takes the person (a number or an address) and optionally `s` show, `v` verify or `e` export (default show).
 - After a command the menu prints its human output (B11.7), then `Press Enter`, and shows the menu again. Errors (exit-code classes B11.8) print on the menu and return to it; the menu itself exits only on `q`, Ctrl-D or a closed stdin (exit 0). Ctrl-C during a running command stops the command (as for the subcommand) and returns to the menu; Ctrl-C at a prompt quits.
-- **Destructive items** (8, 9, and `backup --push`): the menu first runs the dry-run summary (B11.5), then requires the user to **type the account name** to proceed; anything else cancels with "nothing changed". `backup --push` shows the warning in B11.6 and asks `y/N`.
+- **Destructive items** (`forget`, `prune`, and `backup --push`): the menu first runs the dry-run summary (B11.5), then requires the user to **type the account name** to proceed; anything else cancels with "nothing changed". `backup --push` shows the warning in B11.6 and asks `y/N`.
 
 ### B11.5 Commands
 
@@ -859,6 +861,18 @@ A Message-ID needs its angle brackets (without them it contains `@` and is an ad
 - **Not covered, by design:** `--json` is data as received (`JSON.stringify` leaves DEL, C1 including 0x9B, bidi, zero-width, U+2028/2029 and tag characters raw), so consumers must treat every string in it as untrusted; and `show --raw` writes the stored bytes unchanged (pipe it to a file or a parser, not to a terminal you trust blindly).
 - **Errors in `--json` mode** still go to stderr as one human line AND stdout stays empty, so a script checks the exit code first (matching `mailproof-sync`: stdout is the result, stderr the error).
 
+### B11.7a Styling (`src/cli/style.js`)
+
+One module, no dependency (ANSI written by hand). Every value comes from the injected `ctx` (`env`, `stdout.isTTY`, `stdout.columns`), never from `process`, so a test is deterministic.
+
+- **Colour is on** only when the stream is a TTY, `NO_COLOR` is unset (or empty) and `TERM` is not `dumb`. `FORCE_COLOR` (not `0`/`false`) turns it on for a pipe; `NO_COLOR` wins over `FORCE_COLOR`. With colour off every helper returns its text unchanged, so a pipe, `NO_COLOR` and a terminal show **the same words**: stripping the styles from coloured output gives the uncoloured output exactly. `--json` is never styled, byte for byte.
+- **Colour never carries meaning alone**: each coloured verdict has a symbol or a word beside it (`✓ OK`, `✗ NOT OK`, `! unverified`, `verified`, `pending`). Symbols `✓ ! ✗ ·` become `ok ! x -` (and the rule `-`) when the locale is not UTF-8 (`LC_ALL`, then `LC_CTYPE`, then `LANG`: the first one set decides).
+- **Links** (OSC 8): the bundle directory after `export`, the trail and backup paths in `status`, the setup guide in an error hint, and the DNS name of a missing key in a `why` line (to a DNS lookup page; mailproof never fetches it). Only when colour is on and `MAILPROOF_NO_LINKS` is unset; in plain mode the text (and, for the guide hint, the URL) is printed instead.
+- **Escape first, style after.** Every mail- or server-derived string goes through `printable()` (B11.7) before a style helper sees it. The output backstop of `print`/`warn` and of the prompts, when styling is on, keeps only the sequences style.js makes (SGR colour codes, and OSC 8 links carrying this process's random nonce) and escapes every other control character, so a subject holding `\x1b[31m` or an OSC 8 link is shown as text and a forged link opener is escaped even where a field was missed.
+- **Width** is `stdout.columns`, else 80. Tables (`list`, `people`) cut the subject and the address to fit, on code points, with an ellipsis (`…`, or `...` in ASCII); the minimum is a 24-character body, so a very narrow terminal wraps. Relative times (`2 h ago`, `in 4 h`) stand beside absolute ones (`show`, `status`, the menu header).
+- **Look of each command.** `people`: `address / emails / verified / last` and a mark per address (`✓` at least one received email verifies, `✗` received but none does, `sent only`). `list`: a mark and the live trust word per row, the short id dim. `show`: bold section headers Message, People, Proof, Content, Seal (the ids `message-id`, `message-key` and `id` close the Message section, dim); labels dim, a value covered by a verifying signature bold, `N/A` dim; hashes cut to 12 characters unless `--full`. `verify <address>`: one row per email (`✗ NOT OK`, trust, signed subject), the reason on a `why:` line below, then `received: N verified, M not` and the final line, an inverse badge `✓ VERIFIED` (green) or `✗ NOT VERIFIED` (red) followed by the sentence; `verify <id>` and `verify-bundle` end with the same badge, and the badge appears nowhere else. `sync` prints `✓`/`!`/`✗` per folder and, on a terminal **stderr**, one overwriting progress line per folder (`INBOX 312 read · 31% · 14 s`) fed by the library `onProgress` hook (B4.1), cleared before the summary; nothing is written to a non-terminal stderr or in `--json`.
+- **Environment:** `NO_COLOR`, `FORCE_COLOR`, `MAILPROOF_NO_LINKS`, `TERM`, `LC_ALL`/`LC_CTYPE`/`LANG`.
+
 ### B11.8 Exit codes
 
 As `mailproof-sync` (B4.1), plus one:
@@ -907,7 +921,9 @@ The review list of the spec author, with the owner's resolutions. All are final.
 3. **`backup --push` never forces.** A trusted remote and `--yes` are needed; it pushes `--all` and tags with no force. The remote keeps the history from before a `prune` as an archive; the rejected push is explained and exits non-zero (B11.6).
 4. **`Mailproof#upgradeStamps()`** is a small public library method (B3, B13.1.8: the upgrade pass of the stamp job under the stamp lock; the trail lock only to commit a changed proof; no-op result when OTS is off or the binary is missing). In M4 `sync` no longer calls it (the automatic stamp job does the upgrades, B13.1.7).
 5. **`prune({ dryRun: true })`** is a library option (B9.7): the CLI's dry-run summary is the library's own computation, not a re-derivation.
-6. **`config add-account` is an interactive wizard.** It prompts every field with a hint, a default and validation (`?` prints the hint, a bad value asks again, three bad answers cancel), shows the resulting account JSON, and writes `config.json` only after an explicit confirmation. It creates the file (mode 0600) and its directory (0700) when missing, keeps all other accounts, asks `Replace it? [y/N]` before touching an existing account name, refuses a config that is not trusted (B11.2 permission rule, exit 77) or not valid (exit 64), and writes atomically (temp file in the same directory, `fsync`, rename). It never asks for or stores a plaintext password: only `passCommand`, `passFile` or `accessTokenCommand`.
+6. **`config add-account` is an interactive wizard.** It prompts every field with a hint, a default and validation (`?` prints the hint, a bad value asks again, three bad answers cancel), shows the resulting account JSON, and writes `config.json` only after an explicit confirmation. It creates the file (mode 0600) and its directory (0700) when missing, keeps all other accounts, asks `Replace it? [y/N]` before touching an existing account name, refuses a config that is not trusted (B11.2 permission rule, exit 77) or not valid (exit 64), and writes atomically (temp file in the same directory, `fsync`, rename). It never stores a plaintext password: only `passCommand`, `passFile` or `accessTokenCommand`.
+
+   **Flow (3.4):** provider first, `1` Gmail (`imap.gmail.com`, app password, marked proven), `2` Outlook/Hotmail (`outlook.office365.com`, an OAuth2 token command, marked untested in yellow with a pointer to `docs/product/setup-guide.md`), `3` other IMAP (asks host, port and where the password comes from). Then the account name, the email address and the password file (default `~/.config/mailproof/<account>.pass`). When that file does not exist the wizard offers to create it: the secret is read with the echo off (a terminal shows nothing; scripted input is not echoed into the transcript), written to a new file with mode 0600 owned by the user (`wx`, never overwritten), never printed and never put in the config. For Gmail it asks `Include archived mail ([Gmail]/All Mail)?` (default y; folders `INBOX` and `[Gmail]/All Mail`; the first sync takes longer, a mail in two folders is recorded once). It then asks Sent mail, the trail folder (default `~/mailproof/<account>`), the content store and its days, the seal, and `Advanced settings` (default n: trail name, attachments, backup remote). **`Test login now? [Y/n]`** runs before anything is written: one real IMAP login and a folder status through the library `openSession` (the count is the highest UID, an upper bound), shown as `✓ IMAP login ok` or `✗ login failed (CODE): reason`; a failure does not block the write. Then the JSON and the write confirmation (as before), then `First sync now? [Y/n]` (the same `sync` command). Tests inject `deps.testLogin`: IMAP is never contacted from a test.
 7. **Config strictness**: unknown keys refused (exit 64), `v: 1` required, plaintext `pass`/`password`/`secret` keys refused, no stdin/env secret source in the config. `--pass-*` flags are not accepted by `mailproof` (only the config names the secret); `mailproof-sync` keeps them.
 8. **Profile lookup** `check --profile <name>` reads `<configDir>/profiles/<name>.json`; a path is used as given.
 9. **`status` without `--account`** lists all accounts (read-only), the single exception to B11.3.

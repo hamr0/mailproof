@@ -45,53 +45,61 @@ Upgrade later with `mailproof update` (prints the command) or `mailproof update 
 2. Open https://myaccount.google.com/apppasswords, create one named `mailproof`, copy the code (Google shows it in groups of four; spaces are fine).
 3. IMAP must be enabled for the mailbox (Gmail settings, Forwarding and POP/IMAP).
 
-**3.2 Put it in a private file.** mailproof never takes the password at a prompt: it reads it from a command or a file you name.
+**3.2 Run the wizard.** `mailproof` with no arguments on a terminal (first run), or `mailproof config add-account`, walks you through it. mailproof never stores a password: the config names a file (or command) that yields it, and the wizard can create that private file for you. `?` at any prompt shows the hint; nothing is written until you confirm. This is the flow for Gmail (text of the screen, colours left out):
 
-```bash
-mkdir -p ~/.config/mailproof
-install -m 600 /dev/null ~/.config/mailproof/gmail.pass     # create an empty file only you can read
-$EDITOR ~/.config/mailproof/gmail.pass                       # paste the code on the first line, save
+```
+----------------------------------------------------------------
+Set up an account · nothing is written until you confirm
+Adding to ~/.config/mailproof/config.json (it does not exist yet; it will be created with mode 0600). Answer ? at any prompt for help.
+----------------------------------------------------------------
+Mail provider  1 Gmail (app password, proven)   2 Outlook/Hotmail (OAuth2, untested)   3 other IMAP
+Mail provider (1 = Gmail, 2 = Outlook/Hotmail, 3 = other IMAP) [1]: 1
+Account name (letters, digits, - and _, e.g. personal): personal
+Email address (the IMAP user, usually your address, e.g. ana@example.com): ana@gmail.com
+mailproof never stores a password; the config names the file or command that yields it.
+Password file (an absolute path or ~/...) [~/.config/mailproof/personal.pass]:
+! ~/.config/mailproof/personal.pass not found; create it now? (a private 0600 file; you paste the app password, nothing is shown) [Y/n]
+Paste the password (hidden):
+    ✓ ~/.config/mailproof/personal.pass (0600, yours)
+Archived mail ([Gmail]/All Mail) is your whole history. The first sync then takes longer; a mail in two folders is recorded once.
+Include archived mail ([Gmail]/All Mail) (y/n) [y]:
+Also read Sent mail (on, off or a folder path) [on]:
+Trail folder [~/mailproof/personal]:
+Keep the raw emails in the local content store (y/n) [y]:
+Days to keep stored content [730]:
+Seal records with OpenTimestamps (y/n; ...) [y]:
+Advanced settings (trail name, attachments, backup remote) (y/n) [n]:
+----------------------------------------------------------------
+Test login now? [Y/n]
+✓ IMAP login ok · INBOX up to 4 · Sent Mail up to 1 · All Mail up to 6,132
+...the account JSON...
+Write it to ~/.config/mailproof/config.json? [y/N] y
+✓ written ~/.config/mailproof/config.json (mode 0600)
+First sync now? [Y/n]
 ```
 
-The file must be owned by you and mode 0600, or it is refused.
+How to get the app password: turn on 2-Step Verification in your Google account, open https://myaccount.google.com/apppasswords, create one named `mailproof`, and paste the 16-character code when the wizard asks (spaces are fine). IMAP must be enabled for the mailbox (Gmail settings, Forwarding and POP/IMAP). If you decline the file offer, create it yourself: `install -m 600 /dev/null ~/.config/mailproof/personal.pass` and put the code on its first line; the file must be owned by you and mode 0600 or it is refused.
 
-**3.3 Describe the account.** Run `mailproof config add-account`. It asks the questions below in this order. `?` at any prompt shows the hint; nothing is written until you confirm at the end.
-
-| # | Prompt | Answer for Gmail |
-|---|---|---|
-| 1 | Account name | `gmail` (letters, digits, `-`, `_`) |
-| 2 | IMAP user | `ana@example.com` (your full address) |
-| 3 | IMAP host | Enter (default `imap.gmail.com`) |
-| 4 | Port | Enter (`993`) |
-| 5 | Folders to read | Enter (`INBOX`), or comma separated |
-| 6 | Also read Sent mail | Enter (`on`; or `off`, or a folder path) |
-| 7 | Trail directory | Enter (default `~/mailproof/gmail`) |
-| 8 | Trail name | Enter (`default`) |
-| 9 | Where does the password come from | `2` (1 = a command, 2 = a file, 3 = an OAuth2 token command) |
-| 10 | Path of the password file | `~/.config/mailproof/gmail.pass` (an absolute path or `~/...`) |
-| 11 | Keep the raw emails in the local content store | Enter (`y`) |
-| 12 | Keep attachments too | Enter (`y`; only asked if 11 is `y`) |
-| 13 | Days to keep stored content | Enter (`730`; only asked if 11 is `y`) |
-| 14 | Seal records with OpenTimestamps | Enter (`y`) if `ots` is installed; `n` otherwise |
-| 15 | Backup remote for `backup --push` | Enter (empty = none) |
-
-It then prints the account JSON and asks `Write it to <file>?`. Answer `y`. The file is `~/.config/mailproof/config.json`, mode 0600. For the answers above it contains only:
+What the answers mean: the provider fixes the host (`imap.gmail.com` or `outlook.office365.com`; `3` asks for host and port); the password file default and the trail folder use `~/`; "archived mail" adds the folder `[Gmail]/All Mail` next to `INBOX` (Gmail keeps every mail there, so the first sync is longer, and a mail in two folders is recorded once); `Test login now?` does one real IMAP login and a folder status before anything is written (the numbers are the highest message number, an upper bound, not an exact count; a failure shows `✗ login failed (ERR_IMAP_AUTH): login refused by the server` and you can still write the config and fix the password later); `Advanced settings` holds the trail name, keeping attachments and a backup remote. For the answers above the config contains only:
 
 ```json
 {
   "v": 1,
   "accounts": {
-    "gmail": {
-      "user": "ana@example.com",
+    "personal": {
+      "user": "ana@gmail.com",
       "host": "imap.gmail.com",
-      "trailDir": "~/mailproof/gmail",
-      "passFile": "~/.config/mailproof/gmail.pass"
+      "folders": ["INBOX", "[Gmail]/All Mail"],
+      "trailDir": "~/mailproof/personal",
+      "passFile": "~/.config/mailproof/personal.pass"
     }
   }
 }
 ```
 
-The wizard writes only fields that differ from the defaults (port 993, folders `INBOX`, Sent on, trail `default`, content store on, 730 days, OpenTimestamps on). That is expected, not a lost answer. `~/` is expanded for every path in the config; versions up to 3.3.0 expanded it only for the trail directory, so there use the full path (run `echo $HOME` to see yours) for the password file. The password-file example the wizard shows (`/home/ana/...`) is only an example.
+The wizard writes only fields that differ from the defaults (port 993, Sent on, trail `default`, content store on, 730 days, OpenTimestamps on). That is expected, not a lost answer. `~/` is expanded for every path in the config; versions up to 3.3.0 expanded it only for the trail directory, so there use the full path for the password file.
+
+**Colour and links.** On a terminal mailproof uses colour, symbols (`✓ ! ✗`) and clickable links. `NO_COLOR=1` turns colour off, `MAILPROOF_NO_LINKS=1` turns the links off, a pipe gets plain text with the same words, and a locale that is not UTF-8 gets `ok ! x` instead of the symbols. `--json` is never styled.
 
 **3.4 Check it.**
 
