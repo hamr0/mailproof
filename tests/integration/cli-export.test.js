@@ -27,7 +27,7 @@ test('export: human output, --json is the ExportResult, the pending warning goes
   const out = path.join(dir, 'b');
   const r = await cli.run(['export', '--with', BOB, '--out', out]);
   assert.equal(r.code, 0, r.stderr);
-  assert.match(r.stdout, /^wrote .*b \(3 records, 0 replies, \d+ keys, \d+ manifests, [\d.]+ (KiB|bytes)\)$/m);
+  assert.match(r.stdout, /^ok wrote .*b \(3 records, 0 replies, \d+ keys, \d+ manifests, [\d.]+ (KiB|bytes)\)$/m);
   assert.match(r.stdout, /^bundle sha256 ([0-9a-f]{64})  \(tell the recipient this out of band; they can run: mailproof verify-bundle --expect \1 <dir>\)$/m);
   assert.match(r.stdout, /^seals: 0 anchored, \d+ pending, 0 unstamped, 1 unsealed$/m);
   assert.match(r.stdout, /^raw emails still stored: 3 of 3$/m);

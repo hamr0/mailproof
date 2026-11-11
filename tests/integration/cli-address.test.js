@@ -6,7 +6,7 @@ import { buildThread } from '../helpers/thread-trail.js';
 import { makeWorld, account } from '../helpers/cli.js';
 import { classifyTarget } from '../../src/cli/target.js';
 import { UsageError } from '../../src/cli/errors.js';
-import { LABELS } from '../../src/cli/detail.js';
+import { LABELS, SECTIONS } from '../../src/cli/detail.js';
 import { htmlToText, bodyText } from '../../src/proof/body-text.js';
 
 const T = await buildThread();
@@ -16,7 +16,7 @@ await T.rec('html', Buffer.from('From: hal@html.example\r\nTo: me@owner.example\
 const w = makeWorld({ accounts: { test: account(T.dir) } });
 const BOB = 'bob@beta.example';
 const id = (n) => T.r[n].id;
-const labelsOf = (s) => s.split('\n').filter((l) => /^\S/.test(l)).map((l) => l.slice(0, 12).trim());
+const labelsOf = (s) => s.split('\n').filter((l) => /^\S/.test(l) && !SECTIONS.includes(l)).map((l) => l.slice(0, 12).trim());
 
 test('resolver: <..> is a Message-ID, @ an address, 8-32 hex an id; everything else is refused with the forms', () => {
   assert.deepEqual(classifyTarget('<a@b.c>'), { kind: 'message-id', value: '<a@b.c>' });
@@ -89,7 +89,9 @@ test('show <id>: every label, in the fixed order, even for a minimal unsigned re
   assert.match(r.stdout, /^body proof +not proven \(not-checked\)$/m);
   assert.match(r.stdout, /^body +\(text\/plain\)\n  hello\n/m);
   assert.match(r.stdout, /^id +[0-9a-f]{32}\n$/m);
-  assert.ok(r.stdout.trimEnd().endsWith(`id           ${id('plain')}`));
+  assert.ok(r.stdout.includes(`\nid           ${id('plain')}\n`));
+  assert.deepEqual(r.stdout.split('\n').filter((l) => SECTIONS.includes(l)), SECTIONS, 'the sections, in order');
+  assert.ok(r.stdout.trimEnd().split('\n').at(-2) === 'Seal', 'the seal is last');
 });
 
 test('show <id>: the full record view lists dkim, dmarc, thread links, children, the body and a prefix works', async () => {
@@ -136,13 +138,15 @@ test('verify <address>: one line per email, exit 2 when a RECEIVED one fails, se
   assert.equal(r.code, 2, r.stdout);
   assert.match(r.stdout, /^received: 2 verified, 1 not$/m);
   assert.match(r.stdout, /^sent: 1 verified, 0 not \(not counted/m);
-  assert.match(r.stdout, /^1 received email does not verify$/m);
-  assert.match(r.stdout, /NOT OK .*offline re-check|NOT OK .*beta\.example/m);
+  assert.match(r.stdout, /^x NOT VERIFIED  1 received email does not verify$/m);
+  assert.match(r.stdout, /^ +why: .*offline re-check of beta\.example/m, 'the reason is on its own line under the email');
+  assert.match(r.stdout, /^2026-.*  received  x NOT OK  unverified {1,}.*$/m);
   assert.equal(r.stdout.split('\n').filter((l) => /^2026-/.test(l)).length, 4);
+  assert.ok(!r.stdout.includes('\x1b'), 'a pipe: no ANSI');
   assert.equal((await w.run(['verify', BOB, '--all'])).code, 2);
   const ok = await w.run(['verify', 'alice@alpha.example']);
   assert.equal(ok.code, 0, ok.stdout);
-  assert.match(ok.stdout, /^the received email verifies$/m);
+  assert.match(ok.stdout, /^ok VERIFIED  the received email verifies$/m);
   const only = await w.run(['verify', BOB, '--before', '2026-11-01T10:01:30Z']);
   assert.equal(only.code, 2, 'only a sent copy: nothing proves anything received');
   assert.match(only.stdout, /nothing to verify: no received email/);
@@ -160,16 +164,19 @@ test('verify <id> is unchanged: ok 0, a failing record 2', async () => {
   assert.equal((await w.run(['verify', id('signed')])).code, 0);
   const bad = await w.run(['verify', id('failing')]);
   assert.equal(bad.code, 2);
-  assert.match(bad.stdout, /^NOT OK/);
+  assert.match(bad.stdout, /^x NOT OK/);
+  assert.match(bad.stdout, /^x NOT VERIFIED$/m, 'the final verdict line is the badge');
+  assert.match((await w.run(['verify', id('signed')])).stdout, /^ok VERIFIED$/m);
 });
 
 test('people: one line per address with emails, received verified, first and last; the account user is marked (you)', async () => {
   const r = await w.run(['people']);
   assert.equal(r.code, 0, r.stderr);
-  assert.match(r.stdout, /^address +emails +verified +first +last$/m);
-  assert.match(r.stdout, /^me@owner\.example \(you\) +\d+ +\d+ +2026-11-01 +2026-11-01$/m);
-  assert.match(r.stdout, /^bob@beta\.example +4 +2 +2026-11-01 +2026-11-01$/m);
-  assert.match(r.stdout, /^zed@zed\.example +1 +0 /m);
+  assert.match(r.stdout, /^address +emails +verified +last$/m);
+  assert.match(r.stdout, /^me@owner\.example \(you\) +\d+ +\d+ +2026-11-01 +(ok|x|sent only)$/m);
+  assert.match(r.stdout, /^bob@beta\.example +4 +2 +2026-11-01 +ok$/m, 'a verified received email: the check mark');
+  assert.match(r.stdout, /^zed@zed\.example +1 +0 +2026-11-01 +x$/m, 'received but none verifies: the cross');
+  assert.match(r.stdout, /^carol@gamma\.example .* (ok|x|sent only)$/m);
   const j = JSON.parse((await w.run(['people', '--json', '--limit', '3'])).stdout);
   assert.equal(j.length, 3);
   assert.deepEqual(Object.keys(j[0]), ['address', 'emails', 'verified', 'first', 'last', 'you']);
@@ -179,9 +186,11 @@ test('people: one line per address with emails, received verified, first and las
 test('list (text): date, in/out, live trust, other party, subject, short id last; --json is the library rows', async () => {
   const r = await w.run(['list']);
   const line = r.stdout.split('\n').find((l) => l.includes(id('signed').slice(0, 12)));
-  assert.match(line, /^2026-11-01T10:02Z  in   verified +bob@beta\.example +Re: please sign +[0-9a-f]{12}$/);
+  assert.match(line, /^2026-11-01T10:02Z  in   ok verified +bob@beta\.\.\.\.  Re: please\.\.\. +[0-9a-f]{12}$/, 'cut to the 80 columns of a pipe');
+  const wide = (await w.run(['list'], { columns: 140 })).stdout.split('\n').find((l) => l.includes(id('signed').slice(0, 12)));
+  assert.match(wide, /^2026-11-01T10:02Z  in   ok verified +bob@beta\.example +Re: please sign +[0-9a-f]{12}$/, 'room: nothing cut');
   const out = r.stdout.split('\n').find((l) => l.includes(id('req').slice(0, 12)));
-  assert.match(out, /^2026-11-01T10:01Z  out  .* +bob@beta\.example +Approve\? +[0-9a-f]{12}$/);
+  assert.match(out, /^2026-11-01T10:01Z  out  .* +bob@beta.* +Approve\? +[0-9a-f]{12}$/);
   assert.deepEqual(Object.keys(JSON.parse((await w.run(['list', '--json'])).stdout)[0]).sort(), ['addresses', 'captured', 'direction', 'from', 'id', 'live', 'message_id', 'portable', 'subject', 'subjectSource', 'to']);
   const plain = (await w.run(['list', '--json'])).stdout;
   assert.ok(JSON.parse(plain).every((x) => Array.isArray(x.addresses)));
@@ -198,16 +207,19 @@ test('id hints: a flag-looking or too-short id says ids are positional and shows
   assert.match(bare.stderr, /an address \(b@example\.com\), a Message-ID in angle brackets/);
 });
 
-test('menu: People lists them, picks one, then Show / Verify run the same code; Show and Verify take an address', async () => {
+test('menu: People lists them, numbered; one prompt takes the person and s/v/e; Show and Verify take an address', async () => {
   const keys = (...l) => `${l.join('\n')}\n`;
-  const m = await w.run([], { interactive: true, input: keys('16', 'bob@beta.example', 'verify', '', 'q') });
-  assert.match(m.stdout, /bob@beta\.example +4 emails, 2 verified/);
+  const m = await w.run([], { interactive: true, input: keys('2', 'bob@beta.example v', '', 'q') });
+  assert.match(m.stdout, /^ +\d+ bob@beta\.example +4 +2 +2026-11-01 +ok$/m, 'the people table, each row numbered');
+  assert.match(m.stdout, /pick a person \(number or address\), then s show  v verify  e export/);
   assert.match(m.stdout, /received: 2 verified, 1 not/);
-  const byNumber = await w.run([], { interactive: true, input: keys('16', '1', '', '', 'q') });
+  const byNumber = await w.run([], { interactive: true, input: keys('2', '1', '', 'q') });
   assert.match(byNumber.stdout, /^#1 of /m, 'the default action is show');
-  const s = await w.run([], { interactive: true, input: keys('4', BOB, '', 'q') });
+  const bad = await w.run([], { interactive: true, input: keys('2', '99', 'bob@beta.example s', '', 'q') });
+  assert.match(bad.stdout, /choose 1 to \d+/);
+  const s = await w.run([], { interactive: true, input: keys('3', BOB, '', 'q') });
   assert.ok(s.stdout.includes((await w.run(['show', BOB])).stdout));
-  const ex = await w.run([], { interactive: true, input: keys('16', BOB, 'export', '', '', '/nonexistent-dir/xx', '', 'q') });
+  const ex = await w.run([], { interactive: true, input: keys('2', `${BOB} e`, '', '', '/nonexistent-dir/xx', '', 'q') });
   assert.match(ex.stdout, /Write the bundle to/);
 });
 
@@ -231,7 +243,7 @@ await mpX.close();
 const w2 = makeWorld({ accounts: { x: account(dirX) } });
 
 test('RFC 2047 subjects (B and Q, utf-8, an em dash) are decoded in list, show <id>, show <address>', async () => {
-  const l = await w2.run(['list']);
+  const l = await w2.run(['list'], { columns: 140 });
   assert.equal([...l.stdout.matchAll(/weekly — stats/g)].length, 3, l.stdout);
   assert.ok(!l.stdout.includes('=?utf-8'), l.stdout);
   for (const rec of [rGood, rGoodQ]) {

@@ -9,6 +9,7 @@ import { bodyText } from '../proof/body-text.js';
 import { verifyRecord } from '../proof/recheck.js';
 import { printable as p } from './printable.js';
 import { sealLine } from './seal.js';
+import { makeStyle, rel } from './style.js';
 
 /** @typedef {import('../proof/types.js').MpRecord} MpRecord */
 /** @typedef {import('./session.js').Session} Session */
@@ -128,71 +129,109 @@ export async function gather(mp, account, rec, opts = {}) {
 
 /** One rule for every header line: `signed` only when a verifying signature covers it. */
 const COVER = { signed: 'signed', failing: 'covered by a signature that does not verify', none: 'not signed' };
-/** @param {Facts['from']} l @returns {string} */
-const addrText = (l) => (l.length ? l.map((x) => `${p(x.address)} (${COVER[x.coverage]})`).join(', ') : NA);
-/** @param {{ value: string | null, basis: string | null }} h @returns {string} */
-const headText = (h, max = 300) => (h.value === null ? NA : `${p(h.value, { max })} (${h.basis === 'signed' ? 'signed' : h.basis === 'failing' ? COVER.failing : 'claimed, not signed'})`);
 /** @param {string | null} s @returns {string} */
 const link = (s) => (s ? `, link ${s}` : ', link not recorded');
+/** The DNS names of a DKIM key (`selector._domainkey.domain`) in already-escaped text. */
+const DKIM_NAME = /[A-Za-z0-9_.-]+\._domainkey\.[A-Za-z0-9.-]*[A-Za-z0-9]/g;
 
 /**
- * The labelled lines of one record.
+ * The `why` text of a record: escaped (printable), the DNS name of a missing or unreadable DKIM key made a link (to a DNS lookup page: the
+ * user clicks, mailproof never does), in yellow. The name is cut from already-escaped text, so it holds only name characters.
+ * @param {import('./style.js').Style} st @param {string} why @returns {string}
+ */
+export function whyText(st, why) {
+  return st.yellow(p(why, { max: 500 }).replace(DKIM_NAME, (name) => st.link(name, `https://dnschecker.org/#TXT/${encodeURIComponent(name)}`)));
+}
+
+/**
+ * The labelled lines of one record, grouped under section headers (Message, People, Proof, Content, Seal). Every string from the record
+ * goes through printable() BEFORE any style is applied.
  * @param {Facts} f
- * @param {{ compact?: boolean, full?: boolean }} [o]  `compact`: the block of a multi-record view (the long-tail facts are left out, the body is cut to 10 lines unless `full`).
+ * @param {{ compact?: boolean, full?: boolean, fullHashes?: boolean, st?: import('./style.js').Style, now?: Date }} [o]  `compact`: the block of a multi-record view (the long-tail facts are left out, the body is cut to 10 lines unless `full`); `fullHashes`: do not shorten hashes to 12 characters; `st`: the style (default none); `now`: for the relative times.
  * @returns {string[]}
  */
 export function render(f, o = {}) {
+  const st = o.st ?? makeStyle();
+  const now = o.now ?? new Date();
   /** @type {string[]} */
   const out = [];
+  const c = Boolean(o.compact);
+  /** @param {string} h @returns {string} A hash, cut to 12 characters (dim) unless --full. */
+  const hash = (h) => st.dim(o.fullHashes ? p(h) : p(h.replace(/^(sha256:)?(.*)$/s, (_, pre = '', rest) => `${pre}${rest.slice(0, 12)}`)));
+  /** @param {string} v @returns {string} N/A (and its explanation) in dim. */
+  const val = (v) => (v === NA || v.startsWith(`${NA} (`) ? st.dim(v) : v);
+  let sections = 0;
+  /** @param {string} name */
+  const section = (name) => { if (sections++) out.push(''); out.push(st.bold(name)); };
   /** @param {string} label @param {string | string[]} value */
   const row = (label, value) => {
     const v = Array.isArray(value) ? value : [value];
-    v.forEach((x, i) => out.push(`${(i === 0 ? label : '').padEnd(LABEL)} ${x}`));
+    v.forEach((x, i) => out.push(`${st.dim((i === 0 ? label : '').padEnd(LABEL))} ${x}`));
   };
-  const c = Boolean(o.compact);
-  row('account', f.account.user ? `${p(f.account.user)} (${p(f.account.name)})` : `${NA} (${p(f.account.name)})`);
+  /** @param {Facts['from']} l @returns {string} */
+  const addrText = (l) => (l.length ? l.map((x) => `${x.coverage === 'signed' ? st.bold(p(x.address)) : p(x.address)} (${COVER[x.coverage]})`).join(', ') : st.dim(NA));
+  /** @param {{ value: string | null, basis: string | null }} h */
+  const headText = (h, max = 300) => (h.value === null ? st.dim(NA) : `${h.basis === 'signed' ? st.bold(p(h.value, { max })) : p(h.value, { max })} (${h.basis === 'signed' ? 'signed' : h.basis === 'failing' ? COVER.failing : 'claimed, not signed'})`);
+  /** @param {string} t @param {string | null} v @returns {string} A trust word: green when verified, yellow otherwise (the word is always there). */
+  const trustWord = (t, v) => (v === 'verified' ? st.green(t) : st.yellow(t));
+
+  section('Message');
+  row('account', f.account.user ? `${p(f.account.user)} ${st.dim(`(${p(f.account.name)})`)}` : `${st.dim(NA)} (${p(f.account.name)})`);
   row('direction', `${f.direction === 'out' ? 'sent' : 'received'}${f.source ? ` (${p(f.source)})` : ''}`);
   row('date', headText(f.date));
-  row('captured', `${p(f.captured)} (this machine's clock)`);
+  const ago = rel(f.captured, now);
+  row('captured', `${p(f.captured)} (${ago ? `${ago}; ` : ''}this machine's clock)`);
+  row('subject', headText(f.subject, 200));
+  if (!c) {
+    row('in-reply-to', f.in_reply_to ? `${st.dim(p(f.in_reply_to.value))}${link(f.in_reply_to.strength)}` : st.dim(NA));
+    row('references', f.references.length ? f.references.map((r) => `${st.dim(p(r.value))}${link(r.strength)}`) : st.dim(NA));
+    row('children', f.children.length ? [...f.children.map((x) => `${st.dim(p(x.message_id ?? NA))}  ${p(x.strength)}  ${st.dim(p(x.id.slice(0, 12)))}`), ...(f.children_more ? ['... more'] : [])] : st.dim(NA));
+    row('copy', f.copy ? p(f.copy) : st.dim(NA));
+  }
+  row('message-id', f.message_id ? st.dim(p(f.message_id)) : st.dim(NA));
+  if (!c) row('message-key', f.message_key ? hash(f.message_key) : st.dim(NA));
+  row('id', st.dim(p(f.id)));
+
+  section('People');
   row('from', addrText(f.from));
   row('to', addrText(f.to));
   row('cc', addrText(f.cc));
   row('reply-to', addrText(f.reply_to));
-  row('bcc', f.bcc === null ? NA : `${p(f.bcc, { max: 300 })} (not signed, own copy)`);
-  row('subject', headText(f.subject, 200));
+  row('bcc', f.bcc === null ? st.dim(NA) : `${p(f.bcc, { max: 300 })} (not signed, own copy)`);
+
+  section('Proof');
+  row('trust', `live ${trustWord(p(f.trust.live ?? NA), f.trust.live)}, portable ${trustWord(p(f.trust.portable ?? NA), f.trust.portable)}${c ? '' : `; rules ${p(f.trust.rules ?? NA)}`}; re-check ${f.recheck ? `${f.recheck.ok ? st.green('ok') : st.red('not ok')} (${p(f.recheck.trust)})` : st.dim(NA)}`);
+  row('why', f.why === null ? `${st.dim(NA)} (it verifies)` : whyText(st, f.why));
+  row('body proof', f.body_proof === 'matched' ? st.green('matched') : f.body_proof === 'partial' ? st.yellow('partial (the signature covers only the first bytes)') : st.yellow(`not proven (${p(f.body_proof ?? NA)})`));
   if (!c) {
-    row('in-reply-to', f.in_reply_to ? `${p(f.in_reply_to.value)}${link(f.in_reply_to.strength)}` : NA);
-    row('references', f.references.length ? f.references.map((r) => `${p(r.value)}${link(r.strength)}`) : NA);
-    row('children', f.children.length ? [...f.children.map((x) => `${p(x.message_id ?? NA)}  ${p(x.strength)}  ${p(x.id.slice(0, 12))}`), ...(f.children_more ? ['... more'] : [])] : NA);
-    row('copy', f.copy ? p(f.copy) : NA);
-    row('dkim', f.dkim.length ? f.dkim.map((s) => `d=${p(s.d ?? NA)} s=${p(s.s ?? NA)} a=${p(s.a ?? NA)} result=${p(s.result ?? NA)} aligned=${s.aligned === null ? NA : s.aligned ? 'yes' : 'no'} re-check=${p(s.recheck ?? NA)} body=${p(s.body ?? NA)} key archived=${s.key_archived ? 'yes' : 'no'}`) : `${NA} (no DKIM signature)`);
-    row('dmarc', f.dmarc ? `${p(f.dmarc.result ?? NA)}, policy ${p(f.dmarc.policy ?? NA)}, published ${f.dmarc.published ? 'yes' : 'no'}` : NA);
-    row('spf', f.spf ? p(f.spf.result) : NA);
-    row('arc', f.arc ? `${p(f.arc.result)}${f.arc.sealers.length ? `, sealers ${f.arc.sealers.map((x) => p(x)).join(', ')}` : ''}` : NA);
+    row('dkim', f.dkim.length ? f.dkim.map((s) => `d=${p(s.d ?? NA)} s=${p(s.s ?? NA)} a=${p(s.a ?? NA)} result=${s.result === 'pass' ? st.green('pass') : p(s.result ?? NA)} aligned=${s.aligned === null ? NA : s.aligned ? 'yes' : 'no'} re-check=${p(s.recheck ?? NA)} body=${p(s.body ?? NA)} key archived=${s.key_archived ? 'yes' : 'no'}`) : `${st.dim(NA)} (no DKIM signature)`);
+    row('dmarc', f.dmarc ? `${p(f.dmarc.result ?? NA)}, policy ${p(f.dmarc.policy ?? NA)}, published ${f.dmarc.published ? 'yes' : 'no'}` : st.dim(NA));
+    row('spf', f.spf ? p(f.spf.result) : st.dim(NA));
+    row('arc', f.arc ? `${p(f.arc.result)}${f.arc.sealers.length ? `, sealers ${f.arc.sealers.map((x) => p(x)).join(', ')}` : ''}` : st.dim(NA));
   }
-  row('trust', `live ${p(f.trust.live ?? NA)}, portable ${p(f.trust.portable ?? NA)}${c ? '' : `; rules ${p(f.trust.rules ?? NA)}`}; re-check ${f.recheck ? `${f.recheck.ok ? 'ok' : 'not ok'} (${p(f.recheck.trust)})` : NA}`);
-  row('why', f.why === null ? `${NA} (it verifies)` : p(f.why, { max: 500 }));
-  row('body proof', f.body_proof === 'matched' ? 'matched' : f.body_proof === 'partial' ? 'partial (the signature covers only the first bytes)' : `not proven (${p(f.body_proof ?? NA)})`);
-  if (!f.body.stored) row('body', `${NA} (not stored: expired, forgotten or the content store is off)`);
-  else if (f.body.text === null) row('body', `${NA} (${f.body.limit ? `over limit: ${p(f.body.limit)}` : 'no text part'})`);
+
+  section('Content');
+  if (!f.body.stored) row('body', val(`${NA} (not stored: expired, forgotten or the content store is off)`));
+  else if (f.body.text === null) row('body', val(`${NA} (${f.body.limit ? `over limit: ${p(f.body.limit)}` : 'no text part'})`));
   else {
     const lines = f.body.text.split('\n');
     const cut = c && !o.full && lines.length > COMPACT_BODY_LINES;
     const shown = cut ? lines.slice(0, COMPACT_BODY_LINES) : lines;
     row('body', f.body.text === '' ? '(empty)' : `(${f.body.source})`);
     for (const l of f.body.text === '' ? [] : shown) out.push(`  ${p(l)}`);
-    if (cut) out.push(`  ... ${lines.length - COMPACT_BODY_LINES} more lines, use show ${p(f.id.slice(0, 12))} --full`);
+    if (cut) out.push(`  ${st.dim(`... ${lines.length - COMPACT_BODY_LINES} more lines, use show ${p(f.id.slice(0, 12))} --full`)}`);
   }
   row('attachments', f.attachments.length
-    ? f.attachments.map((a) => `${p(a.filename ?? '(no name)', { max: 200 })}  ${a.size === null ? NA : `${a.size} bytes`}  ${p(a.sha256 ?? NA)}  stored ${a.stored ? 'yes' : 'no'}${a.match === null ? '' : a.match ? '  match yes' : '  match NO (differs)'}`)
-    : `${NA} (none)`);
-  if (!c) row('content', f.content.raw_stored ? `raw email stored (${p(f.content.raw_sha256 ?? NA)})` : `${NA} (raw email not stored)`);
-  row('seal', f.seal ?? `${NA} (sealing is off for this account)`);
-  if (!c) row('message-key', f.message_key ? p(f.message_key) : NA);
-  row('message-id', f.message_id ? p(f.message_id) : NA);
-  row('id', p(f.id));
+    ? f.attachments.map((a) => `${p(a.filename ?? '(no name)', { max: 200 })}  ${a.size === null ? NA : `${a.size} bytes`}  ${a.sha256 ? hash(a.sha256) : NA}  stored ${a.stored ? 'yes' : 'no'}${a.match === null ? '' : a.match ? '  match yes' : `  ${st.red('match NO (differs)')}`}`)
+    : val(`${NA} (none)`));
+  if (!c) row('content', f.content.raw_stored ? `raw email stored (${f.content.raw_sha256 ? hash(f.content.raw_sha256) : NA})` : val(`${NA} (raw email not stored)`));
+
+  section('Seal');
+  row('seal', f.seal ?? val(`${NA} (sealing is off for this account)`));
   return out;
 }
 
-/** The label column, for a test. */
-export const LABELS = ['account', 'direction', 'date', 'captured', 'from', 'to', 'cc', 'reply-to', 'bcc', 'subject', 'in-reply-to', 'references', 'children', 'copy', 'dkim', 'dmarc', 'spf', 'arc', 'trust', 'why', 'body proof', 'body', 'attachments', 'content', 'seal', 'message-key', 'message-id', 'id'];
+/** The label column, for a test (the order of the labelled lines). */
+export const LABELS = ['account', 'direction', 'date', 'captured', 'subject', 'in-reply-to', 'references', 'children', 'copy', 'message-id', 'message-key', 'id', 'from', 'to', 'cc', 'reply-to', 'bcc', 'trust', 'why', 'body proof', 'dkim', 'dmarc', 'spf', 'arc', 'body', 'attachments', 'content', 'seal'];
+/** The section headers, in order. */
+export const SECTIONS = ['Message', 'People', 'Proof', 'Content', 'Seal'];

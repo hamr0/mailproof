@@ -12,6 +12,8 @@ import { configPath, TEMPLATE, loadConfig, ConfigError } from './config.js';
 import { addAccountWizard } from './wizard.js';
 import { printable as p } from './printable.js';
 import { stampText } from './sync-op.js';
+import { styleOf } from './style.js';
+import { progressLine } from './progress.js';
 
 /** @typedef {import('./session.js').Ctx} Ctx */
 /** @typedef {import('./session.js').Args} Args */
@@ -28,8 +30,10 @@ export async function syncCmd(a, ctx) {
   const s = await openAccount(a, ctx);
   try {
     if (ctx.stderr.isTTY) warn(ctx, `syncing ${p(s.account.name)} ...`);
-    const r = await syncOnce(s, ctx, over);
-    if (a.values.json) printJson(ctx, { ...r.result, ots: r.ots }); else print(ctx, syncText(r));
+    const progress = progressLine(ctx);
+    let r;
+    try { r = await syncOnce(s, ctx, { ...over, ...(progress ? { onProgress: progress.update } : {}) }); } finally { progress?.clear(); }
+    if (a.values.json) printJson(ctx, { ...r.result, ots: r.ots }); else print(ctx, syncText(r, styleOf(ctx)));
     if (r.folderError) warn(ctx, `mailproof: ${p(r.folderError.folder)}: ${p(r.folderError.code)}: ${p(r.folderError.message)}`);
     return r.exit;
   } finally { await s.close(); }
@@ -44,7 +48,7 @@ export async function stampCmd(a, ctx) {
   const s = await openAccount(a, ctx);
   try {
     const r = await s.mp.stamp();
-    if (a.values.json) printJson(ctx, r); else print(ctx, stampText(r));
+    if (a.values.json) printJson(ctx, r); else print(ctx, stampText(r, styleOf(ctx)));
     if (r.error) { warn(ctx, `mailproof: ${p(r.error)}`); return EX_ERR; }
     return EX_OK;
   } finally { await s.close(); }

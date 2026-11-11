@@ -8,6 +8,7 @@ import { loadProfile } from './config.js';
 import { withAccount, print, warn, printJson } from './session.js';
 import { printable as p } from './printable.js';
 import { gather, render } from './detail.js';
+import { styleOf } from './style.js';
 import { classifyTarget, otherParty, minute } from './target.js';
 import { showMany, verifyMany, peopleRun } from './by-person.js';
 
@@ -48,14 +49,19 @@ export async function listCmd(a, ctx) {
     if (a.values.json) { printJson(ctx, rows); return EX_OK; }
     if (!rows.length) { print(ctx, 'no emails recorded'); return EX_OK; }
     // date, in/out, live trust, the other party, subject, short id last (SPEC B11.5): party and subject are the fields of the
-    // library's list rows (one definition, SPEC B5); a subject that is only the sender's word is marked `~`
-    const width = Math.max(60, Number(/** @type {any} */ (ctx.stdout).columns) || 110);
+    // library's list rows (one definition, SPEC B5); a subject that is only the sender's word is marked `~`. The widths follow the
+    // terminal (80 when there is none); everything is cut as plain escaped text first and styled after.
+    const st = styleOf(ctx);
+    const markOf = (/** @type {string | null} */ live) => (live === 'verified' ? st.green(st.sym.ok.padEnd(2)) : live ? st.yellow(st.sym.warn.padEnd(2)) : '  ');
+    const FIXED = 17 + 2 + 3 + 2 + 2 + 1 + 10 + 2 + 2 + 2 + 12;   // date, direction, mark and trust, the gaps, the id
+    const rest = Math.max(24, st.width - FIXED);
+    const whoW = Math.min(24, Math.max(12, Math.floor(rest * 0.4)));
+    const room = Math.max(10, rest - whoW);
     for (const r of rows) {
-      const who = p(otherParty(r.direction, r.addresses) ?? '-', { max: 24 }).padEnd(24);
-      const head = `${minute(r.captured)}  ${p(r.direction).padEnd(3)}  ${p(r.live ?? '-').padEnd(10)}  ${who}  `;
-      const room = Math.max(10, width - head.length - 14);
+      const who = st.fit(p(otherParty(r.direction, r.addresses) ?? '-'), whoW).padEnd(whoW);
       const subject = r.subject === null ? '(none recorded)' : r.subjectSource === 'claimed' ? `~ ${r.subject}` : r.subject;
-      print(ctx, `${head}${p(subject, { max: room }).padEnd(room)}  ${short(r.id)}`);
+      const live = p(r.live ?? '-').padEnd(10);
+      print(ctx, `${minute(r.captured)}  ${p(r.direction).padEnd(3)}  ${markOf(r.live)} ${r.live === 'verified' ? st.green(live) : st.yellow(live)}  ${who}  ${st.fit(p(subject), room).padEnd(room)}  ${st.dim(short(r.id))}`);
     }
     return EX_OK;
   });
@@ -84,7 +90,7 @@ export async function showCmd(a, ctx) {
       printJson(ctx, { record: rec, proof: parts, links, seal, facts: { ...facts, body: { stored: body.stored, source: body.source, ...(a.values.full ? { text: body.text } : {}) } } });
       return EX_OK;
     }
-    for (const l of render(f, { full: true })) print(ctx, l);
+    for (const l of render(f, { full: true, fullHashes: Boolean(a.values.full), st: styleOf(ctx), now: (ctx.deps.now ?? (() => new Date()))() })) print(ctx, l);
     return EX_OK;
   });
 }
@@ -100,9 +106,12 @@ export async function verifyCmd(a, ctx) {
     if (!rec) { warn(ctx, `mailproof: no record ${short(id)}`); return EX_ERR; }
     const v = await mp.verify(rec, at ? { at } : undefined);
     if (a.values.json) { printJson(ctx, { id, ...v }); return v.ok ? EX_OK : EX_NO; }
-    print(ctx, `${v.ok ? 'ok' : 'NOT OK'}  ${p(v.trust)}  basis ${p(v.basis)}  at ${p(v.at ?? '-')}  rules ${p(v.engine.rules)}`);
-    for (const s of v.signatures) print(ctx, `  ${p(s.d ?? '-')}  ${p(s.s ?? '')}  ${s.ok ? 'verifies' : `fails: ${p(s.why ?? s.reason ?? 'unknown')}`}`);
+    const st = styleOf(ctx);
+    const { sym } = st;
+    print(ctx, `${v.ok ? st.green(`${sym.ok} OK`) : st.red(`${sym.bad} NOT OK`)}  ${v.ok ? st.green(p(v.trust)) : st.yellow(p(v.trust))}  basis ${p(v.basis)}  at ${p(v.at ?? '-')}  rules ${st.dim(p(v.engine.rules))}`);
+    for (const s of v.signatures) print(ctx, `  ${s.ok ? st.green(sym.ok) : st.red(sym.bad)} ${p(s.d ?? '-')}  ${p(s.s ?? '')}  ${s.ok ? 'verifies' : `fails: ${p(s.why ?? s.reason ?? 'unknown')}`}`);
     if (v.error) print(ctx, `  ${p(v.error)}`);
+    print(ctx, v.ok ? st.badge('green', `${sym.ok} VERIFIED`) : st.badge('red', `${sym.bad} NOT VERIFIED`));
     return v.ok ? EX_OK : EX_NO;
   });
 }

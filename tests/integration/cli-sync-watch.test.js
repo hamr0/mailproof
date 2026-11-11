@@ -59,7 +59,7 @@ test('sync: an access-token command is re-run every time (a fresh token); text o
   await w.run(['sync'], { deps });
   assert.equal(toks.length, 2);
   assert.notEqual(toks[0], toks[1]);
-  assert.match(a.stdout, /^INBOX +in +seen 3  recorded 3  duplicate 0\ncomplete\n$/);
+  assert.match(a.stdout, /^ok INBOX +in +seen 3  recorded 3  duplicate 0\ncomplete\n$/);
 });
 
 test('sync exit codes follow B4.1: partial 0, a folder error or a thrown error mapped, stdout still holds the result', async () => {

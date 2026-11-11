@@ -46,7 +46,7 @@ test('the fixture really is hostile (--json carries the raw values)', async () =
 });
 
 test('list (text): hostile Message-IDs are shown as escapes, nothing forbidden reaches stdout', async () => {
-  const r = await run('list');
+  const r = await w.run(['list'], { columns: 140 });
   assert.equal(r.code, 0, r.stderr);
   noForbidden(r, 'list');
   assert.ok(r.stdout.includes('bob@moc.elpmaxe'), r.stdout);

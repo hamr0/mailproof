@@ -6,7 +6,9 @@ import { UsageError, EX_OK, EX_NO } from './errors.js';
 import { parseDate, parseAddress } from './parse.js';
 import { withAccount, print, warn, printJson } from './session.js';
 import { otsOptionFromEnv } from './secrets.js';
+import path from 'node:path';
 import { printable as p } from './printable.js';
+import { styleOf, makeStyle, fileUrl } from './style.js';
 
 /** @typedef {import('./session.js').Ctx} Ctx */
 /** @typedef {import('./session.js').Args} Args */
@@ -39,10 +41,12 @@ export async function exportCmd(a, ctx) {
     const behind = r.seals.pending + r.seals.unstamped + r.seals.unsealed;
     if (v.json) printJson(ctx, r);
     else {
-      print(ctx, `wrote ${p(r.out)} (${r.records} records, ${r.replies} replies, ${r.keys} keys, ${r.manifests} manifests, ${size(r.bytes)})`);
-      print(ctx, `bundle sha256 ${r.bundle_sha256}  (tell the recipient this out of band; they can run: mailproof verify-bundle --expect ${r.bundle_sha256} <dir>)`);
-      print(ctx, `seals: ${r.seals.anchored} anchored, ${r.seals.pending} pending, ${r.seals.unstamped} unstamped, ${r.seals.unsealed} unsealed`);
-      print(ctx, `raw emails still stored: ${r.content.stored} of ${r.records}`);
+      const st = styleOf(ctx);
+      const n = (/** @type {number} */ v, /** @type {string} */ word) => (v > 0 ? st.yellow(`${v} ${word}`) : `${v} ${word}`);
+      print(ctx, `${st.green(st.sym.ok)} wrote ${st.link(p(r.out), fileUrl(path.resolve(r.out)))} (${r.records} records, ${r.replies} replies, ${r.keys} keys, ${r.manifests} manifests, ${size(r.bytes)})`);
+      print(ctx, `${st.dim('bundle sha256')} ${r.bundle_sha256}  ${st.dim(`(tell the recipient this out of band; they can run: mailproof verify-bundle --expect ${r.bundle_sha256} <dir>)`)}`);
+      print(ctx, `${st.dim('seals:')} ${r.seals.anchored} anchored, ${n(r.seals.pending, 'pending')}, ${n(r.seals.unstamped, 'unstamped')}, ${n(r.seals.unsealed, 'unsealed')}`);
+      print(ctx, `${st.dim('raw emails still stored:')} ${r.content.stored} of ${r.records}`);
     }
     if (behind > 0) warn(ctx, `mailproof: ${behind} of ${r.records} records are not anchored yet (pending, unstamped or unsealed): run \`mailproof stamp\` (it stamps and upgrades) and export again`);
     return EX_OK;
@@ -56,19 +60,20 @@ const sealText = (s) => `${s.state}${s.block !== undefined ? ` (block ${s.block}
  * The text report of a bundle check (SPEC B13.3.5): the verdict line, the counts, what was not checked, one line per record, the
  * failures of each check, then three fixed sentences. Every string from the bundle passes through printable().
  * @param {import('../proof/bundle-verify.js').BundleResult} r
+ * @param {import('./style.js').Style} [st]
  * @returns {string}
  */
-export function bundleText(r) {
+export function bundleText(r, st = makeStyle()) {
   const c = r.counts;
   /** @type {string[]} */
   const out = [];
-  out.push(`${r.ok ? 'OK' : `FAILED: ${r.failed.map((x) => p(x)).join(', ')}`}  ${c.records} records (${c.verified} verified, ${c.unverified} unverified); seals: ${c.anchored} anchored, ${c.pending} pending, ${c.unstamped} unstamped, ${c.unsealed} unsealed, ${c.unchecked} unchecked, ${c.bad} bad`);
-  if (r.ots === 'absent') out.push('seals NOT checked: ots not installed (install opentimestamps-client)');
+  out.push(`${r.ok ? st.green('OK') : st.red(`FAILED: ${r.failed.map((x) => p(x)).join(', ')}`)}  ${c.records} records (${c.verified} verified, ${c.unverified} unverified); seals: ${c.anchored} anchored, ${c.pending} pending, ${c.unstamped} unstamped, ${c.unsealed} unsealed, ${c.unchecked} unchecked, ${c.bad} bad`);
+  if (r.ots === 'absent') out.push(st.yellow(`seals NOT checked: ots not installed (install opentimestamps-client)`));
   else if (r.ots === 'off') out.push('seals NOT checked: ots is off (MAILPROOF_OTS=off)');
   else if (r.ots === 'out of time') out.push('seals NOT fully checked: the time budget for ots ran out (the rest are unchecked)');
   for (const x of r.records) {
     const first = x.problems[0];
-    out.push(`${p(x.id.slice(0, 12))}  ${p(x.captured ?? '-')}  ${p(x.direction ?? '-').padEnd(3)}  ${x.trust}  seal ${sealText(x.seal)}${first ? `  -- ${p(first, { max: 200 })}` : ''}`);
+    out.push(`${p(x.id.slice(0, 12))}  ${p(x.captured ?? '-')}  ${p(x.direction ?? '-').padEnd(3)}  ${x.trust === 'verified' ? st.green(x.trust) : st.yellow(x.trust)}  seal ${sealText(x.seal)}${first ? `  -- ${p(first, { max: 200 })}` : ''}`);
   }
   const by = new Map();
   for (const x of r.problems) { const l = by.get(x.check) ?? []; l.push(x); by.set(x.check, l); }
@@ -80,6 +85,7 @@ export function bundleText(r) {
   out.push('This bundle does not prove completeness: the owner chose which emails to include.');
   out.push('"anchored" means the proof is for these bytes and carries a Bitcoin block attestation; the block is not checked against a Bitcoin node (run `ots verify` for that).');
   out.push('"captured" is the owner\'s clock; only the seal bounds it ("no later than").');
+  out.push(r.ok ? st.badge('green', `${st.sym.ok} VERIFIED`) : st.badge('red', `${st.sym.bad} NOT VERIFIED`));
   return out.join('\n');
 }
 
@@ -95,6 +101,6 @@ export async function verifyBundleCmd(a, ctx) {
     ...(expect !== undefined ? { expect: String(expect) } : {}),
     ...(a.values.strict ? { strict: true } : {}),
   });
-  if (a.values.json) printJson(ctx, r); else print(ctx, bundleText(r));
+  if (a.values.json) printJson(ctx, r); else print(ctx, bundleText(r, styleOf(ctx)));
   return r.ok ? EX_OK : EX_NO;
 }
