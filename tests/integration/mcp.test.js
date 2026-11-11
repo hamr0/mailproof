@@ -307,3 +307,18 @@ test('a record whose text is a prompt injection round-trips as data, and the des
   void inDir;
   s.end(); await s.exited;
 });
+
+test('shutdown (B12.9): one SIGTERM with stdin still open exits 0; SIGINT then SIGTERM (Claude Code) exits 0', async (tc) => {
+  const { world } = await oneAccount();
+  const exitsWithin = (s) => Promise.race([s.exited, new Promise((r) => setTimeout(() => r('still running'), 8000))]);
+  const one = spawnMcp(world, { t: tc });
+  await one.init();
+  one.child.kill('SIGTERM');   // stdin stays open: the client has not closed it
+  assert.deepEqual(await exitsWithin(one), { code: 0, signal: null });
+  const two = spawnMcp(world, { t: tc });
+  await two.init();
+  two.child.kill('SIGINT');
+  await new Promise((r) => setTimeout(r, 260));
+  two.child.kill('SIGTERM');   // may land after the exit: harmless
+  assert.deepEqual(await exitsWithin(two), { code: 0, signal: null });
+});

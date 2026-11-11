@@ -164,6 +164,7 @@ export function serve(o) {
       if (done) return;
       done = true;
       stop();
+      o.input.pause();   // an open stdin pipe would keep the event loop alive after a signal; paused, the process can exit
       o.signal?.removeEventListener('abort', finish);
       /** @type {NodeJS.Timeout | undefined} */
       let t;
