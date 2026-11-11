@@ -21,7 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > the first free clean minor, `1.3.0`.) See
 > [`archive/v1/docs/DESIGN.md`](archive/v1/docs/DESIGN.md) for the phasing.
 
-## [Unreleased]
+## [3.2.0] - 2026-11-11
+
+> **Upgrading from 3.1.0.** Configs that worked before are now refused: a `backupRemote` with credentials in the URL fails config validation, and a loose-mode `passFile` or `--pass-file` (group or other bits, or a foreign owner) is refused unread (exit 77). Fix with a git credential helper or ssh key, and `chmod 600` the password file. `backup --with-content` also refuses an existing `<out>.content.tar`.
 
 ### Security
 - `backupRemote` with credentials in the URL (`https://user:token@host/...`) now fails config validation: a pasted token sat in the config and in git's argv. Use a git credential helper or an ssh key; `git@host:path` and `ssh://git@host/path` are unchanged.
@@ -30,6 +32,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `backup` writes and verifies the git bundle in a private 0700 temp directory next to `--out` and links it into place 0600 (never overwriting), so it is never readable by others while it is written either.
 
 ### Changed
+- `backup --push` masks credentials in git's stderr for every URL scheme, not only `https`.
+- The `forget` help text now says From, To, Cc or Reply-To (what SPEC B7.7 always said).
 - `list()` and `copies()` read the trail HEAD once per caught-up call instead of twice (one less `git rev-parse`).
 
 ### Fixed
