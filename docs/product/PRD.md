@@ -399,7 +399,9 @@ After M4 the v2 promise of §1 and §2 is met. "I sent you this" without a reply
 
 **Evidence so far (gitdone operators, real box, 2026-11-11):** a locally submitted, locally delivered copy of an outbound message carries OpenDKIM's `DKIM-Signature` and verifies. The OpenDKIM default `h=` lists only `From:To:Subject:Date:From`, so the guide sets `SignHeaders` (Message-ID, In-Reply-To, References, ...) explicitly; that line is recommended, not yet tested. **One open evidence task:** prove on a real box, end to end with `mailproof record` and `mailproof verify`, that the `sender_bcc_maps` copy carries the DKIM-Signature (strongly implied by the mechanism: the same queue file; not tested). The guide's "verified and unverified" table tracks every other step.
 
-**Out of scope:** an image, a mail-server product, sending (mailproof never sends mail), submission (port 587) setup, multi-user hosting.
+**Open (not covered yet):** sending from a mail client. The guide covers local `sendmail(8)` submission only, which is what a real box proves; a submission service (port 587, SASL, `smtpd_sender_login_maps` with `reject_sender_login_mismatch` so signing and the BCC copy apply only to authenticated senders) is a later addition (owner scope decision, 2026-11-11).
+
+**Out of scope:** an image, a mail-server product, sending (mailproof never sends mail), multi-user hosting.
 
 ### M6 — Zero-knowledge disclosure (PARKED)
 
