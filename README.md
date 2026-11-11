@@ -22,6 +22,8 @@
   <img src="https://img.shields.io/badge/license-Apache%202.0-2a4f8c" alt="license: Apache 2.0">
 </p>
 
+**Guides:** [Setup guide: from zero to a sealed, exportable proof trail with the `mailproof` command](docs/product/setup-guide.md) | [Run your own mail server so your outbound mail is signed](docs/product/self-hosting.md)
+
 ## What it is
 
 **One proof, two goals.** The email-proof engine behind signedreply.com, packaged for anyone who needs a verifiable email.
