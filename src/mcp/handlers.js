@@ -9,8 +9,8 @@ import { syncOnce } from '../cli/sync-op.js';
 import { readBytes, readAllowedFile, saveBytes } from './input.js';
 import { ToolError, badArgument } from './errors.js';
 
-/** Messages read per folder in one `sync` call unless the caller lowers it (SPEC B12.12, measured in F30). */
-export const SYNC_MAX_MESSAGES_DEFAULT = 200;
+/** Messages read per folder in one `sync` call unless the caller lowers it (SPEC B12.12: about 8 s for 100 signed 40 KB messages, F30). */
+export const SYNC_MAX_MESSAGES_DEFAULT = 100;
 /** Message count the `maxMessages` argument may not exceed (the library caps a folder at 1,000 anyway). */
 export const SYNC_MAX_MESSAGES_CEILING = 1000;
 

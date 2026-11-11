@@ -1,6 +1,6 @@
 # mailproof v2 — PRD
 
-> **Status:** v2 is released through 3.2.0 (M0-M2 and M3 steps 1-3 shipped in 3.0.0). M3 steps 4 (`replyFacts`) and 5 (the `mailproof` CLI) shipped in 3.1.0, and 3.2.0 (2026-11-11) is the latest; the rest of M3 (MCP) is specified, not built. 1.x is frozen at tag `v1.4.0` (v1 code archived in `archive/v1/`; no `v1` branch).
+> **Status:** v2 is released through 3.2.0 (M0-M2 and M3 steps 1-3 shipped in 3.0.0). M3 steps 4 (`replyFacts`) and 5 (the `mailproof` CLI) shipped in 3.1.0, and 3.2.0 (2026-11-11) is the latest; M3 step 6 (the MCP server, `mailproof mcp`, SPEC B12) is built on `feat/m3-mcp` and not yet released. 1.x is frozen at tag `v1.4.0` (v1 code archived in `archive/v1/`; no `v1` branch).
 > **Owner:** hamr0 · **Last updated:** 2026-11-09
 >
 > **For future Claude:** this PRD wins on intent and scope. The *why* behind each choice is in
@@ -222,7 +222,7 @@ It stores no text, no body bytes and no subject (the trail stays header-only). I
 
 ### M3 — Two-party record (specified)
 
-**Status:** specified 2026-11-08, approvals round added 2026-11-09; **build step 1 shipped in 3.0.0: the local content store, retention and `forget`** ([SPEC B7](SPEC.md), [F22](findings.md)); **build step 2 shipped in 3.0.0: trust profiles, the counterparty view and graded thread links** ([SPEC B5, B8](SPEC.md), [F23](findings.md)); **build step 3 shipped in 3.0.0: prune before date** ([SPEC B9](SPEC.md), [F25](findings.md)); **build step 4 shipped in 3.1.0: `replyFacts`** ([SPEC B10](SPEC.md), [F26](findings.md), [F27](findings.md)); **build step 5 shipped in 3.1.0: the `mailproof` CLI, with `Mailproof#upgradeStamps()` and `prune({ dryRun })`** ([SPEC B11](SPEC.md)); the rest (MCP) is not built; a few items still open (see Open below). Reasons and options: [decisions-log](decisions-log.md) entry "M3 scope: one trail per owned account, local content store, prune-before-date, CLI + stdlib MCP". Wire formats go to SPEC Part B when each step is built (B7 is the first).
+**Status:** specified 2026-11-08, approvals round added 2026-11-09; **build step 1 shipped in 3.0.0: the local content store, retention and `forget`** ([SPEC B7](SPEC.md), [F22](findings.md)); **build step 2 shipped in 3.0.0: trust profiles, the counterparty view and graded thread links** ([SPEC B5, B8](SPEC.md), [F23](findings.md)); **build step 3 shipped in 3.0.0: prune before date** ([SPEC B9](SPEC.md), [F25](findings.md)); **build step 4 shipped in 3.1.0: `replyFacts`** ([SPEC B10](SPEC.md), [F26](findings.md), [F27](findings.md)); **build step 5 shipped in 3.1.0: the `mailproof` CLI, with `Mailproof#upgradeStamps()` and `prune({ dryRun })`** ([SPEC B11](SPEC.md)); **build step 6, the MCP server, is built on `feat/m3-mcp`, not released** ([SPEC B12](SPEC.md), [F30](findings.md)); a few items still open (see Open below). Reasons and options: [decisions-log](decisions-log.md) entry "M3 scope: one trail per owned account, local content store, prune-before-date, CLI + stdlib MCP". Wire formats go to SPEC Part B when each step is built (B7 is the first).
 
 **Goal.** M3 makes mailproof a two-party record for three use cases on one substrate:
 
@@ -347,7 +347,7 @@ POC first where the mechanism is unproven: `replyFacts` on real replies, the std
 
 #### Open (not decided)
 
-- **MCP:** decided (SPEC B12, 2026-11-11); only confirmations remain (hint choices, B12.10). Elicitation as a real human gate is a later POC.
+- **MCP:** built (SPEC B12, F30), not released; the hint choices (B12.10) still await owner confirmation, and F30 shows Claude Code does not act on the hints, so scoping is by tool name. Elicitation as a real human gate is a later POC.
 - **`watch` mechanism:** interval vs IMAP IDLE. A mechanism choice, decided at build.
 - **Pair/thread export:** whether a minimal one ships in M3 or waits for M6.
 - **Provider sampling (evidence task, not done):** sample one reply each from Yahoo, iCloud, Proton and Fastmail to see whether they sign In-Reply-To/References. Signing is per-provider configuration; only Gmail and Microsoft are measured.

@@ -21,6 +21,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > the first free clean minor, `1.3.0`.) See
 > [`archive/v1/docs/DESIGN.md`](archive/v1/docs/DESIGN.md) for the phasing.
 
+## [Unreleased]
+
+### Added
+- **`mailproof mcp`: an MCP server** (stdio, no new dependency; SPEC B12). One process serves every configured account to an MCP client (Claude Code, Claude Desktop, ...): 22 tools named after the library methods (`list`, `get`, `verify`, `replyFacts`, `record`, `sync`, `forget`, `prune`, ...), all always listed, each with the four MCP annotations. Every account-bound tool takes `account` (required when two or more are configured; `--account <name>` restricts a server to one). Results are JSON text; `rawEmail` and `attachment` return a blob or save a file (`saveTo`). Failures are `isError` results with the library's error code and a `retryable` flag. `forget` and `prune` only preview until called with `confirm: true`. Write and destructive calls add one line to `<state>/mcp.log`. Everything an email says is marked as untrusted data in every tool description.
+- Config block `mcp` (`inputDirs`, `outputDir`, `maxResponseBytes`, `maxBinaryBytes`): paths are read only from `inputDirs` and files are saved only into `outputDir`; both are off until you set them.
+- `Mailproof#forget(target, { dryRun: true })` previews what a `forget` would remove (`{ removed, attachments, dryRun: true, ids }`); the CLI's `forget` summary now uses it.
+- `npm run build:mcp-tools` / `check:mcp-tools` (generated tool list, checked in CI).
+
+### Notes
+- Claude Code 2.1.322 does not act on the tool annotations: it refuses any MCP tool not in its allow list and runs `forget` without a gate once allowed. Scope by tool name in the client (usage guide).
+- `mailproof mcp` with no stdin stream or on a terminal exits 64 (it is a stdio server, not interactive).
+
 ## [3.2.0] - 2026-11-11
 
 > **Upgrading from 3.1.0.** Configs that worked before are now refused: a `backupRemote` with credentials in the URL fails config validation, and a loose-mode `passFile` or `--pass-file` (group or other bits, or a foreign owner) is refused unread (exit 77). Fix with a git credential helper or ssh key, and `chmod 600` the password file. `backup --with-content` also refuses an existing `<out>.content.tar`.

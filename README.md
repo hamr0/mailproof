@@ -55,12 +55,13 @@ await mp.verify(id);                                   // later, offline, from t
 const reply = await mp.replyText(rawEmail);            // the sender's new words, and reply.proven
 ```
 
-## Four ways to use it
+## Five ways to use it
 
 1. **Library**: `check`, `record`, `verify`, `matchBody`, `matchFile`, `list`, `copies`, `replyText`, `replyFacts`, `counterparties`, `linked`, `checkProfile`, `proofParts`, `rawEmail`, `attachment`, `expireContent`, `forget`, `prune`, `upgradeStamps`. Use it in your own pipeline, for example a Postfix pipe.
 2. **IMAP capture**: `mp.sync({...})` reads a mailbox (Gmail first) read-only and records every message. Run it again to pick up new mail.
 3. **The `mailproof` command**: run it for a menu, or use its subcommands (`sync`, `watch`, `list`, `show`, `verify`, `replies`, `check`, `forget`, `prune`, `backup`, `status`, ...) in scripts. Your mailboxes live in one config file and the password is always read from a command or a file you name, never typed or stored. `mailproof-sync` stays for one sync run under cron or a systemd timer.
-4. **AI agents**: `primitives.json` is a machine-readable menu of every verb (`when`, `import`, `signature`, `fails`, `example`), generated from source. Also on unpkg: `unpkg.com/mailproof/primitives.json`. Hand your assistant `mailproof.context.md` for the full contract.
+4. **MCP server**: `mailproof mcp` gives Claude Code or any MCP client 22 tools over your accounts (`claude mcp add mailproof -- mailproof mcp`). Scope it by tool name: Claude Code does not act on the read-only/destructive hints. `forget` and `prune` only preview until called with `confirm`. [Usage guide](docs/product/usage-guide.md#ai-agents-the-mcp-server-mailproof-mcp).
+5. **AI agents**: `primitives.json` is a machine-readable menu of every verb (`when`, `import`, `signature`, `fails`, `example`), generated from source. Also on unpkg: `unpkg.com/mailproof/primitives.json`. Hand your assistant `mailproof.context.md` for the full contract.
 
 ### The command line
 
