@@ -130,11 +130,13 @@ test('a failed commit removes only this call\'s new files; tracked files are unt
   const trailDir = tmp();
   const m1 = await signedMail({ body: 'one\r\n' });
   const mp = new Mailproof({ trailDir, resolver: m1.resolver });
-  await mp.record(m1.raw, { direction: 'in' });
+  const first = await mp.record(m1.raw, { direction: 'in' });
   const root = path.join(trailDir, 'default');
   const trackedBefore = fs.readFileSync(path.join(root, 'trail.json'), 'utf8');
   fs.writeFileSync(path.join(root, '.git', 'hooks', 'pre-commit'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
-  const id = 'ab'.repeat(16);
+  // the doomed id must land in a shard the first record does not occupy (random id: 1-in-256 clash otherwise)
+  const p = (first.id[0] === 'a' ? 'b' : 'a') + first.id[1];
+  const id = p.repeat(16);
   await assert.rejects(() => commitRecord(root, 'default', {
     record: { v: 2, id },
     keyFiles: [{ rel: 'keys/x.example/s/0000.json', json: { v: 2 } }],
