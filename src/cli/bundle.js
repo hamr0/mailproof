@@ -10,7 +10,7 @@ import path from 'node:path';
 import { printable as p } from './printable.js';
 import { styleOf, makeStyle, fileUrl } from './style.js';
 import { tilde, userDir, ensureDefaultDir } from './paths.js';
-import { count, humanSize } from './words.js';
+import { count, humanSize, wrap } from './words.js';
 import { pageLines } from './rows.js';
 import { sealPhrase } from './seal.js';
 
@@ -85,12 +85,25 @@ export async function exportCmd(a, ctx) {
   });
 }
 
-/** @param {import('../proof/bundle-verify.js').BundleSeal} s @param {import('./style.js').Style} st @returns {string} */
-const sealText = (s, st) => sealPhrase(s, new Date(), st.sym.dot);
+/**
+ * A bundle record as the facts a browse row takes (rows.js): the bundle carries no subject or sender in its check result, so the row's
+ * party column is the record id, its second line the seal phrase and its third the first problem (or the signature count).
+ * @param {import('../proof/bundle-verify.js').BundleResult['records'][number]} x @param {import('./style.js').Style} st @param {Date} now
+ * @returns {import('./rows.js').Facts}
+ */
+const rowFacts = (x, st, now) => {
+  const party = [{ address: x.id.slice(0, 12), coverage: 'none' }];
+  const reason = x.problems[0] ?? `${count(x.signatures.length, 'signature')}${x.key === 'ok' || x.key === 'none' ? '' : `, key ${x.key}`}`;
+  return /** @type {any} */ ({
+    captured: typeof x.captured === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d/.test(x.captured) ? x.captured : '1970-01-01T00:00:00.000Z',
+    direction: x.direction === 'out' ? 'out' : 'in', from: x.direction === 'out' ? [] : party, to: x.direction === 'out' ? party : [], cc: [],
+    trust: { live: x.trust }, subject: { value: sealPhrase(x.seal, now, st.sym.dot), coverage: 'signed' }, reason, attachments: [],
+  });
+};
 
 /**
- * The text report of a bundle check (SPEC B13.3.5): the verdict line, the counts, what was not checked, one line per record, the
- * failures of each check, then three fixed sentences. Every string from the bundle passes through printable().
+ * The text report of a bundle check (SPEC B13.3.5): the verdict line, the counts, what was not checked, one two-line row per record (the
+ * browse rows), the failures of each check, then three fixed sentences (dim, wrapped). Every string from the bundle passes through printable().
  * @param {import('../proof/bundle-verify.js').BundleResult} r
  * @param {import('./style.js').Style} [st]
  * @returns {string}
@@ -99,14 +112,12 @@ export function bundleText(r, st = makeStyle()) {
   const c = r.counts;
   /** @type {string[]} */
   const out = [];
-  out.push(`${r.ok ? st.green('OK') : st.red(`FAILED: ${r.failed.map((x) => p(x)).join(', ')}`)}  ${c.records} records (${c.verified} verified, ${c.unverified} unverified); seals: ${c.anchored} anchored, ${c.pending} pending, ${c.unstamped} unstamped, ${c.unsealed} unsealed, ${c.unchecked} unchecked, ${c.bad} bad`);
+  out.push(`${r.ok ? st.green('OK') : st.red(`FAILED: ${r.failed.map((x) => p(x)).join(', ')}`)}  ${count(c.records, 'record')} (${c.verified} verified, ${c.unverified} unverified); seals: ${c.anchored} anchored, ${c.pending} pending, ${c.unstamped} unstamped, ${c.unsealed} unsealed, ${c.unchecked} unchecked, ${c.bad} bad`);
   if (r.ots === 'absent') out.push(st.yellow(`seals NOT checked: ots not installed (install opentimestamps-client)`));
   else if (r.ots === 'off') out.push('seals NOT checked: ots is off (MAILPROOF_OTS=off)');
   else if (r.ots === 'out of time') out.push('seals NOT fully checked: the time budget for ots ran out (the rest are unchecked)');
-  for (const x of r.records) {
-    const first = x.problems[0];
-    out.push(`${p(x.id.slice(0, 12))}  ${p(x.captured ?? '-')}  ${p(x.direction ?? '-').padEnd(3)}  ${x.trust === 'verified' ? st.green(x.trust) : st.yellow(x.trust)}  seal ${sealText(x.seal, st)}${first ? `  -- ${p(first, { max: 200 })}` : ''}`);
-  }
+  const now = new Date();
+  if (r.records.length) out.push(...pageLines({ st, now: () => now }, r.records.map((x) => ({ facts: rowFacts(x, st, now) })), 1));
   const by = new Map();
   for (const x of r.problems) { const l = by.get(x.check) ?? []; l.push(x); by.set(x.check, l); }
   for (const [check, list] of by) {
@@ -114,9 +125,13 @@ export function bundleText(r, st = makeStyle()) {
     for (const x of list.slice(0, 50)) out.push(`  ${x.id ? `${p(x.id.slice(0, 12))}: ` : ''}${p(x.why, { max: 300 })}`);
     if (list.length > 50) out.push(`  ... and ${list.length - 50} more`);
   }
-  out.push('This bundle does not prove completeness: the owner chose which emails to include.');
-  out.push('"anchored" means the proof is for these bytes and carries a Bitcoin block attestation; the block is not checked against a Bitcoin node (run `ots verify` for that).');
-  out.push('"captured" is the owner\'s clock; only the seal bounds it ("no later than").');
+  out.push('');
+  for (const n of [
+    'This bundle does not prove completeness: the owner chose which emails to include.',
+    '"anchored" means the proof is for these bytes and carries a Bitcoin block attestation; the block is not checked against a Bitcoin node (run `ots verify` for that).',
+    '"captured" is the owner\'s clock; only the seal bounds it ("no later than").',
+  ]) for (const l of wrap(n, st.width)) out.push(st.dim(l));
+  out.push('');
   out.push(r.ok ? st.badge('green', `${st.sym.ok} VERIFIED`) : st.badge('red', `${st.sym.bad} NOT VERIFIED`));
   return out.join('\n');
 }
