@@ -3,6 +3,10 @@
 // the compact action line follows the output. On a pipe there is no pager (the menu keeps its "Press Enter" step).
 
 import { stripStyle } from './style.js';
+import { SECTIONS } from './detail.js';
+
+/** A block header of `show <address>`. */
+const BLOCK = /^#\d+ of \d+$/;
 
 /** @typedef {{ write: (s: string | Uint8Array) => unknown, isTTY?: boolean, columns?: number, rows?: number }} Out */
 
@@ -26,6 +30,29 @@ export function makePager(real, p, st) {
   const height = (l) => Math.max(1, Math.ceil([...stripStyle(l)].length / (real.columns || 80)));
 
   /**
+   * Where a page that would end at `end` (exclusive) should end instead (SPEC B11.4): before the last `#N of M` block that starts on this page,
+   * else before the last section heading, so a block is not cut right after its header; the blank line that separates them goes with the cut
+   * (the next page starts at the header). Unchanged when the text ends here, when nothing on the page is such a start, or at the page's own first line.
+   * @param {string[]} lines @param {number} start @param {number} end @returns {number}
+   */
+  function cut(lines, start, end) {
+    if (end >= lines.length) return end;
+    /** @param {(t: string) => boolean} is */
+    const last = (is) => {
+      for (let j = end; j > start; j--) {
+        const at = lines[j] === undefined ? '' : stripStyle(lines[j]);
+        const b = at === '' && j + 1 < lines.length && is(stripStyle(lines[j + 1])) ? j : is(at) && lines[j - 1] !== '' ? j : -1;   // the boundary: the blank before a start, else the start itself
+        if (b > start) return b;
+      }
+      return -1;
+    };
+    const b = last((t) => BLOCK.test(t));
+    if (b > start) return b;
+    const c = last((t) => SECTIONS.includes(t));
+    return c > start ? c : end;
+  }
+
+  /**
    * Show the held-back output: all of it when it fits (rows, default 24, minus the action line and the prompt), else page by page.
    * @returns {Promise<boolean>}  False when the input ended.
    */
@@ -39,7 +66,9 @@ export function makePager(real, p, st) {
       let used = 0;
       const start = i;
       while (i < lines.length && (used + height(lines[i]) <= avail || i === start)) used += height(lines[i++]);
+      i = cut(lines, start, i);
       real.write(`${lines.slice(start, i).join('\n')}\n`);
+      while (i < lines.length && lines[i] === '' && i > start) i++;   // a blank line never leads a page
       if (i >= lines.length) break;
       real.write(`${footer}\n`);
       /** @type {string | null} */
