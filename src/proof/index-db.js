@@ -27,7 +27,7 @@ import { git, gitLines } from './git.js';
 import { parseRecordPath, parseManifestPath, assertTrailLayout } from './layout.js';
 import { readChain, readManifestAt } from './seal.js';
 import { RECORD_ID_RE, readRecord, withTrailLock, trailLockFile, trailIndexFile, headOf } from './trail.js';
-import { LINKED_CHILDREN_DEFAULT, REPLY_FACTS_MAX, INDEX_MAX_SUBJECT } from './limits.js';
+import { LINKED_CHILDREN_DEFAULT, REPLY_FACTS_MAX, INDEX_MAX_SUBJECT, INDEX_QUIET_RECORDS } from './limits.js';
 import { headerText } from './header-text.js';
 import { participantsOf, linksOf, directParents, ROLES, addressCoverage, signedHeaderValue } from './participants.js';
 import { verifyRecord } from './recheck.js';
@@ -156,10 +156,34 @@ async function eachListedBatch(root, args, onIds) {
  * @param {string} root
  * @param {string[]} ids
  * @param {(batch: Array<[string, MpRecord | null]>) => void} fn
+ * @param {(done: number) => void} [after]  Called with the number of ids handled so far, after each batch.
  * @returns {Promise<void>}
  */
-async function eachBatch(root, ids, fn) {
-  for (let i = 0; i < ids.length; i += READ_BATCH) fn(await readBatch(root, ids.slice(i, i + READ_BATCH)));
+async function eachBatch(root, ids, fn, after) {
+  for (let i = 0; i < ids.length; i += READ_BATCH) {
+    fn(await readBatch(root, ids.slice(i, i + READ_BATCH)));
+    after?.(Math.min(ids.length, i + READ_BATCH));
+  }
+}
+
+/**
+ * The record ids that differ between two commits of the trail (added, changed or removed): what a catch-up reads. The one listing, shared by
+ * the catch-up and by `indexPlan`.
+ * @param {string} root @param {string} from @param {string} to
+ * @returns {Promise<string[]>}
+ */
+async function changedIds(root, from, to) {
+  /** @type {string[]} */
+  const ids = [];
+  await eachListedBatch(root, ['diff', '--name-only', '--no-renames', '-z', from, to, '--', 'records'], (b) => { for (const id of b) ids.push(id); });
+  return ids;
+}
+
+/** @param {string} root @param {string} head @returns {Promise<number>} The record files at `head`. */
+async function countRecords(root, head) {
+  let n = 0;
+  await gitLines(root, ['ls-tree', '-r', '--name-only', '-z', head, '--', 'records'], (p) => { const r = parseRecordPath(p); if (r && !r.ots) n++; }, { sep: '\0' });
+  return n;
 }
 
 /** @param {string} root @param {string[]} ids @returns {Promise<Array<[string, MpRecord | null]>>} */
@@ -186,7 +210,24 @@ async function atomic(d, fn) {
  * @property {string} root  The trail repo directory.
  * @property {string} trail  The trail name.
  * @property {number} lockTimeoutMs
+ * @property {(p: IndexProgress) => void} [onProgress]  Called while the index is rebuilt (always) or caught up over more than INDEX_QUIET_RECORDS changed records: first with `done: 0`, then after every batch of records, last with `done === total`. Synchronous, its return value is ignored and a throw is swallowed, so it can never fail or slow the work.
  */
+
+/**
+ * What the index work is doing, for a caller that shows a progress line (the same hook style as `SyncProgress`).
+ * @typedef {Object} IndexProgress
+ * @property {'rebuild' | 'catch-up'} phase  `rebuild`: every record is read again (no index, an old schema, a rewritten trail); `catch-up`: only the records that changed since the index was last current.
+ * @property {number} done  Records handled so far.
+ * @property {number} total  Records this run will handle.
+ */
+
+/**
+ * @param {IndexCfg} cfg @param {IndexProgress} e
+ */
+function report(cfg, e) {
+  if (!cfg.onProgress) return;
+  try { cfg.onProgress(e); } catch { /* a progress hook never fails the work */ }
+}
 
 /** The loaded driver class: cached after the first successful load. A class, not a handle. @type {any} */
 let Driver = null;
@@ -293,7 +334,8 @@ async function openFile({ root, trail, lockTimeoutMs }, file) {
  * Bring the index to `head`. Caller holds the trail lock.
  * @param {ReturnType<typeof session>} s @param {IndexCfg} cfg @param {string} head
  */
-async function reconcile(s, { root }, head) {
+async function reconcile(s, cfg, head) {
+  const { root } = cfg;
   const stored = s.meta('head');
   const versionOk = s.meta('schema') === String(SCHEMA);
   if (stored === head && versionOk) return;
@@ -306,32 +348,38 @@ async function reconcile(s, { root }, head) {
   if (stored && versionOk) {
     try {
       await git(root, ['merge-base', '--is-ancestor', stored, head]);
-      /** @type {string[]} */
-      const ids = [];
-      await eachListedBatch(root, ['diff', '--name-only', '--no-renames', '-z', stored, head, '--', 'records'], (b) => { for (const id of b) ids.push(id); });
+      const ids = await changedIds(root, stored, head);
       added = await addedCommits(root, `${stored}..${head}`);
       newManifests = (await git(root, ['diff', '--name-only', '--diff-filter=A', '--no-renames', '-z', stored, head, '--', 'manifests'])).split('\0').map((p) => parseManifestPath(p)).filter((m) => m !== null && !m.ots).map((m) => /** @type {{ seq: number }} */ (m).seq);
       changed = ids;
     } catch { changed = null; } // not an ancestor (or git failed): rebuild
   }
   if (changed) {
+    const total = changed.length;
+    const loud = total > INDEX_QUIET_RECORDS;   // a small catch-up is quiet: a progress line for 0.2 s of work is noise
+    if (loud) report(cfg, { phase: 'catch-up', done: 0, total });
     await atomic(s.d, async () => {
       await eachBatch(root, changed, (batch) => {
         for (const [id, r] of batch) {
           const x = rowOf(id, r, added.get(id) ?? s.commitOf(id));
           if (x) s.put(x); else s.del(id);
         }
-      });
+      }, loud ? (done) => report(cfg, { phase: 'catch-up', done, total }) : undefined);
       for (const seq of newManifests) { const m = await readManifestAt(root, head, seq); if (m) s.putManifest(m); }   // a manifest is immutable once committed: only additions matter
       s.setMeta('head', head);
     });
     return;
   }
+  const total = cfg.onProgress ? await countRecords(root, head) : 0;   // only counted for a caller that shows progress
+  report(cfg, { phase: 'rebuild', done: 0, total });
   const commits = await addedCommits(root, head);
+  let done = 0;
   await atomic(s.d, async () => {
     s.d.exec('DELETE FROM rec; DELETE FROM att; DELETE FROM participants; DELETE FROM links; DELETE FROM seal; DELETE FROM meta;');
     await eachListedBatch(root, ['ls-tree', '-r', '--name-only', '-z', head, '--', 'records'], async (ids) => {
       for (const [id, r] of await readBatch(root, ids)) { const x = rowOf(id, r, commits.get(id) ?? null); if (x) s.put(x); }
+      done += ids.length;
+      report(cfg, { phase: 'rebuild', done: Math.min(done, total), total });
     });
     await readChain(root, head, (m) => s.putManifest(m));
     s.setMeta('schema', String(SCHEMA));
@@ -435,6 +483,39 @@ export async function indexOverview(cfg, file) {
   let total = 0;
   if (head !== null) await gitLines(cfg.root, ['ls-tree', '-r', '--name-only', '-z', head, '--', 'records'], (p) => { const r = parseRecordPath(p); if (r && !r.ots) total++; }, { sep: '\0' });
   return { state, total, totalSource: 'git', in: null, out: null, oldest: null, newest: null, verified: null, unverified: null };
+}
+
+/**
+ * What bringing the index up to date would take, without doing it and without a lock: `none` (current, or no trail yet, or the addon cannot
+ * load), `catch-up` (`records` changed records to read) or `rebuild` (no file, an unreadable file, an older schema, a HEAD the index is not an ancestor of).
+ * One git read over the changed paths, at most. For a bounded refresh (`status({ refresh: 'bounded' })`).
+ * @param {IndexCfg} cfg
+ * @param {string} file  The index file (`trailIndexFile`).
+ * @returns {Promise<{ work: 'none' | 'catch-up' | 'rebuild', records: number }>}
+ */
+export async function indexPlan(cfg, file) {
+  const head = await headOf(cfg.root);
+  if (head === null) return { work: 'none', records: 0 };
+  try { await fs.access(file); } catch { return { work: 'rebuild', records: 0 }; }
+  /** @type {Db | null} */
+  let d = null;
+  /** @type {string | undefined} */
+  let stored;
+  try {
+    const Database = await loadDriver();
+    const opened = /** @type {Db} */ (new Database(file, { readonly: true, fileMustExist: true }));
+    d = opened;
+    const meta = (/** @type {string} */ k) => /** @type {{ v?: string } | undefined} */ (opened.prepare('SELECT v FROM meta WHERE k = ?').get(k))?.v;
+    if (meta('schema') !== String(SCHEMA)) return { work: 'rebuild', records: 0 };
+    stored = meta('head');
+  } catch (e) { return { work: /** @type {any} */ (e)?.code === 'ERR_INDEX_UNAVAILABLE' ? 'none' : 'rebuild', records: 0 }; }
+  finally { try { d?.close(); } catch { /* already closed */ } }
+  if (stored === head) return { work: 'none', records: 0 };
+  if (!stored) return { work: 'rebuild', records: 0 };
+  try {
+    await git(cfg.root, ['merge-base', '--is-ancestor', stored, head]);
+    return { work: 'catch-up', records: (await changedIds(cfg.root, stored, head)).length };
+  } catch { return { work: 'rebuild', records: 0 }; }
 }
 
 /**

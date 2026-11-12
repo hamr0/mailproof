@@ -17,7 +17,11 @@ import { indexOverview } from './index-db.js';
  * @property {'absent' | 'present' | 'stale' | 'unreadable' | 'unknown'} index
  * @property {number | null} pendingStamps  Proofs not yet anchored; null with the seal off or no trail.
  * @property {Awaited<ReturnType<typeof sealStatus>> | null} seal
+ * @property {string} [hint]  Set only when a bounded refresh (`status({ refresh: 'bounded' })`) left the trail index alone because bringing it up to date would take long: what to run to build it.
  */
+
+/** The `hint` of a bounded refresh that skipped the index work (one definition: the MCP tool and the library both carry it). */
+export const INDEX_NOT_BUILT_HINT = 'The trail index is not up to date and was not built here, because that can take a while on a large trail: the counts marked null stay unknown until it is. Run `sync` (the tool) or `mailproof status` in a terminal to build it.';
 
 /** @param {string} dir @returns {Promise<{ files: number, bytes: number }>} */
 async function sizeOf(dir) {

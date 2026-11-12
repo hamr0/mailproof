@@ -3,7 +3,8 @@
 import { EX_OK, EX_ERR, EX_NOPERM, exitFor, EX_TEMPFAIL } from './errors.js';
 import { parseDuration, MIN_INTERVAL_MS } from './parse.js';
 import { openAccount, print, warn, printJson, stamp } from './session.js';
-import { syncOnce, folderLines } from './sync-op.js';
+import { syncOnce, folderLines, indexAfterSync } from './sync-op.js';
+import { indexProgressLine } from './progress.js';
 import { styleOf } from './style.js';
 import { printable as p } from './printable.js';
 import { updateState, appendWatchLog, truncateWatchLog } from './state.js';
@@ -88,6 +89,7 @@ export async function watchCmd(a, ctx) {
         print(ctx, line);   // the log keeps this one line; the screen adds the per-folder counts, as `sync` prints them
         if (synced) for (const l of folderLines(synced, styleOf(ctx))) print(ctx, `  ${l}`);
       }
+      if (synced) await indexAfterSync(s, ctx, json ? null : indexProgressLine(ctx));   // the cheap catch-up of this tick's records (a first build shows its progress)
       if (stop) { if (tick.status === 'error') warn(ctx, `mailproof: ${p(tick.error?.code)}: ${p(tick.error?.message)}`); break; }
       if (ctx.signal.aborted) break;   // a signal during the sync: it finished, now stop
       await sleep(wait, ctx.signal);

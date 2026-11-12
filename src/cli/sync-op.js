@@ -48,6 +48,22 @@ export async function syncOnce(s, ctx, over = {}) {
 }
 
 /**
+ * Bring the trail index up to date at the end of a sync (SPEC B11.5), so `status` and `list` rarely pay for it: the cheap catch-up after new
+ * records, a rebuild (with the progress line when `progress` is given) when there is no index or it is of an older schema, nothing when it is
+ * current. It is the library's `status({ refresh: true })` (one definition of "bring the index up to date"). A failure here never fails the
+ * sync: the library already answers from git when the index cannot be built, and anything it throws is only a warning on stderr.
+ * @param {import('./session.js').Session} s
+ * @param {import('./session.js').Ctx} ctx
+ * @param {{ update: (e: import('../proof/index-db.js').IndexProgress) => void, clear: () => void } | null} [progress]
+ * @returns {Promise<void>}
+ */
+export async function indexAfterSync(s, ctx, progress = null) {
+  try { await s.mp.status({ refresh: true, ...(progress ? { onProgress: progress.update } : {}) }); }
+  catch (e) { ctx.stderr.write(`mailproof: could not update the trail index: ${p(String(/** @type {Error} */ (e)?.message ?? e).slice(0, 200))}\n`); }
+  finally { progress?.clear(); }
+}
+
+/**
  * The per-folder lines of a sync result (what `sync` prints, and what every `watch` tick prints under its line).
  * @param {SyncOnce} r
  * @param {import('./style.js').Style} [st]

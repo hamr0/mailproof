@@ -100,16 +100,41 @@ test('library status({ refresh: true }) catches the index up; status() alone sta
   await s.m.close();
 });
 
-test('MCP status carries the same counts the CLI prints (refreshed), and the install facts', async () => {
+test('MCP status on a cold trail never builds the index (index absent, null counts, a hint); once the index is built it carries the same counts the CLI prints; and the install facts', async () => {
   const s = await setup({ deps: { installInfo: () => ({ dev: true, dir: '/tmp/x/mailproof' }) } });
+  const idx = path.join(s.w.trailDir, '.default.index.sqlite');
+  const cold = await s.m.call('status');
+  assert.equal(cold.isError, false, cold.text);
+  assert.equal(cold.json.index, 'absent');
+  assert.equal(cold.json.records.totalSource, 'git');
+  assert.equal(cold.json.records.in, null);
+  assert.match(cold.json.hint, /sync/);
+  assert.match(cold.json.hint, /mailproof status/);
+  assert.equal(fs.existsSync(idx), false, 'the tool built nothing');
+  await s.w.mp.status({ refresh: true });   // what the CLI status or a sync does
   const r = await s.m.call('status');
   assert.equal(r.isError, false, r.text);
   assert.equal(r.json.index, 'present');
+  assert.equal(Object.hasOwn(r.json, 'hint'), false);
   assert.deepEqual([r.json.records.total, r.json.records.in, r.json.records.out], [3, 2, 1]);
   assert.equal(typeof r.json.records.verified, 'number'); assert.equal(typeof r.json.records.unverified, 'number');
   assert.deepEqual(r.json.install, { kind: 'dev-link', path: '/tmp/x/mailproof' });
   assert.equal(Object.hasOwn(r.json, 'updateCommand'), false, 'a development link is updated with git: no npm command');
   assert.equal(r.json.update, 'development link to /tmp/x/mailproof; update with git (git pull in that folder)');
+  await s.m.close();
+});
+
+test('MCP sync builds the index at its end, so the status tool then has the counts (and a failing sync leaves it alone)', async () => {
+  const sync = async () => ({ folders: [{ folder: 'INBOX', direction: 'in', seen: 0, recorded: 0, duplicate: 0, over_limit: 0, complete: true, attempted: true }], complete: true, stamp: null });
+  const s = await setup({ deps: { sync } });
+  const idx = path.join(s.w.trailDir, '.default.index.sqlite');
+  assert.equal((await s.m.call('status')).json.index, 'absent');
+  const r = await s.m.call('sync');
+  assert.equal(r.isError, false, r.text);
+  assert.equal(fs.existsSync(idx), true, 'sync built the index');
+  const st = await s.m.call('status');
+  assert.equal(st.json.index, 'present');
+  assert.deepEqual([st.json.records.total, st.json.records.in, st.json.records.out], [3, 2, 1]);
   await s.m.close();
 });
 

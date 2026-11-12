@@ -167,6 +167,11 @@ export const STAMP_EVERY_HOURS = 6;
 
 /** The longest `status({ refresh: true })` waits for the trail lock to catch the index up (ms): a writer holding it must not make a status call hang; the read-only answer follows. */
 export const STATUS_REFRESH_LOCK_MS = 500;
+
+/** A catch-up of the trail index over more changed records than this reports progress (`onProgress`) and is "substantial" (F39: about 80 ms plus 1 ms a record, size-independent, so 500 records is about 0.6 s; below that a progress line is noise). A rebuild always reports. */
+export const INDEX_QUIET_RECORDS = 500;
+/** The most changed records a bounded refresh (`status({ refresh: 'bounded' })`, the MCP tool) catches up: about 1.2 s (F39: 100 commits 190 ms, 1 commit 80 ms). Anything more, or a rebuild (1.2 s at 2,000 records, 11 s at 20,000), is left to `sync`, the CLI `status` or `list`, so a tool call never runs for more than a second or two. */
+export const INDEX_BOUNDED_RECORDS = 1000;
 export const STAMP_EVERY_HOURS_MIN = 1;
 export const STAMP_EVERY_HOURS_MAX = 720;
 

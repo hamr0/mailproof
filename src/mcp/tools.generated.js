@@ -670,7 +670,7 @@ export const GENERATED_TOOLS = Object.freeze(/** @type {GeneratedTool[]} */ (/**
       "idempotentHint": true,
       "openWorldHint": false
     },
-    "description": "What the trail holds and how it is kept, offline: `records` (total, in, out, verified, unverified, oldest and newest capture; the tool catches the trail index up first, so these are the real counts unless a writer holds the lock or the index cannot be built, then null), `content` (stored files and bytes, or \"off\"), `index` state, `pendingStamps`, and the `seal` (mode, last run, next due, manifests, proofs not yet anchored, chain state). The tool adds last sync, last backup, a running watch, the config check, the version and `install` (`dev-link` or `npm`, with the folder). Never connects to the mailbox.",
+    "description": "What the trail holds and how it is kept, offline: `records` (total, in, out, verified, unverified, oldest and newest capture), `content` (stored files and bytes, or \"off\"), `index` state, `pendingStamps`, and the `seal` (mode, last run, next due, manifests, proofs not yet anchored, chain state). The tool catches the trail index up only when that is quick; with a cold or far-behind index `index` is `absent` or `stale`, in/out/verified and dates are null and `hint` says to run `sync` or `mailproof status`. It adds last sync, last backup, a running watch, the config check, the version and `install`. Never contacts the mailbox.",
     "noAccount": false,
     "required": [],
     "properties": {}

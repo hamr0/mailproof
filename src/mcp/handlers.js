@@ -6,7 +6,7 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 import { verifyRecord, verifyBundle } from '../index.js';
 import { parseDate, parseAddress, resolveId, messageIdOf } from '../cli/parse.js';
-import { syncOnce } from '../cli/sync-op.js';
+import { syncOnce, indexAfterSync } from '../cli/sync-op.js';
 import { readBytes, readAllowedFile, resolveAllowedBundle, saveBytes, outputPath } from './input.js';
 import { accountStatus, configFacts } from '../cli/status.js';
 import { updateFacts } from '../cli/install.js';
@@ -201,13 +201,14 @@ export const HANDLERS = {
     /** @type {import('../cli/session.js').Ctx} */
     const cliCtx = { stdout: { write: () => true }, stderr: { write: () => true }, stdin: null, interactive: false, env: c.env, signal: new AbortController().signal, deps: c.deps };
     const r = await syncOnce({ account, mp: c.mp(), state: c.state, configFile: c.configFile, close: async () => {} }, cliCtx, over);
+    await indexAfterSync({ account, mp: c.mp(), state: c.state, configFile: c.configFile, close: async () => {} }, cliCtx);   // the index is what the status tool leaves to sync
     const recorded = r.result.folders.reduce((n, f) => n + f.recorded, 0);
     return json({ ...r.result, ots: r.ots }, `ok recorded ${recorded}${r.result.complete ? '' : ' (not complete)'}`);
   },
   upgradeStamps: async (c) => json(await c.mp().upgradeStamps()),
   status: async (c) => {
     const account = /** @type {import('../cli/config.js').Account} */ (c.account);
-    const s = await accountStatus(account, c.mp(), c.state, { refresh: true });
+    const s = await accountStatus(account, c.mp(), c.state, { refresh: 'bounded' });
     return json({ ...s, config: c.configFile ? await configFacts(c.configFile, c.env) : null, version: c.version, ...updateFacts(c.deps, c.env) });
   },
   stamp: async (c) => {

@@ -8,6 +8,7 @@ import { selectAccount, mailproofOptions, loadConfig } from './config.js';
 import { print, printJson, loadCtxConfig } from './session.js';
 import { printable as p } from './printable.js';
 import { styleOf, fileUrl, rel } from './style.js';
+import { indexProgressLine } from './progress.js';
 import { readState, stateDir } from './state.js';
 import { tilde } from './paths.js';
 import { updateFacts } from './install.js';
@@ -24,14 +25,14 @@ import { indexOverview } from '../proof/index-db.js';
  * @param {import('./config.js').Account} account
  * @param {import('../index.js').Mailproof} mp
  * @param {string} state  The state directory.
- * @param {{ refresh?: boolean }} [opts]  `refresh`: the library catches the trail index up first (the CLI and the MCP tool both do).
- * @returns {Promise<{ user: string, trail: string, records: import('../proof/status.js').TrailStatus['records'], lastSync: import('./state.js').AccountState['lastSync'], content: import('../proof/status.js').TrailStatus['content'], index: import('../proof/status.js').TrailStatus['index'], pendingStamps: number | null, seal: import('../proof/status.js').TrailStatus['seal'], lastBackup: import('./state.js').AccountState['lastBackup'], watch: { running: boolean, pid?: number } }>}
+ * @param {{ refresh?: boolean | 'bounded', onProgress?: (p: import('../proof/index-db.js').IndexProgress) => void }} [opts]  `refresh`: the library catches the trail index up first: fully for the CLI (`true`, with `onProgress` for its progress line), bounded for the MCP tool (`'bounded'`: it never builds a cold index, the answer carries a `hint`).
+ * @returns {Promise<{ user: string, trail: string, records: import('../proof/status.js').TrailStatus['records'], lastSync: import('./state.js').AccountState['lastSync'], content: import('../proof/status.js').TrailStatus['content'], index: import('../proof/status.js').TrailStatus['index'], pendingStamps: number | null, seal: import('../proof/status.js').TrailStatus['seal'], lastBackup: import('./state.js').AccountState['lastBackup'], watch: { running: boolean, pid?: number }, hint?: string }>}
  */
 export async function accountStatus(account, mp, state, opts = {}) {
-  const [lib, st] = await Promise.all([mp.status(opts.refresh ? { refresh: true } : undefined), readState(state, account.name)]);
+  const [lib, st] = await Promise.all([mp.status(opts.refresh ? { refresh: opts.refresh, ...(opts.onProgress ? { onProgress: opts.onProgress } : {}) } : undefined), readState(state, account.name)]);
   return {
     user: account.user, trail: lib.trail, records: lib.records, lastSync: st.lastSync, content: lib.content, index: lib.index,
-    pendingStamps: lib.pendingStamps, seal: lib.seal, lastBackup: st.lastBackup,
+    pendingStamps: lib.pendingStamps, seal: lib.seal, lastBackup: st.lastBackup, ...(lib.hint ? { hint: lib.hint } : {}),
     watch: st.lastWatch && st.lastWatch.state === 'running' && pidAlive(st.lastWatch.pid) ? { running: true, pid: st.lastWatch.pid } : { running: false },
   };
 }
@@ -55,7 +56,8 @@ export async function configFacts(file, env) {
  */
 async function statusOf(account, ctx) {
   const mp = ctx.deps.makeMailproof ? ctx.deps.makeMailproof(account) : new Mailproof(mailproofOptions(account));
-  try { return await accountStatus(account, mp, stateDir(ctx.env), { refresh: true }); } finally { await mp.close(); }
+  const progress = indexProgressLine(ctx);   // a rebuild can take ten seconds on a big trail: say so on a terminal
+  try { return await accountStatus(account, mp, stateDir(ctx.env), { refresh: true, ...(progress ? { onProgress: progress.update } : {}) }); } finally { progress?.clear(); await mp.close(); }
 }
 
 /**
