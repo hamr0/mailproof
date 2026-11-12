@@ -29,7 +29,7 @@ export const GENERATED_TOOLS = Object.freeze(/** @type {GeneratedTool[]} */ (/**
       "idempotentHint": true,
       "openWorldHint": false
     },
-    "description": "List recorded emails, newest capture first (default 50, at most 500; `limit` narrows). Filter by `direction`, counterparty `with` (one exact address, case-insensitive, on From, To, Cc or Reply-To; `role` narrows it) and `after` (inclusive) / `before` (exclusive) capture time. Rows say who and what: `from`, `to[]`, `subject` with `subjectSource` (`signed`: a verifying signature covers it; `claimed`: only the sender's word; null) and `addresses[]` with `signed` (some signature covers the line) and `coverage` (`signed` verifies, `failing`, `none`: trust `coverage`). `get` has the full record. Fails with `ERR_INDEX_UNAVAILABLE`, `ERR_TRAIL_LOCKED` (retry) or `ERR_TRAIL_LAYOUT`.",
+    "description": "List recorded emails, newest capture first (default 50, at most 500). Filter by `direction`, counterparty `with` (one exact address, case-insensitive, on From, To, Cc or Reply-To; `role` narrows it), `subject` (case-insensitive text) and `after` (inclusive) / `before` (exclusive) capture time. Rows: `from`, `to[]`, `subject` with `subjectSource` (`signed`: a verifying signature covers it; `claimed`: only the sender's word; null) and `addresses[]` with `signed` and `coverage` (`signed` verifies, `failing`, `none`: trust `coverage`). `get` has the full record. Fails with `ERR_INDEX_UNAVAILABLE`, `ERR_TRAIL_LOCKED` (retry) or `ERR_TRAIL_LAYOUT`.",
     "noAccount": false,
     "required": [],
     "properties": {
@@ -60,6 +60,10 @@ export const GENERATED_TOOLS = Object.freeze(/** @type {GeneratedTool[]} */ (/**
           "reply-to"
         ],
         "description": "narrow --with to from, to, cc or reply-to"
+      },
+      "subject": {
+        "type": "string",
+        "description": "only emails whose subject contains this text (case-insensitive, plain text)"
       },
       "before": {
         "type": "string",

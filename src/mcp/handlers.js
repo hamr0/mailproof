@@ -59,7 +59,7 @@ const dateArg = (v, name) => parseDate(/** @type {string} */ (v), name);
 
 /**
  * @param {Record<string, any>} a
- * @returns {{ limit?: number, direction?: 'in' | 'out', with?: string, role?: 'from' | 'to' | 'cc' | 'reply-to', before?: Date, after?: Date }}
+ * @returns {{ limit?: number, direction?: 'in' | 'out', with?: string, role?: 'from' | 'to' | 'cc' | 'reply-to', subject?: string, before?: Date, after?: Date }}
  */
 function listFilters(a) {
   /** @type {ReturnType<typeof listFilters>} */
@@ -67,6 +67,7 @@ function listFilters(a) {
   if (a.with !== undefined) f.with = parseAddress(a.with, 'with');
   if (a.role !== undefined) { if (f.with === undefined) throw badArgument('role needs with'); f.role = a.role; }
   if (a.direction !== undefined) f.direction = a.direction;
+  if (a.subject !== undefined) { if (typeof a.subject !== 'string' || !a.subject.trim()) throw badArgument('subject needs some text'); f.subject = a.subject; }
   if (a.before !== undefined) f.before = dateArg(a.before, 'before');
   if (a.after !== undefined) f.after = dateArg(a.after, 'after');
   return f;

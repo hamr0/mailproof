@@ -57,6 +57,7 @@ export const COMMANDS = {
       with: { type: 'string', arg: '<address>', help: 'only emails naming this exact address' },
       role: { type: 'string', arg: '<role>', help: 'narrow --with to from, to, cc or reply-to' },
       direction: { type: 'string', arg: '<in|out>', help: 'only received (in) or sent (out) emails' },
+      subject: { type: 'string', arg: '<text>', help: 'only emails whose subject contains this text (case-insensitive, plain text)' },
       before: { type: 'string', arg: '<date>', help: 'captured before this date (YYYY-MM-DD, UTC, or a full ISO time)' },
       after: { type: 'string', arg: '<date>', help: 'captured on or after this date' },
       limit: { type: 'string', arg: '<n>', help: 'most rows (default 50, 0 = no cap)' },

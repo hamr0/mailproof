@@ -77,6 +77,7 @@ export const TOOLS = {
       direction: { type: 'string', enum: ['in', 'out'], description: flag('list', 'direction') },
       with: { type: 'string', description: flag('list', 'with') },
       role: { type: 'string', enum: ['from', 'to', 'cc', 'reply-to'], description: flag('list', 'role') },
+      subject: { type: 'string', description: flag('list', 'subject') },
       before: { type: 'string', description: flag('list', 'before') },
       after: { type: 'string', description: flag('list', 'after') },
     },

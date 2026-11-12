@@ -81,6 +81,7 @@ test('every tool once, with the shape of its result; blobs, saveTo, prefixes, no
   assert.equal(JSON.stringify(acc).includes('echo not-used'), false, 'no secret reference');
   const list = (await s.call('list')).json; assert.equal(list.length, 6);
   assert.equal((await s.call('list', { with: 'bob@beta.example', direction: 'in', limit: 2 })).json.length, 2);
+  assert.deepEqual((await s.call('list', { subject: 'APPROVE' })).json.map((r) => r.id), [t.r.req.id], 'subject: a case-insensitive substring');
   assert.equal((await s.call('get', { id })).json.id, id);
   assert.equal((await s.call('get', { id: id.slice(0, 10) })).json.id, id, 'a unique prefix resolves');
   assert.deepEqual((await s.call('get', { id: 'f'.repeat(32) })).json, { found: false });
@@ -139,6 +140,7 @@ test('every error class is an isError result with the library code and retryable
   assert.equal((await e('list', { bogus: 1 })).code, 'ERR_BAD_ARGUMENT');             // unknown property
   assert.equal((await e('list', { limit: 501 })).code, 'ERR_BAD_ARGUMENT');           // above the maximum
   assert.equal((await e('list', { before: 'yesterday' })).code, 'ERR_BAD_ARGUMENT');  // bad date
+  assert.equal((await e('list', { subject: '  ' })).code, 'ERR_BAD_ARGUMENT');        // empty subject text
   assert.equal((await e('get', { id: 'zz' })).code, 'ERR_BAD_ARGUMENT');              // not an id
   assert.equal((await e('replyFacts', { messageId: '' })).code, 'ERR_BAD_ARGUMENT');  // library TypeError
   assert.equal((await e('check', {})).code, 'ERR_BAD_ARGUMENT');                      // neither path nor base64

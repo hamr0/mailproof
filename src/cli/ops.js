@@ -23,7 +23,7 @@ const cut = (s, n) => p(s, { max: n });
 
 /**
  * @param {Args} a
- * @returns {{ limit?: number, direction?: 'in' | 'out', with?: string, role?: 'from' | 'to' | 'cc' | 'reply-to', before?: Date, after?: Date }}
+ * @returns {{ limit?: number, direction?: 'in' | 'out', with?: string, role?: 'from' | 'to' | 'cc' | 'reply-to', subject?: string, before?: Date, after?: Date }}
  */
 function listFilters(a) {
   const v = a.values;
@@ -35,6 +35,7 @@ function listFilters(a) {
     f.role = /** @type {'from' | 'to' | 'cc' | 'reply-to'} */ (parseChoice(v.role, '--role', 'from', 'to', 'cc', 'reply-to'));
   }
   if (v.direction !== undefined) f.direction = /** @type {'in' | 'out'} */ (parseChoice(v.direction, '--direction', 'in', 'out'));
+  if (v.subject !== undefined) { if (!v.subject.trim()) throw new UsageError('--subject needs some text'); f.subject = v.subject; }
   if (v.before !== undefined) f.before = parseDate(v.before, '--before');
   if (v.after !== undefined) f.after = parseDate(v.after, '--after');
   return f;
