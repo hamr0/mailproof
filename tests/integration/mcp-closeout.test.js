@@ -11,7 +11,7 @@ import { makeWorld, account } from '../helpers/cli.js';
 import { inProcess } from '../helpers/mcp.js';
 import { makeTmpDir } from '../helpers/tmp.js';
 import { loadProfile, listProfiles, resolveProfile, profilesDir } from '../../src/cli/profiles.js';
-import { installInfo, installFacts } from '../../src/cli/install.js';
+import { installInfo, installFacts, updateFacts } from '../../src/cli/install.js';
 import { mcpSettings, validateConfig } from '../../src/cli/config.js';
 import { mcpFacts, mcpStatusLines } from '../../src/cli/mcp-setup.js';
 import { styleOf } from '../../src/cli/style.js';
@@ -108,8 +108,26 @@ test('MCP status carries the same counts the CLI prints (refreshed), and the ins
   assert.deepEqual([r.json.records.total, r.json.records.in, r.json.records.out], [3, 2, 1]);
   assert.equal(typeof r.json.records.verified, 'number'); assert.equal(typeof r.json.records.unverified, 'number');
   assert.deepEqual(r.json.install, { kind: 'dev-link', path: '/tmp/x/mailproof' });
-  assert.match(r.json.updateCommand, /^npm install/);
+  assert.equal(Object.hasOwn(r.json, 'updateCommand'), false, 'a development link is updated with git: no npm command');
+  assert.equal(r.json.update, 'development link to /tmp/x/mailproof; update with git (git pull in that folder)');
   await s.m.close();
+});
+
+test('MCP status on a real npm install gives the npm command and no git hint', async () => {
+  const s = await setup({ deps: { installInfo: () => ({ dev: false, dir: '/usr/lib/node_modules/mailproof' }) } });
+  const r = await s.m.call('status');
+  assert.equal(r.isError, false, r.text);
+  assert.equal(r.json.updateCommand, 'npm install -g mailproof@latest');
+  assert.equal(Object.hasOwn(r.json, 'update'), false);
+  await s.m.close();
+});
+
+test('updateFacts: one definition for the update hint (status, MCP and the update screen)', () => {
+  const env = { HOME: '/home/ana' };
+  assert.deepEqual(updateFacts({ installInfo: () => ({ dev: true, dir: '/home/ana/src/mailproof' }) }, env),
+    { install: { kind: 'dev-link', path: '~/src/mailproof' }, update: 'development link to ~/src/mailproof; update with git (git pull in that folder)' });
+  assert.deepEqual(updateFacts({ installInfo: () => ({ dev: false, dir: '/usr/lib/node_modules/mailproof' }) }, env),
+    { install: { kind: 'npm', path: '/usr/lib/node_modules/mailproof' }, updateCommand: 'npm install -g mailproof@latest' });
 });
 
 // ---- 3. install facts ----

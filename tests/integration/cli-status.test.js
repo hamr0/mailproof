@@ -163,3 +163,18 @@ test('status: an index whose SQLite add-on cannot load is unknown, and the hint 
   assert.match(text.stdout, /reinstall or rebuild/);
   assert.doesNotMatch(text.stdout, /index stale/);
 });
+
+test('status --json: carries install and the update hint, the npm command only for a real install', async () => {
+  const T = await buildThread();
+  const w = makeWorld({ accounts: { test: account(T.dir) } });
+  const dev = await w.run(['status', '--json'], { deps: { installInfo: () => ({ dev: true, dir: `${w.home}/src/mailproof` }) } });
+  assert.equal(dev.code, 0, dev.stderr);
+  const d = JSON.parse(dev.stdout).test;
+  assert.deepEqual(d.install, { kind: 'dev-link', path: '~/src/mailproof' });
+  assert.equal(d.update, 'development link to ~/src/mailproof; update with git (git pull in that folder)');
+  assert.equal(Object.hasOwn(d, 'updateCommand'), false);
+  const npm = await w.run(['status', '--json'], { deps: { installInfo: () => ({ dev: false, dir: '/usr/lib/node_modules/mailproof' }) } });
+  const n = JSON.parse(npm.stdout).test;
+  assert.equal(n.updateCommand, 'npm install -g mailproof@latest');
+  assert.equal(Object.hasOwn(n, 'update'), false);
+});

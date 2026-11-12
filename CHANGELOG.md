@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **`status` (MCP and `status --json`) no longer offers the npm update command on a development link.** `updateCommand` (`npm install -g mailproof@latest`) would replace the link; a `dev-link` install now gets `update` (`development link to ~/...; update with git (git pull in that folder)`, the same sentence `mailproof update` prints, one definition) and no `updateCommand`. A real npm install is unchanged. `status --json` also gains `install` per account.
 - **`export --tar` with an `--out` that does not end in `.tar`** wrote a tar file with no extension that `verify-bundle` then refused (exit 64). The export now writes `<out>.tar` (one name rule in the library, so the MCP `export` too; the result `out`, the printed path and the `they run:` hint name the real file; `.tar` is never doubled), and `verify-bundle` (library, CLI, MCP) recognises a tar file by its `ustar` header, not only its `.tar` name; a regular file that is not a tar is still refused.
 
 ### Changed

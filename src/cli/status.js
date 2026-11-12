@@ -10,6 +10,7 @@ import { printable as p } from './printable.js';
 import { styleOf, fileUrl, rel } from './style.js';
 import { readState, stateDir } from './state.js';
 import { tilde } from './paths.js';
+import { updateFacts } from './install.js';
 import { clock } from './menu-header.js';
 import { count, humanSize } from './words.js';
 import { pidAlive, headOf, trailIndexFile } from '../proof/trail.js';
@@ -119,7 +120,7 @@ export async function statusCmd(a, ctx) {
   for (const n of names) all[n] = await statusOf(config.accounts[n], ctx);
   if (a.values.json) {
     // the shape `status --json` has always had: the verified/unverified counts are in the text and the MCP tool, not here
-    printJson(ctx, Object.fromEntries(Object.entries(all).map(([n, s]) => [n, { ...s, records: s.records && !('error' in s.records) ? (({ verified: _v, unverified: _u, ...rest }) => rest)(s.records) : s.records }])));
+    printJson(ctx, Object.fromEntries(Object.entries(all).map(([n, s]) => [n, { ...s, ...updateFacts(ctx.deps, ctx.env), records: s.records && !('error' in s.records) ? (({ verified: _v, unverified: _u, ...rest }) => rest)(s.records) : s.records }])));
     return EX_OK;
   }
   const st = styleOf(ctx);

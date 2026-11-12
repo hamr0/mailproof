@@ -91,7 +91,8 @@ test('MCP status: deep-equals the library for the trail, adds the account facts,
   assert.equal(r.json.lastSync, null); assert.equal(r.json.lastBackup, null); assert.deepEqual(r.json.watch, { running: false });
   assert.deepEqual(r.json.config, { path: s.world.configFile, ok: true });
   assert.equal(r.json.version, 'test');
-  assert.match(r.json.updateCommand, /^npm install -g mailproof@latest$/);
+  assert.equal(Object.hasOwn(r.json, 'updateCommand'), false, 'this checkout is a development link');
+  assert.match(r.json.update, /^development link to .*; update with git/);
   const tool = (await s.m.request('tools/list')).result.tools.find((t) => t.name === 'status');
   assert.equal(tool.annotations.readOnlyHint, true);
   assert.deepEqual(tool.inputSchema.required, undefined);

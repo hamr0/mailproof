@@ -9,8 +9,7 @@ import { parseDate, parseAddress, resolveId, messageIdOf } from '../cli/parse.js
 import { syncOnce } from '../cli/sync-op.js';
 import { readBytes, readAllowedFile, resolveAllowedBundle, saveBytes, outputPath } from './input.js';
 import { accountStatus, configFacts } from '../cli/status.js';
-import { UPDATE_COMMAND } from '../cli/version.js';
-import { installFacts } from '../cli/install.js';
+import { updateFacts } from '../cli/install.js';
 import { resolveProfile, listProfiles, profilesDir } from '../cli/profiles.js';
 import { tilde, tildeText, ensureUserDir } from '../cli/paths.js';
 import { bundleName } from '../cli/bundle.js';
@@ -209,7 +208,7 @@ export const HANDLERS = {
   status: async (c) => {
     const account = /** @type {import('../cli/config.js').Account} */ (c.account);
     const s = await accountStatus(account, c.mp(), c.state, { refresh: true });
-    return json({ ...s, config: c.configFile ? await configFacts(c.configFile, c.env) : null, version: c.version, install: installFacts(c.deps, c.env), updateCommand: UPDATE_COMMAND });
+    return json({ ...s, config: c.configFile ? await configFacts(c.configFile, c.env) : null, version: c.version, ...updateFacts(c.deps, c.env) });
   },
   stamp: async (c) => {
     const r = await c.mp().stamp();

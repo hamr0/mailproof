@@ -8,7 +8,7 @@ import { print, warn, printJson } from './session.js';
 import { printable as p } from './printable.js';
 import { styleOf } from './style.js';
 import { tilde } from './paths.js';
-import { installInfo } from './install.js';
+import { installInfo, devLinkText } from './install.js';
 import { version, NPM_ARGS, UPDATE_COMMAND } from './version.js';
 
 /** @typedef {import('./session.js').Ctx} Ctx */
@@ -57,7 +57,7 @@ export async function updateCmd(a, ctx) {
   const info = ctx.deps.installInfo ? ctx.deps.installInfo() : installInfo();
   const installed = version();
   const json = Boolean(a.values.json);
-  const dev = `development link to ${p(tilde(info.dir, ctx.env))}; update with git (git pull in that folder)`;
+  const dev = devLinkText(p(tilde(info.dir, ctx.env)));
   if (ctx.updateOut) ctx.updateOut.dev = info.dev;
   if (info.dev) {
     if (json) printJson(ctx, { installed, dev: true, dir: info.dir }); else print(ctx, `mailproof ${installed}: ${dev}`);

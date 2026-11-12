@@ -4,6 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { tilde } from './paths.js';
+import { UPDATE_COMMAND } from './version.js';
 
 /**
  * Where this copy of mailproof lives, and whether it is a development link: its real folder is outside any `node_modules` or has a `.git`
@@ -26,4 +27,23 @@ export function installInfo() {
 export function installFacts(deps, env) {
   const info = deps.installInfo ? deps.installInfo() : installInfo();
   return { kind: info.dev ? 'dev-link' : 'npm', path: tilde(info.dir, env) };
+}
+
+/**
+ * The one sentence for a development link, shown by `update` and carried by `status` (CLI and MCP): git, never npm.
+ * @param {string} shownDir  The package folder, already shown as `~/`.
+ * @returns {string}
+ */
+export const devLinkText = (shownDir) => `development link to ${shownDir}; update with git (git pull in that folder)`;
+
+/**
+ * The install facts plus how to update, for `status --json` and the MCP `status`: `updateCommand` (the npm command) only for a real
+ * install; a development link gets `update` (the git hint) instead, never the npm command that would replace the link.
+ * @param {{ installInfo?: () => { dev: boolean, dir: string } }} deps
+ * @param {Record<string, string | undefined>} env
+ * @returns {{ install: { kind: 'dev-link' | 'npm', path: string }, update: string } | { install: { kind: 'dev-link' | 'npm', path: string }, updateCommand: string }}
+ */
+export function updateFacts(deps, env) {
+  const install = installFacts(deps, env);
+  return install.kind === 'dev-link' ? { install, update: devLinkText(install.path) } : { install, updateCommand: UPDATE_COMMAND };
 }
