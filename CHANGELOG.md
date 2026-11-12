@@ -24,9 +24,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `list({ subject })` (library), `mailproof list --subject <text>`, the MCP `list` tool's `subject` argument and the menu's `s`: keep the emails whose subject (signed, or the sender's claim read from the stored email) contains the text, ignoring case; a plain substring, the limit counts matches.
+- The menu's **list** is a browser (SPEC B11.4a): it asks only `Who`, shows the latest 5 emails as numbered rows (when, age, direction, verdict, who; the full subject; why it is or is not verified, with the attachment count) and `N of TOTAL`; `m` more, `f` filter, `s` subject search. A number opens the email (the `show` text) with `r` raw email, `a` save attachment (never over an existing file, 0600), `v` verify again, `t` thread (parent and direct replies, signed or unsigned link) and `p` this person.
 - `replyFacts({ address })` (and `mailproof replies <address>`, the menu's item 6, the MCP `replyFacts` tool's `address` argument): the direct replies one person sent to any email in the trail, with the same bundles, earliest first. Give exactly one of `messageId` or `address`.
 
 ### Changed
+- The menu's list item no longer asks Role, Direction, Before, After and Limit up front, and prints no one-line table: those became `f` (filter) inside the browser. The non-menu `mailproof list` is unchanged apart from `--subject`.
 - `mailproof replies` tells an address from a Message-ID by shape, like `show` and `verify`. **A bare `id@host` is now an address**: write the angle brackets for a Message-ID (`<id@host>`); the library's `replyFacts({ messageId })` still accepts it bare.
 - The menu's `?` shows what the menu showed at the start: the header lines, then the full grouped menu.
 - `mailproof stamp` (menu item 12, seal) prints one line, `nothing new to seal`, when nothing was sealed, upgraded or pending; any other result keeps the full report (`--json` is unchanged).
