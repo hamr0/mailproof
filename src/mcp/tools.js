@@ -50,6 +50,8 @@ const READ_DNS = hints(true, false, true, true);
 /** @type {ParamSpec} */
 const ID = { type: 'string', description: 'a record id: 32 hex characters, or a unique prefix of at least 8' };
 /** @type {ParamSpec} */
+const TARGET = { type: 'string', description: 'one exact email address (bob@example.com), a Message-ID in angle brackets (<abc@mail.example>), or a record id (8 to 32 hex characters)' };
+/** @type {ParamSpec} */
 const PATH = { type: 'string', description: 'absolute path of a file inside one of the server\'s input folders (mcp.inputDirs in the config); give this or base64' };
 /** @type {ParamSpec} */
 const B64 = { type: 'string', description: 'the exact bytes, base64-encoded; give this or path' };
@@ -79,6 +81,16 @@ export const TOOLS = {
       after: { type: 'string', description: flag('list', 'after') },
     },
   },
+  describe: {
+    cls: 'read', title: 'See one email, or everything with an address', annotations: READ, required: ['target'],
+    params: {
+      target: TARGET,
+      full: { type: 'boolean', description: 'true: the whole body text of each email (else its first 10 lines and the count of the rest)' },
+      after: { type: 'string', description: flag('show', 'after') },
+      before: { type: 'string', description: flag('show', 'before') },
+      limit: LIMIT(500, 'emails'),
+    },
+  },
   get: { cls: 'read', title: 'Read one record', annotations: READ, params: { id: ID }, required: ['id'] },
   copies: {
     cls: 'read', title: 'Copies of one message', annotations: READ, required: ['id'],
@@ -87,6 +99,17 @@ export const TOOLS = {
   counterparties: { cls: 'read', title: 'List counterparties', annotations: READ, params: { limit: LIMIT(500, 'addresses') }, required: [] },
   linked: { cls: 'read', title: 'Thread links of one record', annotations: READ, params: { id: ID, limit: { type: 'integer', minimum: 1, description: 'most children to return (default 1000)' } }, required: ['id'] },
   verify: { cls: 'read', title: 'Re-check one record offline', annotations: READ, params: { id: ID, at: AT }, required: ['id'] },
+  verifyWith: {
+    cls: 'read', title: 'Re-check every email with an address', annotations: READ, required: ['target'],
+    params: {
+      target: TARGET,
+      all: { type: 'boolean', description: 'true: count your sent copies too (by default only received emails decide ok)' },
+      after: { type: 'string', description: flag('verify', 'after') },
+      before: { type: 'string', description: flag('verify', 'before') },
+      limit: LIMIT(500, 'records'),
+      at: AT,
+    },
+  },
   verifyRecord: {
     cls: 'read', title: 'Re-check an exported record', annotations: READ, noAccount: true, required: [],
     params: { record: { type: ['object', 'string'], description: 'an exported record (the JSON object, or its JSON text); give this or path' }, path: { ...PATH, description: 'absolute path of a record JSON file inside one of the server\'s input folders; give this or record' }, at: AT },

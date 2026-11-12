@@ -1,131 +1,36 @@
 // The `show` view of one record (SPEC B11.5a): every field on its own labelled line, always, in one fixed order, `N/A` when a
-// value does not exist, so the layout never shifts. `gather` reads the facts (the record, an offline re-check, the stored raw email,
-// the seal), `render` turns them into lines. The compact form (the per-record block of `show <address>`) is the same lines minus
-// the long-tail facts and with the body cut. No DNS and no network: everything is the record, the content store and the trail.
+// value does not exist, so the layout never shifts. PRESENTATION ONLY: the facts are the library's `describe` result (SPEC B8.5,
+// `src/proof/describe.js`), the `why` sentence is the library's `explain`; `render` turns them into lines. The compact form (the
+// per-record block of `show <address>`) is the same lines minus the long-tail facts. No DNS and no network.
 
-import { participantsOf, signedHeaderValue, addressCoverage } from '../proof/participants.js';
-import { claimedHeader, headerText } from '../proof/header-text.js';
-import { bodyText } from '../proof/body-text.js';
-import { verifyRecord } from '../proof/recheck.js';
 import { printable as p } from './printable.js';
-import { sealLine } from './seal.js';
+import { sealText } from './seal.js';
 import { makeStyle, rel } from './style.js';
 
-/** @typedef {import('../proof/types.js').MpRecord} MpRecord */
+/** @typedef {import('../proof/describe.js').Facts} LibFacts */
 /** @typedef {import('./session.js').Session} Session */
+/** @typedef {LibFacts & { account: { user: string | null, name: string } }} Facts  The library's facts plus the account line (the config's `user` and the account name). */
 
 export const NA = 'N/A';
 const LABEL = 12;
-const COMPACT_BODY_LINES = 10;
-
-/** @param {string | null | undefined} v @returns {string | null} */
-const str = (v) => (typeof v === 'string' && v !== '' ? v : null);
 
 /**
- * Why a record is not verified, in plain words, from what was recorded (no DNS). Null when it verifies live and on re-check.
- * @param {MpRecord} rec
- * @param {{ ok: boolean, signatures: Array<Record<string, any>> }} v  The offline re-check.
- * @returns {string | null}
- */
-export function whyNot(rec, v) {
-  const live = /** @type {Record<string, any> | undefined} */ (rec.verdicts?.live);
-  if (live?.trust === 'verified' && v.ok) return null;
-  /** @type {string[]} */
-  const why = [];
-  const sigs = Array.isArray(rec.signatures) ? rec.signatures : [];
-  if (!sigs.length) why.push('there is no DKIM signature on this email');
-  /** Signatures with a recorded key-lookup error: that error is the fact, so the hedged inference is left out for them. */
-  const lookup = new Map(sigs.filter((s) => s.key_error).map((s) => [`${s.tags?.d}\0${s.tags?.s}`, String(s.key_error)]));
-  for (const d of Array.isArray(live?.dkim) ? live.dkim : []) {
-    if (!d.d && !d.s) continue;   // mailauth's placeholder for "no signature"
-    const where = `${d.s ?? '?'}._domainkey.${d.d ?? '?'}`;
-    if (d.result !== 'pass') why.push(`DKIM ${d.result}${lookup.has(`${d.d}\0${d.s}`) ? '' : d.result === 'neutral' || d.result === 'none' ? ` (typically no public key is published at ${where})` : ` for ${where}`}`);
-    else if (!d.aligned) why.push(`DKIM passed for ${d.d} but that is not the From domain (not aligned)`);
-  }
-  for (const s of sigs) {
-    if (!s.key_error) continue;
-    const where = `${s.tags?.s ?? '?'}._domainkey.${s.tags?.d ?? '?'}`;
-    const err = String(s.key_error);
-    why.push(/ENODATA|ENOTFOUND|NXDOMAIN|no record|no key/i.test(err) ? `no public key published at ${where} at capture (DNS: ${err})` : `the public key at ${where} could not be fetched at capture (DNS: ${err})`);
-  }
-  if (live?.dmarc?.published && live.dmarc.result !== 'pass') why.push(`DMARC ${live.dmarc.result} (policy ${live.dmarc.policy ?? 'none'})`);
-  if (live?.arc && live.arc.result !== 'pass') why.push(`ARC ${live.arc.result}`);
-  if (!v.ok) for (const s of v.signatures) if (!s.ok) why.push(`offline re-check of ${s.d ?? '?'}: ${s.why ?? s.reason ?? 'does not verify'}`);
-  if (!why.length) why.push(`live verdict ${live?.trust ?? NA}, portable ${rec.verdicts?.portable?.trust ?? NA}`);
-  return why.join('; ');
-}
-
-/**
- * Everything `show` prints for one record.
- * @param {Session['mp']} mp
+ * The facts `render` takes: the library facts of one record plus which account they came from.
+ * @param {LibFacts} f
  * @param {Session['account']} account
- * @param {MpRecord} rec
- * @param {{ links?: boolean }} [opts]  `links`: also read the thread (the strength of In-Reply-To and References).
+ * @returns {Facts}
  */
-export async function gather(mp, account, rec, opts = {}) {
-  const id = rec.id;
-  const [raw, parts, ver, seal, links] = await Promise.all([
-    mp.rawEmail(id).catch(() => null), mp.proofParts(rec), mp.verify(rec), sealLine(mp, id), opts.links ? mp.linked(id).catch(() => null) : Promise.resolve(null),
-  ]);
-  const passing = verifyRecord(rec).passing;
-  const roles = participantsOf(rec);
-  const cover = addressCoverage(rec, passing);
-  /** "signed" only when a verifying, aligned signature covers the header; `failing` when only signatures that do not verify do. @param {string} role */
-  const addrs = (role) => roles.map((x) => ({ x, c: cover.get(`${x.role}\0${x.address}`) })).filter(({ x }) => x.role === role)
-    .map(({ x, c }) => ({ address: x.raw, signed: c === 'signed', coverage: /** @type {'signed' | 'failing' | 'none'} */ (c ?? 'none') }));
-  /** A header: the value a passing signature covers (signed), else the one in the stored raw email (claimed), else absent. @param {string} name @param {(s: string) => string} dec */
-  const header = (name, dec) => {
-    /** @typedef {'signed' | 'failing' | 'claimed' | null} Basis */
-    const s = passing.length ? signedHeaderValue(rec, name, passing) : null;
-    if (s !== null) return { value: dec(s), basis: /** @type {Basis} */ ('signed') };
-    const f = signedHeaderValue(rec, name);   // covered, but only by signatures that do not verify
-    if (f !== null) return { value: dec(f), basis: /** @type {Basis} */ ('failing') };
-    const c = raw ? claimedHeader(raw, name) : null;
-    return c !== null ? { value: dec(c), basis: /** @type {Basis} */ ('claimed') } : { value: null, basis: /** @type {Basis} */ (null) };
-  };
-  const bcc = raw ? claimedHeader(raw, 'bcc') : null;
-  const live = /** @type {Record<string, any>} */ (rec.verdicts?.live ?? {});
-  const liveDkim = Array.isArray(live.dkim) ? live.dkim : [];
-  const sigs = (Array.isArray(rec.signatures) ? rec.signatures : []).map((s, i) => {
-    const l = liveDkim.find((x) => x.d === s.tags?.d && x.s === s.tags?.s) ?? liveDkim[i] ?? null;
-    return {
-      d: str(s.tags?.d), s: str(s.tags?.s), a: str(s.tags?.a), result: l ? String(l.result) : null, aligned: l ? Boolean(l.aligned) : null,
-      recheck: ver.signatures[i] ? (ver.signatures[i].ok ? 'ok' : `fails: ${ver.signatures[i].why ?? ver.signatures[i].reason ?? 'unknown'}`) : null,
-      body: str(s.body?.status), key_archived: Boolean(s.key || s.key_file),
-    };
-  });
-  const strengthOf = (/** @type {string} */ mid) => links?.parents.find((x) => x.message_id === mid)?.strength ?? null;
-  const m = rec.message ?? {};
-  const bt = raw ? bodyText(raw) : null;
-  return {
-    account: { user: account.user ?? null, name: account.name },
-    direction: rec.direction, source: str(rec.source),
-    date: header('date', headerText), captured: rec.captured,
-    from: addrs('from'), to: addrs('to'), cc: addrs('cc'), reply_to: addrs('reply-to'), bcc: bcc === null ? null : headerText(bcc),
-    subject: header('subject', headerText),
-    in_reply_to: str(m.in_reply_to) ? { value: /** @type {string} */ (m.in_reply_to), strength: strengthOf(/** @type {string} */ (m.in_reply_to)) } : null,
-    references: (Array.isArray(m.references) ? m.references : []).map((r) => ({ value: String(r), strength: strengthOf(String(r)) })),
-    children: (links?.children ?? []).map((x) => ({ id: x.id, message_id: x.message_id, strength: x.strength })), children_more: Boolean(links?.more),
-    copy: str(rec.copy?.kind),
-    dkim: sigs,
-    dmarc: live.dmarc ? { result: live.dmarc.result ?? null, policy: live.dmarc.policy ?? null, published: Boolean(live.dmarc.published) } : null,
-    spf: live.spf?.result ? { result: String(live.spf.result) } : null,
-    arc: live.arc ? { result: String(live.arc.result), sealers: Array.isArray(live.arc.sealers) ? live.arc.sealers.map(String) : [] } : null,
-    trust: { live: rec.verdicts?.live?.trust ?? null, portable: rec.verdicts?.portable?.trust ?? null, rules: live.engine?.rules ?? rec.verdicts?.portable?.engine?.rules ?? null },
-    recheck: parts ? { ok: parts.email.ok, trust: parts.email.trust } : null,
-    why: whyNot(rec, ver),
-    body_proof: rec.body_status ?? null,
-    body: { stored: raw !== null, source: bt?.source ?? null, limit: bt?.limit ?? null, text: bt && bt.source !== 'none' ? bt.text : null },
-    attachments: (parts?.attachments ?? []).map((a) => ({
-      filename: a.filename, size: typeof rec.attachments?.[a.index]?.size === 'number' ? rec.attachments[a.index].size : null, sha256: a.sha256, stored: a.stored, match: a.match,
-    })),
-    content: { raw_stored: raw !== null, raw_sha256: str(m.raw_sha256) },
-    seal: seal.text, seal_data: seal.data,
-    message_key: str(rec.message_key), message_id: str(m.message_id), id,
-  };
-}
+export const accountFacts = (f, account) => ({ ...f, account: { user: account.user ?? null, name: account.name } });
 
-/** @typedef {Awaited<ReturnType<typeof gather>>} Facts */
+/**
+ * The facts as `--json` carries them: the body text only when the caller asked for the whole thing (`--full`).
+ * @param {Facts} f @param {boolean} full @returns {Facts | Omit<Facts, 'body'> & { body: Omit<Facts['body'], 'text' | 'more_lines'> }}
+ */
+export function jsonFacts(f, full) {
+  if (full) return f;
+  const { text: _t, more_lines: _m, ...body } = f.body;
+  return { ...f, body };
+}
 
 /** One rule for every header line: `signed` only when a verifying signature covers it. */
 const COVER = { signed: 'signed', failing: 'covered by a signature that does not verify', none: 'not signed' };
@@ -147,7 +52,7 @@ export function whyText(st, why) {
  * The labelled lines of one record, grouped under section headers (Message, People, Proof, Content, Seal). Every string from the record
  * goes through printable() BEFORE any style is applied.
  * @param {Facts} f
- * @param {{ compact?: boolean, full?: boolean, fullHashes?: boolean, st?: import('./style.js').Style, now?: Date }} [o]  `compact`: the block of a multi-record view (the long-tail facts are left out, the body is cut to 10 lines unless `full`); `fullHashes`: do not shorten hashes to 12 characters; `st`: the style (default none); `now`: for the relative times.
+ * @param {{ compact?: boolean, fullHashes?: boolean, st?: import('./style.js').Style, now?: Date }} [o]  `compact`: the block of a multi-record view (the long-tail facts are left out; the body is as long as the facts carry it, the library cuts it to 10 lines unless asked for `full`); `fullHashes`: do not shorten hashes to 12 characters; `st`: the style (default none); `now`: for the relative times.
  * @returns {string[]}
  */
 export function render(f, o = {}) {
@@ -170,8 +75,8 @@ export function render(f, o = {}) {
   };
   /** @param {Facts['from']} l @returns {string} */
   const addrText = (l) => (l.length ? l.map((x) => `${x.coverage === 'signed' ? st.bold(p(x.address)) : p(x.address)} (${COVER[x.coverage]})`).join(', ') : st.dim(NA));
-  /** @param {{ value: string | null, basis: string | null }} h */
-  const headText = (h, max = 300) => (h.value === null ? st.dim(NA) : `${h.basis === 'signed' ? st.bold(p(h.value, { max })) : p(h.value, { max })} (${h.basis === 'signed' ? 'signed' : h.basis === 'failing' ? COVER.failing : 'claimed, not signed'})`);
+  /** @param {{ value: string | null, coverage: string }} h */
+  const headText = (h, max = 300) => (h.value === null ? st.dim(NA) : `${h.coverage === 'signed' ? st.bold(p(h.value, { max })) : p(h.value, { max })} (${h.coverage === 'signed' ? 'signed' : h.coverage === 'failing' ? COVER.failing : 'claimed, not signed'})`);
   /** @param {string} t @param {string | null} v @returns {string} A trust word: green when verified, yellow otherwise (the word is always there). */
   const trustWord = (t, v) => (v === 'verified' ? st.green(t) : st.yellow(t));
 
@@ -200,11 +105,11 @@ export function render(f, o = {}) {
   row('bcc', f.bcc === null ? st.dim(NA) : `${p(f.bcc, { max: 300 })} (not signed, own copy)`);
 
   section('Proof');
-  row('trust', `live ${trustWord(p(f.trust.live ?? NA), f.trust.live)}, portable ${trustWord(p(f.trust.portable ?? NA), f.trust.portable)}${c ? '' : `; rules ${p(f.trust.rules ?? NA)}`}; re-check ${f.recheck ? `${f.recheck.ok ? st.green('ok') : st.red('not ok')} (${p(f.recheck.trust)})` : st.dim(NA)}`);
+  row('trust', `live ${trustWord(p(f.trust.live ?? NA), f.trust.live)}, portable ${trustWord(p(f.trust.portable ?? NA), f.trust.portable)}${c ? '' : `; rules ${p(f.trust.rules ?? NA)}`}; re-check ${f.recheck.ok ? st.green('ok') : st.red('not ok')} (${p(f.recheck.trust)})`);
   row('why', f.why === null ? `${st.dim(NA)} (it verifies)` : whyText(st, f.why));
   row('body proof', f.body_proof === 'matched' ? st.green('matched') : f.body_proof === 'partial' ? st.yellow('partial (the signature covers only the first bytes)') : st.yellow(`not proven (${p(f.body_proof ?? NA)})`));
   if (!c) {
-    row('dkim', f.dkim.length ? f.dkim.map((s) => `d=${p(s.d ?? NA)} s=${p(s.s ?? NA)} a=${p(s.a ?? NA)} result=${s.result === 'pass' ? st.green('pass') : p(s.result ?? NA)} aligned=${s.aligned === null ? NA : s.aligned ? 'yes' : 'no'} re-check=${p(s.recheck ?? NA)} body=${p(s.body ?? NA)} key archived=${s.key_archived ? 'yes' : 'no'}`) : `${st.dim(NA)} (no DKIM signature)`);
+    row('dkim', f.dkim.length ? f.dkim.map((s) => `d=${p(s.d ?? NA)} s=${p(s.s ?? NA)} a=${p(s.a ?? NA)} result=${s.result === 'pass' ? st.green('pass') : p(s.result ?? NA)} aligned=${s.aligned === null ? NA : s.aligned ? 'yes' : 'no'} re-check=${p(s.recheck === null ? NA : s.recheck.ok ? 'ok' : `fails: ${s.recheck.why}`)} body=${p(s.body ?? NA)} key archived=${s.key_archived ? 'yes' : 'no'}`) : `${st.dim(NA)} (no DKIM signature)`);
     row('dmarc', f.dmarc ? `${p(f.dmarc.result ?? NA)}, policy ${p(f.dmarc.policy ?? NA)}, published ${f.dmarc.published ? 'yes' : 'no'}` : st.dim(NA));
     row('spf', f.spf ? p(f.spf.result) : st.dim(NA));
     row('arc', f.arc ? `${p(f.arc.result)}${f.arc.sealers.length ? `, sealers ${f.arc.sealers.map((x) => p(x)).join(', ')}` : ''}` : st.dim(NA));
@@ -214,12 +119,9 @@ export function render(f, o = {}) {
   if (!f.body.stored) row('body', val(`${NA} (not stored: expired, forgotten or the content store is off)`));
   else if (f.body.text === null) row('body', val(`${NA} (${f.body.limit ? `over limit: ${p(f.body.limit)}` : 'no text part'})`));
   else {
-    const lines = f.body.text.split('\n');
-    const cut = c && !o.full && lines.length > COMPACT_BODY_LINES;
-    const shown = cut ? lines.slice(0, COMPACT_BODY_LINES) : lines;
     row('body', f.body.text === '' ? '(empty)' : `(${f.body.source})`);
-    for (const l of f.body.text === '' ? [] : shown) out.push(`  ${p(l)}`);
-    if (cut) out.push(`  ${st.dim(`... ${lines.length - COMPACT_BODY_LINES} more lines, use show ${p(f.id.slice(0, 12))} --full`)}`);
+    for (const l of f.body.text === '' ? [] : f.body.text.split('\n')) out.push(`  ${p(l)}`);
+    if (f.body.more_lines) out.push(`  ${st.dim(`... ${f.body.more_lines} more lines, use show ${p(f.id.slice(0, 12))} --full`)}`);
   }
   row('attachments', f.attachments.length
     ? f.attachments.map((a) => `${p(a.filename ?? '(no name)', { max: 200 })}  ${a.size === null ? NA : `${a.size} bytes`}  ${a.sha256 ? hash(a.sha256) : NA}  stored ${a.stored ? 'yes' : 'no'}${a.match === null ? '' : a.match ? '  match yes' : `  ${st.red('match NO (differs)')}`}`)
@@ -227,7 +129,7 @@ export function render(f, o = {}) {
   if (!c) row('content', f.content.raw_stored ? `raw email stored (${f.content.raw_sha256 ? hash(f.content.raw_sha256) : NA})` : val(`${NA} (raw email not stored)`));
 
   section('Seal');
-  row('seal', f.seal ?? val(`${NA} (sealing is off for this account)`));
+  row('seal', f.seal === null ? val(`${NA} (sealing is off for this account)`) : sealText(f.seal));
   return out;
 }
 

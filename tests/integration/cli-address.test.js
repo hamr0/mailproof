@@ -275,7 +275,7 @@ test('why: a recorded key-lookup error is stated as the fact, the inference stay
   assert.match(why, /no public key published at sel9\._domainkey\.late\.example at capture \(DNS: /, why);
   assert.ok(!/typically/.test(why), why);
   // no recorded error: a neutral result keeps the hedged inference (a hand-made record)
-  const { whyNot } = await import('../../src/cli/detail.js');
+  const { explain } = await import('../../src/proof/explain.js');
   const rec = { v: 2, signatures: [{ tags: { d: 'a.example', s: 'k' }, key_error: null }], verdicts: { live: { trust: 'unverified', dkim: [{ d: 'a.example', s: 'k', result: 'neutral', aligned: false }] } } };
-  assert.match(whyNot(rec, { ok: false, signatures: [] }), /DKIM neutral \(typically no public key is published at k\._domainkey\.a\.example\)/);
+  assert.match(explain(rec, { ok: false, signatures: [] }), /DKIM neutral \(typically no public key is published at k\._domainkey\.a\.example\)/);
 });

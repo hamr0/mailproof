@@ -66,7 +66,7 @@ test('list: text, filters, --json is one array; a bad date, address or role is 6
 test('show: text, --json {record, proof, links}, an id prefix, --raw bytes; unknown and ambiguous ids', async () => {
   const j = json(await sp(['show', id('signed'), '--json']));
   assert.deepEqual(Object.keys(j).sort(), ['facts', 'links', 'proof', 'record', 'seal']);
-  assert.equal(j.seal, null, 'recorded but not sealed yet');
+  assert.equal(j.seal.state, 'unsealed', 'recorded but not sealed yet');
   assert.equal(j.record.id, id('signed'));
   assert.equal(j.proof.email.ok, true);
   assert.equal(j.links.parents[0].strength, 'signed');

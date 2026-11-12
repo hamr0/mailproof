@@ -7,7 +7,7 @@ import { parseDate, parseAddress, parseLimit, parseChoice, resolveId, messageIdO
 import { loadProfile } from './config.js';
 import { withAccount, print, warn, printJson } from './session.js';
 import { printable as p } from './printable.js';
-import { gather, render } from './detail.js';
+import { render, accountFacts, jsonFacts } from './detail.js';
 import { styleOf } from './style.js';
 import { classifyTarget, otherParty, minute } from './target.js';
 import { showMany, verifyMany, peopleRun } from './by-person.js';
@@ -80,17 +80,15 @@ export async function showCmd(a, ctx) {
       ctx.stdout.write(raw);
       return EX_OK;
     }
-    const rec = await mp.get(id);
-    if (!rec) { warn(ctx, `mailproof: no record ${short(id)}`); return EX_ERR; }
-    const parts = await mp.proofParts(rec);
-    const links = await mp.linked(id);
-    const f = await gather(mp, account, rec, { links: true });
+    const { records: [found] } = await mp.describe(id, { full: true });
+    if (!found) { warn(ctx, `mailproof: no record ${short(id)}`); return EX_ERR; }
+    const f = accountFacts(found, account);
     if (a.values.json) {
-      const { body, seal_data: seal, ...facts } = f;
-      printJson(ctx, { record: rec, proof: parts, links, seal, facts: { ...facts, body: { stored: body.stored, source: body.source, ...(a.values.full ? { text: body.text } : {}) } } });
+      const [record, proof, links] = await Promise.all([mp.get(id), mp.proofParts(id), mp.linked(id)]);
+      printJson(ctx, { record, proof, links, seal: f.seal, facts: jsonFacts(f, Boolean(a.values.full)) });
       return EX_OK;
     }
-    for (const l of render(f, { full: true, fullHashes: Boolean(a.values.full), st: styleOf(ctx), now: (ctx.deps.now ?? (() => new Date()))() })) print(ctx, l);
+    for (const l of render(f, { fullHashes: Boolean(a.values.full), st: styleOf(ctx), now: (ctx.deps.now ?? (() => new Date()))() })) print(ctx, l);
     return EX_OK;
   });
 }

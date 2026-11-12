@@ -1,78 +1,34 @@
-// Address-first targets for `show` and `verify` (SPEC B11.5a): one resolver by the SHAPE of the argument, shared by the
-// subcommands and the menu, and the helpers both commands use to turn a target into records. Library calls only
-// (`list`, `copies`, `get`); "an email names this address" is the library's one definition (`list({ with })`, SPEC B8).
+// Address-first targets for `show` and `verify` (SPEC B11.5a): the CLI's wording of the library's one resolver
+// (`src/proof/target.js`, shared with `describe` and `verifyWith`), plus the one-line facts of a record that `show` JSON rows carry.
 
 import { UsageError } from './errors.js';
 import { parseAddress } from './parse.js';
+import { classifyTarget as classify, otherParty, TARGET_FORMS } from '../proof/target.js';
 import { participantsOf, signedHeaderValue } from '../proof/participants.js';
 import { headerText } from '../proof/header-text.js';
 
-/** @typedef {import('../proof/types.js').MpRecord} MpRecord */
-/** @typedef {{ kind: 'id', value: string } | { kind: 'address', value: string } | { kind: 'message-id', value: string }} Target */
+export { otherParty };
 
-export const TARGET_FORMS = 'an address (b@example.com), a Message-ID in angle brackets (<abc@mail.example>), or a record id (8 to 32 hex characters)';
+/** @typedef {import('../proof/types.js').MpRecord} MpRecord */
+/** @typedef {import('../proof/target.js').Target} Target */
+
 export const ID_HINT = 'ids are positional: mailproof show ea1fda2a (8+ characters), or use an address: mailproof show b@example.com';
 
 /**
- * Classify a `show`/`verify` argument by shape: `<...>` is a Message-ID, anything with `@` an exact address, 8 to 32 hex
- * characters a record id. Anything else is a usage error that names the three forms.
+ * Classify a `show`/`verify` argument by shape (the library's resolver); a refusal is a usage error that names the three forms.
  * @param {string} s
  * @returns {Target}
  */
 export function classifyTarget(s) {
-  const t = s.trim();
-  if (t.startsWith('<')) {
-    if (t.length < 3 || !t.endsWith('>') || /[\s<>]/.test(t.slice(1, -1))) throw new UsageError(`"${s}" is not a Message-ID: write it with angle brackets and no spaces, like <abc@mail.example>`);
-    return { kind: 'message-id', value: t };
+  try { return classify(s); } catch (e) {
+    const err = /** @type {{ code?: string, reason?: string, message: string }} */ (e);
+    if (err.code !== 'ERR_TARGET') throw e;
+    if (err.reason === 'address') parseAddress(s.trim(), 'target');   // throws the CLI's own words
+    if (err.reason === 'flag') throw new UsageError(`"${s}" looks like a flag. ${ID_HINT}`);
+    if (err.reason === 'short') throw new UsageError(`"${s}" is too short for a record id (8 or more hex characters). ${ID_HINT}`);
+    if (err.reason === 'shape') throw new UsageError(`"${s}" is not something mailproof can look up. Give ${TARGET_FORMS}.`);
+    throw new UsageError(err.message);
   }
-  if (t.startsWith('-')) throw new UsageError(`"${s}" looks like a flag. ${ID_HINT}`);
-  if (t.includes('@')) return { kind: 'address', value: parseAddress(t, 'target').toLowerCase() };
-  const low = t.toLowerCase();
-  if (/^[0-9a-f]{8,32}$/.test(low)) return { kind: 'id', value: low };
-  if (/^[0-9a-f]{1,7}$/.test(low)) throw new UsageError(`"${s}" is too short for a record id (8 or more hex characters). ${ID_HINT}`);
-  throw new UsageError(`"${s}" is not something mailproof can look up. Give ${TARGET_FORMS}.`);
-}
-
-/**
- * The records an address or Message-ID target names, newest capture first.
- * @param {import('../index.js').Mailproof} mp
- * @param {Target} t  Not an id.
- * @param {{ after?: Date, before?: Date, limit: number }} o  `limit` 0 = all.
- * @returns {Promise<{ records: MpRecord[], total: number }>}  `total` counts every match, `records` the newest `limit` of them.
- */
-export async function targetRecords(mp, t, o) {
-  const range = { ...(o.after ? { after: o.after } : {}), ...(o.before ? { before: o.before } : {}) };
-  /** @type {string[]} */
-  let ids;
-  if (t.kind === 'address') {
-    ids = (await mp.list({ with: t.value, ...range })).map((r) => r.id);
-  } else {
-    const all = await mp.list(range);
-    const keep = new Set(all.filter((r) => r.message_id === t.value).map((r) => r.id));
-    const [any] = keep;
-    if (any) for (const c of (await mp.copies(any)).copies) keep.add(c.id);
-    ids = all.filter((r) => keep.has(r.id)).map((r) => r.id);
-  }
-  const pick = o.limit > 0 ? ids.slice(0, o.limit) : ids;
-  /** @type {MpRecord[]} */
-  const records = [];
-  for (let i = 0; i < pick.length; i += 25) {
-    const got = await Promise.all(pick.slice(i, i + 25).map((id) => mp.get(id)));
-    for (const r of got) if (r) records.push(r);
-  }
-  return { records, total: ids.length };
-}
-
-/**
- * The other party of an email: the From of a received one, the first To (else Cc) of a sent one. The one definition, used by
- * `list` rows and by `factsOfRecord`.
- * @param {string} direction
- * @param {Array<{ role: string, address: string }>} addresses  In header order.
- * @returns {string | null}
- */
-export function otherParty(direction, addresses) {
-  const first = (/** @type {string} */ role) => addresses.find((p) => p.role === role)?.address ?? null;
-  return direction === 'out' ? (first('to') ?? first('cc')) : first('from');
 }
 
 /**

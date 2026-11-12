@@ -5,9 +5,10 @@ import { UsageError, EX_OK, EX_ERR, EX_NO } from './errors.js';
 import { parseDate, parseLimit } from './parse.js';
 import { print, warn, printJson } from './session.js';
 import { printable as p } from './printable.js';
-import { gather, render, whyText, whyNot } from './detail.js';
+import { render, whyText, accountFacts, jsonFacts } from './detail.js';
+import { sealText } from './seal.js';
 import { styleOf } from './style.js';
-import { targetRecords, factsOfRecord, minute } from './target.js';
+import { factsOfRecord, minute } from './target.js';
 
 /** @typedef {import('./session.js').Ctx} Ctx */
 /** @typedef {import('./session.js').Args} Args */
@@ -43,39 +44,29 @@ const nothing = (t) => (t.kind === 'address' ? `no email with ${p(t.value)} in t
 export async function showMany(a, ctx, mp, account, t) {
   if (a.values.raw) throw new UsageError('--raw needs one record id (an address can name many emails)');
   const f = rangeFlags(a, 50);
-  const { records, total } = await targetRecords(mp, t, f);
+  const full = Boolean(a.values.full);
+  const { total, records: described } = await mp.describe(t, { full, ...(f.after ? { after: f.after } : {}), ...(f.before ? { before: f.before } : {}), limit: f.limit });
   if (!total) { warn(ctx, `mailproof: ${nothing(t)}`); return EX_ERR; }
-  const facts = [];
-  for (const r of records) facts.push(await gather(mp, account, r));
+  const facts = described.map((x) => accountFacts(x, account));
   if (a.values.json) {
-    printJson(ctx, { target: t, total, shown: records.length, records: facts.map((x, i) => {
-      const { body, seal_data: seal, ...rest } = x;
-      return { ...factsOfRecord(records[i]), seal: x.seal, facts: { ...rest, body: { stored: body.stored, source: body.source, ...(a.values.full ? { text: body.text } : {}) } }, record: records[i] };
-    }) });
+    const rows = [];
+    for (const x of facts) {
+      const record = /** @type {import('../proof/types.js').MpRecord} */ (await mp.get(x.id));
+      rows.push({ ...factsOfRecord(record), seal: x.seal === null ? null : sealText(x.seal), facts: jsonFacts(x, full), record });
+    }
+    printJson(ctx, { target: t, total, shown: facts.length, records: rows });
     return EX_OK;
   }
-  const more = total - records.length;
+  const more = total - facts.length;
   const st = styleOf(ctx);
   const now = (ctx.deps.now ?? (() => new Date()))();
-  print(ctx, `${total} email${total === 1 ? '' : 's'} with ${label(t)}${more ? `; showing the newest ${records.length}, ${more} more (--limit 0 for all, or narrow with --after/--before)` : ''}`);
+  print(ctx, `${total} email${total === 1 ? '' : 's'} with ${label(t)}${more ? `; showing the newest ${facts.length}, ${more} more (--limit 0 for all, or narrow with --after/--before)` : ''}`);
   facts.forEach((x, i) => {
     print(ctx, '');
-    print(ctx, st.cyan(`#${i + 1} of ${records.length}`));
-    for (const l of render(x, { compact: true, full: Boolean(a.values.full), fullHashes: Boolean(a.values.full), st, now })) print(ctx, l);
+    print(ctx, st.cyan(`#${i + 1} of ${facts.length}`));
+    for (const l of render(x, { compact: true, fullHashes: Boolean(a.values.full), st, now })) print(ctx, l);
   });
   return EX_OK;
-}
-
-/**
- * Why a re-check said no, in a few words.
- * @param {Awaited<ReturnType<import('./session.js').Session['mp']['verify']>>} v
- * @returns {string}
- */
-function reasonOf(v) {
-  if (v.error) return v.error;
-  if (!v.signatures.length) return 'unsigned';
-  const bad = v.signatures.find((s) => !s.ok);
-  return bad ? `${bad.d ?? '-'}: ${bad.why ?? bad.reason ?? 'does not verify'}` : `trust ${v.trust}`;
 }
 
 /**
@@ -87,26 +78,13 @@ function reasonOf(v) {
 export async function verifyMany(a, ctx, mp, t, at) {
   const f = rangeFlags(a, 0);   // verify checks everything by default: a partial check with exit 0 would mislead
   const all = Boolean(a.values.all);
-  const { records, total } = await targetRecords(mp, t, f);
+  const res = await mp.verifyWith(t, { all, ...(at ? { at } : {}), ...(f.after ? { after: f.after } : {}), ...(f.before ? { before: f.before } : {}), limit: f.limit });
+  const { total, ok, inbound, outbound, counted: checkedCounted, not_verified: failedCounted } = res;
+  const rows = res.records;
   if (!total) { warn(ctx, `mailproof: ${nothing(t)}`); return EX_ERR; }
-  const rows = [];
-  for (const r of records) {
-    const v = await mp.verify(r, at ? { at } : undefined);
-    const counted = all || r.direction !== 'out';
-    rows.push({ id: r.id, captured: r.captured, direction: r.direction, ok: v.ok, trust: v.trust, reason: v.ok ? null : reasonOf(v), counted, subject: factsOfRecord(r).subject, why: v.ok ? null : whyNot(r, v) });
-  }
-  const tally = (/** @type {string} */ dir) => {
-    const x = rows.filter((r) => r.direction === dir);
-    return { verified: x.filter((r) => r.ok).length, failed: x.filter((r) => !r.ok).length };
-  };
-  const inbound = tally('in');
-  const outbound = tally('out');
-  const failedCounted = rows.filter((r) => r.counted && !r.ok).length;
-  const checkedCounted = rows.filter((r) => r.counted).length;
-  const ok = checkedCounted > 0 && failedCounted === 0;
   const code = ok ? EX_OK : EX_NO;
   if (a.values.json) {
-    printJson(ctx, { target: t, ok, total, checked: rows.length, inbound, outbound, all, results: rows.map(({ subject: _s, why: _w, ...r }) => r) });
+    printJson(ctx, { target: t, ok, total, checked: res.checked, inbound, outbound, all, results: rows.map(({ subject: _s, why: _w, ...r }) => r) });
     return code;
   }
   const st = styleOf(ctx);

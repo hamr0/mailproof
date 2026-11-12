@@ -107,6 +107,12 @@ export const HANDLERS = {
     if (!rec) return json({ found: false });
     return json(await mp.verify(rec, a.at === undefined ? undefined : { at: dateArg(a.at, 'at') }));
   },
+  describe: async (c, a) => json(await c.mp().describe(a.target, { ...(a.full !== undefined ? { full: a.full } : {}), ...(a.after !== undefined ? { after: dateArg(a.after, 'after') } : {}), ...(a.before !== undefined ? { before: dateArg(a.before, 'before') } : {}), limit: a.limit ?? 50 })),
+  verifyWith: async (c, a) => json(await c.mp().verifyWith(a.target, {
+    ...(a.all !== undefined ? { all: a.all } : {}), ...(a.at !== undefined ? { at: dateArg(a.at, 'at') } : {}),
+    ...(a.after !== undefined ? { after: dateArg(a.after, 'after') } : {}), ...(a.before !== undefined ? { before: dateArg(a.before, 'before') } : {}),
+    ...(a.limit !== undefined ? { limit: a.limit } : {}),
+  })),
   verifyRecord: async (c, a) => {
     const hasPath = a.path !== undefined;
     if (hasPath === (a.record !== undefined)) throw badArgument('give record or path, not both and not neither');

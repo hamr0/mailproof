@@ -72,6 +72,47 @@ export const GENERATED_TOOLS = Object.freeze(/** @type {GeneratedTool[]} */ (/**
     }
   },
   {
+    "name": "describe",
+    "method": "describe",
+    "cls": "read",
+    "title": "See one email, or everything with an address",
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    },
+    "description": "See one recorded email, or every email with an address, as the facts the CLI `show` prints. `target` is a record id (8 to 32 hex), a `<message-id>` or one exact address; newest first, `limit` (default 50) cuts the list and `more` says there were others. Per email: addresses with `coverage` (`signed` only when a verifying signature covers the line), date and subject with coverage, DKIM/DMARC/SPF/ARC, both trust levels, `why` in plain words when not verified, body proof, attachments, seal. Body text only with `full: true` (else 10 lines and `more_lines`). Absent values are null. Fails with `ERR_TARGET`, `ERR_INDEX_UNAVAILABLE`, `ERR_TRAIL_LOCKED` (retry) or `ERR_TRAIL_LAYOUT`.",
+    "noAccount": false,
+    "required": [
+      "target"
+    ],
+    "properties": {
+      "target": {
+        "type": "string",
+        "description": "one exact email address (bob@example.com), a Message-ID in angle brackets (<abc@mail.example>), or a record id (8 to 32 hex characters)"
+      },
+      "full": {
+        "type": "boolean",
+        "description": "true: the whole body text of each email (else its first 10 lines and the count of the rest)"
+      },
+      "after": {
+        "type": "string",
+        "description": "address or Message-ID target: captured on or after this date"
+      },
+      "before": {
+        "type": "string",
+        "description": "address or Message-ID target: captured before this date"
+      },
+      "limit": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 500,
+        "description": "most emails to return (at most 500)"
+      }
+    }
+  },
+  {
     "name": "get",
     "method": "get",
     "cls": "read",
@@ -188,6 +229,51 @@ export const GENERATED_TOOLS = Object.freeze(/** @type {GeneratedTool[]} */ (/**
       "id": {
         "type": "string",
         "description": "a record id: 32 hex characters, or a unique prefix of at least 8"
+      },
+      "at": {
+        "type": "string",
+        "description": "judge key and signature expiry as of this time (default: the capture time)"
+      }
+    }
+  },
+  {
+    "name": "verifyWith",
+    "method": "verifyWith",
+    "cls": "read",
+    "title": "Re-check every email with an address",
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    },
+    "description": "Re-check, offline, every email with an address (or every copy of a `<message-id>`) and say if they all verify: `ok` is true only when at least one RECEIVED email was counted and every counted one verifies (a provider's Sent copy is normally unsigned, so sent copies are listed but counted only with `all: true`). Result `{ total, counted, verified, not_verified, sent_copies, ok, records[] }` with `why` per failing record. Same as the CLI `verify <address>`. Uses the records alone (no DNS). Fails with `ERR_TARGET`, `ERR_INDEX_UNAVAILABLE`, `ERR_TRAIL_LOCKED` (retry) or `ERR_TRAIL_LAYOUT`.",
+    "noAccount": false,
+    "required": [
+      "target"
+    ],
+    "properties": {
+      "target": {
+        "type": "string",
+        "description": "one exact email address (bob@example.com), a Message-ID in angle brackets (<abc@mail.example>), or a record id (8 to 32 hex characters)"
+      },
+      "all": {
+        "type": "boolean",
+        "description": "true: count your sent copies too (by default only received emails decide ok)"
+      },
+      "after": {
+        "type": "string",
+        "description": "address or Message-ID target: captured on or after this date"
+      },
+      "before": {
+        "type": "string",
+        "description": "address or Message-ID target: captured before this date"
+      },
+      "limit": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 500,
+        "description": "most records to return (at most 500)"
       },
       "at": {
         "type": "string",
