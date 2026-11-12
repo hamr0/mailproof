@@ -297,3 +297,14 @@ test('watch: a hostile server error message is escaped on stdout, stderr and in 
   for (const [what, text] of [['stdout', r.stdout], ['stderr', r.stderr], ['watch.log', log]]) assert.ok(!hasForbidden(text), `${what}: ${JSON.stringify(text)}`);
   assert.ok(log.includes('bad\\x1b[1A\\x1b]0;pwned\\x07\\x9b2J\\u202e'), log);
 });
+
+import { stampText } from '../../src/cli/sync-op.js';
+import { makeStyle } from '../../src/cli/style.js';
+
+test('stampText: nothing to do is one line; any count or manifest keeps the full report', () => {
+  const st = makeStyle();
+  const base = { enabled: true, ran: true, manifests: [], stamped: null, upgraded: 0, pending: 0, unstamped: 0, unsealed: 0 };
+  assert.equal(stampText(base, st), 'nothing new to seal');
+  for (const k of ['upgraded', 'pending', 'unstamped', 'unsealed']) assert.equal(stampText({ ...base, [k]: 1 }, st).split('\n').length, 3, k);
+  assert.equal(stampText({ ...base, skipped: 'no ots binary' }, st).split('\n').length, 4, 'a skip reason is never hidden');
+});

@@ -69,6 +69,7 @@ export function syncText(r, st = makeStyle()) {
  */
 export function stampText(r, st = makeStyle()) {
   if (!r.enabled) return `${st.dim('ots is off for this account')}`;
+  if (!r.manifests.length && r.stamped === null && !r.upgraded && !r.pending && !r.unstamped && !r.unsealed && !r.skipped && !r.error) return 'nothing new to seal';
   const lines = [];
   for (const m of r.manifests) lines.push(`manifest ${m.seq}: ${m.records} records, ${m.replies} replies listed`);
   if (!r.manifests.length) lines.push('nothing new to seal');
