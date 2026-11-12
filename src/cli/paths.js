@@ -25,6 +25,19 @@ export function tilde(f, env) {
 }
 
 /**
+ * Free text with every `<home>/` shown as `~/` (an error message that names a path). Display only.
+ * @param {string} text
+ * @param {Record<string, string | undefined>} env
+ * @returns {string}
+ */
+export function tildeText(text, env) {
+  const h = homeOf(env);
+  if (!h || h === '/') return text;
+  const base = h.endsWith('/') ? h : `${h}/`;
+  return text.split(base).join('~/');
+}
+
+/**
  * `<home>/mailproof/<kind>`: where mailproof writes this kind of file for the person.
  * @param {Record<string, string | undefined>} env
  * @param {UserKind} kind

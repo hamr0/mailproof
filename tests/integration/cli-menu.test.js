@@ -127,7 +127,7 @@ test('every number 1-19 and every name is accepted at any prompt, not only the o
   const deps = { sync: async () => ({ complete: true, folders: [] }), stamp: async () => ({}), runNpm: async () => 0 };
   // the names that select an item, and its first output (the input ends right after the pick, which quits the menu)
   const asked = [
-    [['1', 'sync'], /^Folders \(/m],
+    [['1', 'sync'], /^complete$/m],
     [['2', 'watch'], /^Interval \(/m],
     [['3', 'people'], /bob@beta\.example/],
     [['4', 'list'], /^Who \(/m],
@@ -138,7 +138,7 @@ test('every number 1-19 and every name is accepted at any prompt, not only the o
     [['9', 'check .eml', 'check-file', 'eml'], /^Path of the \.eml file/m],
     [['10', 'verify-bundle'], /^Bundle directory \(/m],
     [['11', 'export'], /^With \(/m],
-    [['12', 'seal', 'stamp'], /^0 upgraded, /m],
+    [['12', 'seal', 'stamp'], /^the Bitcoin anchor is pending/m],
     [['13', 'backup'], /^Write the bundle to \(/m],
     [['14', 'forget'], /^Ids \(/m],
     [['15', 'prune'], /^Before \(/m],

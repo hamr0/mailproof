@@ -6,7 +6,7 @@ import { UsageError, EX_OK, EX_ERR, EX_USAGE } from './errors.js';
 import { parseFolders, parseSent } from './parse.js';
 import { openAccount, loadCtxConfig, print, warn, printJson } from './session.js';
 import { serveMcp } from '../mcp/server.js';
-import { syncOnce, syncText } from './sync-op.js';
+import { syncOnce, syncText, nextSealDue } from './sync-op.js';
 import { configPath, TEMPLATE, loadConfig, ConfigError } from './config.js';
 import { addAccountWizard } from './wizard.js';
 import { printable as p } from './printable.js';
@@ -32,7 +32,8 @@ export async function syncCmd(a, ctx) {
     const progress = progressLine(ctx);
     let r;
     try { r = await syncOnce(s, ctx, { ...over, ...(progress ? { onProgress: progress.update } : {}) }); } finally { progress?.clear(); }
-    if (a.values.json) printJson(ctx, { ...r.result, ots: r.ots }); else print(ctx, syncText(r, styleOf(ctx)));
+    if (a.values.json) printJson(ctx, { ...r.result, ots: r.ots });
+    else print(ctx, syncText(r, styleOf(ctx), { nextDue: r.ots ? await nextSealDue(s) : null, now: (ctx.deps.now ?? (() => new Date()))() }));
     if (r.folderError) warn(ctx, `mailproof: ${p(r.folderError.folder)}: ${p(r.folderError.code)}: ${p(r.folderError.message)}`);
     return r.exit;
   } finally { await s.close(); }

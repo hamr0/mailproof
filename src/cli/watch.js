@@ -3,7 +3,8 @@
 import { EX_OK, EX_ERR, EX_NOPERM, exitFor, EX_TEMPFAIL } from './errors.js';
 import { parseDuration, MIN_INTERVAL_MS } from './parse.js';
 import { openAccount, print, warn, printJson, stamp } from './session.js';
-import { syncOnce } from './sync-op.js';
+import { syncOnce, folderLines } from './sync-op.js';
+import { styleOf } from './style.js';
 import { printable as p } from './printable.js';
 import { updateState, appendWatchLog, truncateWatchLog } from './state.js';
 
@@ -53,9 +54,12 @@ export async function watchCmd(a, ctx) {
       /** @type {{ status: 'ok' | 'locked' | 'error', result?: unknown, ots?: unknown, error?: { code: string, message: string } }} */
       let tick;
       let line;
+      /** @type {import('./sync-op.js').SyncOnce | null} */
+      let synced = null;
       let stop = false;
       try {
         const r = await syncOnce(s, ctx);
+        synced = r;
         if (r.folderError) {
           const c = exitFor(r.folderError.code);
           tick = { status: 'error', result: r.result, ots: r.ots, error: { code: r.folderError.code, message: r.folderError.message } };
@@ -78,7 +82,10 @@ export async function watchCmd(a, ctx) {
       }
       await appendWatchLog(s.state, name, p(line, { keepBackslash: true }));   // the log is a file people `tail`: nothing raw in it either
       if (json) printJson(ctx, { at, ...tick, nextInMs: stop ? null : wait });
-      else print(ctx, line);   // a tick is one line; the detail is in --json and in `sync`
+      else {
+        print(ctx, line);   // the log keeps this one line; the screen adds the per-folder counts, as `sync` prints them
+        if (synced) for (const l of folderLines(synced, styleOf(ctx))) print(ctx, `  ${l}`);
+      }
       if (stop) { if (tick.status === 'error') warn(ctx, `mailproof: ${p(tick.error?.code)}: ${p(tick.error?.message)}`); break; }
       if (ctx.signal.aborted) break;   // a signal during the sync: it finished, now stop
       await sleep(wait, ctx.signal);

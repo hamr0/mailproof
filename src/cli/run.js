@@ -16,7 +16,7 @@ import { statusCmd } from './status.js';
 import { runMenu } from './menu.js';
 import { ID_HINT } from './target.js';
 import { styleOf } from './style.js';
-import { expandHome } from './paths.js';
+import { expandHome, tildeText } from './paths.js';
 
 /** The setup guide, where an error hint points. */
 export const GUIDE_URL = 'https://github.com/hamr0/mailproof/blob/main/docs/product/setup-guide.md';
@@ -131,8 +131,9 @@ export async function run(argv, ctx) {
  */
 function report(e, cmd, ctx) {
   const err = /** @type {{ code?: string, message?: string }} */ (e);
-  if (e instanceof UsageError) warn(ctx, `mailproof: ${p(e.message, { keepNewline: true })}\nsee: mailproof help${cmd && Object.hasOwn(COMMANDS, cmd) ? ` ${cmd}` : ''}`);
-  else warn(ctx, `mailproof: ${err?.code && !/^ERR_|^EX_/.test(String(err.message)) ? `${p(err.code)}: ` : ''}${p(err?.message ?? e, { keepNewline: true })}`);
+  const shown = (/** @type {unknown} */ m) => tildeText(p(m, { keepNewline: true }), ctx.env);   // a path in a message shows as ~/ (SPEC B11.2a)
+  if (e instanceof UsageError) warn(ctx, `mailproof: ${shown(e.message)}\nsee: mailproof help${cmd && Object.hasOwn(COMMANDS, cmd) ? ` ${cmd}` : ''}`);
+  else warn(ctx, `mailproof: ${err?.code && !/^ERR_|^EX_/.test(String(err.message)) ? `${p(err.code)}: ` : ''}${shown(err?.message ?? e)}`);
   const hint = typeof err?.code === 'string' && Object.hasOwn(HINTS, err.code) ? HINTS[/** @type {keyof typeof HINTS} */ (err.code)] : null;
   if (hint) {
     const st = styleOf(ctx, 'stderr');

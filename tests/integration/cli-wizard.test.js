@@ -38,7 +38,7 @@ test('every field: the prompts show label, example and default; non-default answ
     user: 'ana@corp.example.net', host: 'imap.corp.example.net', port: 1143, folders: ['INBOX', 'Archive'], sent: '[Gmail]/Sent Mail', trailDir: '/srv/mp/biz', trail: 'main',
     accessTokenCommand: 'oauth-token --account biz', content: { attachments: false, days: 90 }, ots: false, backupRemote: 'git@git.example.org:ana/biz.git',
   });
-  for (const hint of ['Mail provider (1 = Gmail, 2 = Outlook/Hotmail, 3 = other IMAP) [1]', 'Account name (letters, digits', 'IMAP host (e.g. imap.example.org)', 'Port [993]', 'Folders to read (comma separated) [INBOX]', 'Trail folder [~/mailproof/biz]', 'Where does the password come from (1 = a command, 2 = a file, 3 = an OAuth2 token command) [1]', 'Advanced settings']) {
+  for (const hint of ['Mail provider (1 = Gmail, 2 = Outlook/Hotmail, 3 = other IMAP, q = back) [1]', 'Account name (letters, digits', 'IMAP host (e.g. imap.example.org, empty = back)', 'Port (q = back) [993]', 'Folders to read (comma separated, q = back) [INBOX]', 'Trail folder (q = back) [~/mailproof/biz]', 'Where does the password come from (1 = a command, 2 = a file, 3 = an OAuth2 token command, q = back) [1]', 'Advanced settings']) {
     assert.ok(r.stdout.includes(hint), hint);
   }
   assert.match(r.stdout, /"accessTokenCommand": "oauth-token --account biz"/, 'the JSON is shown before the question');
@@ -164,7 +164,7 @@ test('Gmail: the missing password file is created 0600 from a hidden answer; the
   assert.equal(fs.statSync(file).uid, process.getuid(), 'owned by the user');
   for (const text of [r.stdout, r.stderr, fs.readFileSync(w.configFile, 'utf8')]) assert.ok(!text.includes(SECRET) && !text.includes('abcdefghijklmnop'), 'the secret appears nowhere');
   assert.match(r.stdout, /Paste the password \(hidden\): \n/);
-  assert.match(r.stdout, /Password file \(an absolute path or ~\/\.\.\.\) \[~\/\.config\/mailproof\/gmx\.pass\]: \n/);
+  assert.match(r.stdout, /Password file \(an absolute path or ~\/\.\.\., q = back\) \[~\/\.config\/mailproof\/gmx\.pass\]: \n/);
   assert.match(r.stdout, /not found; create it now\?/);
   assert.deepEqual(read(w).accounts.gmx, { user: 'ana@gmail.com', host: 'imap.gmail.com', folders: ['INBOX', '[Gmail]/All Mail'], trailDir: '~/mailproof/gmx', passFile: '~/.config/mailproof/gmx.pass' });
   assert.equal((await w.run(['config', 'validate'])).code, 0);

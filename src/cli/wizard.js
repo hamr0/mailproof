@@ -13,6 +13,7 @@ import { ACCOUNT_NAME_RE, readTrustedFile, validateConfig, writeConfigAtomic, ex
 import { parseFolders, parseSent } from './parse.js';
 import { print, warn } from './session.js';
 import { styleOf } from './style.js';
+import { tilde } from './paths.js';
 import { resolveAuth } from './secrets.js';
 import { testLogin } from './login-test.js';
 import { TRAIL_NAME_RE } from '../proof/trail.js';
@@ -60,7 +61,7 @@ export async function addAccountWizard(a, ctx, file) {
   const st = styleOf(ctx);
   const { sym } = st;
   /** @param {import('./prompt.js').ValueSpec} spec */
-  const ask = (spec) => askValue(p, ctx.stdout, spec, st);
+  const ask = (spec) => askValue(p, ctx.stdout, { back: true, ...spec }, st);   // every prompt backs out on an empty answer or q (SPEC B11.4b)
   /** A y/N question in the stream's style. @param {string} q @param {boolean} [d] */
   const askYes = (q, d) => confirm(p, q, d, st);
   /** A question's label, dim. @param {string} s @returns {string} */
@@ -80,7 +81,7 @@ export async function addAccountWizard(a, ctx, file) {
       if (problems.length) throw new UsageError(`config ${file} has problems, so it is not rewritten:\n${problems.join('\n')}`);
       base = json;
     }
-    print(ctx, `${st.rule()}\n${st.bold('Set up an account')} ${st.dim(`${sym.dot} nothing is written until you confirm`)}\nAdding to ${file}${exists ? '' : ' (it does not exist yet; it will be created with mode 0600)'}. Answer ? at any prompt for help.\n${st.rule()}`);
+    print(ctx, `${st.rule()}\n${st.bold('Set up an account')} ${st.dim(`${sym.dot} nothing is written until you confirm`)}\nAdding to ${tilde(file, ctx.env)}${exists ? '' : ' (it does not exist yet; it will be created with mode 0600)'}. Answer ? at any prompt for help.\n${st.rule()}`);
 
     // 1. the provider
     print(ctx, `${L('Mail provider')}  ${st.key('1')} Gmail ${st.dim('(app password, proven)')}   ${st.key('2')} Outlook/Hotmail ${st.yellow('(OAuth2, untested)')}   ${st.key('3')} other IMAP`);
@@ -202,10 +203,10 @@ export async function addAccountWizard(a, ctx, file) {
         print(ctx, `${st.red(`${sym.bad} cannot test the login`)}: ${printable(/** @type {Error} */ (e)?.message ?? e)}`);
       }
     }
-    print(ctx, `\nThis account would be added to ${file}:\n${printable(JSON.stringify({ [name]: acct }, null, 2), { keepNewline: true })}\n`);
-    if (!(await askYes(`Write it to ${file}?`))) { print(ctx, 'nothing written'); return EX_OK; }
+    print(ctx, `\nThis account would be added to ${tilde(file, ctx.env)}:\n${printable(JSON.stringify({ [name]: acct }, null, 2), { keepNewline: true })}\n`);
+    if (!(await askYes(`Write it to ${tilde(file, ctx.env)}?`))) { print(ctx, 'nothing written'); return EX_OK; }
     await writeConfigAtomic(file, next);
-    print(ctx, `${st.green(`${sym.ok} written`)} ${file} ${st.dim('(mode 0600)')}`);
+    print(ctx, `${st.green(`${sym.ok} written`)} ${tilde(file, ctx.env)} ${st.dim('(mode 0600)')}`);
     if (await askYes(`${L('First sync now?')}`, true)) {
       const { run } = await import('./run.js');
       return run(['sync', '--account', name, '--config', file], { ...ctx, ...(own ? {} : { prompter: ctx.prompter }) });
@@ -213,6 +214,7 @@ export async function addAccountWizard(a, ctx, file) {
     print(ctx, `${st.dim('Next:')} mailproof status --account ${name}   then   mailproof sync --account ${name}`);
     return EX_OK;
   } catch (e) {
+    if (e instanceof Cancel && e.reason === 'back') { print(ctx, 'nothing written'); return EX_OK; }
     if (e instanceof Cancel) { warn(ctx, `mailproof: ${e.message}; nothing was written`); return EX_USAGE; }
     throw e;
   } finally { if (own) p.close(); }

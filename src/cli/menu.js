@@ -4,7 +4,7 @@
 
 import { UsageError, EX_USAGE } from './errors.js';
 import { createPrompter, askValue, confirm, Cancel, isTerminal } from './prompt.js';
-import { parseDate, parseAddress, parseDuration, parseSent, parseFolders, parseChoice, MIN_INTERVAL_MS, FULL_ID_RE } from './parse.js';
+import { parseDate, parseAddress, parseDuration, parseChoice, MIN_INTERVAL_MS, FULL_ID_RE } from './parse.js';
 import { loadCtxConfig, openAccount, print, warn } from './session.js';
 import { browseList } from './browse.js';
 import { makeFrame } from './frame.js';
@@ -176,11 +176,8 @@ export async function runMenu(ctx, exec, opts = {}) {
 
     /** @type {Record<string, () => Promise<void>>} */
     const handlers = {
-      sync: async () => {
-        const folders = await ask({ label: 'Folders', example: 'comma separated, empty = the account\'s', optional: true, validate: (s) => { parseFolders(s); return s; } });
-        const sent = await ask({ label: 'Sent', example: 'on, off or a folder path, empty = the account\'s', optional: true, validate: (s) => { parseSent(s); return s; } });
-        await go(['sync', ...(folders ? ['--folders', folders] : []), ...(sent ? ['--sent', sent] : [])]);
-      },
+      // the account's folders and Sent setting: the overrides stay `mailproof sync --folders/--sent` (SPEC B11.4)
+      sync: async () => { await go(['sync']); },
       watch: async () => {
         const interval = await ask({ label: 'Interval', example: '30s, 5m, 1h', def: '5m', validate: (s) => { parseDuration(s, 'Interval', ctx.deps.minIntervalMs ?? MIN_INTERVAL_MS); return s; } });
         crumb([step('watch'), interval]);

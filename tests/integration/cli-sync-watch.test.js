@@ -106,7 +106,7 @@ test('sync with OTS on: the run ends with the stamp job, its result is `ots` (a 
   assert.deepEqual([first.ran, first.manifests.length, first.manifests[0].records, first.stamped, first.upgraded, first.pending, first.unstamped, first.unsealed], [true, 1, 1, 1, 0, 1, 0, 0]);
   const again = JSON.parse((await w.run(['sync', '--json'], { deps })).stdout).ots;
   assert.deepEqual([again.ran, again.skipped, again.upgraded, again.pending], [false, 'not due', 0, 1], 'upgraded and pending keep their meaning');
-  assert.match((await w.run(['sync'], { deps })).stdout, /ots: skipped \(not due\), 0 upgraded, 1 pending/);
+  assert.match((await w.run(['sync'], { deps })).stdout, /^seal: next due \d\d:\d\dZ \(in [56] h\); 1 waiting for its Bitcoin anchor$/m, 'plain words: no `ots:`, no `skipped`, no counts of upgrades');
   const sh = (await w.run(['show', rec.id])).stdout;
   assert.match(sh, /^seal +manifest 1, stamped by manifest 1 \(pending\)$/m);
   const st1 = JSON.parse((await w.run(['status', '--json'])).stdout).acme;
@@ -137,7 +137,7 @@ test('sync with OTS on: the run ends with the stamp job, its result is `ots` (a 
   assert.equal(bad.code, 0);
   const MSG = 'ots not installed: records are not sealed; install opentimestamps-client or set ots: false';
   assert.equal(JSON.parse(bad.stdout).ots.error, MSG);
-  assert.match((await w2.run(['sync'], { deps })).stdout, /ots: skipped \(not due\)/, 'one spawn per cadence, not per sync');
+  assert.match((await w2.run(['sync'], { deps })).stdout, /^seal: next due /m, 'one spawn per cadence, not per sync');
   const sb = await w2.run(['stamp']);
   assert.equal(sb.code, 1);
   assert.ok(sb.stderr.includes(MSG), sb.stderr);
@@ -171,10 +171,9 @@ test('watch: one line per tick, appended to watch.log, the interval between tick
   assert.equal(r.code, 0);
   assert.deepEqual(r.sleeps, [30_000, 30_000, 30_000]);
   assert.equal(r.ticks, 3);
-  assert.deepEqual(r.stdout.trim().split('\n'), [
-    '2026-11-10T12:00:00Z ok recorded 3', '2026-11-10T12:00:00Z ok recorded 0', '2026-11-10T12:00:00Z ok recorded 3',
-  ]);
-  assert.equal(readLog(w, 'acme'), r.stdout);
+  const tick = (n, seen) => ['2026-11-10T12:00:00Z ok recorded ' + n, `  ok INBOX                    in    seen ${seen}  recorded ${n}  duplicate 0`];
+  assert.deepEqual(r.stdout.trim().split('\n'), [...tick(3, 3), ...tick(0, 0), ...tick(3, 3)], 'each tick: its line, then the per-folder counts as sync prints them (SPEC B11.9)');
+  assert.equal(readLog(w, 'acme'), r.stdout.split('\n').filter((l) => !l.startsWith('  ')).join('\n'), 'the log keeps one line per tick');
   const st = readState(w, 'acme');
   assert.equal(st.lastWatch.state, 'stopped');
   assert.equal(st.lastWatch.pid, process.pid);
@@ -195,7 +194,7 @@ test('watch: a held lock is "skipped (locked)" and the next tick comes at the no
   const w = mk();
   const r = await watch(w, [async () => { throw failing('ERR_SYNC_LOCKED'); }, async () => { throw failing('ERR_TRAIL_LOCKED'); }, async () => result()]);
   assert.deepEqual(r.sleeps, [30_000, 30_000, 30_000]);
-  assert.match(r.stdout, /skipped \(locked\)\n.*skipped \(locked\)\n.* ok recorded 3\n$/);
+  assert.match(r.stdout, /skipped \(locked\)\n.*skipped \(locked\)\n.* ok recorded 3\n {2}ok INBOX.*\n$/);
   assert.equal(r.code, 0);
 });
 
@@ -305,6 +304,9 @@ test('stampText: nothing to do is one line; any count or manifest keeps the full
   const st = makeStyle();
   const base = { enabled: true, ran: true, manifests: [], stamped: null, upgraded: 0, pending: 0, unstamped: 0, unsealed: 0 };
   assert.equal(stampText(base, st), 'nothing new to seal');
-  for (const k of ['upgraded', 'pending', 'unstamped', 'unsealed']) assert.equal(stampText({ ...base, [k]: 1 }, st).split('\n').length, 3, k);
-  assert.equal(stampText({ ...base, skipped: 'no ots binary' }, st).split('\n').length, 4, 'a skip reason is never hidden');
+  for (const k of ['upgraded', 'pending', 'unstamped', 'unsealed']) assert.ok(stampText({ ...base, [k]: 1 }, st).split('\n').length >= 2, k);
+  assert.match(stampText({ ...base, skipped: 'no ots binary' }, st), /skipped \(no ots binary\)/, 'a skip reason is never hidden');
+  const sealed = stampText({ ...base, manifests: [{ seq: 1, records: 3, replies: 0 }], stamped: 1, pending: 1 }, st);
+  assert.equal(sealed, st.sym.ok + ' sealed 3 new records\nthe Bitcoin anchor is pending (usually a few hours); it completes on the next sync or seal');
+  assert.match(stampText({ ...base, manifests: [{ seq: 1, records: 1, replies: 0 }], stamped: 1 }, st), /sealed 1 new record$/m, 'plain plural');
 });

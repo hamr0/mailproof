@@ -6,7 +6,11 @@ import { exitFor } from './errors.js';
 import { updateState } from './state.js';
 import { stamp } from './session.js';
 import { printable as p } from './printable.js';
-import { makeStyle } from './style.js';
+import { makeStyle, rel } from './style.js';
+import { clock } from './menu-header.js';
+import { count } from './words.js';
+import { sealStatus } from '../proof/stamp.js';
+import { STAMP_EVERY_HOURS } from '../proof/limits.js';
 
 /**
  * @typedef {Object} SyncOnce
@@ -44,25 +48,71 @@ export async function syncOnce(s, ctx, over = {}) {
 }
 
 /**
- * The text of a sync result.
+ * The per-folder lines of a sync result (what `sync` prints, and what every `watch` tick prints under its line).
  * @param {SyncOnce} r
  * @param {import('./style.js').Style} [st]
- * @returns {string}
+ * @returns {string[]}
  */
-export function syncText(r, st = makeStyle()) {
+export function folderLines(r, st = makeStyle()) {
   const { sym } = st;
-  const lines = r.result.folders.map((f) => {
+  return r.result.folders.map((f) => {
     const [ch, colour] = f.error ? [sym.bad, st.red] : !f.attempted || !f.complete ? [sym.warn, st.yellow] : [sym.ok, st.green];
     const tail = f.error ? `  ${st.red(`error ${p(f.error.code)}`)}` : !f.attempted ? '  not attempted' : f.complete ? '' : '  partial (run again)';
     return `${colour(ch)}${' '.repeat(Math.max(0, 2 - ch.length))} ${p(f.folder).padEnd(24)} ${f.direction === 'out' ? 'sent' : 'in  '}  seen ${f.seen}  recorded ${f.recorded}  duplicate ${f.duplicate}${f.over_limit ? `  over-limit ${f.over_limit}` : ''}${tail}`;
   });
+}
+
+/**
+ * The seal line of a sync, in plain words (SPEC B11.5): what was sealed, when the next seal is due, and how many proofs still wait for their Bitcoin anchor.
+ * @param {import('../proof/stamp.js').StampResult} z
+ * @param {import('./style.js').Style} st
+ * @param {{ nextDue?: string | null, now?: Date }} [o]  `nextDue`: the library's seal status (ISO time); left out when unknown.
+ * @returns {string}
+ */
+export function sealLine(z, st, o = {}) {
+  if (!z.enabled) return `seal: ${st.dim('off for this account')}`;
+  const now = o.now ?? new Date();
+  const records = z.manifests.reduce((n, m) => n + m.records, 0);
+  /** @type {string[]} */
+  const parts = [];
+  if (z.error) parts.push(st.yellow(`problem: ${p(z.error)}`));
+  else if (z.skipped === 'locked') parts.push('another seal run is in progress');
+  else if (z.ran && z.manifests.length) parts.push(`sealed ${count(records, 'new record')}`);
+  if (o.nextDue) parts.push(`next due ${clock(o.nextDue, now)} (${rel(o.nextDue, now)})`);
+  if (z.upgraded) parts.push(`${count(z.upgraded, 'proof')} anchored in Bitcoin`);
+  const waiting = z.pending + z.unstamped;
+  if (waiting) parts.push(`${waiting} waiting for ${waiting === 1 ? 'its' : 'their'} Bitcoin anchor`);
+  if (!parts.length) parts.push('nothing to seal');
+  return `seal: ${parts.join('; ')}`;
+}
+
+/**
+ * The text of a sync result.
+ * @param {SyncOnce} r
+ * @param {import('./style.js').Style} [st]
+ * @param {{ nextDue?: string | null, now?: Date }} [o]  See `sealLine`.
+ * @returns {string}
+ */
+export function syncText(r, st = makeStyle(), o = {}) {
+  const lines = folderLines(r, st);
   lines.push(r.result.complete ? st.green('complete') : st.yellow('not complete: the next run continues from the saved cursor'));
-  if (r.ots) lines.push(`ots: ${r.ots.ran ? 'sealed' : `skipped (${r.ots.skipped})`}${r.ots.manifests.length ? `, ${r.ots.manifests.reduce((n, m) => n + m.records + m.replies, 0)} files listed` : ''}, ${r.ots.upgraded} upgraded, ${r.ots.pending} pending${r.ots.error ? ` (${p(r.ots.error)})` : ''}`);
+  if (r.ots) lines.push(sealLine(r.ots, st, o));
   return lines.join('\n');
 }
 
 /**
- * The text of a stamp result.
+ * When the next seal is due, from the library's seal status: cheap and offline (a read of the manifest chain), null when the seal is off or unreadable.
+ * @param {import('./session.js').Session} s
+ * @returns {Promise<string | null>}
+ */
+export async function nextSealDue(s) {
+  if (s.account.otsBin === null) return null;
+  const z = await sealStatus({ root: s.mp.root, trail: s.mp.trail, stamp: { mode: s.account.stamp.mode ?? 'batch', everyHours: s.account.stamp.everyHours ?? STAMP_EVERY_HOURS }, enabled: true }).catch(() => null);
+  return z?.nextDue ?? null;
+}
+
+/**
+ * The text of a stamp result, in plain words (SPEC B11.5).
  * @param {import('../proof/stamp.js').StampResult} r
  * @param {import('./style.js').Style} [st]
  * @returns {string}
@@ -70,11 +120,15 @@ export function syncText(r, st = makeStyle()) {
 export function stampText(r, st = makeStyle()) {
   if (!r.enabled) return `${st.dim('ots is off for this account')}`;
   if (!r.manifests.length && r.stamped === null && !r.upgraded && !r.pending && !r.unstamped && !r.unsealed && !r.skipped && !r.error) return 'nothing new to seal';
+  /** @type {string[]} */
   const lines = [];
-  for (const m of r.manifests) lines.push(`manifest ${m.seq}: ${m.records} records, ${m.replies} replies listed`);
-  if (!r.manifests.length) lines.push('nothing new to seal');
-  lines.push(r.stamped === null ? 'no new proof made' : `${st.green(st.sym.ok)} stamped manifest ${r.stamped}`);
-  lines.push(`${r.upgraded} upgraded, ${r.pending} pending, ${r.unstamped} manifests without a proof, ${r.unsealed} files not yet sealed`);
+  const records = r.manifests.reduce((n, m) => n + m.records, 0);
+  const replies = r.manifests.reduce((n, m) => n + m.replies, 0);
+  if (r.manifests.length) lines.push(`${st.green(st.sym.ok)} sealed ${count(records, 'new record')}${replies ? ` and ${count(replies, 'reply', 'replies')}` : ''}`);
+  else lines.push('nothing new to seal');
+  if (r.upgraded) lines.push(`${count(r.upgraded, 'proof')} anchored in Bitcoin`);
+  if (r.pending + r.unstamped > 0) lines.push('the Bitcoin anchor is pending (usually a few hours); it completes on the next sync or seal');
+  if (r.unsealed) lines.push(`${count(r.unsealed, 'file')} not sealed yet: run seal again`);
   if (r.skipped) lines.push(`${st.yellow(st.sym.warn)} skipped (${r.skipped})`);
   if (r.error) lines.push(`${st.red(st.sym.bad)} error: ${p(r.error)}`);
   return lines.join('\n');
