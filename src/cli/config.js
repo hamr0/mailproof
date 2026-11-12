@@ -71,6 +71,43 @@ export const TEMPLATE = {
   },
 };
 
+/** One line per key for the annotated example the menu shows (the printable template stays plain JSON). */
+export const TEMPLATE_NOTES = Object.freeze({
+  v: 'the file format; always 1',
+  accounts: 'one entry per mailbox, named by you (a-z, 0-9, _ and -)',
+  user: 'your login, usually your email address',
+  host: 'the IMAP server',
+  port: 'the IMAP port (993 = TLS)',
+  folders: 'folders to record as received mail',
+  sent: 'true: find the Sent folder itself; a folder name; false: do not read sent mail',
+  trailDir: 'where this account\'s proofs are kept (an absolute path, or starting with ~/)',
+  trail: 'the trail name inside trailDir',
+  passCommand: 'a command that prints the password (never the password itself)',
+  passFile: 'a file holding the password; must be owner-only (mode 0600)',
+  accessTokenCommand: 'a command that prints an OAuth access token',
+  content: 'the local copy of each raw email (outside git)',
+  store: 'keep raw emails',
+  attachments: 'keep attachments',
+  days: 'delete stored content after this many days (proofs are kept)',
+  sweepDays: 'how often the expiry sweep runs, in days',
+  ots: 'true: seal records with OpenTimestamps (needs the ots program); false: off',
+  stamp: 'seal options: mode and everyHours (how often the seal job runs)',
+  backupRemote: 'a git remote that `backup --push` sends the trail to (no password in the URL)',
+  mcp: 'settings for `mailproof mcp`: inputDirs, outputDir and the response caps',
+});
+
+/**
+ * The example config with a one-line comment after each key (display only: comments are not valid JSON, `config template` prints the plain file).
+ * @returns {string[]}
+ */
+export function annotatedTemplate() {
+  const notes = /** @type {Record<string, string>} */ (TEMPLATE_NOTES);
+  return JSON.stringify(TEMPLATE, null, 2).split('\n').map((l) => {
+    const k = /^\s*"([A-Za-z]+)":/.exec(l)?.[1];
+    return k && notes[k] ? `${l}   // ${notes[k]}` : l;
+  });
+}
+
 /** An error that carries every problem found, one per line, each naming the JSON path. */
 export class ConfigError extends UsageError {
   /** @param {string[]} problems */

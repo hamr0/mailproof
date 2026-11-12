@@ -21,7 +21,8 @@ import { headerFacts } from './status.js';
 import { mainHeader, fullMenu, shortLine, firstRun, jobOf, SCREEN_JOBS, MENU_ITEMS, MENU_ALIASES } from './menu-header.js';
 import { checkFileCmd } from './check-file.js';
 import { mcpFacts, mcpStatusLines, writeOtherClients, runClaude, CLAUDE_ADD, CLAUDE_REMOVE } from './mcp-setup.js';
-import { configPath, listProfiles, loadProfile } from './config.js';
+import { configPath, listProfiles, loadProfile, annotatedTemplate } from './config.js';
+import { configSummary, editUntilValid, openEditor, editorCommand } from './config-screen.js';
 
 /** @typedef {import('./session.js').Ctx} Ctx */
 
@@ -138,7 +139,7 @@ export async function runMenu(ctx, exec, opts = {}) {
       if (typeof got === 'number') return got;
       config = got;
     }
-    const names = Object.keys(config.accounts);
+    let names = Object.keys(config.accounts);
     const pickAccount = async () => (names.length === 1 ? names[0] : ask({
       label: 'Account', example: names.map((n) => `{${n}}`).join('/'), validate: (s) => { if (!names.includes(s)) throw new UsageError(`choose one of ${names.join(', ')}`); return s; },
     }));
@@ -325,9 +326,19 @@ export async function runMenu(ctx, exec, opts = {}) {
         if (await askYes('Upgrade now?')) await go(['update', '--run']);
       },
       config: async () => {
-        const action = await ask({ label: 'Action', example: 'path, validate, template, add-account', def: 'validate', validate: (s) => parseChoice(s, 'Action', 'path', 'validate', 'template', 'add-account') });
-        crumb([step('config'), action]);
-        await go(['config', action]);
+        const file = configPath(opts.configFlag, ctx.env);
+        const { lines, valid } = await configSummary(file, base, st);
+        for (const l of lines) out(l);
+        frame.foot(`${st.key('1')} edit settings  ${st.key('2')} add an account  ${st.key('3')} show an example`);
+        const c = await ask({ label: 'Choice', example: '{1}, {2} or {3}', validate: (s) => parseChoice(s, 'Choice', '1', '2', '3') });
+        if (c === '3') { out(''); for (const l of annotatedTemplate()) out(l); return; }
+        if (c === '2') { out(''); await exec([...pre, 'config', 'add-account'], base); }
+        else {
+          out(`opening ${printable(tilde(file))} in ${printable(editorCommand(ctx.env)[0])} ...`);
+          await editUntilValid(file, { ctx, edit: ctx.deps.edit ?? ((f) => openEditor(f, ctx.env)), suspend: (fn) => p.suspend(fn), askYes, out, st });
+        }
+        // the settings may have changed: the menu follows the file (a bad file keeps the settings it started with)
+        try { config = (await loadCtxConfig(cfgArgs, ctx)).config; names = Object.keys(config.accounts); if (!names.includes(account)) account = await pickAccount(); } catch { /* the summary said what is wrong */ }
       },
       export: async () => {
         await exportFor(await ask({ label: 'With', example: 'exact addresses, comma separated, e.g. {bob@example.org,bob@work.example}', validate: (s) => { s.split(',').map((x) => parseAddress(x.trim(), 'With')); return s; } }));

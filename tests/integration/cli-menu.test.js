@@ -143,7 +143,7 @@ test('every number 1-19 and every name is accepted at any prompt, not only the o
     [['14', 'forget'], /^Who \(/m],
     [['15', 'prune'], /^Before \(/m],
     [['16', 'status'], /^test [·-] me@owner\.example\n {2}trail /m],
-    [['17', 'config'], /^Action \(/m],
+    [["17", "config"], /^Choice \(/m],
     [['18', 'update'], /the npm registry could not be reached/],
   ];
   for (const [picks, re] of asked) for (const pick of picks) {
@@ -242,12 +242,12 @@ test('Backup prompts for the path with the ~/mailproof/backups default, and the 
   assert.match(dflt.stdout, /^ {2}git clone ~\/mailproof\/backups\//m);
 });
 
-test('Config: validate and path run the subcommands; a missing config offers the wizard', async () => {
+test('Config: the screen shows the path and validity; a missing config offers the wizard', async () => {
   const w = world();
-  const v = await menu(w, keys('config', '', '', 'q'));
-  assert.match(v.stdout, /^ok$/m);
-  const p = await menu(w, keys('config', 'path', '', 'q'));
-  assert.ok(p.stdout.includes(w.configFile));
+  const v = await menu(w, keys('config', '', 'q'));
+  assert.match(v.stdout, /^Valid +(ok|✓) valid$/m);
+  assert.match(v.stdout, /^Config file +\S+config\.json$/m);
+  assert.equal((await w.run(['config', 'path'])).stdout.trim(), w.configFile, 'the script subcommands stay');
   const none = makeWorld({ config: null });
   const wiz = await menu(none, keys('1', '3', 'personal', 'ana@example.com', 'imap.example.org', '', '1', 'pass show x', '', '', '', '', '', '', '', 'n', 'y', 'n', 'q'));
   assert.equal(wiz.code, 0, wiz.stderr);

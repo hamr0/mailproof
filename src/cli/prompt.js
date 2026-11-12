@@ -26,6 +26,7 @@ export const isTerminal = (ctx) => ctx.stdout.isTTY === true && /** @type {{ isT
  * @property {(label: string) => Promise<string | null>} ask  One line, or null when the input ended.
  * @property {(label: string) => Promise<string | null>} askSecret  One line typed with the echo OFF (a terminal shows nothing; scripted input is not echoed into the transcript), or null when the input ended. The caller never prints the answer.
  * @property {(fn: (() => void) | null) => void} onInterrupt  What Ctrl-C does while a command runs (null: end the input).
+ * @property {<T>(fn: () => Promise<T>) => Promise<T>} suspend  Run something that takes over the terminal (an editor): the line reader is paused and the terminal handed back meanwhile.
  * @property {() => void} close
  */
 
@@ -91,6 +92,12 @@ export function createPrompter(input, output, terminal) {
       return new Promise((resolve) => { waiter = (l) => resolve(done(l)); });
     },
     onInterrupt(fn) { interrupt = fn; },
+    async suspend(fn) {
+      const tty = /** @type {{ setRawMode?: (m: boolean) => unknown }} */ (input);
+      rl.pause();
+      if (terminal) tty.setRawMode?.(false);
+      try { return await fn(); } finally { if (terminal) tty.setRawMode?.(true); rl.resume(); }
+    },
     close() { rl.close(); },
   };
 }

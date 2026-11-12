@@ -19,7 +19,7 @@ export function makePager(real, p, st) {
   /** @type {Out} */
   const stream = { write: (s) => { if (live) return real.write(s); buf += typeof s === 'string' ? s : Buffer.from(s).toString(); return true; }, ...(real.isTTY !== undefined ? { isTTY: real.isTTY } : {}), ...(real.columns ? { columns: real.columns } : {}), ...(real.rows ? { rows: real.rows } : {}) };
   /** @type {import('./prompt.js').Prompter} */
-  const prompter = { ...p, ask: (l) => { flush(); return p.ask(l); }, askSecret: (l) => { flush(); return p.askSecret(l); } };
+  const prompter = { ...p, ask: (l) => { flush(); return p.ask(l); }, askSecret: (l) => { flush(); return p.askSecret(l); }, suspend: (fn) => { flush(); return p.suspend(fn); } };
   const footer = `${st.key('Enter')} ${st.dim('more')} ${st.dim(st.sym.dot)} ${st.key('q')} ${st.dim('menu')}`;
 
   /** Screen lines of a text line: a long one wraps. @param {string} l */
