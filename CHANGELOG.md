@@ -23,7 +23,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `replyFacts({ address })` (and `mailproof replies <address>`, the menu's item 6, the MCP `replyFacts` tool's `address` argument): the direct replies one person sent to any email in the trail, with the same bundles, earliest first. Give exactly one of `messageId` or `address`.
+
 ### Changed
+- `mailproof replies` tells an address from a Message-ID by shape, like `show` and `verify`. **A bare `id@host` is now an address**: write the angle brackets for a Message-ID (`<id@host>`); the library's `replyFacts({ messageId })` still accepts it bare.
+- The menu's `?` shows what the menu showed at the start: the header lines, then the full grouped menu.
+- `mailproof stamp` (menu item 12, seal) prints one line, `nothing new to seal`, when nothing was sealed, upgraded or pending; any other result keeps the full report (`--json` is unchanged).
 - The `mailproof` menu shows every command at once, grouped (Mail, Look, Check, Share and keep, Clean up, Setup), one per line with its help, numbered 1 to 19; after an action only a short line of the common ones follows. The numbers changed (`3` is now `people`, `5` `show`, `7` `verify`, `11` `export`, `16` `status`); names still work. New items: `9` check a saved `.eml` and `10` `verify-bundle`.
 
 ## [3.3.0] - 2026-11-11

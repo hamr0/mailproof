@@ -56,10 +56,11 @@ test('the menu shows the header (identity, counts), the action line and quits on
   assert.match(r.stdout, /^records: 6 - 3 verified - 2 unverified - 1 sent copy - seal never run - watch off$/m);
   assert.ok(r.stdout.includes(FULL_MENU), 'the full grouped menu, at the start');
   assert.equal(r.stdout.split(FULL_MENU).length, 3, 'shown at the start and again on ?');
+  assert.match(r.stdout.slice(r.stdout.indexOf(FULL_MENU) + FULL_MENU.length), /^-{64}\nmailproof \d/m, 'the header comes first on ?');
   assert.ok(!r.stdout.includes('[b: change]') && !/ a account/.test(r.stdout), 'one account: nothing to change');
   assert.ok(!r.stdout.includes('\x1b'), 'no terminal colour on a pipe');
   assert.equal(r.stdout.split('1 sync  3 people').length, 1, 'no short line before any action');
-  assert.equal((r.stdout.match(/^-{64}$/gm) ?? []).length, 2, '? does not repeat the header');
+  assert.equal((r.stdout.match(/^-{64}$/gm) ?? []).length, 4, '? draws the header again, as at the start');
   const noTty = await w.run([], { interactive: false, input: keys('q') });
   assert.equal(noTty.code, 64);
   assert.match(noTty.stdout, /^Usage: mailproof/);
@@ -110,8 +111,9 @@ test('Show, Verify, Replies, Check, Status run the subcommand code (same output,
   assert.ok(show.stdout.includes((await w.run(['show', id])).stdout));
   const ver = await menu(w, keys('7', idOf('failing'), '', '', 'q'));
   assert.match(ver.stdout, /NOT OK/);
-  const rep = await menu(w, keys('replies', 'req@owner.example', '', 'q'));
-  assert.match(rep.stdout, /bob@beta.example/);
+  const rep = await menu(w, keys('replies', 'bob@beta.example', '', 'q'));
+  assert.match(rep.stdout, /bob@beta.example  dkim-aligned pass/);
+  assert.ok(!rep.stdout.includes('no replies recorded'));
   const prof = path.join(makeTmpDir('mp-cli-menu-'), 'p.json');
   fs.writeFileSync(prof, JSON.stringify({ senders: ['@beta.example'] }));
   const chk = await menu(w, keys('check', id, prof, '', '', 'q'));
@@ -135,7 +137,7 @@ test('every number 1-19 and every name is accepted at any prompt, not only the o
     [['3', 'people'], /bob@beta\.example/],
     [['4', 'list'], /^With \(/m],
     [['5', 'show'], /^Target \(/m],
-    [['6', 'replies'], /^Message-ID \(/m],
+    [['6', 'replies'], /^Address or Message-ID \(/m],
     [['7', 'verify'], /^Target \(/m],
     [['8', 'check'], /^Id \(/m],
     [['9', 'check .eml', 'check-file', 'eml'], /^Path of the \.eml file/m],
@@ -329,4 +331,15 @@ test('first run: "check a .eml file" asks for a path, calls the library check (i
   assert.match(r.stdout, /nothing was recorded/);
   assert.match(r.stderr, /no such file/);
   assert.ok(!fs.existsSync(none.configFile), 'nothing was written');
+});
+
+test('? shows what the menu showed at the start: the header lines, then the grouped menu', async () => {
+  const w = world();
+  await w.run(['list']);
+  const r = await menu(w, keys('?', 'q'));
+  assert.equal((r.stdout.match(/^mailproof \d+\.\d+\.\d+ - me@owner\.example/gm) ?? []).length, 2, 'the identity line at the start and again after ?');
+  assert.equal((r.stdout.match(/^records: \d+ - /gm) ?? []).length, 2);
+  const half = r.stdout.indexOf(FULL_MENU) + FULL_MENU.length;
+  assert.equal(r.stdout.slice(half).split(FULL_MENU).length, 2, 'the same grouped menu follows the second header');
+  assert.ok(!r.stdout.slice(half).includes(SHORT), 'no short line after ?: the full menu was the last thing shown');
 });

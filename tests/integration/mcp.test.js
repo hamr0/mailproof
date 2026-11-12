@@ -94,6 +94,7 @@ test('every tool once, with the shape of its result; blobs, saveTo, prefixes, no
   assert.ok((await s.call('proofParts', { id })).json.email);
   assert.equal((await s.call('checkProfile', { id, profile: { senders: ['bob@beta.example'] } })).json.ok !== undefined, true);
   assert.equal((await s.call('replyFacts', { messageId: '<req@owner.example>' })).json.length, 3);
+  assert.equal((await s.call('replyFacts', { address: 'bob@beta.example' })).json.length, 2, 'an address works too');
   const mb = (await s.call('matchBody', { id })).json; assert.ok('match' in mb);
   assert.equal((await s.call('matchBody', { id, base64: t.mails.signed.raw.toString('base64') })).json.match, true);
   assert.equal((await s.call('matchFile', { id, base64: Buffer.from('nothing').toString('base64') })).json.match, false);

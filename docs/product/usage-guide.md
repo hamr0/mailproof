@@ -41,7 +41,7 @@ Whoever runs mailproof keeps that data and is responsible for it. An individual 
 | Give a counterparty the proof of what you exchanged, or check one you were given | `mp.export({ with, out })` / `verifyBundle(dir)`; CLI `mailproof export`, `mailproof verify-bundle` |
 | Check a body or an attachment you produce later | `mp.matchBody(id, raw)` / `mp.matchFile(id, bytes)` |
 | Read what the sender newly wrote in a recorded reply | `mp.replyText(raw)` |
-| Read the facts of every signed reply to a request you sent (who, whether it is aligned and signed, the first line) | `mp.replyFacts({ messageId })` |
+| Read the facts of every signed reply to a request you sent (who, whether it is aligned and signed, the first line) | `mp.replyFacts({ messageId })`; or every reply one person sent: `mp.replyFacts({ address: 'bob@example.org' })` |
 | Seal what was recorded since the last run (manifest, stamp, upgrade) | `mp.stamp()` (`mailproof stamp`) |
 | Fold pending OpenTimestamps stamps into their Bitcoin attestation | `mp.upgradeStamps()` |
 | Capture a mailbox over IMAP, read-only | `mp.sync({ host, user, auth, ... })` |

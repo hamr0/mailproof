@@ -575,6 +575,26 @@ export async function repliesIndex(cfg, messageId) {
 }
 
 /**
+ * The direct replies one address sent, for `Mailproof#replyFacts({ address })` (SPEC B10): the inbound records whose From is
+ * the address and whose In-Reply-To or last References entry names a message that is in the trail, earliest capture first
+ * (ties by id), each with the Message-ID it answers (the lowest when it answers two) and the commit that added it.
+ * At most REPLY_FACTS_MAX + 1 rows come back, so the caller can tell the list was cut.
+ * @param {IndexCfg} cfg
+ * @param {string} address  Lower case.
+ * @returns {Promise<Array<{ id: string, captured: string, commit: string, parent: string }>>}
+ */
+export async function repliesFromIndex(cfg, address) {
+  return query(cfg, (d) => d.prepare(
+    `SELECT r.id AS id, r.captured AS captured, r.commit_id AS commit_id, MIN(l.mid) AS parent
+       FROM participants pt JOIN rec r ON r.id = pt.rec_id
+       JOIN links l ON l.rec_id = r.id AND l.direct = 1
+       JOIN rec p ON p.message_id = l.mid
+      WHERE pt.address = ? AND pt.role = 'from' AND r.direction = 'in'
+      GROUP BY r.id ORDER BY r.captured, r.id LIMIT ?`,
+  ).all(address, REPLY_FACTS_MAX + 1).map((r) => ({ id: r.id, captured: r.captured, commit: r.commit_id ?? '', parent: r.parent })), []);
+}
+
+/**
  * The manifests that list a record or reply-text file, newest first: only a HINT for `findSeal` (SPEC B13.1.10), which reads
  * those manifests from the trail and checks them. `slug` null: the record file; else the reply-text file of that stripper version.
  * @param {IndexCfg} cfg

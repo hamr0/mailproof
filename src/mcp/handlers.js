@@ -145,7 +145,10 @@ export const HANDLERS = {
     const opts = { ...(a.at !== undefined ? { at: dateArg(a.at, 'at') } : {}), ...(a.parent !== undefined ? { parent: messageIdOf(a.parent) } : {}) };
     return json(await mp.checkProfile(await idArg(a, 'id', mp), a.profile, Object.keys(opts).length ? opts : undefined));
   },
-  replyFacts: async (c, a) => json(await c.mp().replyFacts({ messageId: messageIdOf(a.messageId) })),
+  replyFacts: async (c, a) => {
+    if ((a.messageId === undefined) === (a.address === undefined)) throw badArgument('give messageId or address, one of them');
+    return json(await c.mp().replyFacts(a.address !== undefined ? { address: a.address } : { messageId: messageIdOf(a.messageId) }));
+  },
   matchBody: async (c, a) => {
     const mp = c.mp();
     const raw = await readBytes(a, c.input, true);

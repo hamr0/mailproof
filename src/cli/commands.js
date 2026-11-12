@@ -93,7 +93,7 @@ export const COMMANDS = {
     },
   },
   replies: {
-    primitive: 'Mailproof#replyFacts', summary: 'what people answered (by Message-ID)', account: true, positional: '<messageId>', min: 1, max: 1, flags: {},
+    primitive: 'Mailproof#replyFacts', summary: 'what people answered: an address\'s replies, or the replies to a Message-ID', account: true, positional: '<address|messageId>', min: 1, max: 1, flags: {},
   },
   check: {
     primitive: 'Mailproof#checkProfile', summary: 'trust profile pass/fail', account: true, positional: '<id>', min: 1, max: 1,

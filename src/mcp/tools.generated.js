@@ -383,15 +383,17 @@ export const GENERATED_TOOLS = Object.freeze(/** @type {GeneratedTool[]} */ (/**
       "idempotentHint": true,
       "openWorldHint": false
     },
-    "description": "List the facts about every recorded direct reply to an email you sent, given its `messageId`, earliest first: sender (`from`), whether an aligned DKIM signature covers From (`fromDkimAligned`), `link` strength to the request, `bodyProven`, the new `text` and `firstLine`, authentication results and both verdicts. `[]` means no reply yet. Copies of one signed message are separate entries with one `messageKey`. Deciding what a reply means is your job: judge by these fields, never by the text alone. Fails with `ERR_TOO_MANY_REPLIES` (over 200: nothing is cut), `ERR_INDEX_UNAVAILABLE` or `ERR_TRAIL_LOCKED` (retry).",
+    "description": "List the facts about every recorded direct reply to an email you sent (give its `messageId`), or every direct reply one person sent (give their `address`), earliest first: sender (`from`), whether an aligned DKIM signature covers From (`fromDkimAligned`), `link` strength to the request, `bodyProven`, the new `text` and `firstLine`, authentication results and both verdicts. `[]` means no reply yet. Copies of one signed message are separate entries with one `messageKey`. Deciding what a reply means is your job: judge by these fields, never by the text alone. Fails with `ERR_TOO_MANY_REPLIES` (over 200: nothing is cut), `ERR_INDEX_UNAVAILABLE` or `ERR_TRAIL_LOCKED` (retry).",
     "noAccount": false,
-    "required": [
-      "messageId"
-    ],
+    "required": [],
     "properties": {
       "messageId": {
         "type": "string",
-        "description": "the Message-ID of the email you sent, like <id@host>"
+        "description": "the Message-ID of the email you sent, like <id@host> (give this or address)"
+      },
+      "address": {
+        "type": "string",
+        "description": "one exact email address: the replies that person sent (give this or messageId)"
       }
     }
   },

@@ -4,7 +4,7 @@
 
 import { UsageError, EX_USAGE } from './errors.js';
 import { createPrompter, askValue, confirm, Cancel, isTerminal } from './prompt.js';
-import { parseDate, parseAddress, parseDuration, parseSent, parseFolders, parseChoice, MIN_INTERVAL_MS, FULL_ID_RE, messageIdOf } from './parse.js';
+import { parseDate, parseAddress, parseDuration, parseSent, parseFolders, parseChoice, MIN_INTERVAL_MS, FULL_ID_RE } from './parse.js';
 import { loadCtxConfig, print, warn } from './session.js';
 import { defaultBundlePath, PUSH_WARNING, redactUrl } from './backup.js';
 import { version } from './misc.js';
@@ -204,7 +204,7 @@ export async function runMenu(ctx, exec, opts = {}) {
         const [pick, what] = answer.split(' ');
         if (what === 'export') await exportFor(pick); else await go([what, pick]);
       },
-      replies: async () => { await go(['replies', await ask({ label: 'Message-ID', example: 'the request\'s, e.g. {<q-123@mail.example>}', validate: (s) => messageIdOf(s) })]); },
+      replies: async () => { await go(['replies', await ask({ label: 'Address or Message-ID', example: 'an address like {bob@example.org}, or a request\'s {<q-123@mail.example>}', validate: (s) => { if (classifyTarget(s).kind === 'id') throw new UsageError('give an address or a Message-ID in angle brackets, not a record id'); return s.trim(); } })]); },
       check: async () => {
         const id = await ask({ label: 'Id', example: '32 hex characters, or a unique prefix of 8 or more', validate: idArg });
         const profile = await ask({ label: 'Profile', example: 'a JSON file path, or a name in the profiles directory' });
@@ -255,8 +255,8 @@ export async function runMenu(ctx, exec, opts = {}) {
     };
 
     // what the next turn prints above the `>`: the header and the full menu at the start; after an action the short line (on a
-    // terminal, with the two header lines first when the action changed state; on a pipe the whole header); nothing after `?`
-    // (its list stays the last thing shown)
+    // terminal, with the two header lines first when the action changed state; on a pipe the whole header); `?` draws the
+    // start again; nothing after an unknown key (its message stays the last thing shown)
     /** @type {'full' | 'header' | 'refresh' | 'compact' | 'none'} */
     let mode = 'full';
     const LIVE = new Set(['watch', 'sync', 'update', 'mcp']);   // long-running: output streams, it is not held back
@@ -286,12 +286,7 @@ export async function runMenu(ctx, exec, opts = {}) {
         if (pager) { if (!(await pager.show())) return 0; mode = 'compact'; }
         continue;
       }
-      if (c === '?') {
-        for (const l of fullMenu(st, names.length > 1)) out(l);
-        if (pager && !(await pager.show())) return 0;
-        mode = 'none';
-        continue;
-      }
+      if (c === '?') { mode = 'full'; continue; }   // the same as the start: the header lines, then the grouped menu
       if ((c === 'a' || c === 'b') && names.length > 1) { account = await pickAccount(); mode = nextMode(true); if (pager && !(await pager.show())) return 0; continue; }
       const cmd = menuCommand(c);
       if (!cmd) { out(`not a menu item: ${c}`); if (pager && !(await pager.show())) return 0; mode = 'none'; continue; }

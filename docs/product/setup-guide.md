@@ -195,7 +195,7 @@ Start from the person, not from an id. `show` and `verify` take a **target**: an
 | `mailproof show <abc@mail.example>` / `verify <abc@mail.example>` | the same for every copy of one Message-ID |
 | `mailproof show 3f2a9c1d` (`--raw`) | one record in full: every recorded fact (DKIM per signature, DMARC, SPF, ARC, thread links, content store) and the whole body; `--raw` prints the stored raw email (exit 1 if the content store no longer has it) |
 | `mailproof list [--with ana@example.com] [--role from\|to\|cc\|reply-to] [--direction in\|out] [--after 2026-01-01] [--before 2026-07-01] [--limit n]` | a table, newest first: date, in/out, trust, the other party, subject, short id last. `--with` is one exact address. Dates are `YYYY-MM-DD` UTC or a full ISO time. Default 50 rows, `--limit 0` for all |
-| `mailproof replies <messageId>` | what people answered to an email you sent (by its Message-ID), as facts, not interpreted |
+| `mailproof replies <address\|messageId>` | what people answered, as facts, not interpreted: the replies one person sent (an address), or the replies to an email you sent (its Message-ID in angle brackets) |
 | `mailproof check <id> --profile <file\|name> [--parent <messageId>]` | gate an email against a trust profile (allowed senders, required checks, body level, link strength). A name is looked up as `~/.config/mailproof/profiles/<name>.json`. Exit 0 pass, 2 fail with the failed rules |
 
 An address with no recorded email is exit 1 (`no email with b@example.com in this trail`). A bare word or an id shorter than 8 characters is exit 64 with the three accepted forms. In the menu, **People** (item 16) lists them and lets you pick one, then Show, Verify or Export.

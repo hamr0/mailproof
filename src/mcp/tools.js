@@ -125,8 +125,11 @@ export const TOOLS = {
     },
   },
   replyFacts: {
-    cls: 'read', title: 'Facts about the replies to an email', annotations: READ, required: ['messageId'],
-    params: { messageId: { type: 'string', description: 'the Message-ID of the email you sent, like <id@host>' } },
+    cls: 'read', title: 'Facts about the replies to an email', annotations: READ, required: [],
+    params: {
+      messageId: { type: 'string', description: 'the Message-ID of the email you sent, like <id@host> (give this or address)' },
+      address: { type: 'string', description: 'one exact email address: the replies that person sent (give this or messageId)' },
+    },
   },
   matchBody: { cls: 'read', title: 'Does a body match the signed hash', annotations: READ, params: { id: ID, path: PATH, base64: B64 }, required: ['id'] },
   matchFile: { cls: 'read', title: 'Is this file the recorded attachment', annotations: READ, params: { id: ID, path: PATH, base64: B64 }, required: ['id'] },

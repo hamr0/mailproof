@@ -250,3 +250,18 @@ test('cost: replyFacts at 2,000 records (measured, wide margin)', async () => {
   console.log(`# replyFacts at 2,003 index rows: ${ms.toFixed(1)} ms`);
   assert.ok(ms < 5000);
 });
+
+test('replyFacts({ address }): the inbound direct replies that person sent to any message in the trail, earliest first', async () => {
+  const { mp, r } = await buildThread();
+  const bob = await mp.replyFacts({ address: 'Bob@Beta.Example' });
+  assert.deepEqual(ids(bob), [r.signed.id, r.failing.id]);
+  bob.forEach(assertShape);
+  assert.equal(bob[0].messageId, '<r1@beta.example>');
+  assert.equal(bob[0].link, 'signed');
+  assert.deepEqual(ids(await mp.replyFacts({ address: 'alice@alpha.example' })), [r.grand.id], 'a reply to a reply counts: its parent is in the trail');
+  assert.deepEqual(await mp.replyFacts({ address: 'me@owner.example' }), [], 'my own sent mail is not an inbound reply');
+  assert.deepEqual(await mp.replyFacts({ address: 'zed@zed.example' }), [], 'mail that replies to nothing');
+  assert.deepEqual(await mp.replyFacts({ address: 'nobody@nowhere.example' }), []);
+  await assert.rejects(() => mp.replyFacts({ address: 'not an address' }), TypeError);
+  await assert.rejects(() => mp.replyFacts({ address: 'a@b.example', messageId: REQ }), TypeError, 'one of the two');
+});

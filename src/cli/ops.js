@@ -121,9 +121,10 @@ export async function peopleCmd(a, ctx) {
 
 /** @param {Args} a @param {Ctx} ctx @returns {Promise<number>} */
 export async function repliesCmd(a, ctx) {
-  const messageId = messageIdOf(a.positionals[0]);
+  const t = classifyTarget(a.positionals[0]);
+  if (t.kind === 'id') throw new UsageError('replies takes an address (bob@example.org) or a Message-ID in angle brackets (<abc@mail.example>), not a record id');
   return withAccount(a, ctx, async ({ mp }) => {
-    const rows = await mp.replyFacts({ messageId });
+    const rows = await mp.replyFacts(t.kind === 'address' ? { address: t.value } : { messageId: t.value });
     if (a.values.json) { printJson(ctx, rows); return EX_OK; }
     if (!rows.length) { print(ctx, 'no replies recorded'); return EX_OK; }
     for (const r of rows) {

@@ -107,7 +107,13 @@ test('replies: the flat bundles; none is a message and exit 0', async () => {
   assert.equal(rows.length, 3);
   assert.equal(rows[0].recordId, id('signed'));
   assert.equal(rows[0].link, 'signed');
-  assert.equal(json(await sp(['replies', 'req@owner.example', '--json'])).length, 3, 'brackets are optional');
+  const byAddr = json(await sp(['replies', 'Bob@Beta.Example', '--json']));
+  assert.deepEqual(byAddr.map((b) => b.recordId), [id('signed'), id('failing')], 'an address lists what that person sent');
+  assert.equal((await sp(['replies', '--json'])).code, 64);
+  assert.equal(json(await sp(['replies', 'nobody@x.example', '--json'])).length, 0);
+  const addrText = await sp(['replies', 'bob@beta.example']);
+  assert.equal(addrText.code, 0);
+  assert.match(addrText.stdout, /^\S+  bob@beta\.example  dkim-aligned pass  link signed  verified\/verified  body proven$/m);
   const text = await sp(['replies', '<req@owner.example>']);
   assert.equal(text.code, 0);
   assert.match(text.stdout, /bob@beta.example/);
