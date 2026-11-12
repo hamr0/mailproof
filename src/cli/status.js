@@ -9,6 +9,7 @@ import { print, printJson, loadCtxConfig } from './session.js';
 import { printable as p } from './printable.js';
 import { styleOf, fileUrl, rel } from './style.js';
 import { readState, stateDir } from './state.js';
+import { tilde } from './paths.js';
 import { pidAlive, headOf, trailIndexFile } from '../proof/trail.js';
 import { sealStatus } from '../proof/stamp.js';
 import { STAMP_EVERY_HOURS } from '../proof/limits.js';
@@ -78,9 +79,10 @@ function sealText(z) {
  * @param {Record<string, any>} s
  * @param {import('./style.js').Style} st
  * @param {Date} now
+ * @param {Record<string, string | undefined>} env
  * @returns {string}
  */
-function statusText(s, st, now) {
+function statusText(s, st, now, env) {
   const r = s.records;
   const hint = s.index === 'unreadable' ? 'the index cannot be opened: check permissions on the trail directory; if it is writable, `mailproof list` rebuilds it'
     : s.index === 'unknown' ? 'the SQLite add-on (better-sqlite3) cannot load, so `mailproof list` fails too: reinstall or rebuild it (npm rebuild better-sqlite3)'
@@ -96,13 +98,13 @@ function statusText(s, st, now) {
   /** @param {string} label @param {string} v */
   const row = (label, v) => `  ${st.dim(label.padEnd(13))} ${v}`;
   return [
-    row('trail', st.link(p(s.trail), fileUrl(s.trail))),
+    row('trail', st.link(p(tilde(s.trail, env)), fileUrl(s.trail))),
     row('records', rec),
     row('last sync', sync),
     row('content', c),
     row('index', s.index === 'present' ? st.green(s.index) : st.yellow(s.index)),
     row('seal', sealWord(sealText(s.seal))),
-    row('last backup', s.lastBackup ? `${p(s.lastBackup.at)}  ${st.link(p(s.lastBackup.path), fileUrl(String(s.lastBackup.path)))}` : st.dim('never')),
+    row('last backup', s.lastBackup ? `${p(s.lastBackup.at)}  ${st.link(p(tilde(String(s.lastBackup.path), env)), fileUrl(String(s.lastBackup.path)))}` : st.dim('never')),
     row('watch', s.watch.running ? st.green(`running (pid ${s.watch.pid})`) : st.dim('not running')),
   ].join('\n');
 }
@@ -117,7 +119,7 @@ export async function statusCmd(a, ctx) {
   if (a.values.json) { printJson(ctx, all); return EX_OK; }
   const st = styleOf(ctx);
   const now = (ctx.deps.now ?? (() => new Date()))();
-  for (const n of names) print(ctx, `${st.bold(p(n))}\n${statusText(all[n], st, now)}`);
+  for (const n of names) print(ctx, `${st.bold(p(n))}\n${statusText(all[n], st, now, ctx.env)}`);
   return EX_OK;
 }
 

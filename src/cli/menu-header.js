@@ -8,43 +8,65 @@ import { summaryOf } from './help.js';
 
 /**
  * The menu table, the one place that names every menu item: key, the dispatch name (a handler in menu.js), the label
- * shown (and accepted as a name), and the help line. A help of `null` is the command's own summary from the command
- * table (commands.js); a text here is a menu-only wording. Groups are in screen order.
- * @type {ReadonlyArray<{ title: string, items: ReadonlyArray<{ key: string, cmd: string, label: string, help: string | null }> }>}
+ * shown (and accepted as a name), the help line and the job line. A help of `null` is the command's own summary from the command
+ * table (commands.js); a text here is a menu-only wording. The `job` is the one sentence under the breadcrumb of the item's screen (SPEC B11.4b):
+ * what the screen is for, in plain words. Groups are in screen order.
+ * @type {ReadonlyArray<{ title: string, items: ReadonlyArray<{ key: string, cmd: string, label: string, help: string | null, job: string }> }>}
  */
 export const MENU_GROUPS = [
   { title: 'Mail', items: [
-    { key: '1', cmd: 'sync', label: 'sync', help: 'fetch new mail, record proofs' },
-    { key: '2', cmd: 'watch', label: 'watch', help: null },
+    { key: '1', cmd: 'sync', label: 'sync', help: 'fetch new mail, record proofs', job: 'Fetch new mail from your mailbox and record a proof of each email.' },
+    { key: '2', cmd: 'watch', label: 'watch', help: null, job: 'Keep syncing on a timer until you stop it with Ctrl-C.' },
   ] },
   { title: 'Look', items: [
-    { key: '3', cmd: 'people', label: 'people', help: 'who is in this trail' },
-    { key: '4', cmd: 'list', label: 'list', help: 'newest first; filter by person/date' },
-    { key: '5', cmd: 'show', label: 'show', help: 'an address\'s emails and their proof' },
-    { key: '6', cmd: 'replies', label: 'replies', help: 'what people answered' },
+    { key: '3', cmd: 'people', label: 'people', help: 'who is in this trail', job: 'Everyone in this trail: how many emails, how many verified.' },
+    { key: '4', cmd: 'list', label: 'list', help: 'newest first; filter by person/date', job: 'Browse emails newest first; open one to see its proof.' },
+    { key: '5', cmd: 'show', label: 'show', help: 'an address\'s emails and their proof', job: 'Every email with one address, and what its signature proves.' },
+    { key: '6', cmd: 'replies', label: 'replies', help: 'what people answered', job: 'What people answered: the new text of each signed reply.' },
   ] },
   { title: 'Check', items: [
-    { key: '7', cmd: 'verify', label: 'verify', help: 're-check an address\'s emails offline' },
-    { key: '8', cmd: 'check', label: 'check', help: null },
-    { key: '9', cmd: 'check-file', label: 'check .eml', help: 'check a saved email file' },
-    { key: '10', cmd: 'verify-bundle', label: 'verify-bundle', help: null },
+    { key: '7', cmd: 'verify', label: 'verify', help: 're-check an address\'s emails offline', job: 'Re-check an address\'s emails offline, from the saved records alone.' },
+    { key: '8', cmd: 'check', label: 'check', help: null, job: 'Test one email against a trust profile: each rule passes or fails.' },
+    { key: '9', cmd: 'check-file', label: 'check .eml', help: 'check a saved email file', job: 'Check a saved .eml file for a DKIM signature; nothing is recorded.' },
+    { key: '10', cmd: 'verify-bundle', label: 'verify-bundle', help: null, job: 'Check a proof bundle someone sent you; no account needed.' },
   ] },
   { title: 'Share and keep', items: [
-    { key: '11', cmd: 'export', label: 'export', help: null },
-    { key: '12', cmd: 'stamp', label: 'seal', help: null },
-    { key: '13', cmd: 'backup', label: 'backup', help: null },
+    { key: '11', cmd: 'export', label: 'export', help: null, job: 'Write a proof bundle of your emails with one person, to send them.' },
+    { key: '12', cmd: 'stamp', label: 'seal', help: null, job: 'Seal new records now with OpenTimestamps (a Bitcoin time anchor).' },
+    { key: '13', cmd: 'backup', label: 'backup', help: null, job: 'Save a copy of the trail as one file you can keep or restore.' },
   ] },
   { title: 'Clean up', items: [
-    { key: '14', cmd: 'forget', label: 'forget', help: 'delete stored mail content' },
-    { key: '15', cmd: 'prune', label: 'prune', help: 'drop old history from the trail' },
+    { key: '14', cmd: 'forget', label: 'forget', help: 'delete stored mail content', job: 'Delete stored mail content for a person or dates; the proofs stay.' },
+    { key: '15', cmd: 'prune', label: 'prune', help: 'drop old history from the trail', job: 'Permanently remove proofs captured before a date (forget only removes content).' },
   ] },
   { title: 'Setup', items: [
-    { key: '16', cmd: 'status', label: 'status', help: null },
-    { key: '17', cmd: 'config', label: 'config', help: null },
-    { key: '18', cmd: 'update', label: 'update', help: null },
-    { key: '19', cmd: 'mcp', label: 'mcp', help: null },
+    { key: '16', cmd: 'status', label: 'status', help: null, job: 'What this trail holds and how it is kept.' },
+    { key: '17', cmd: 'config', label: 'config', help: null, job: 'Your settings: where they live, whether they\'re valid, and how to change them.' },
+    { key: '18', cmd: 'update', label: 'update', help: null, job: 'Check for a newer mailproof and upgrade it.' },
+    { key: '19', cmd: 'mcp', label: 'mcp', help: null, job: 'Let an AI assistant read and prove your mail through mailproof.' },
   ] },
 ];
+
+/**
+ * The job line of the screens inside a command (SPEC B11.4b): an opened email and what its actions open, and the list's own steps.
+ * @type {Readonly<Record<'open' | 'raw' | 'attachment' | 'verify' | 'thread' | 'person' | 'more' | 'filter' | 'subject' | 'setup' | 'help', string>>}
+ */
+export const SCREEN_JOBS = {
+  open: 'One email: what was signed and what that proves.',
+  raw: 'The raw email exactly as it was stored.',
+  attachment: 'Save an attachment of this email to a file.',
+  verify: "Re-check this email's signature again, offline.",
+  thread: 'The email this one answers and the replies to it.',
+  person: 'Everything with the other party of this email.',
+  more: 'The next five emails.',
+  filter: 'Narrow the list by role, direction or date.',
+  subject: 'Narrow the list to subjects containing some text.',
+  setup: 'Add your mailbox: where it lives, how to log in, which folders.',
+  help: 'Every command, and what it does.',
+};
+
+/** The job line of a menu command. @param {string} cmd @returns {string} */
+export const jobOf = (cmd) => MENU_GROUPS.flatMap((g) => g.items).find((i) => i.cmd === cmd)?.job ?? '';
 
 /** Every menu item, flat. */
 export const MENU_ITEMS = MENU_GROUPS.flatMap((g) => g.items);
@@ -102,7 +124,9 @@ export function mainHeader(st, h, now) {
   const sync = !ls ? st.dim('never')
     : `${ls.error ? st.red(`${sym.bad} failed (${p(ls.error)}), last try `) : ls.complete ? '' : st.yellow(`${sym.warn} not complete, `)}${clock(ls.at, now)} ${st.dim(`(${rel(ls.at, now)})`)}`;
   const trail = h.trailOk ? st.green(sym.ok) : st.yellow(`${sym.warn} none yet`);
-  const id = `${st.bold('mailproof')} ${p(h.version)}${sep}${p(h.user)} ${st.dim(`(${p(h.account)})`)}${sep}trail ${trail}${sep}last sync ${sync}`;
+  // the first line is the status bar: bold (each plain stretch; the coloured parts keep their own colour)
+  const b = st.bold;
+  const id = `${b('mailproof')} ${b(p(h.version))}${b(sep)}${b(p(h.user))} ${st.dim(`(${p(h.account)})`)}${b(sep)}${b('trail')} ${trail}${b(sep)}${b('last sync')} ${sync}`;
 
   /** @type {string[]} */
   const parts = [];

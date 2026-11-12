@@ -41,7 +41,7 @@ test('export: human output, --json is the ExportResult, the pending warning goes
   assert.match(v.stdout, /^FAILED: expect/);
 });
 
-test('export: exit codes (64 usage and ERR_EXPORT_EXISTS, 1 empty), the default out in the current directory form, --tar', async () => {
+test('export: exit codes (64 usage and ERR_EXPORT_EXISTS, 1 empty), the default out under ~/mailproof/exports, --tar', async () => {
   const { cli, dir, w } = await cliWorld();
   assert.equal((await cli.run(['export'])).code, 64);
   assert.match((await cli.run(['export'])).stderr, /export needs --with/);
@@ -69,14 +69,15 @@ test('export: exit codes (64 usage and ERR_EXPORT_EXISTS, 1 empty), the default 
   assert.equal(noTar.code, 1);
   assert.match(noTar.stderr, /tar not found/);
   assert.deepEqual(fs.readdirSync(dir).filter((f) => f.startsWith('q') || f.startsWith('.mailproof-export-')), [], 'nothing was built');
-  // the default out is ./mailproof-bundle-<account>-<UTC yyyymmdd-hhmmss>
+  // the default out is ~/mailproof/exports/mailproof-bundle-<account>-<UTC yyyymmdd-hhmmss>, whatever the current directory is
   const cwd = process.cwd();
   const here = makeTmpDir('mp-cli-export-cwd-');
   process.chdir(here);
   try {
     const d = await cli.run(['export', '--with', BOB], { deps: { now: () => new Date('2026-11-12T09:30:00Z') } });
     assert.equal(d.code, 0, d.stderr);
-    assert.deepEqual(fs.readdirSync(here), ['mailproof-bundle-work-20261112-093000']);
+    assert.deepEqual(fs.readdirSync(here), [], 'nothing is written to the current directory');
+    assert.deepEqual(fs.readdirSync(path.join(cli.home, 'mailproof', 'exports')), ['mailproof-bundle-work-20261112-093000']);
   } finally { process.chdir(cwd); }
 });
 

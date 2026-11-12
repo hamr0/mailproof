@@ -16,6 +16,7 @@ import { statusCmd } from './status.js';
 import { runMenu } from './menu.js';
 import { ID_HINT } from './target.js';
 import { styleOf } from './style.js';
+import { expandHome } from './paths.js';
 
 /** The setup guide, where an error hint points. */
 export const GUIDE_URL = 'https://github.com/hamr0/mailproof/blob/main/docs/product/setup-guide.md';
@@ -52,6 +53,20 @@ export const HANDLER_NAMES = Object.keys(HANDLERS);
 const optionsOf = (flags) => Object.fromEntries(Object.entries(flags).map(([k, f]) => [k, { type: f.type, ...(f.short ? { short: f.short } : {}) }]));
 
 /**
+ * A leading `~` in a path argument is the home directory (a quoted `--out=~/x` or a menu answer never went through the shell): every flag the
+ * command table marks `path`, and a path positional.
+ * @param {import('./commands.js').CommandSpec} spec
+ * @param {{ values: Record<string, any>, positionals: string[] }} parsed
+ * @param {Record<string, string | undefined>} env
+ */
+function expandPaths(spec, parsed, env) {
+  for (const [name, f] of Object.entries({ ...GLOBAL_FLAGS, ...spec.flags })) {
+    if (f.path && typeof parsed.values[name] === 'string') parsed.values[name] = expandHome(parsed.values[name], env);
+  }
+  if (spec.pathPositional && parsed.positionals[0] !== undefined) parsed.positionals[0] = expandHome(parsed.positionals[0], env);
+}
+
+/**
  * The command named in an argument list: the first positional, looking past the global flags that take a value.
  * @param {string[]} argv
  * @returns {{ cmd: string | null, index: number }}
@@ -80,7 +95,7 @@ export async function run(argv, ctx) {
       if (help) { ctx.stdout.write(renderList()); return EX_OK; }
       if (ctx.interactive && ctx.stdin) {
         const { values } = parseArgs({ args: argv, options: optionsOf(GLOBAL_FLAGS), allowPositionals: false, strict: true });
-        return runMenu(ctx, (v, c) => run(v, c), { configFlag: /** @type {string | undefined} */ (values.config) });
+        return runMenu(ctx, (v, c) => run(v, c), { configFlag: typeof values.config === 'string' ? expandHome(values.config, ctx.env) : undefined });
       }
       ctx.stdout.write(renderList());
       return EX_USAGE;
@@ -98,6 +113,7 @@ export async function run(argv, ctx) {
       throw new UsageError(hex ? `${m}. ${ID_HINT}` : m);
     }
     if (parsed.values.help) { ctx.stdout.write(/** @type {string} */ (renderCommand(cmd))); return EX_OK; }
+    expandPaths(spec, parsed, ctx.env);
     if (parsed.positionals.length < spec.min) throw new UsageError(`${cmd} needs ${spec.positional || 'no arguments'}`);
     if (parsed.positionals.length > spec.max) throw new UsageError(`${cmd}: unexpected argument "${parsed.positionals[spec.max]}"`);
     return await HANDLERS[cmd]({ cmd, values: parsed.values, positionals: parsed.positionals }, ctx);

@@ -45,3 +45,21 @@ test('terminal-safe: a segment from an email carries no escape or bidi character
   const l = crumbLine(utf(100), ['4 list', 'evil\x1b[2J‮@x.example', 's "a\nb"']);
   assert.ok(!/[\x00-\x08\x0a-\x1f\x7f‮]/.test(l), JSON.stringify(l));
 });
+
+test('the command name is never cut: a long path value becomes its file name, a long address its middle ellipsis, then middle steps go', () => {
+  const l = crumbLine(utf(40), ['10 verify-bundle', '/home/ana/mailproof/exports/mailproof-bundle-work-20261112-130248.tar']);
+  assert.ok(l.includes('10 verify-bundle'), l);
+  assert.ok([...l].length <= 40, l);
+  assert.ok(!l.includes('/home/ana'), 'a path shows as its file name');
+  const wide = crumbLine(utf(100), ['10 verify-bundle', '/home/ana/b/x.tar']);
+  assert.ok(wide.includes('› x.tar'), wide);
+  for (const cols of [30, 45, 60]) {
+    const a = crumbLine(utf(cols), ['16 status', 'someone.very.long@example.organisation', '#1', 'v verify']);
+    assert.ok(a.includes('16 status'), `${cols}: ${a}`);
+    assert.ok([...a].length <= cols, `${cols}: ${a}`);
+  }
+  const mid = crumbLine(utf(50), ['4 list', 'someone.very.long.name@example.organisation']);
+  assert.match(mid, /someone[^ ]*…[^ ]*organisation/, mid);
+  const cmdOnly = crumbLine(utf(24), ['10 verify-bundle']);
+  assert.ok(cmdOnly.includes('10 verify-bundle'), cmdOnly);
+});

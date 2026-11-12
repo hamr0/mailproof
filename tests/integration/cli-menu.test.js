@@ -75,14 +75,14 @@ test('List: asks only Who (label, example); the screen is the browse view (cli-b
   const w = world();
   const r = await menu(w, keys('list', '', '', 'q'));
   assert.equal(r.code, 0, r.stderr);
-  assert.ok(r.stdout.includes('Who (address, empty = everyone): '));
+  assert.ok(r.stdout.includes('Who (address, empty = everyone, q = back): '));
   assert.ok(!r.stdout.includes('Press Enter '), 'the list is a screen of its own: no Press Enter after it');
   assert.equal(r.stdout.split(SHORT).length, 2, 'the short line is shown after the list');
   const direct = await w.run(['list']);
   assert.match(direct.stdout, /^2026-11-01T10:06Z {2}in +! +unverified/m, 'the non-menu list keeps its one-line rows');
 });
 
-test('a bad value prints the reason and re-prompts; ? prints the hint; three bad answers go back to the menu; an empty required value re-prompts', async () => {
+test('a bad value prints the reason and re-prompts; ? prints the hint; three bad answers go back to the menu; an empty required value goes back', async () => {
   const w = world();
   const r = await menu(w, keys('list', 'not-an-address', '', '', 'q'));
   assert.match(r.stdout, /Who: "not-an-address" is not an email address/);
@@ -92,7 +92,8 @@ test('a bad value prints the reason and re-prompts; ? prints the hint; three bad
   assert.match(s.stdout, /cancelled/);
   assert.equal(s.stdout.split(SHORT).length, 2, 'back at the prompt, which then took the q');
   const e = await menu(w, keys('5', '', '', '', 'q'));
-  assert.equal((e.stdout.match(/a value is needed/g) ?? []).length, 3);
+  assert.equal((e.stdout.match(/a value is needed/g) ?? []).length, 0, 'an empty required value goes back; it never loops (cli-frame.test.js)');
+  assert.equal((e.stdout.match(/^Target \(/gm) ?? []).length, 1, 'asked once');
   const x = await menu(w, keys('99', '', 'x', 'q'));
   assert.match(x.stdout, /not a menu item: 99/);
   assert.match(x.stdout, /not a menu item: x/);
@@ -172,7 +173,7 @@ test('9 and 10 prompt for their path and run the same code as the first-run scre
   assert.match(r.stdout, /^ok verified {2}live verified, portable verified, 1 signature, body matched$/m);
   assert.match(r.stdout, /nothing was recorded/);
   assert.match(r.stderr, /no such file/);
-  assert.match(r.stdout, /Bundle directory \(the directory mailproof export wrote\): /);
+  assert.match(r.stdout, /Bundle directory \(the directory mailproof export wrote, empty = back\): /);
   const direct = await w.run(['verify-bundle', '/nonexistent-bundle']);
   assert.ok(r.stderr.includes(direct.stderr.trim().split('\n')[0]) || direct.stderr.length > 0);
 });
@@ -181,7 +182,7 @@ test('two accounts: the first screen asks which, b asks again, and the choice go
   const w = makeWorld({ accounts: { one: account(T.dir), two: account(makeTmpDir('mp-cli-menu2-')) } });
   const r = await menu(w, keys('two', 'list', '', '', 'a', 'one', 'list', '', '', 'q'));
   assert.equal(r.code, 0, r.stderr);
-  assert.match(r.stdout, /Account \(one\/two\): /);
+  assert.match(r.stdout, /Account \(one\/two, empty = back\): /);
   assert.match(r.stdout, /\(two\) - trail/);
   assert.match(r.stdout, /^  16 status {3}17 config {3}18 update {3}19 mcp {3}a account$/m);
   assert.match(r.stdout, /no emails match/, 'account two is empty');
@@ -244,15 +245,15 @@ test('Update shows the command and runs npm only after a yes; the subcommand nev
   assert.equal(calls.length, 2);
 });
 
-test('Backup prompts for the path with the state-dir default, and the content archive', async () => {
+test('Backup prompts for the path with the ~/mailproof/backups default, and the content archive', async () => {
   const w = world();
   const out = path.join(makeTmpDir('mp-cli-menu-bak-'), 'b.bundle');
   const r = await menu(w, keys('backup', out, 'y', '', 'q'));
   assert.equal(r.code, 0, r.stderr);
-  assert.ok(r.stdout.includes(`Write the bundle to (a path) [${path.join(w.stateDir, 'backups', 'test')}${path.sep}test-`), 'the default is under the state dir');
+  assert.ok(r.stdout.includes('Write the bundle to (a path, q = back) [~/mailproof/backups/test-'), 'the default is under ~/mailproof/backups');
   assert.ok(fs.existsSync(out) && fs.existsSync(out.replace(/\.bundle$/, '.content.tar')));
   const dflt = await menu(w, keys('backup', '', 'n', '', 'q'), { deps: { now: () => new Date('2026-11-10T10:15:30Z') } });
-  assert.ok(fs.existsSync(path.join(w.stateDir, 'backups', 'test', 'test-20261110T101530Z.bundle')), 'the default path is used');
+  assert.ok(fs.existsSync(path.join(w.home, 'mailproof', 'backups', 'test-20261110T101530Z.bundle')), 'the default path is used');
   assert.match(dflt.stdout, /restore: git clone /);
 });
 
@@ -300,7 +301,7 @@ test('Ctrl-C: during a running command it stops the command and the menu stays; 
   const m = terminalMenu(w, { sync: async () => { syncs++; return { complete: true, folders: [] }; } });   // the default interval is 5 min: watch is asleep after one tick
   await m.until(/> \x1b\[3G$/);
   m.stdin.write('watch\n');
-  await m.until(/Interval \(30s, 5m, 1h\) \[5m\]: /);
+  await m.until(/Interval \(30s, 5m, 1h, q = back\) \[5m\]: /);
   m.stdin.write('\n');
   await m.until(/ ok recorded 0/);
   assert.equal(syncs, 1);

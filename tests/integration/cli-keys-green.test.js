@@ -18,12 +18,12 @@ test('main menu line, the ? list and the People prompt: keys, example and defaul
   for (const k of ['1', '3', '10', '19', 'q']) assert.ok(c.stdout.includes(`${G(k)} `), `full menu key ${k}`);
   assert.ok(c.stdout.includes(` ${G('Mail')}`.replace(G('Mail'), '\x1b[1mMail\x1b[0m')), 'group titles are bold');
   assert.ok(c.stdout.includes(`${G('s')} show  ${G('v')} verify  ${G('e')} export`), 'sub-action keys');
-  assert.ok(c.stdout.includes(`then ${G('s')}, ${G('v')} or ${G('e')} (default show), e.g. ${G('3 v')})`), 'People prompt');
+  assert.ok(c.stdout.includes(`then ${G('s')}, ${G('v')} or ${G('e')} (default show), e.g. ${G('3 v')}, empty = back)`), 'People prompt');
   assert.ok(!c.stdout.includes('\x1b[36m'), 'no cyan left');
   const plain = await w.run([], { interactive: true, input: script(['?', '3']), env: UTF });
   assert.ok(!plain.stdout.includes('\x1b'));
   assert.ok(plain.stdout.includes('pick a person (number or address), then s show  v verify  e export\n'));
-  assert.ok(plain.stdout.includes('Person (a number or an address, then s, v or e (default show), e.g. 3 v): '));
+  assert.ok(plain.stdout.includes('Person (a number or an address, then s, v or e (default show), e.g. 3 v, empty = back): '));
   assert.equal(stripStyle(c.stdout), plain.stdout, 'same words');
   const no = await w.run([], { interactive: true, input: script(['?', '3']), env: { ...UTF, FORCE_COLOR: '1', NO_COLOR: '1' } });
   assert.equal(no.stdout, plain.stdout);
@@ -55,7 +55,7 @@ test('first-run screen and account switch use the same green keys', async () => 
   const T2 = await buildThread();
   const w5 = makeWorld({ accounts: { one: account(T.dir), two: account(T2.dir) } });
   const a = await w5.run([], { interactive: true, input: script(['one', 'q']), env: { ...UTF, FORCE_COLOR: '1' } });
-  assert.ok(a.stdout.includes(`(${G('one')}/${G('two')})`), 'account choices');
+  assert.ok(a.stdout.includes(`(${G('one')}/${G('two')}, empty = back)`), 'account choices');
   assert.ok(a.stdout.includes(`${G('a')} account`), 'a switch key');
 });
 
@@ -69,7 +69,7 @@ test('terminal, short output: no Enter prompt, the compact action line follows, 
   assert.equal(r.stdout.split('\n Mail\n').length, 2, 'the grouped menu once');
   const col = await M({ input: script(['16', 'q']), rows: 40, color: true });
   for (const k of ['1', '3', '5', '7', '11', '16', '?', 'q']) assert.ok(col.stdout.split('\n').some((l) => /· /.test(l) && l.includes(`${G(k)} `)), `short line key ${k}`);
-  assert.equal(r.stdout.split('─'.repeat(64)).length, 3, 'the rules are printed once (full header at the start only)');
+  assert.equal(r.stdout.split('─'.repeat(64)).length, 4, 'the header is not repeated: its two rules at the start, one more above the short line');
 });
 
 test('terminal, an action that changes state refreshes the two header lines above the action line', async () => {
@@ -86,7 +86,7 @@ test('terminal, long output: one screen, then the footer; Enter shows more, q re
   assert.ok(!/Press Enter/.test(paged.stdout));
   const quit = await M({ input: script(['h', 'q', 'q']), rows: 6 });
   assert.equal(quit.stdout.split('Enter more · q menu').length, 2, 'q at the footer goes straight back: one footer');
-  assert.ok(/Enter more · q menu\nq\n {2}1 sync {2}3 people.*\n> q\n$/.test(quit.stdout), 'back at the short line prompt');
+  assert.ok(/Enter more · q menu\nq\n\n─{64}\n {2}1 sync {2}3 people.*\n> q\n$/.test(quit.stdout), 'back at the short line prompt');
   const color = await M({ input: script(['h', 'q', 'q']), rows: 6, color: true });
   assert.ok(color.stdout.includes(`${G('Enter')}`) && color.stdout.includes(`${G('q')}`), 'footer keys green');
 });

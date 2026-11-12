@@ -9,6 +9,7 @@ import { otsOptionFromEnv } from './secrets.js';
 import path from 'node:path';
 import { printable as p } from './printable.js';
 import { styleOf, makeStyle, fileUrl } from './style.js';
+import { tilde, userDir, ensureDefaultDir } from './paths.js';
 
 /** @typedef {import('./session.js').Ctx} Ctx */
 /** @typedef {import('./session.js').Args} Args */
@@ -20,10 +21,16 @@ const compact = (d) => d.toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, '
 const size = (n) => (n < 1024 ? `${n} bytes` : n < 1024 * 1024 ? `${(n / 1024).toFixed(1)} KiB` : `${(n / 1024 / 1024).toFixed(1)} MiB`);
 
 /**
- * The default `out` (SPEC B13.2.7): in the current directory, where the owner will copy it from.
+ * The name of a default export (a directory, or a .tar file with `tar`).
  * @param {string} account @param {Date} now @param {boolean} tar @returns {string}
  */
-export const defaultBundleOut = (account, now, tar) => `./mailproof-bundle-${account}-${compact(now)}${tar ? '.tar' : ''}`;
+export const bundleName = (account, now, tar) => `mailproof-bundle-${account}-${compact(now)}${tar ? '.tar' : ''}`;
+
+/**
+ * The default `out` (SPEC B13.2.7, B11.2a): `~/mailproof/exports/<name>`, absolute under $HOME, never relative to the current directory.
+ * @param {string} account @param {Date} now @param {boolean} tar @param {Record<string, string | undefined>} env @returns {string}
+ */
+export const defaultBundleOut = (account, now, tar, env) => path.join(userDir(env, 'exports'), bundleName(account, now, tar));
 
 /** @param {Args} a @param {Ctx} ctx @returns {Promise<number>} */
 export async function exportCmd(a, ctx) {
@@ -36,14 +43,15 @@ export async function exportCmd(a, ctx) {
   const tar = v.tar === true;
   return withAccount(a, ctx, async ({ mp, account }) => {
     const now = (ctx.deps.now ?? (() => new Date()))();
-    const out = v.out !== undefined ? String(v.out) : defaultBundleOut(account.name, now, tar);
+    const out = v.out !== undefined ? String(v.out) : defaultBundleOut(account.name, now, tar, ctx.env);
+    await ensureDefaultDir(out, ctx.env, 'exports');
     const r = await mp.export({ with: addrs, ...(after ? { after } : {}), ...(before ? { before } : {}), out, tar });
     const behind = r.seals.pending + r.seals.unstamped + r.seals.unsealed;
     if (v.json) printJson(ctx, r);
     else {
       const st = styleOf(ctx);
       const n = (/** @type {number} */ v, /** @type {string} */ word) => (v > 0 ? st.yellow(`${v} ${word}`) : `${v} ${word}`);
-      print(ctx, `${st.green(st.sym.ok)} wrote ${st.link(p(r.out), fileUrl(path.resolve(r.out)))} (${r.records} records, ${r.replies} replies, ${r.keys} keys, ${r.manifests} manifests, ${size(r.bytes)})`);
+      print(ctx, `${st.green(st.sym.ok)} wrote ${st.link(p(tilde(r.out, ctx.env)), fileUrl(path.resolve(r.out)))} (${r.records} records, ${r.replies} replies, ${r.keys} keys, ${r.manifests} manifests, ${size(r.bytes)})`);
       print(ctx, `${st.dim('bundle sha256')} ${r.bundle_sha256}  ${st.dim(`(tell the recipient this out of band; they can run: mailproof verify-bundle --expect ${r.bundle_sha256} <dir>)`)}`);
       print(ctx, `${st.dim('seals:')} ${r.seals.anchored} anchored, ${n(r.seals.pending, 'pending')}, ${n(r.seals.unstamped, 'unstamped')}, ${n(r.seals.unsealed, 'unsealed')}`);
       print(ctx, `${st.dim('raw emails still stored:')} ${r.content.stored} of ${r.records}`);

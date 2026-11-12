@@ -9,6 +9,7 @@
  * @property {string} [short]
  * @property {string} [arg]  The value's name in help (`<date>`).
  * @property {string} help
+ * @property {boolean} [path]  The value is a file or folder path: a leading `~` is expanded to the home directory (run.js).
  */
 /**
  * @typedef {Object} CommandSpec
@@ -18,6 +19,7 @@
  * @property {string} [fails]  Own text, for a command with no primitive.
  * @property {boolean} account  Runs on one account (needs the config and `--account` per SPEC B11.3).
  * @property {string} positional  `''`, or the usage of the positional arguments (`<id>`, `[id ...]`).
+ * @property {boolean} [pathPositional]  The positional is a path (`~` is expanded).
  * @property {number} min  Fewest positionals.
  * @property {number} max  Most positionals.
  * @property {Record<string, FlagSpec>} flags  Beyond the global flags.
@@ -26,7 +28,7 @@
 /** Global flags: accepted by every command, before or after it. */
 export const GLOBAL_FLAGS = /** @type {Record<string, FlagSpec>} */ ({
   account: { type: 'string', arg: '<name>', help: 'the account to run on (needed when the config holds more than one)' },
-  config: { type: 'string', arg: '<path>', help: 'the config file (default $XDG_CONFIG_HOME/mailproof/config.json)' },
+  config: { type: 'string', arg: '<path>', path: true, help: 'the config file (default $XDG_CONFIG_HOME/mailproof/config.json)' },
   json: { type: 'boolean', help: 'print one JSON document on stdout instead of text' },
   help: { type: 'boolean', short: 'h', help: 'show this help' },
 });
@@ -99,7 +101,7 @@ export const COMMANDS = {
   check: {
     primitive: 'Mailproof#checkProfile', summary: 'trust profile pass/fail', account: true, positional: '<id>', min: 1, max: 1,
     flags: {
-      profile: { type: 'string', arg: '<file|name>', help: 'required: a profile JSON file, or a name looked up as <configDir>/profiles/<name>.json' },
+      profile: { type: 'string', arg: '<file|name>', path: true, help: 'required: a profile JSON file, or a name looked up as <configDir>/profiles/<name>.json' },
       parent: { type: 'string', arg: '<messageId>', help: 'the request\'s Message-ID, for a profile that requires a link' },
     },
   },
@@ -122,10 +124,10 @@ export const COMMANDS = {
   },
   backup: {
     summary: 'git bundle of the trail', account: true, positional: '', min: 0, max: 0,
-    when: 'Use to keep a copy of the proofs somewhere else. It writes a git bundle of the whole trail (records, keys, replies, stamps; never message bodies) to <state>/backups/<account>/, and prints the path: restore with `git clone <file>.bundle <dir>`. --with-content adds a separate, unencrypted <file>.content.tar of the stored raw emails (other people\'s mail: encrypt it or the disk yourself). --push also pushes the trail to the account\'s backupRemote, never with force: after a prune the remote keeps the history from before it as an archive and the push is refused.',
+    when: 'Use to keep a copy of the proofs somewhere else. It writes a git bundle of the whole trail (records, keys, replies, stamps; never message bodies) to ~/mailproof/backups/, and prints the path: restore with `git clone <file>.bundle <dir>`. --with-content adds a separate, unencrypted <file>.content.tar of the stored raw emails (other people\'s mail: encrypt it or the disk yourself). --push also pushes the trail to the account\'s backupRemote, never with force: after a prune the remote keeps the history from before it as an archive and the push is refused.',
     fails: 'Exit 1 for an empty trail, a bundle that does not verify, or a missing tar; 64 for a missing --yes with --push or an unconfigured backupRemote; 75 for a push that failed on the network or on a login; 1 for a push the remote rejected.',
     flags: {
-      out: { type: 'string', arg: '<path>', help: 'write the bundle here (the directory must exist; an existing file is refused)' },
+      out: { type: 'string', arg: '<path>', path: true, help: 'write the bundle here (default ~/mailproof/backups/<account>-<UTC date and time>.bundle; the directory must exist; an existing file is refused)' },
       'with-content': { type: 'boolean', help: 'also write <file>.content.tar of the content store (the tar binary; not encrypted)' },
       push: { type: 'boolean', help: 'also push the trail to the account\'s backupRemote (no force)' },
       yes: { type: 'boolean', help: 'with --push: confirm the remote is trusted with sender and recipient addresses, subjects and dates' },
@@ -156,12 +158,12 @@ export const COMMANDS = {
       with: { type: 'string', arg: '<a,b>', help: 'required: the exact addresses, comma separated; an email is included when it names any of them' },
       after: { type: 'string', arg: '<date>', help: 'captured on or after this date' },
       before: { type: 'string', arg: '<date>', help: 'captured before this date' },
-      out: { type: 'string', arg: '<path>', help: 'the new directory (default ./mailproof-bundle-<account>-<UTC date and time>; with --tar, the .tar file)' },
+      out: { type: 'string', arg: '<path>', path: true, help: 'the new directory (default ~/mailproof/exports/mailproof-bundle-<account>-<UTC date and time>; with --tar, the .tar file)' },
       tar: { type: 'boolean', help: 'also pack the bundle into one .tar file for mailing (the tar binary)' },
     },
   },
   'verify-bundle': {
-    primitive: 'verifyBundle', summary: 'check a bundle you were sent', account: false, positional: '<dir>', min: 1, max: 1,
+    primitive: 'verifyBundle', summary: 'check a bundle you were sent', account: false, positional: '<dir>', pathPositional: true, min: 1, max: 1,
     flags: {
       expect: { type: 'string', arg: '<sha256>', help: 'the bundle sha256 its owner told you by another channel: fails when bundle.json is not the one they made' },
       strict: { type: 'boolean', help: 'also fail unless every email is DKIM-verified and every seal is anchored (also fails when ots is missing)' },
@@ -171,7 +173,7 @@ export const COMMANDS = {
     summary: 'serve the trail to an MCP client (stdio)', account: false, positional: '', min: 0, max: 0,
     when: 'Use to let an AI client (Claude Code, Claude Desktop, any MCP client) read and prove mail through mailproof. It is a stdio server the client starts: register it as `claude mcp add mailproof -- mailproof mcp`. One process serves every account in the config (every account-bound tool takes `account`, required when there are two or more); --account restricts it to one, so a client can give each account its own server and policy. It lists every tool, each with MCP annotations (read-only, destructive, idempotent, open-world) so the client can allow reads and ask a human before the destructive ones; forget, prune, export and backup only preview until called again with confirm (export and backup write only into the output folder, and name nothing outside it). Paths are read only from the folders in the config `mcp.inputDirs` and files are saved only into `mcp.outputDir`; both are off until you set them. Every write or destructive call adds one line to <state>/mcp.log. Everything an email says reaches the model as untrusted data. stdout carries protocol only and stderr stays silent; --log <file> keeps diagnostics.',
     fails: 'Exit 0 when the client closes stdin or on SIGINT/SIGTERM (calls in flight finish first, up to 5 s; a second signal exits at once), 64 for a bad config, an unknown --account, or a terminal on stdin (it is not an interactive command), 77 when the config file is not private.',
-    flags: { log: { type: 'string', arg: '<file>', help: 'append diagnostics to this file (stderr stays silent)' } },
+    flags: { log: { type: 'string', arg: '<file>', path: true, help: 'append diagnostics to this file (stderr stays silent)' } },
   },
   help: {
     summary: 'this list, or one command', account: false, positional: '[command]', min: 0, max: 1, flags: {},

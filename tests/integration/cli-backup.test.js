@@ -13,7 +13,7 @@ import { makeTmpDir } from '../helpers/tmp.js';
 const git = (cwd, ...a) => execFileSync('git', a, { cwd, encoding: 'utf8' }).trim();
 const json = (r) => JSON.parse(r.stdout);
 
-test('the bundle: default path under the state dir, verifies, clones to the same history; --json shape; mode 0600', async () => {
+test('the bundle: default path under ~/mailproof/backups, verifies, clones to the same history; --json shape; mode 0600', async () => {
   const T = await buildThread();
   const w = makeWorld({ accounts: { acme: account(T.dir) } });
   const root = path.join(T.dir, 'default');
@@ -21,7 +21,7 @@ test('the bundle: default path under the state dir, verifies, clones to the same
   assert.equal(r.code, 0, r.stderr);
   const j = json(r);
   assert.deepEqual(Object.keys(j).sort(), ['bytes', 'bundle', 'commits', 'content', 'pushed'].sort());
-  assert.equal(j.bundle, path.join(w.stateDir, 'backups', 'acme', 'acme-20261110T101530Z.bundle'));
+  assert.equal(j.bundle, path.join(w.home, 'mailproof', 'backups', 'acme-20261110T101530Z.bundle'));
   assert.equal(j.content, null);
   assert.equal(j.pushed, null);
   assert.equal(j.bytes, fs.statSync(j.bundle).size);

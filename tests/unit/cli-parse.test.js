@@ -117,7 +117,7 @@ test('backup helpers: credentials in a URL are hidden, a failed push is classifi
   assert.equal(classifyPush("fatal: unable to access 'https://x/': Could not resolve host: x"), 'network');
   assert.equal(classifyPush('git@host: Permission denied (publickey).\nfatal: Could not read from remote repository.'), 'network');
   assert.equal(classifyPush('fatal: something else'), 'other');
-  assert.equal(defaultBundlePath('/s', 'personal', new Date('2026-11-10T10:15:30.123Z')), path.join('/s', 'backups', 'personal', 'personal-20261110T101530Z.bundle'));
+  assert.equal(defaultBundlePath({ HOME: '/s' }, 'personal', new Date('2026-11-10T10:15:30.123Z')), path.join('/s', 'mailproof', 'backups', 'personal-20261110T101530Z.bundle'));
 });
 
 test('passFile: a file with group or other bits is refused with a PermError (not read); mode 0600 is read', async () => {

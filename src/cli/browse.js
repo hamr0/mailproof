@@ -12,6 +12,8 @@ import { parseChoice, parseDate } from './parse.js';
 import { printable as p } from './printable.js';
 import { rel } from './style.js';
 import { otherParty } from './target.js';
+import { SCREEN_JOBS } from './menu-header.js';
+import { expandHome, ensureDefaultDir } from './paths.js';
 
 /** @typedef {import('./session.js').Ctx} Ctx */
 /** @typedef {import('../proof/describe.js').Facts} Facts */
@@ -26,13 +28,14 @@ import { otherParty } from './target.js';
  * @property {(spec: import('./prompt.js').ValueSpec) => Promise<string>} ask
  * @property {(label: string, flag: string, example?: string) => Promise<string>} askDate
  * @property {(s: string) => void} out  Text output, through the backstop.
- * @property {(path: string[]) => void} crumb  Print the where-am-I breadcrumb for this path (after `mailproof`), preceded by a blank line (crumb.js).
+ * @property {(path: string[], job?: string) => void} crumb  Print the top of a screen: a blank line, the where-am-I breadcrumb for this path (after `mailproof`) and, when given, the job line (frame.js).
+ * @property {(line: string) => void} foot  Print the bottom of a screen: a blank line, the dim rule, then the options line (frame.js).
  * @property {(argv: string[]) => Promise<number>} go  Run a subcommand on the account (the menu's own path).
  * @property {() => Promise<boolean>} showHeld  Show what a terminal pager holds back; false when the input ended.
  * @property {import('../index.js').Mailproof} mp
  * @property {(f: string) => string} tilde
  * @property {() => Date} now
- * @property {string | undefined} home
+ * @property {Record<string, string | undefined>} env  The environment (HOME): `~` in a path the person types, the default folder for a saved attachment.
  */
 
 export const PAGE = 5;
@@ -123,21 +126,23 @@ async function screen(e, o) {
   let shown = 0;
   let from = 0;
   let crumbed = Boolean(o.crumbed);
-  /** @param {number} at */
-  /** @param {string} [step] */
-  const page = async (at, step) => {
+  /** @param {number} at @param {string} [step] @param {string} [job] */
+  const page = async (at, step, job) => {
     const slice = entries.slice(at, at + PAGE);
     await load(e, slice.map((x) => x.id), cache);
     const items = slice.flatMap((x) => { const facts = cache.get(x.id); return facts ? [{ facts, ...(x.tag ? { tag: x.tag } : {}) }] : []; });
     from = at;
     shown = at + slice.length;
-    if (!crumbed) e.crumb(step ? [...o.path, step] : o.path);
+    if (!crumbed) e.crumb(step ? [...o.path, step] : o.path, job);
     crumbed = false;
     if (!slice.length) e.out(entries.length ? 'that is all' : 'no emails match');
     else for (const l of pageLines(e, items, at + 1)) e.out(l);
+    footer();
+  };
+  const footer = () => {
     const k = (/** @type {string} */ s) => st.key(s);
     const parts = [...(shown > 0 ? [`${shown} of ${entries.length}`, `open: ${k('a number')}`] : []), ...(shown < entries.length ? [`${k('m')} more`] : []), ...(o.filters ? [`${k('f')} filter`, `${k('s')} subject search`] : []), `${k('Enter')} back`];
-    e.out(parts.join(DASH(e)));
+    e.foot(parts.join(DASH(e)));
   };
   await page(0);
   for (;;) {
@@ -152,17 +157,26 @@ async function screen(e, o) {
       await page(from);
     } else if (c === 'm') {
       if (shown >= entries.length) { e.out('that is all'); continue; }
-      await page(shown, 'm more');
+      await page(shown, 'm more', SCREEN_JOBS.more);
     } else if ((c === 'f' || c === 's') && o.filters && o.reload) {
       const f = o.filters;
-      if (c === 'f') {
-        f.role = f.who ? await e.ask({ label: 'Role', example: 'from, to, cc, reply-to, empty = any', optional: true, validate: (s) => parseChoice(s, 'Role', 'from', 'to', 'cc', 'reply-to') }) : '';
-        f.direction = await e.ask({ label: 'Direction', example: 'in, out, empty = both', optional: true, validate: (s) => parseChoice(s, 'Direction', 'in', 'out') });
-        f.after = await e.askDate('After', '--after', 'date, e.g. {2026-01-01}, empty = no limit');
-        f.before = await e.askDate('Before', '--before', 'date, e.g. {2026-08-19}, empty = no limit');
-      } else f.subject = await e.ask({ label: 'Subject contains', example: 'text, empty = any', optional: true });
+      e.crumb([...o.path, c === 'f' ? 'f filter' : 's subject'], c === 'f' ? SCREEN_JOBS.filter : SCREEN_JOBS.subject);   // before its questions
+      const next = { ...f };
+      try {
+        if (c === 'f') {
+          next.role = f.who ? await e.ask({ label: 'Role', example: 'from, to, cc, reply-to, empty = any', optional: true, validate: (s) => parseChoice(s, 'Role', 'from', 'to', 'cc', 'reply-to') }) : '';
+          next.direction = await e.ask({ label: 'Direction', example: 'in, out, empty = both', optional: true, validate: (s) => parseChoice(s, 'Direction', 'in', 'out') });
+          next.after = await e.askDate('After', '--after', 'date, e.g. {2026-01-01}, empty = no limit');
+          next.before = await e.askDate('Before', '--before', 'date, e.g. {2026-08-19}, empty = no limit');
+        } else next.subject = await e.ask({ label: 'Subject contains', example: 'text, empty = any', optional: true });
+      } catch (x) {
+        if (x instanceof Cancel && x.reason === 'back') { footer(); continue; }   // back to this screen, the filters as they were
+        throw x;
+      }
+      Object.assign(f, next);
       entries = await o.reload(f);
-      await page(0, c === 'f' ? 'f filter' : f.subject ? `s "${f.subject}"` : 's clear');
+      crumbed = c === 'f';   // the filter's crumb is already on screen; a subject search adds its answer to the path
+      await page(0, c === 'f' ? undefined : f.subject ? `s "${f.subject}"` : 's clear');
     } else e.out(`not a choice: ${p(c, { max: 40 })}`);
   }
 }
@@ -192,23 +206,28 @@ async function openEmail(e, id, path) {
   const { st } = e;
   const k = (/** @type {string} */ s) => st.key(s);
   const action = `  ${k('r')} raw email${DASH(e)}${k('a')} save attachment${DASH(e)}${k('v')} verify again${DASH(e)}${k('t')} thread${DASH(e)}${k('p')} this person${DASH(e)}${k('Enter')} back to list`;
-  e.crumb(path);
+  e.crumb(path, SCREEN_JOBS.open);
   await e.go(['show', id]);
   if (!(await e.showHeld())) throw new Cancel('eof');
   const facts = (await e.mp.describe(id)).records[0];
   if (!facts) return;
   for (;;) {
-    e.out(action);
+    e.foot(action);
     const a = await e.p.ask('> ');
     if (a === null) throw new Cancel('eof');
     const c = a.trim().toLowerCase();
     if (c === '') return;
-    if (c === 'r') { e.crumb([...path, 'r raw']); await rawEmail(e, id); }
-    else if (c === 'a') { e.crumb([...path, 'a attachment']); await saveAttachment(e, facts); }
-    else if (c === 'v') { e.crumb([...path, 'v verify']); await e.go(['verify', id]); }
-    else if (c === 't') await thread(e, id, [...path, 't thread']);
-    else if (c === 'p') await person(e, facts, [...path, 'p this person']);
-    else { e.out(`not a choice: ${p(c, { max: 40 })}`); continue; }
+    try {
+      if (c === 'r') { e.crumb([...path, 'r raw'], SCREEN_JOBS.raw); await rawEmail(e, id); }
+      else if (c === 'a') { e.crumb([...path, 'a attachment'], SCREEN_JOBS.attachment); await saveAttachment(e, facts); }
+      else if (c === 'v') { e.crumb([...path, 'v verify'], SCREEN_JOBS.verify); await e.go(['verify', id]); }
+      else if (c === 't') await thread(e, id, [...path, 't thread']);
+      else if (c === 'p') await person(e, facts, [...path, 'p this person']);
+      else { e.out(`not a choice: ${p(c, { max: 40 })}`); continue; }
+    } catch (x) {
+      if (x instanceof Cancel && x.reason === 'back') continue;   // back out of a question: this email's actions again
+      throw x;
+    }
     if (!(await e.showHeld())) throw new Cancel('eof');
   }
 }
@@ -238,11 +257,12 @@ async function saveAttachment(e, facts) {
   const att = atts[Number(which) - 1];
   const bytes = att.sha256 ? await e.mp.attachment(att.sha256) : null;
   if (!bytes) { e.out('the attachment is no longer stored (expired, forgotten or never stored)'); return; }
-  const dflt = `~/Downloads/${safeName(att.filename, att.sha256 ?? '')}`;
+  const dflt = `~/mailproof/saved/${safeName(att.filename, att.sha256 ?? '')}`;
   for (let tries = 0; tries < 3; tries++) {
     const want = await e.ask({ label: 'Save to', example: 'path', def: dflt });
-    const dest = path.resolve(want === '~' || want.startsWith('~/') ? `${e.home ?? ''}${want.slice(1)}` : want);
+    const dest = path.resolve(expandHome(want, e.env));
     try {
+      await ensureDefaultDir(dest, e.env, 'saved');   // the default folder is made on first use (0700); a folder the person chose must exist
       await fs.writeFile(dest, bytes, { flag: 'wx', mode: 0o600 });
       e.out(`saved ${bytes.length} bytes to ${p(e.tilde(dest))}`);
       return;
@@ -256,7 +276,7 @@ async function saveAttachment(e, facts) {
 
 /** The parent and the direct replies of one email, graded by link, as a numbered screen. @param {BrowseEnv} e @param {string} id @param {string[]} path */
 async function thread(e, id, path) {
-  e.crumb(path);
+  e.crumb(path, SCREEN_JOBS.thread);
   const t = await e.mp.linked(id);
   const parents = (t?.parents ?? []);
   /** @type {Entry[]} */
@@ -276,7 +296,7 @@ async function thread(e, id, path) {
 
 /** The counterparty row for the other party of this email (as the people list shows it), then the latest five with them. @param {BrowseEnv} e @param {Facts} facts @param {string[]} path */
 async function person(e, facts, path) {
-  e.crumb(path);
+  e.crumb(path, SCREEN_JOBS.person);
   const addr = partyOf(facts);
   if (!addr) { e.out('no other party is recorded for this email'); return; }
   const who = addr;

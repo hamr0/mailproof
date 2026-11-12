@@ -6,6 +6,7 @@ import path from 'node:path';
 import { UsageError, EX_OK, EX_ERR, EX_USAGE, EX_TEMPFAIL } from './errors.js';
 import { withAccount, print, warn, printJson, stamp } from './session.js';
 import { updateState } from './state.js';
+import { tilde, userDir, ensureDefaultDir } from './paths.js';
 import { printable as p } from './printable.js';
 import { PUSH_WARNING, redactUrl, classifyPush } from '../proof/backup.js';
 
@@ -18,14 +19,20 @@ export { PUSH_WARNING, redactUrl, classifyPush };
 const compact = (d) => d.toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
 
 /**
- * The default bundle path: `<state>/backups/<account>/<account>-<UTC timestamp>.bundle`.
- * @param {string} state
+ * The name of a default backup: `<account>-<UTC timestamp>.bundle`.
+ * @param {string} account @param {Date} now @returns {string}
+ */
+export const backupName = (account, now) => `${account}-${compact(now)}.bundle`;
+
+/**
+ * The default bundle path (SPEC B11.2a): `~/mailproof/backups/<account>-<UTC timestamp>.bundle`, absolute under $HOME.
+ * @param {Record<string, string | undefined>} env
  * @param {string} account
  * @param {Date} now
  * @returns {string}
  */
-export function defaultBundlePath(state, account, now) {
-  return path.join(state, 'backups', account, `${account}-${compact(now)}.bundle`);
+export function defaultBundlePath(env, account, now) {
+  return path.join(userDir(env, 'backups'), backupName(account, now));
 }
 
 /**
@@ -40,8 +47,9 @@ export async function backupCmd(a, ctx) {
     if (v.push) {
       if (!account.backupRemote) throw new UsageError(`account ${p(account.name)} has no backupRemote in the config; --push needs one`);
     }
-    const out = v.out ? path.resolve(v.out) : defaultBundlePath(state, account.name, now);
-    const opts = { out, mkdir: !v.out, withContent: v['with-content'] === true, ...(v.push ? { push: true, remote: /** @type {string} */ (account.backupRemote) } : {}) };
+    const out = v.out ? path.resolve(v.out) : defaultBundlePath(ctx.env, account.name, now);
+    await ensureDefaultDir(out, ctx.env, 'backups');
+    const opts = { out, mkdir: false, withContent: v['with-content'] === true, ...(v.push ? { push: true, remote: /** @type {string} */ (account.backupRemote) } : {}) };
     /** @type {import('../proof/backup.js').BackupResult} */
     let r;
     try {
@@ -79,11 +87,11 @@ export async function backupCmd(a, ctx) {
     if (code !== EX_OK) { /* a failure: the message above is the output, stdout stays empty */ }
     else if (v.json) printJson(ctx, { bundle: r.bundle, bytes: r.bytes, commits: r.commits, content: r.content, pushed: r.pushed ? { remote: r.pushed.remote, refs: r.pushed.refs } : null });
     else {
-      print(ctx, `bundle   ${p(r.bundle)}  (${r.bytes} bytes, ${r.commits} commits)`);
-      if (r.content) print(ctx, `content  ${p(r.content.path)}  (${r.content.bytes} bytes; not encrypted: it holds other people's mail)`);
+      print(ctx, `bundle   ${p(tilde(r.bundle, ctx.env))}  (${r.bytes} bytes, ${r.commits} commits)`);
+      if (r.content) print(ctx, `content  ${p(tilde(r.content.path, ctx.env))}  (${r.content.bytes} bytes; not encrypted: it holds other people's mail)`);
       if (r.contentNote) print(ctx, r.contentNote);
       if (r.pushed) print(ctx, `pushed   ${p(r.pushed.remote)}  (${r.pushed.refs.length} ref(s))`);
-      print(ctx, `restore: git clone ${p(r.bundle)} <dir>`);
+      print(ctx, `restore: git clone ${p(tilde(r.bundle, ctx.env))} <dir>`);
     }
     return code;
   });

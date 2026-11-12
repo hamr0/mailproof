@@ -280,7 +280,7 @@ export const HELP = Object.freeze({
     "backup": {
       "usage": "mailproof backup [flags]",
       "summary": "git bundle of the trail",
-      "when": "Use to keep a copy of the proofs somewhere else. It writes a git bundle of the whole trail (records, keys, replies, stamps; never message bodies) to <state>/backups/<account>/, and prints the path: restore with `git clone <file>.bundle <dir>`. --with-content adds a separate, unencrypted <file>.content.tar of the stored raw emails (other people's mail: encrypt it or the disk yourself). --push also pushes the trail to the account's backupRemote, never with force: after a prune the remote keeps the history from before it as an archive and the push is refused.",
+      "when": "Use to keep a copy of the proofs somewhere else. It writes a git bundle of the whole trail (records, keys, replies, stamps; never message bodies) to ~/mailproof/backups/, and prints the path: restore with `git clone <file>.bundle <dir>`. --with-content adds a separate, unencrypted <file>.content.tar of the stored raw emails (other people's mail: encrypt it or the disk yourself). --push also pushes the trail to the account's backupRemote, never with force: after a prune the remote keeps the history from before it as an archive and the push is refused.",
       "fails": "Exit 1 for an empty trail, a bundle that does not verify, or a missing tar; 64 for a missing --yes with --push or an unconfigured backupRemote; 75 for a push that failed on the network or on a login; 1 for a push the remote rejected.",
       "account": true,
       "flags": [
@@ -288,7 +288,7 @@ export const HELP = Object.freeze({
           "name": "out",
           "type": "string",
           "arg": "<path>",
-          "help": "write the bundle here (the directory must exist; an existing file is refused)"
+          "help": "write the bundle here (default ~/mailproof/backups/<account>-<UTC date and time>.bundle; the directory must exist; an existing file is refused)"
         },
         {
           "name": "with-content",
@@ -374,7 +374,7 @@ export const HELP = Object.freeze({
           "name": "out",
           "type": "string",
           "arg": "<path>",
-          "help": "the new directory (default ./mailproof-bundle-<account>-<UTC date and time>; with --tar, the .tar file)"
+          "help": "the new directory (default ~/mailproof/exports/mailproof-bundle-<account>-<UTC date and time>; with --tar, the .tar file)"
         },
         {
           "name": "tar",

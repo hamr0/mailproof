@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { Mailproof } from '../index.js';
 import { EX_OK, EX_NO, UsageError } from './errors.js';
-import { expandHome } from './config.js';
+import { expandHome, tilde } from './paths.js';
 import { print } from './session.js';
 import { printable as p } from './printable.js';
 import { styleOf } from './style.js';
@@ -21,8 +21,8 @@ import { MAX_TOTAL_BYTES } from '../proof/limits.js';
 export async function checkFileCmd(file, ctx) {
   const abs = expandHome(file.trim(), ctx.env);
   let st;
-  try { st = await fs.stat(abs); } catch { throw new UsageError(`cannot read ${abs}: no such file`); }
-  if (!st.isFile()) throw new UsageError(`${abs} is not a file`);
+  try { st = await fs.stat(abs); } catch { throw new UsageError(`cannot read ${tilde(abs, ctx.env)}: no such file`); }
+  if (!st.isFile()) throw new UsageError(`${tilde(abs, ctx.env)} is not a file`);
   if (st.size > MAX_TOTAL_BYTES * 2) throw new UsageError(`${abs} is larger than mailproof reads (${MAX_TOTAL_BYTES * 2} bytes)`);
   const raw = await fs.readFile(abs);
   // nothing is written: the trail directory only names an instance, it is never created

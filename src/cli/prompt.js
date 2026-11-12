@@ -8,10 +8,10 @@ import { allowStyle, makeStyle } from './style.js';
 /** Output backstop for what a prompt writes (typed input is echoed back, validators quote it): F28. It keeps only the style sequences style.js makes. @param {string} s @returns {string} */
 const safe = allowStyle;
 
-/** Raised when the person cannot be asked any more: the input ended, Ctrl-C at a prompt, or three bad answers. */
+/** Raised when the person cannot be asked any more: the input ended, three bad answers, or they backed out (an empty answer or `q` at a menu prompt). */
 export class Cancel extends Error {
-  /** @param {'eof' | 'tries'} reason */
-  constructor(reason) { super(reason === 'eof' ? 'input ended' : 'too many invalid answers'); this.reason = reason; }
+  /** @param {'eof' | 'tries' | 'back'} reason */
+  constructor(reason) { super(reason === 'eof' ? 'input ended' : reason === 'back' ? 'back' : 'too many invalid answers'); this.reason = reason; }
 }
 
 /**
@@ -95,13 +95,14 @@ export function createPrompter(input, output, terminal) {
  * @property {string} [example]  `email address, e.g. {bob@example.org}, empty = everyone`; each `{token}` is a choice or an example input, shown green
  * @property {string} [def]  The default: an empty answer takes it.
  * @property {boolean} [optional]  An empty answer is allowed and gives ''.
+ * @property {boolean} [back]  A menu prompt: an empty answer with no default and no meaning goes back (never "a value is needed"), `q` always goes back, and the label says so.
  * @property {string} [hint]  Printed for `?`.
  * @property {(s: string) => string} [validate]  Throws UsageError with the reason.
  */
 
 /**
  * Ask for one value (SPEC B11.4): label, example and default in brackets, `?` re-prints the hint, a bad value prints
- * the reason and asks again, three bad answers give up.
+ * the reason and asks again, three bad answers give up. With `back` (every menu prompt) an empty answer or `q` goes back.
  * @param {Prompter} p
  * @param {{ write: (s: string) => unknown }} out
  * @param {ValueSpec} spec
@@ -110,15 +111,21 @@ export function createPrompter(input, output, terminal) {
  * @throws {Cancel}
  */
 export async function askValue(p, out, spec, st = makeStyle()) {
-  const label = `${spec.label}${spec.example ? ` (${st.choices(spec.example)})` : ''}${spec.def !== undefined && spec.def !== '' ? ` [${st.key(spec.def)}]` : ''}: `;
+  // the way back is part of the label: `empty = back` where an empty answer has no other meaning, `q = back` where it has (a default, "everyone")
+  const meaning = spec.def !== undefined || spec.optional === true;
+  const back = spec.back ? (meaning ? 'q = back' : 'empty = back') : '';
+  const inner = [spec.example ? st.choices(spec.example) : '', back].filter(Boolean).join(', ');
+  const label = `${spec.label}${inner ? ` (${inner})` : ''}${spec.def !== undefined && spec.def !== '' ? ` [${st.key(spec.def)}]` : ''}: `;
   for (let tries = 0; tries < 3;) {
     const ans = await p.ask(label);
     if (ans === null) throw new Cancel('eof');
     const t = ans.trim();
+    if (spec.back && t.toLowerCase() === 'q') throw new Cancel('back');
     if (t === '?') { out.write(`${safe(spec.hint ?? spec.example ?? 'no further help')}\n`); continue; }
     if (t === '') {
       if (spec.def !== undefined) return spec.def;
       if (spec.optional) return '';
+      if (spec.back) throw new Cancel('back');
       out.write('a value is needed\n');
       tries++;
       continue;

@@ -7,17 +7,17 @@ import { createPrompter, askValue, confirm, Cancel, isTerminal } from './prompt.
 import { parseDate, parseAddress, parseDuration, parseSent, parseFolders, parseChoice, MIN_INTERVAL_MS, FULL_ID_RE } from './parse.js';
 import { loadCtxConfig, openAccount, print, warn } from './session.js';
 import { browseList } from './browse.js';
-import { crumbLine } from './crumb.js';
+import { makeFrame } from './frame.js';
 import { printable } from './printable.js';
 import { defaultBundlePath, PUSH_WARNING, redactUrl } from './backup.js';
 import { version } from './misc.js';
 import { defaultBundleOut } from './bundle.js';
-import { stateDir } from './state.js';
+import { tilde as tildeOf } from './paths.js';
 import { classifyTarget } from './target.js';
 import { styleOf } from './style.js';
 import { makePager } from './pager.js';
 import { headerFacts } from './status.js';
-import { mainHeader, fullMenu, shortLine, firstRun, MENU_ITEMS, MENU_ALIASES } from './menu-header.js';
+import { mainHeader, fullMenu, shortLine, firstRun, jobOf, SCREEN_JOBS, MENU_ITEMS, MENU_ALIASES } from './menu-header.js';
 import { checkFileCmd } from './check-file.js';
 import { configPath } from './config.js';
 
@@ -58,12 +58,13 @@ export async function runMenu(ctx, exec, opts = {}) {
   const base = { ...ctx, stdout: outStream, stderr: errStream, prompter: p };
   const out = (/** @type {string} */ s) => print(base, s);   // through the output backstop (F28)
   const err = (/** @type {string} */ s) => warn(base, s);
-  /** The where-am-I line (crumb.js) before an output block: a blank line, then the dim path. The screen is never cleared. @param {string[]} segs The path after `mailproof`. */
-  const crumb = (segs) => { out(''); out(crumbLine(st, segs)); };
+  const frame = makeFrame(out, st);
+  /** The top of a screen (frame.js): a blank line, the where-am-I crumb, the job line. The screen is never cleared. @param {string[]} segs The path after `mailproof`. @param {string} [job] */
+  const crumb = (segs, job) => frame.open(segs, job);
   /** `4 list`: the menu number and name of a command, the first step of every path. @param {string} cmd @returns {string} */
   const step = (cmd) => { const i = MENU_ITEMS.find((x) => x.cmd === cmd); return i ? `${i.key} ${i.label}` : cmd; };
-  /** @param {import('./prompt.js').ValueSpec} spec */
-  const ask = (spec) => askValue(p, outStream, spec, st);
+  /** Every menu prompt backs out on an empty answer or q (prompt.js `back`). @param {import('./prompt.js').ValueSpec} spec */
+  const ask = (spec) => askValue(p, outStream, { back: true, ...spec }, st);
   /** A y/N question in the stream's style. @param {string} q @param {boolean} [d] */
   const askYes = (q, d) => confirm(p, q, d, st);
   const pre = opts.configFlag ? ['--config', opts.configFlag] : [];
@@ -71,20 +72,22 @@ export async function runMenu(ctx, exec, opts = {}) {
   /** An optional date prompt. @param {string} label @param {string} flag @param {string} [example] */
   const askDate = (label, flag, example = 'date, e.g. {2026-08-19}') => ask({ label, example, optional: true, validate: (s) => { parseDate(s, flag); return s; } });
   const now = () => (ctx.deps.now ?? (() => new Date()))();
-  /** The home directory shown as `~`. @param {string} f */
-  const tilde = (f) => { const h = ctx.env.HOME; return h && f.startsWith(`${h}/`) ? `~${f.slice(h.length)}` : f; };
+  /** The home directory shown as `~` (paths.js). @param {string} f */
+  const tilde = (f) => tildeOf(f, ctx.env);
   /** After an action: on a terminal show its output (paged when long); on a pipe ask for Enter. @returns {Promise<boolean>} False when the input ended. */
   const afterAction = async () => (pager ? pager.show() : (await p.ask('Press Enter ')) !== null);
   /** Check a saved .eml: the same path as the first-run screen, nothing is recorded. */
-  const checkEml = async (/** @type {boolean} */ inMenu = false) => {
+  /** @param {string[]} [lead] The crumb path up to the command (the menu item, or the first-run item). */
+  const checkEml = async (lead = [step('check-file')]) => {
     const file = await ask({ label: 'Path of the .eml file', example: 'e.g. {~/Downloads/mail.eml}' });
-    if (inMenu) crumb([step('check-file'), file]);
+    crumb([...lead, file]);
     await checkFileCmd(file, base).catch((e) => { warn(base, `mailproof: ${/** @type {Error} */ (e).message}`); });
   };
   /** Verify a bundle: the `verify-bundle` subcommand, which needs no account. */
-  const verifyBundleCmd = async (/** @type {boolean} */ inMenu = false) => {
+  /** @param {string[]} [lead] */
+  const verifyBundleCmd = async (lead = [step('verify-bundle')]) => {
     const dir = await ask({ label: 'Bundle directory', example: 'the directory mailproof export wrote' });
-    if (inMenu) crumb([step('verify-bundle'), dir]);
+    crumb([...lead, dir]);
     await exec([...pre, 'verify-bundle', dir], base);
   };
   /**
@@ -102,16 +105,19 @@ export async function runMenu(ctx, exec, opts = {}) {
       if (c === '') continue;
       try {
         if (c === '1') {
+          crumb(['1 set up an account'], SCREEN_JOBS.setup);
           await exec([...pre, 'config', 'add-account'], base);
           try { return (await loadCtxConfig(cfgArgs, ctx)).config; } catch { continue; }
         } else if (c === '2') {
-          await checkEml();
+          crumb(['2 check .eml'], jobOf('check-file'));
+          await checkEml(['2 check .eml']);
         } else if (c === '3') {
-          await verifyBundleCmd();
+          crumb(['3 verify-bundle'], jobOf('verify-bundle'));
+          await verifyBundleCmd(['3 verify-bundle']);
         } else if (c === '?' || c === 'h') await exec([...pre, 'help'], base);
         else out(`not a menu item: ${c}`);
       } catch (e) {
-        if (e instanceof Cancel) { if (e.reason === 'eof') return 0; out('cancelled'); continue; }
+        if (e instanceof Cancel) { if (e.reason === 'eof') return 0; if (e.reason === 'tries') out('cancelled'); continue; }
         throw e;
       }
       if (!(await afterAction())) return 0;
@@ -158,11 +164,12 @@ export async function runMenu(ctx, exec, opts = {}) {
     const exportFor = async (who) => {
       const after = await askDate('After', '--after', 'date, e.g. {2026-01-01}, empty = from the beginning');
       const before = await askDate('Before', '--before', 'date, e.g. {2026-08-19}, empty = until now');
-      const dflt = defaultBundleOut(account, (ctx.deps.now ?? (() => new Date()))(), false);
+      // the default name is computed ONCE: the name offered is the name written (never a second clock read)
+      const dflt = tilde(defaultBundleOut(account, now(), false, ctx.env));
       const outPath = await ask({ label: 'Write the bundle to', example: 'a new directory', def: dflt });
       const tar = await askYes('Also pack it into one .tar file for mailing?');
-      crumb([step('export'), who]);
-      await go(['export', '--with', who, ...(after ? ['--after', after] : []), ...(before ? ['--before', before] : []), ...(outPath === dflt ? [] : ['--out', outPath]), ...(tar ? ['--tar'] : [])]);
+      crumb([step('export'), who]);   // a second crumb: the answer that names the result below
+      await go(['export', '--with', who, ...(after ? ['--after', after] : []), ...(before ? ['--before', before] : []), '--out', tar && outPath === dflt ? `${dflt}.tar` : outPath, ...(tar ? ['--tar'] : [])]);
     };
     /** One target: an address, a Message-ID or a record id. */
     const askTarget = () => ask({ label: 'Target', example: 'an address like bob@example.org, a <message-id>, or a record id (8+ hex)', validate: (s) => { classifyTarget(s); return s.trim(); } });
@@ -172,7 +179,6 @@ export async function runMenu(ctx, exec, opts = {}) {
       sync: async () => {
         const folders = await ask({ label: 'Folders', example: 'comma separated, empty = the account\'s', optional: true, validate: (s) => { parseFolders(s); return s; } });
         const sent = await ask({ label: 'Sent', example: 'on, off or a folder path, empty = the account\'s', optional: true, validate: (s) => { parseSent(s); return s; } });
-        crumb([step('sync')]);
         await go(['sync', ...(folders ? ['--folders', folders] : []), ...(sent ? ['--sent', sent] : [])]);
       },
       watch: async () => {
@@ -184,7 +190,7 @@ export async function runMenu(ctx, exec, opts = {}) {
         const who = await ask({ label: 'Who', example: 'address, empty = everyone', optional: true, validate: (s) => parseAddress(s, 'Who') });
         const session = await openAccount({ cmd: 'list', values: { config: opts.configFlag, account }, positionals: [] }, base);
         try {
-          await browseList({ st, p, ask, askDate, out, crumb, go, mp: session.mp, tilde, now, home: ctx.env.HOME, showHeld: async () => (pager ? pager.show() : true) }, who.toLowerCase());
+          await browseList({ st, p, ask, askDate, out, crumb, foot: frame.foot, go, mp: session.mp, tilde, now, env: ctx.env, showHeld: async () => (pager ? pager.show() : true) }, who.toLowerCase());
         } catch (e) {
           if (e instanceof Cancel || e instanceof UsageError) throw e;
           err(`mailproof: ${printable(/** @type {Error} */ (e).message, { keepNewline: true })}`);
@@ -199,7 +205,6 @@ export async function runMenu(ctx, exec, opts = {}) {
       },
       people: async () => {
         // the table is the `people` command's own text, numbered here so a row can be picked; the rows come from the same `people --json`
-        crumb([step('people')]);
         /** @type {string[]} */
         const chunks = [];
         const code = await exec([...pre, 'people', '--json', '--account', account], { ...base, stdout: { write: (x) => { chunks.push(String(x)); return true; } } });
@@ -223,7 +228,7 @@ export async function runMenu(ctx, exec, opts = {}) {
           return `${n ?? parseAddress(first, 'Person')} ${act}`;
         } });
         const [pick, what] = answer.split(' ');
-        if (what !== 'export') crumb([step('people'), pick, what]);
+        crumb([step('people'), pick, what === 'export' ? 'e export' : what], jobOf(what === 'show' || what === 'verify' || what === 'export' ? what : 'show'));
         if (what === 'export') await exportFor(pick); else await go([what, pick]);
       },
       replies: async () => {
@@ -240,7 +245,7 @@ export async function runMenu(ctx, exec, opts = {}) {
       },
       forget: async () => {
         /** @param {string[]} argv */
-        const run = async (argv) => { crumb([step('forget')]); await destructive(argv); };
+        const run = async (argv) => { await destructive(argv); };
         const ids = await ask({ label: 'Ids', example: 'record ids separated by spaces; empty = by person', optional: true, validate: (s) => { s.split(/\s+/).forEach(idArg); return s; } });
         if (ids) { await run(['forget', ...ids.split(/\s+/)]); return; }
         const who = await ask({ label: 'With', example: 'email address, e.g. {bob@example.org}', validate: (s) => parseAddress(s, 'With') });
@@ -251,11 +256,10 @@ export async function runMenu(ctx, exec, opts = {}) {
       prune: async () => {
         const before = await ask({ label: 'Before', example: 'date, e.g. {2026-08-19}', validate: (s) => { parseDate(s, '--before'); return s; } });
         const del = await askYes('Also delete the pre-prune backup afterwards (the removal is only final then)?');
-        crumb([step('prune')]);
         await destructive(['prune', '--before', before, ...(del ? ['--delete-backup'] : [])]);
       },
       backup: async () => {
-        const dflt = defaultBundlePath(stateDir(ctx.env), account, (ctx.deps.now ?? (() => new Date()))());
+        const dflt = tilde(defaultBundlePath(ctx.env, account, now()));   // computed once: the name offered is the name written
         const outPath = await ask({ label: 'Write the bundle to', example: 'a path', def: dflt });
         const content = await askYes('Also archive the content store (other people\'s mail, not encrypted)?');
         const remote = config.accounts[account].backupRemote;
@@ -264,12 +268,10 @@ export async function runMenu(ctx, exec, opts = {}) {
           out(PUSH_WARNING);
           if (!(await askYes('Is that remote one you trust to hold that?'))) { out('nothing changed'); return; }
         }
-        crumb([step('backup')]);
-        await go(['backup', ...(outPath === dflt ? [] : ['--out', outPath]), ...(content ? ['--with-content'] : []), ...(push ? ['--push', '--yes'] : [])]);
+        await go(['backup', '--out', outPath, ...(content ? ['--with-content'] : []), ...(push ? ['--push', '--yes'] : [])]);
       },
-      status: async () => { crumb([step('status')]); await go(['status']); },
+      status: async () => { await go(['status']); },
       update: async () => {
-        crumb([step('update')]);
         await go(['update']);
         if (await askYes('Run it now?')) await go(['update', '--run']);
       },
@@ -281,10 +283,10 @@ export async function runMenu(ctx, exec, opts = {}) {
       export: async () => {
         await exportFor(await ask({ label: 'With', example: 'exact addresses, comma separated, e.g. {bob@example.org,bob@work.example}', validate: (s) => { s.split(',').map((x) => parseAddress(x.trim(), 'With')); return s; } }));
       },
-      stamp: async () => { crumb([step('stamp')]); await go(['stamp']); },
-      'check-file': () => checkEml(true),
-      'verify-bundle': () => verifyBundleCmd(true),
-      mcp: async () => { crumb([step('mcp')]); await go(['mcp']); },
+      stamp: async () => { await go(['stamp']); },
+      'check-file': () => checkEml(),
+      'verify-bundle': () => verifyBundleCmd(),
+      mcp: async () => { await go(['mcp']); },
     };
 
     // what the next turn prints above the `>`: the header and the full menu at the start; after an action the short line (on a
@@ -297,15 +299,15 @@ export async function runMenu(ctx, exec, opts = {}) {
     /** @param {boolean} changed @returns {'header' | 'refresh' | 'compact'} */
     const nextMode = (changed) => (!pager ? 'header' : changed ? 'refresh' : 'compact');
     for (;;) {
-      if (mode === 'compact') out(shortLine(st, names.length > 1));
+      if (mode === 'compact') frame.foot(shortLine(st, names.length > 1));
       else if (mode !== 'none') {
-        if (mode === 'full' || mode === 'header') out('');
+        out('');
         /** @type {Awaited<ReturnType<typeof headerFacts>> | null} */
         let f = null;
         try { f = await headerFacts(config.accounts[account], ctx); } catch { /* a broken trail still gets a menu */ }
         const h = { version: version(), user: config.accounts[account].user, account, trailOk: false, lastSync: null, records: null, seal: { state: /** @type {const} */ ('off'), nextDue: null }, watch: false, ...f, manyAccounts: names.length > 1 };
         const lines = mainHeader(st, h, now());
-        for (const l of mode === 'refresh' ? [lines[1], lines[2]] : lines) out(l);
+        for (const l of lines) out(l);   // after an action too: the rule above and below make it a status bar, not output
         if (mode === 'full') for (const l of fullMenu(st, names.length > 1)) out(l); else out(shortLine(st, names.length > 1));
       }
       mode = 'full';
@@ -315,20 +317,25 @@ export async function runMenu(ctx, exec, opts = {}) {
       if (c === 'q') return 0;
       if (c === '') continue;
       if (c === 'h') {
-        crumb(['h help']);
+        crumb(['h help'], SCREEN_JOBS.help);
         await exec([...pre, 'help'], base);
         if (pager) { if (!(await pager.show())) return 0; mode = 'compact'; }
         continue;
       }
       if (c === '?') { mode = 'full'; continue; }   // the same as the start: the header lines, then the grouped menu
-      if ((c === 'a' || c === 'b') && names.length > 1) { account = await pickAccount(); mode = nextMode(true); if (pager && !(await pager.show())) return 0; continue; }
+      if ((c === 'a' || c === 'b') && names.length > 1) {
+        try { account = await pickAccount(); mode = nextMode(true); } catch (e) { if (!(e instanceof Cancel) || e.reason === 'eof') throw e; mode = nextMode(false); }
+        if (pager && !(await pager.show())) return 0;
+        continue;
+      }
       const cmd = menuCommand(c);
       if (!cmd) { out(`not a menu item: ${c}`); if (pager && !(await pager.show())) return 0; mode = 'none'; continue; }
       pager?.setLive(LIVE.has(cmd));
+      crumb([step(cmd)], jobOf(cmd));   // the moment an item is chosen, before its questions
       try { await handlers[cmd](); }
       catch (e) {
         pager?.setLive(false);
-        if (e instanceof Cancel) { if (e.reason === 'eof') return 0; out('cancelled'); if (pager && !(await pager.show())) return 0; mode = nextMode(false); continue; }
+        if (e instanceof Cancel) { if (e.reason === 'eof') return 0; if (e.reason === 'tries') out('cancelled'); if (pager && !(await pager.show())) return 0; mode = nextMode(false); continue; }
         throw e;
       }
       pager?.setLive(false);

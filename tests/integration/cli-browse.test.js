@@ -26,7 +26,7 @@ test('item 4 asks only Who, then shows the latest 5 newest first: row line, full
   const w = world();
   const r = await menu(w, keys('4', '', '', 'q'));
   assert.equal(r.code, 0, r.stderr);
-  assert.match(r.stdout, /^Who \(address, empty = everyone\): $/m);
+  assert.match(r.stdout, /^Who \(address, empty = everyone, q = back\): $/m);
   for (const gone of ['Role (', 'Direction (', 'Before (', 'After (', 'Limit (']) assert.ok(!r.stdout.includes(gone), `${gone} is not asked`);
   assert.match(r.stdout, /^ #  when +age +verdict +from$/m);
   assert.match(r.stdout, /^ 1  11-01 10:06Z  54 min +x unverified +zed@zed\.example$/m);
@@ -70,10 +70,10 @@ test('Who narrows the list; empty result says so; a bad address asks again', asy
 test('f filters (role only after a Who; direction, after, before validated); empty answers clear; filters combine with Who', async () => {
   const w = world();
   const r = await menu(w, keys('4', 'bob@beta.example', 'f', 'from', 'in', '', '', '', 'q'));
-  assert.ok(r.stdout.includes('Role (from, to, cc, reply-to, empty = any): '));
-  assert.ok(r.stdout.includes('Direction (in, out, empty = both): '));
-  assert.ok(r.stdout.includes('After (date, e.g. 2026-01-01, empty = no limit): '));
-  assert.ok(r.stdout.includes('Before (date, e.g. 2026-08-19, empty = no limit): '));
+  assert.ok(r.stdout.includes('Role (from, to, cc, reply-to, empty = any, q = back): '));
+  assert.ok(r.stdout.includes('Direction (in, out, empty = both, q = back): '));
+  assert.ok(r.stdout.includes('After (date, e.g. 2026-01-01, empty = no limit, q = back): '));
+  assert.ok(r.stdout.includes('Before (date, e.g. 2026-08-19, empty = no limit, q = back): '));
   assert.match(r.stdout, /^2 of 2 - /m, 'bob as sender, received: two');
   const bad = await menu(w, keys('4', '', 'f', 'sideways', 'out', '', '', '', 'q'));
   assert.match(bad.stdout, /Direction: use in, out/);
@@ -87,7 +87,7 @@ test('f filters (role only after a Who; direction, after, before validated); emp
 test('s searches the subject, case-insensitively, and combines with Who; empty text clears it', async () => {
   const w = world();
   const r = await menu(w, keys('4', '', 's', 'APPROVE', '', 'q'));
-  assert.ok(r.stdout.includes('Subject contains (text, empty = any): '));
+  assert.ok(r.stdout.includes('Subject contains (text, empty = any, q = back): '));
   assert.match(r.stdout, /^1 of 1 - open: a number - f filter - s subject search - Enter back$/m);
   assert.ok(r.stdout.includes('    Approve?'));
   const both = await menu(w, keys('4', 'zed@zed.example', 's', 'please', '', 'q'));
@@ -157,25 +157,25 @@ test('p: the person view (the people row) and the latest 5 for that address; men
   assert.match(sent.stdout, /open: a number/);
 });
 
-test('a saves an attachment: numbered list, destination default ~/Downloads/<name>, never overwrites, 0600', async () => {
+test('a saves an attachment: numbered list, destination default ~/mailproof/saved/<name>, never overwrites, 0600', async () => {
   const dir = makeTmpDir('mp-browse-att-');
   const PDF = Buffer.from('%PDF-1.4\nbrowse test bytes\n');
   const m = await signedMail({ domain: 'att.example', from: 'ann@att.example', to: 'me@owner.example', subject: 'with a file', signTime: new Date('2026-11-01T09:00:00Z'), attachment: { filename: 'c.pdf', bytes: PDF } });
   const mp = new Mailproof({ trailDir: dir, resolver: m.resolver, worker: { size: 0 }, now: () => new Date('2026-11-01T10:00:00Z') });
   const rec = (await mp.record(m.raw, { direction: 'in', source: 'test' })).record;
   const w = makeWorld({ accounts: { test: account(dir) } });
-  const dl = path.join(w.home, 'Downloads');
-  fs.mkdirSync(dl);
+  const dl = path.join(w.home, 'mailproof', 'saved');
+  fs.mkdirSync(dl, { recursive: true });
   const plain = await menu(w, keys('4', '', '1', 'a', '', '', '', 'q'));   // empty choice cancels
   assert.match(plain.stdout, /^ {2}1  c\.pdf  \d+ bytes  stored yes$/m);
   assert.match(plain.stdout, /1 attachment/, 'the list row counts it');
   assert.ok(!fs.existsSync(path.join(dl, 'c.pdf')));
   const r = await menu(w, keys('4', '', '1', 'a', '1', '', '', '', 'q'));
-  assert.ok(r.stdout.includes('Save to (path) [~/Downloads/c.pdf]: '), r.stdout);
+  assert.ok(r.stdout.includes('Save to (path, q = back) [~/mailproof/saved/c.pdf]: '), r.stdout);
   assert.deepEqual(fs.readFileSync(path.join(dl, 'c.pdf')), PDF);
   assert.equal(fs.statSync(path.join(dl, 'c.pdf')).mode & 0o777, 0o600);
   const again = await menu(w, keys('4', '', '1', 'a', '1', '', path.join(dl, 'second.pdf'), '', '', 'q'));
-  assert.match(again.stdout, /~\/Downloads\/c\.pdf already exists: nothing is overwritten; choose another path/);
+  assert.match(again.stdout, /~\/mailproof\/saved\/c\.pdf already exists: nothing is overwritten; choose another path/);
   assert.deepEqual(fs.readFileSync(path.join(dl, 'second.pdf')), PDF);
   assert.deepEqual(fs.readFileSync(path.join(dl, 'c.pdf')), PDF, 'the first one is untouched');
   await mp.forget([rec.id]);

@@ -10,8 +10,8 @@ import { syncOnce } from '../cli/sync-op.js';
 import { readBytes, readAllowedFile, resolveAllowedDir, saveBytes, outputPath } from './input.js';
 import { accountStatus, configFacts } from '../cli/status.js';
 import { UPDATE_COMMAND } from '../cli/version.js';
-import { defaultBundleOut } from '../cli/bundle.js';
-import { defaultBundlePath } from '../cli/backup.js';
+import { bundleName } from '../cli/bundle.js';
+import { backupName } from '../cli/backup.js';
 import { otsOptionFromEnv } from '../cli/secrets.js';
 import { updateState } from '../cli/state.js';
 import { stamp as isoStamp } from '../cli/session.js';
@@ -209,7 +209,7 @@ export const HANDLERS = {
     const now = (c.deps.now ?? (() => new Date()))();
     const addrs = /** @type {string[]} */ (a.with).map((x) => parseAddress(x, 'with'));
     const tar = a.tar === true;
-    let name = a.out ?? path.basename(defaultBundleOut(account.name, now, tar));
+    let name = a.out ?? bundleName(account.name, now, tar);
     await outputPath(name, c.settings.outputDir, 'out');   // the name as given must be plain, whatever suffix follows
     if (tar && !name.endsWith('.tar')) name += '.tar';
     const out = await outputPath(name, c.settings.outputDir, 'out');
@@ -231,7 +231,7 @@ export const HANDLERS = {
     const account = /** @type {import('../cli/config.js').Account} */ (c.account);
     const now = (c.deps.now ?? (() => new Date()))();
     if (a.push === true && !account.backupRemote) throw badArgument('this account has no backupRemote in the config: push needs one');
-    let name = a.out ?? path.basename(defaultBundlePath('', account.name, now));
+    let name = a.out ?? backupName(account.name, now);
     await outputPath(name, c.settings.outputDir, 'out');   // the name as given must be plain, whatever suffix follows
     if (!name.endsWith('.bundle')) name += '.bundle';
     const out = await outputPath(name, c.settings.outputDir, 'out');

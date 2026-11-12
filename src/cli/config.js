@@ -84,7 +84,7 @@ export class ConfigError extends UsageError {
  * @param {Record<string, string | undefined>} env
  * @returns {string}
  */
-const homeOf = (env) => env.HOME || os.homedir();
+export const homeOf = (env) => env.HOME || os.homedir();
 
 /**
  * @param {Record<string, string | undefined>} env
