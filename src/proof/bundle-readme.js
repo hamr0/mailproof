@@ -4,6 +4,7 @@
 // 200 code points. The verifier never reads it (it is only hashed, so damage is noticed): nothing in it is trusted.
 
 import { printable } from './printable.js';
+import { headerText } from './header-text.js';
 import { participantsOf, signedHeaderValue } from './participants.js';
 import { verifyRecord } from './recheck.js';
 
@@ -41,17 +42,6 @@ function wrap(label, text) {
 const field = (v, n = FIELD_MAX) => printable(v, { max: n });
 
 /**
- * A header value the signature covers is bytes (Latin-1 in the record); show valid UTF-8 as characters, else as written.
- * @param {string} v
- * @returns {string}
- */
-function asText(v) {
-  const b = Buffer.from(v, 'binary');
-  const u = b.toString('utf8');
-  return u.includes('�') ? v : u;
-}
-
-/**
  * What the README says about one record, taken from the record alone (never the raw email). Small, so a bundle of thousands keeps
  * only this per record.
  * @param {MpRecord} rec
@@ -74,7 +64,7 @@ function factsOf(rec) {
   return {
     id: rec.id, direction: rec.direction, captured: rec.captured,
     from: addrs('from'), to: addrs('to'), cc: addrs('cc'), replyTo: addrs('reply-to'),
-    subject: subject === null ? null : asText(subject), date: date === null ? null : asText(date),
+    subject: subject === null ? null : headerText(subject), date: date === null ? null : headerText(date),
     messageId: typeof m.message_id === 'string' ? m.message_id : null,
     inReplyTo: typeof m.in_reply_to === 'string' ? m.in_reply_to : null,
     inReplyToSigned: signedHeaderValue(rec, 'in-reply-to') !== null,
@@ -208,4 +198,4 @@ THE EMAILS`;
   return `${lines.join('\n')}\n`;
 }
 
-export { factsOf, emailBlock, readmeText, wrap, asText };
+export { factsOf, emailBlock, readmeText, wrap };

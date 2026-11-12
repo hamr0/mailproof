@@ -150,16 +150,16 @@ test('MCP status on a real npm install gives the npm command and no git hint', a
 test('updateFacts: one definition for the update hint (status, MCP and the update screen)', () => {
   const env = { HOME: '/home/ana' };
   assert.deepEqual(updateFacts({ installInfo: () => ({ dev: true, dir: '/home/ana/src/mailproof' }) }, env),
-    { install: { kind: 'dev-link', path: '~/src/mailproof' }, update: 'development link to ~/src/mailproof; update with git (git pull in that folder)' });
+    { install: { kind: 'dev-link', path: '/home/ana/src/mailproof' }, update: 'development link to ~/src/mailproof; update with git (git pull in that folder)' });
   assert.deepEqual(updateFacts({ installInfo: () => ({ dev: false, dir: '/usr/lib/node_modules/mailproof' }) }, env),
     { install: { kind: 'npm', path: '/usr/lib/node_modules/mailproof' }, updateCommand: 'npm install -g mailproof@latest' });
 });
 
 // ---- 3. install facts ----
 
-test('installFacts: one detection (installInfo) for update and status; the path is tilded; kind dev-link or npm', () => {
+test('installFacts: one detection (installInfo) for update and status; the path is absolute (data); kind dev-link or npm', () => {
   const env = { HOME: '/home/ana' };
-  assert.deepEqual(installFacts({ installInfo: () => ({ dev: true, dir: '/home/ana/src/mailproof' }) }, env), { kind: 'dev-link', path: '~/src/mailproof' });
+  assert.deepEqual(installFacts({ installInfo: () => ({ dev: true, dir: '/home/ana/src/mailproof' }) }, env), { kind: 'dev-link', path: '/home/ana/src/mailproof' });
   assert.deepEqual(installFacts({ installInfo: () => ({ dev: false, dir: '/usr/lib/node_modules/mailproof' }) }, env), { kind: 'npm', path: '/usr/lib/node_modules/mailproof' });
   const real = installInfo();
   assert.equal(real.dev, true, 'this checkout is a development link');

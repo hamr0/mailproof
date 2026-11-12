@@ -383,3 +383,16 @@ test('round trip on real fixture mail: export, verify-bundle OK, then a prune of
   assert.equal(v.expect.match, true);
   void hidden;
 });
+
+test('RFC 2047 subject: the dry-run selection and the README show the decoded text, as list does; verify-bundle carries it decoded too', async () => {
+  const w = bundleWorld();
+  const enc = '[addypin] weekly stats =?utf-8?Q?=E2=80=94?= 2026-W45';
+  const a = await w.rec({ who: BOB, tag: 'a', subject: enc });
+  const dry = await w.mp.export({ with: [BOB], out: outDir(), dryRun: true });
+  assert.equal(dry.selection[0].subject, '[addypin] weekly stats — 2026-W45');
+  assert.equal((await w.mp.list({ with: BOB }))[0].subject, dry.selection[0].subject, 'the same text list returns');
+  const real = await w.mp.export({ with: [BOB], out: outDir() });
+  assert.ok(fs.readFileSync(path.join(real.out, 'README.txt'), 'utf8').includes('weekly stats — 2026-W45'));
+  const v = await verifyBundle(real.out, { ots: null });
+  assert.equal(v.records.find((x) => x.id === a.id).subject, '[addypin] weekly stats — 2026-W45');
+});

@@ -18,7 +18,7 @@ export function installInfo() {
 }
 
 /**
- * The install facts as data: `kind` is `dev-link` (update with git) or `npm` (update with the npm command), `path` the package folder with the home shown as `~/`.
+ * The install facts as data: `kind` is `dev-link` (update with git) or `npm` (update with the npm command), `path` the package folder, absolute (data; only prose shows `~/`).
  * `deps.installInfo` replaces the detection (tests).
  * @param {{ installInfo?: () => { dev: boolean, dir: string } }} deps
  * @param {Record<string, string | undefined>} env
@@ -26,7 +26,7 @@ export function installInfo() {
  */
 export function installFacts(deps, env) {
   const info = deps.installInfo ? deps.installInfo() : installInfo();
-  return { kind: info.dev ? 'dev-link' : 'npm', path: tilde(info.dir, env) };
+  return { kind: info.dev ? 'dev-link' : 'npm', path: info.dir };
 }
 
 /**
@@ -45,5 +45,5 @@ export const devLinkText = (shownDir) => `development link to ${shownDir}; updat
  */
 export function updateFacts(deps, env) {
   const install = installFacts(deps, env);
-  return install.kind === 'dev-link' ? { install, update: devLinkText(install.path) } : { install, updateCommand: UPDATE_COMMAND };
+  return install.kind === 'dev-link' ? { install, update: devLinkText(tilde(install.path, env)) } : { install, updateCommand: UPDATE_COMMAND };
 }
