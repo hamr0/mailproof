@@ -112,6 +112,16 @@ export async function nextSealDue(s) {
 }
 
 /**
+ * The next seal time for a `show`, only when one of these records still waits for a seal (otherwise null, and no lookup).
+ * @param {Array<{ seal: { state: string } | null }>} facts
+ * @param {import('./session.js').Session} s
+ * @returns {Promise<string | null>}
+ */
+export async function dueFor(facts, s) {
+  return facts.some((f) => f.seal && (f.seal.state === 'unsealed' || f.seal.state === 'not-stamped')) ? nextSealDue(s) : null;
+}
+
+/**
  * The text of a stamp result, in plain words (SPEC B11.5).
  * @param {import('../proof/stamp.js').StampResult} r
  * @param {import('./style.js').Style} [st]

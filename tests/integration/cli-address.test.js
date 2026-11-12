@@ -143,6 +143,15 @@ test('C12/C14/C15: the short coverage tags; dkim/dmarc/spf/arc in every block; t
   assert.ok(JSON.parse((await w.run(['show', tabbed.id, '--json', '--full'])).stdout).facts.body.text.includes('\t'), '--json keeps the tab');
 });
 
+test('spf: N/A says why for a mailbox (IMAP) copy; a real result stays; a non-mailbox record keeps the plain N/A', async () => {
+  const imap = (await T.mp.record(Buffer.from('From: Ivy <ivy@imap.example>\r\nTo: me@owner.example\r\nMessage-ID: <i1@imap.example>\r\nSubject: from a mailbox\r\n\r\nhi\r\n'), { direction: 'in', source: 'imap:INBOX' })).record;
+  const r = await w.run(['show', imap.id]);
+  assert.match(r.stdout, /^spf +N\/A \(not checkable from a mailbox copy\)$/m);
+  assert.match((await w.run(['show', id('signed')])).stdout, /^spf +N\/A$/m);
+  const j = JSON.parse((await w.run(['show', imap.id, '--json'])).stdout);
+  assert.equal(j.facts.spf, null, '--json unchanged');
+});
+
 test('htmlToText and bodyText: scripts and styles dropped, entities decoded, never throws', () => {
   assert.equal(htmlToText('<p>a&nbsp;b &#65; &#x42; &bogus;</p><script>x<y</script><!-- c --><div>z</div>'), 'a b A B &bogus;\nz');
   assert.equal(htmlToText('<unterminated'), '<unterminated');

@@ -6,6 +6,7 @@ import { parseDate, parseLimit } from './parse.js';
 import { print, warn, printJson } from './session.js';
 import { printable as p } from './printable.js';
 import { render, accountFacts, jsonFacts } from './detail.js';
+import { dueFor } from './sync-op.js';
 import { pageLines } from './rows.js';
 import { sealText } from './seal.js';
 import { styleOf } from './style.js';
@@ -39,10 +40,10 @@ const nothing = (t) => (t.kind === 'address' ? `no email with ${p(t.value)} in t
 
 /**
  * `show` for an address or a Message-ID: one compact block per record, newest first.
- * @param {Args} a @param {Ctx} ctx @param {import('./session.js').Session['mp']} mp @param {import('./session.js').Session['account']} account @param {Target} t
+ * @param {Args} a @param {Ctx} ctx @param {import('./session.js').Session['mp']} mp @param {import('./session.js').Session['account']} account @param {Target} t @param {import('./session.js').Session} [s]  The session, for the next seal time.
  * @returns {Promise<number>}
  */
-export async function showMany(a, ctx, mp, account, t) {
+export async function showMany(a, ctx, mp, account, t, s) {
   if (a.values.raw) throw new UsageError('--raw needs one record id (an address can name many emails)');
   const f = rangeFlags(a, 50);
   const full = Boolean(a.values.full);
@@ -61,11 +62,12 @@ export async function showMany(a, ctx, mp, account, t) {
   const more = total - facts.length;
   const st = styleOf(ctx);
   const now = (ctx.deps.now ?? (() => new Date()))();
+  const nextDue = s ? await dueFor(facts, s) : null;
   print(ctx, `${total} email${total === 1 ? '' : 's'} with ${label(t)}${more ? `; showing the newest ${facts.length}, ${more} more (--limit 0 for all, or narrow with --after/--before)` : ''}`);
   facts.forEach((x, i) => {
     print(ctx, '');
     print(ctx, st.cyan(`#${i + 1} of ${facts.length}`));
-    for (const l of render(x, { compact: true, fullHashes: Boolean(a.values.full), st, now })) print(ctx, l);
+    for (const l of render(x, { compact: true, fullHashes: Boolean(a.values.full), st, now, nextDue })) print(ctx, l);
   });
   return EX_OK;
 }

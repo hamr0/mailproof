@@ -26,15 +26,17 @@ const when = (iso, now) => `${iso.slice(iso.slice(0, 4) === String(now.getUTCFul
  * @param {{ state: string, sealed_at?: string | null, block?: number | null, anchored?: boolean }} seal
  * @param {Date} [now]
  * @param {string} [dot]  The separator (the style's `sym.dot`).
+ * @param {string | null} [nextDue]  When the next seal run is due (ISO, the library's seal status), when known: a record still waiting says when (`waiting to be sealed (next 14:03Z)`); a time already past is left out.
  * @returns {string}
  */
-export function sealPhrase(seal, now = new Date(), dot = '·') {
+export function sealPhrase(seal, now = new Date(), dot = '·', nextDue = null) {
   const at = typeof seal.sealed_at === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d/.test(seal.sealed_at) ? `sealed ${when(seal.sealed_at, now)}` : 'sealed';
   const block = typeof seal.block === 'number' && seal.block > 0 ? ` (Bitcoin block ${seal.block})` : '';
+  const due = typeof nextDue === 'string' ? Date.parse(nextDue) : NaN;
+  const waiting = Number.isFinite(due) && due > now.getTime() ? `waiting to be sealed (next ${new Date(due).toISOString().slice(0, 10) === now.toISOString().slice(0, 10) ? `${new Date(due).toISOString().slice(11, 16)}Z` : when(new Date(due).toISOString(), now)})` : 'waiting to be sealed';
   switch (seal.state) {
-    case 'unsealed': return 'unsealed';
+    case 'unsealed': case 'not-stamped': case 'unstamped': return waiting;
     case 'own-stamp': return 'sealed by its own stamp';
-    case 'not-stamped': case 'unstamped': return 'waiting to be sealed';
     case 'anchored': return `${at} ${dot} anchored${block}`;
     case 'pending': return `${at} ${dot} anchor pending`;
     case 'unchecked': return `${at} ${dot} anchor not checked`;

@@ -101,7 +101,7 @@ test('sync with OTS on: the run ends with the stamp job, its result is `ots` (a 
   const st0 = JSON.parse((await w.run(['status', '--json'])).stdout).acme;
   assert.deepEqual([st0.pendingStamps, st0.seal.enabled, st0.seal.manifests, st0.seal.last], [0, true, 0, null]);
   assert.match((await w.run(['status'])).stdout, /seal +one batch every 6 h; never run/);
-  assert.match((await w.run(['show', rec.id])).stdout, /^seal +unsealed$/m);
+  assert.match((await w.run(['show', rec.id])).stdout, /^seal +waiting to be sealed$/m, 'no run yet: no next time to name');
   const first = JSON.parse((await w.run(['sync', '--json'], { deps })).stdout).ots;
   assert.deepEqual([first.ran, first.manifests.length, first.manifests[0].records, first.stamped, first.upgraded, first.pending, first.unstamped, first.unsealed], [true, 1, 1, 1, 0, 1, 0, 0]);
   const again = JSON.parse((await w.run(['sync', '--json'], { deps })).stdout).ots;
@@ -123,6 +123,9 @@ test('sync with OTS on: the run ends with the stamp job, its result is `ots` (a 
   assert.match(s2.stdout, /nothing new to seal/);
   assert.match((await w.run(['show', rec.id])).stdout, /^seal +sealed \d\d-\d\d \d\d:\d\dZ [·-] anchored \(Bitcoin block 777\)$/m);
   assert.equal(JSON.parse((await w.run(['status', '--json'])).stdout).acme.pendingStamps, 0);
+  // a record captured after that seal waits for the next run, and says when it is due
+  const later = await new Mailproof({ trailDir: dir, resolver: m.resolver, worker: { size: 0 }, otsBin: bin }).record(Buffer.from('From: z@z.example\r\nTo: me@x.example\r\nMessage-ID: <later@z.example>\r\n\r\nhi\r\n'), { direction: 'in' });
+  assert.match((await w.run(['show', later.id])).stdout, /^seal +waiting to be sealed \(next (\d\d-\d\d )?\d\d:\d\dZ\)$/m);
   // a held stamp lock is 75
   fs.writeFileSync(path.join(dir, '.default.stamp.lock'), JSON.stringify({ pid: process.pid, host: os.hostname(), started: new Date().toISOString() }));
   const locked = await w.run(['stamp']);

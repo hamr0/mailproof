@@ -8,6 +8,7 @@ import { loadProfile } from './config.js';
 import { withAccount, print, warn, printJson } from './session.js';
 import { printable as p } from './printable.js';
 import { render, accountFacts, jsonFacts } from './detail.js';
+import { dueFor } from './sync-op.js';
 import { styleOf } from './style.js';
 import { classifyTarget, otherParty, minute } from './target.js';
 import { showMany, verifyMany, peopleRun } from './by-person.js';
@@ -76,8 +77,9 @@ export async function listCmd(a, ctx) {
 export async function showCmd(a, ctx) {
   if (a.values.raw && a.values.json) throw new UsageError('--raw prints bytes: it cannot be combined with --json');
   const t = classifyTarget(a.positionals[0]);
-  return withAccount(a, ctx, async ({ mp, account }) => {
-    if (t.kind !== 'id') return showMany(a, ctx, mp, account, t);
+  return withAccount(a, ctx, async (s) => {
+    const { mp, account } = s;
+    if (t.kind !== 'id') return showMany(a, ctx, mp, account, t, s);
     const id = await resolveId(t.value, mp.root);
     if (a.values.raw) {
       const raw = await mp.rawEmail(id);
@@ -93,7 +95,7 @@ export async function showCmd(a, ctx) {
       printJson(ctx, { record, proof, links, seal: f.seal, facts: jsonFacts(f, Boolean(a.values.full)) });
       return EX_OK;
     }
-    for (const l of render(f, { fullHashes: Boolean(a.values.full), st: styleOf(ctx), now: (ctx.deps.now ?? (() => new Date()))() })) print(ctx, l);
+    for (const l of render(f, { fullHashes: Boolean(a.values.full), st: styleOf(ctx), now: (ctx.deps.now ?? (() => new Date()))(), nextDue: await dueFor([f], s) })) print(ctx, l);
     return EX_OK;
   });
 }

@@ -52,7 +52,7 @@ export function whyText(st, why) {
  * The labelled lines of one record, grouped under section headers (Message, People, Proof, Content, Seal). Every string from the record
  * goes through printable() BEFORE any style is applied.
  * @param {Facts} f
- * @param {{ compact?: boolean, fullHashes?: boolean, st?: import('./style.js').Style, now?: Date }} [o]  `compact`: the block of a multi-record view (the long-tail facts are left out; the body is as long as the facts carry it, the library cuts it to 10 lines unless asked for `full`); `fullHashes`: do not shorten hashes to 12 characters; `st`: the style (default none); `now`: for the relative times.
+ * @param {{ compact?: boolean, fullHashes?: boolean, st?: import('./style.js').Style, now?: Date, nextDue?: string | null }} [o]  `compact`: the block of a multi-record view (the long-tail facts are left out; the body is as long as the facts carry it, the library cuts it to 10 lines unless asked for `full`); `fullHashes`: do not shorten hashes to 12 characters; `st`: the style (default none); `now`: for the relative times; `nextDue`: when the next seal run is due (the seal phrase of a waiting record says when).
  * @returns {string[]}
  */
 export function render(f, o = {}) {
@@ -111,7 +111,7 @@ export function render(f, o = {}) {
   {   // the same lines in every block (show <address> too): one definition
     row('dkim', f.dkim.length ? f.dkim.map((s) => `d=${p(s.d ?? NA)} s=${p(s.s ?? NA)} a=${p(s.a ?? NA)} result=${s.result === 'pass' ? st.green('pass') : p(s.result ?? NA)} aligned=${s.aligned === null ? NA : s.aligned ? 'yes' : 'no'} re-check=${p(s.recheck === null ? NA : s.recheck.ok ? 'ok' : `fails: ${s.recheck.why}`)} body=${p(s.body ?? NA)} key archived=${s.key_archived ? 'yes' : 'no'}`) : `${st.dim(NA)} (no DKIM signature)`);
     row('dmarc', f.dmarc ? `${p(f.dmarc.result ?? NA)}, policy ${p(f.dmarc.policy ?? NA)}, published ${f.dmarc.published ? 'yes' : 'no'}` : st.dim(NA));
-    row('spf', f.spf ? p(f.spf.result) : st.dim(NA));
+    row('spf', f.spf ? p(f.spf.result) : f.source?.startsWith('imap') ? st.dim(`${NA} (not checkable from a mailbox copy)`) : st.dim(NA));
     row('arc', f.arc ? `${p(f.arc.result)}${f.arc.sealers.length ? `, sealers ${f.arc.sealers.map((x) => p(x)).join(', ')}` : ''}` : st.dim(NA));
   }
 
@@ -129,7 +129,7 @@ export function render(f, o = {}) {
   if (!c) row('content', f.content.raw_stored ? `raw email stored (${f.content.raw_sha256 ? hash(f.content.raw_sha256) : NA})` : val(`${NA} (raw email not stored: ${goneText(f.content.gone, now)})`));
 
   section('Seal');
-  row('seal', f.seal === null ? val(`${NA} (sealing is off for this account)`) : sealPhrase(f.seal, now, st.sym.dot));
+  row('seal', f.seal === null ? val(`${NA} (sealing is off for this account)`) : sealPhrase(f.seal, now, st.sym.dot, o.nextDue ?? null));
   return out;
 }
 
