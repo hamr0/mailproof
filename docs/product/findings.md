@@ -556,13 +556,13 @@ POC script: [`poc/m0-header-recheck.js`](../../poc/m0-header-recheck.js) (throwa
 
 - **Question.** Does the built CLI work end to end on the owner's real Gmail account (app password), as a new user would run it?
 - **Evidence.** First `sync`: 5 records (INBOX 4, Sent 1) in about 31 s wall, about 164 MB max RSS, one batch manifest stamped (pending). Second `sync`: nothing new, seal "not due". The Gmail INBOX and Sent folders hold few messages while their UIDs are high (6132 and 2064): archived mail lives in `[Gmail]/All Mail`, which must be added to `folders` to capture history (not yet run).
-- **Bugs found, each with a red test first** (fixes on this branch):
-  1. `~` was not expanded for `passFile`: sync failed ENOENT (exit 64) while `config validate` passed because it reads no secret. Now `~/` is expanded in every path field.
-  2. `list` printed raw RFC 2047 subjects. Now decoded.
-  3. `show` called headers "signed" when only a failing signature covered them. Now "signed" only when a passing signature covers the header.
-  4. `show <id>` used as a flag gave "Unknown option". Now a hint.
-  5. `list` had no sender or subject columns. Added.
-  6. Found, fix in progress on this branch (the commit history will confirm): MCP `list` was thin, `counterparties` lacked verified counts, and the `sync` result duplicated `ots`.
+- **Bugs found, each with a red test first** (fixes on this branch; status checked 2026-11-12 against the code and the pinning test):
+  1. `~` was not expanded for `passFile`: sync failed ENOENT (exit 64) while `config validate` passed because it reads no secret. Now `~/` is expanded in every path field. **Fixed**, commit `3feb8b0`; pinned by `tests/unit/cli-config.test.js` ("~ in passFile is expanded against HOME").
+  2. `list` printed raw RFC 2047 subjects. Now decoded. **Fixed**, commit `9123e48`; pinned by `tests/integration/cli-address.test.js` ("RFC 2047 subjects (B and Q, utf-8, an em dash) are decoded in list, show <id>, show <address>").
+  3. `show` called headers "signed" when only a failing signature covered them. Now "signed" only when a passing signature covers the header (`signed, failing` otherwise). **Fixed**, commit `9123e48`; pinned by `tests/integration/cli-address.test.js` ("a header covered only by a signature that does not verify is not shown as signed") and `tests/integration/list-rows.test.js` ("coverage failing").
+  4. `show <id>` used as a flag gave "Unknown option". Now a hint. **Fixed**; pinned by `tests/integration/cli-address.test.js` ("id hints: a flag-looking or too-short id says ids are positional").
+  5. `list` had no sender or subject columns. Added. **Fixed**, commits `b18fb51` and `7432608`; pinned by `tests/integration/list-rows.test.js` ("list rows: from, to, subject (signed) and every address").
+  6. MCP `list` was thin and `counterparties` lacked verified counts. **Fixed**, commit `7432608`: the MCP `list` returns the library rows (from, to, subject, addresses with coverage; `tests/integration/list-rows.test.js`, `tests/integration/mcp.test.js` list calls) and `counterparties` rows carry `verified` (`tests/integration/counterparty.test.js` and `tests/integration/list-rows.test.js`, "counterparties rows carry verified"). The `sync` result's `ots` is **not a bug**: it is a deliberate, documented deprecated alias of `result.stamp` (kept since 3.3.0; see `src/cli/sync-op.js`), so nothing was changed there.
 - **Tests on this branch** (Node 22.22; the Node 22.19 run is pending before the release PR): 799 before M4, 829 after the stamp job, 869 after `export` and `verify-bundle`, 885 then 888 after the address-first CLI.
 - **Affects:** SPEC B11.5a, [setup-guide.md](setup-guide.md), decisions-log "Address-first CLI".
 
@@ -578,7 +578,7 @@ Public DNS facts about the owner's own services, seen in the real walkthrough (F
 ## F36 — M3 MCP: a walkthrough in Claude Code on a real trail (2026-11-11)
 
 - **Evidence.** `list`, `verify`, `get`, `counterparties`, `proofParts`, `verifyRecord`, the `forget` preview and `sync` all worked. `forget` refused without `confirm` and returned an exact preview. `verifyRecord` needed the whole record JSON passed through the conversation, so its description now points trail records to `verify`. Several answers needed two or three calls because `list` lacked sender and subject.
-- **Result.** The tool surface works; `list` and `counterparties` were thin (see F34 item 6).
+- **Result.** The tool surface works; `list` and `counterparties` were thin (F34 item 6, **fixed** in `7432608`; the `verifyRecord` description is generated from its `@mcp` block, guarded by `check:mcp-tools`).
 - **Affects:** SPEC B12, F30.
 
 ## F37 — Microsoft consumer IMAP: basic auth is gone (2026-11-11; desk research, not run)
@@ -586,3 +586,16 @@ Public DNS facts about the owner's own services, seen in the real walkthrough (F
 - **Evidence.** Basic authentication and app passwords for consumer Outlook/Hotmail IMAP are removed. Microsoft's official page gives no date; third-party sources say 2024-09-16; Microsoft Q&A reports failures from about 2024-10-01. XOAUTH2 (OAuth2) is required; reports of the needed scope disagree. Sources are listed in the setup guide.
 - **Result.** An `accessTokenCommand` is required. **Untested with mailproof.** A local OAuth proxy route is unsupported (the CLI has no CA option).
 - **Affects:** [setup-guide.md](setup-guide.md).
+
+## F38 — M4/M3 CLI and MCP: the 2026-11-12 menu walkthrough (2026-11-12)
+
+- **Question.** Does the interactive menu read well and work end to end on a real account, screen by screen, as a new owner would use it?
+- **Evidence.** The owner walked every menu screen and returned 46 findings. They were built in three parts, followed by two tidy passes and the MCP/CLI parity close-out (profiles by name, `status({ refresh })`, install facts, MCP folders defaulting to the CLI's `~/mailproof/*`). Real bugs found, each fixed with a red test first:
+  1. Ctrl-C at a prompt quit the whole menu; it now backs out to the menu.
+  2. `verify-bundle` did not expand `~` and refused the `.tar` that `export` writes; it expands `~/` and recognises a tar by its `ustar` header.
+  3. `export` and `backup` offered a different timestamped name than the one they wrote; the offered and written name are now one definition.
+  4. `update` replaced the npm development link with a registry install; a development link is now updated with git and never offered npm (later also in `status`, which no longer returns `updateCommand` on a link).
+  5. `export --tar` with an extensionless `--out` wrote a tar that `verify-bundle` refused; the export now writes `<out>.tar`.
+- **Not a bug.** Mail the owner sent to themselves and recorded from INBOX is correctly direction `in`: the received copy is the one that carries DKIM proof, and the Sent-folder copy of the same message is a duplicate (an unsigned `out` copy).
+- **Result.** Text output is in plain words; suite counts and fixes are in the CHANGELOG [Unreleased]. No real addresses or mail content are kept here.
+- **Affects:** SPEC B11.4c, B12, [setup-guide.md](setup-guide.md), F34, F36.
