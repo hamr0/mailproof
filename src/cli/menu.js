@@ -6,7 +6,6 @@ import { UsageError, EX_USAGE } from './errors.js';
 import { createPrompter, askValue, confirm, Cancel, isTerminal } from './prompt.js';
 import { parseDate, parseAddress, parseDuration, parseSent, parseFolders, parseChoice, MIN_INTERVAL_MS, FULL_ID_RE, messageIdOf } from './parse.js';
 import { loadCtxConfig, print, warn } from './session.js';
-import { summaryOf } from './help.js';
 import { defaultBundlePath, PUSH_WARNING, redactUrl } from './backup.js';
 import { version } from './misc.js';
 import { defaultBundleOut } from './bundle.js';
@@ -15,17 +14,20 @@ import { classifyTarget } from './target.js';
 import { styleOf } from './style.js';
 import { makePager } from './pager.js';
 import { headerFacts } from './status.js';
-import { mainHeader, mainActionLine, firstRun, MAIN_ITEMS, MORE_ITEMS } from './menu-header.js';
+import { mainHeader, fullMenu, shortLine, firstRun, MENU_ITEMS, MENU_ALIASES } from './menu-header.js';
 import { checkFileCmd } from './check-file.js';
 import { configPath } from './config.js';
 
 /** @typedef {import('./session.js').Ctx} Ctx */
 
-/** Every command the menu can run, by number (the action line shows 1-7, `?` lists 8-17) and by name. */
+/** Every command the menu can run, by number (1-19) and by name (its label, its command, an alias). */
 /** @type {Map<string, string>} */
-const BY_KEY = new Map([...MAIN_ITEMS.map(([k, cmd]) => /** @type {[string, string]} */ ([k, cmd])), ...MORE_ITEMS.map(([k, cmd]) => /** @type {[string, string]} */ ([k, cmd]))]);
+const BY_KEY = new Map(MENU_ITEMS.map((i) => [i.key, i.cmd]));
 /** @type {Map<string, string>} */
-const BY_NAME = new Map([...[...BY_KEY.values()].map((c) => /** @type {[string, string]} */ ([c, c])), ['seal', 'stamp']]);
+const BY_NAME = new Map([...MENU_ITEMS.flatMap((i) => [[i.label, i.cmd], [i.cmd, i.cmd]]), ...MENU_ALIASES].map(([n, c]) => /** @type {[string, string]} */ ([n, c])));
+
+/** The command a menu answer selects: a number 1-19, a label, a command name or an alias; undefined when it is none of them. @param {string} c @returns {string | undefined} */
+export const menuCommand = (c) => BY_KEY.get(c) ?? BY_NAME.get(c);
 
 /** @param {string} s @returns {string} */
 const idArg = (s) => {
@@ -66,6 +68,10 @@ export async function runMenu(ctx, exec, opts = {}) {
   const tilde = (f) => { const h = ctx.env.HOME; return h && f.startsWith(`${h}/`) ? `~${f.slice(h.length)}` : f; };
   /** After an action: on a terminal show its output (paged when long); on a pipe ask for Enter. @returns {Promise<boolean>} False when the input ended. */
   const afterAction = async () => (pager ? pager.show() : (await p.ask('Press Enter ')) !== null);
+  /** Check a saved .eml: the same path as the first-run screen, nothing is recorded. */
+  const checkEml = async () => { await checkFileCmd(await ask({ label: 'Path of the .eml file', example: 'e.g. {~/Downloads/mail.eml}' }), base).catch((e) => { warn(base, `mailproof: ${/** @type {Error} */ (e).message}`); }); };
+  /** Verify a bundle: the `verify-bundle` subcommand, which needs no account. */
+  const verifyBundleCmd = async () => { await exec([...pre, 'verify-bundle', await ask({ label: 'Bundle directory', example: 'the directory mailproof export wrote' })], base); };
   /**
    * The screen when there is no config: set up an account, check a saved .eml, verify a bundle.
    * @returns {Promise<import('./config.js').Config | number>}  The config once an account exists, or the menu's exit code.
@@ -84,9 +90,9 @@ export async function runMenu(ctx, exec, opts = {}) {
           await exec([...pre, 'config', 'add-account'], base);
           try { return (await loadCtxConfig(cfgArgs, ctx)).config; } catch { continue; }
         } else if (c === '2') {
-          await checkFileCmd(await ask({ label: 'Path of the .eml file', example: 'e.g. {~/Downloads/mail.eml}' }), base).catch((e) => { warn(base, `mailproof: ${/** @type {Error} */ (e).message}`); });
+          await checkEml();
         } else if (c === '3') {
-          await exec([...pre, 'verify-bundle', await ask({ label: 'Bundle directory', example: 'the directory mailproof export wrote' })], base);
+          await verifyBundleCmd();
         } else if (c === '?' || c === 'h') await exec([...pre, 'help'], base);
         else out(`not a menu item: ${c}`);
       } catch (e) {
@@ -243,27 +249,31 @@ export async function runMenu(ctx, exec, opts = {}) {
         await exportFor(await ask({ label: 'With', example: 'exact addresses, comma separated, e.g. {bob@example.org,bob@work.example}', validate: (s) => { s.split(',').map((x) => parseAddress(x.trim(), 'With')); return s; } }));
       },
       stamp: async () => { await go(['stamp']); },
+      'check-file': checkEml,
+      'verify-bundle': verifyBundleCmd,
       mcp: async () => { await go(['mcp']); },
     };
 
-    // what the next turn prints above the `>`: the whole header; on a terminal after an action only the action line, or, when the action
-    // changed state, the two header lines and the action line; nothing after `?` (its list stays the last thing shown)
-    /** @type {'full' | 'refresh' | 'compact' | 'none'} */
+    // what the next turn prints above the `>`: the header and the full menu at the start; after an action the short line (on a
+    // terminal, with the two header lines first when the action changed state; on a pipe the whole header); nothing after `?`
+    // (its list stays the last thing shown)
+    /** @type {'full' | 'header' | 'refresh' | 'compact' | 'none'} */
     let mode = 'full';
     const LIVE = new Set(['watch', 'sync', 'update', 'mcp']);   // long-running: output streams, it is not held back
     const CHANGES_STATE = new Set(['sync', 'stamp', 'update', 'forget', 'prune', 'config']);
-    /** @param {boolean} changed @returns {'full' | 'refresh' | 'compact'} */
-    const nextMode = (changed) => (!pager ? 'full' : changed ? 'refresh' : 'compact');
+    /** @param {boolean} changed @returns {'header' | 'refresh' | 'compact'} */
+    const nextMode = (changed) => (!pager ? 'header' : changed ? 'refresh' : 'compact');
     for (;;) {
-      if (mode === 'compact') out(mainActionLine(st, names.length > 1));
+      if (mode === 'compact') out(shortLine(st, names.length > 1));
       else if (mode !== 'none') {
-        if (mode === 'full') out('');
+        if (mode === 'full' || mode === 'header') out('');
         /** @type {Awaited<ReturnType<typeof headerFacts>> | null} */
         let f = null;
         try { f = await headerFacts(config.accounts[account], ctx); } catch { /* a broken trail still gets a menu */ }
         const h = { version: version(), user: config.accounts[account].user, account, trailOk: false, lastSync: null, records: null, seal: { state: /** @type {const} */ ('off'), nextDue: null }, watch: false, ...f, manyAccounts: names.length > 1 };
         const lines = mainHeader(st, h, now());
-        for (const l of mode === 'full' ? lines : [lines[1], lines[2], lines[4]]) out(l);
+        for (const l of mode === 'refresh' ? [lines[1], lines[2]] : lines) out(l);
+        if (mode === 'full') for (const l of fullMenu(st, names.length > 1)) out(l); else out(shortLine(st, names.length > 1));
       }
       mode = 'full';
       const choice = await p.ask('> ');
@@ -277,14 +287,13 @@ export async function runMenu(ctx, exec, opts = {}) {
         continue;
       }
       if (c === '?') {
-        for (const [k, cmd] of MORE_ITEMS) out(`${' '.repeat(Math.max(0, 3 - k.length))}${st.key(k)} ${cmd.padEnd(8)} ${st.dim(summaryOf(cmd))}`);
-        out(`${st.dim('type a number or a name,')} ${st.key('h')} ${st.dim('for the full help')}`);
+        for (const l of fullMenu(st, names.length > 1)) out(l);
         if (pager && !(await pager.show())) return 0;
         mode = 'none';
         continue;
       }
       if ((c === 'a' || c === 'b') && names.length > 1) { account = await pickAccount(); mode = nextMode(true); if (pager && !(await pager.show())) return 0; continue; }
-      const cmd = BY_KEY.get(c) ?? BY_NAME.get(c);
+      const cmd = menuCommand(c);
       if (!cmd) { out(`not a menu item: ${c}`); if (pager && !(await pager.show())) return 0; mode = 'none'; continue; }
       pager?.setLive(LIVE.has(cmd));
       try { await handlers[cmd](); }

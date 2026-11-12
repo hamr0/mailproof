@@ -4,11 +4,56 @@
 import { printable as p } from './printable.js';
 import { rel } from './style.js';
 
-/** The menu's numbered action line: key, command, label. */
-export const MAIN_ITEMS = /** @type {const} */ ([['1', 'sync', 'sync'], ['2', 'people', 'people'], ['3', 'show', 'show'], ['4', 'verify', 'verify'], ['5', 'export', 'export'], ['6', 'stamp', 'seal'], ['7', 'status', 'status']]);
+import { summaryOf } from './help.js';
 
-/** `?` lists these; they are chosen by number or by name. */
-export const MORE_ITEMS = /** @type {const} */ ([['8', 'watch'], ['9', 'list'], ['10', 'replies'], ['11', 'check'], ['12', 'backup'], ['13', 'forget'], ['14', 'prune'], ['15', 'config'], ['16', 'update'], ['17', 'mcp']]);
+/**
+ * The menu table, the one place that names every menu item: key, the dispatch name (a handler in menu.js), the label
+ * shown (and accepted as a name), and the help line. A help of `null` is the command's own summary from the command
+ * table (commands.js); a text here is a menu-only wording. Groups are in screen order.
+ * @type {ReadonlyArray<{ title: string, items: ReadonlyArray<{ key: string, cmd: string, label: string, help: string | null }> }>}
+ */
+export const MENU_GROUPS = [
+  { title: 'Mail', items: [
+    { key: '1', cmd: 'sync', label: 'sync', help: 'fetch new mail, record proofs' },
+    { key: '2', cmd: 'watch', label: 'watch', help: null },
+  ] },
+  { title: 'Look', items: [
+    { key: '3', cmd: 'people', label: 'people', help: 'who is in this trail' },
+    { key: '4', cmd: 'list', label: 'list', help: 'newest first; filter by person/date' },
+    { key: '5', cmd: 'show', label: 'show', help: 'an address\'s emails and their proof' },
+    { key: '6', cmd: 'replies', label: 'replies', help: 'what people answered' },
+  ] },
+  { title: 'Check', items: [
+    { key: '7', cmd: 'verify', label: 'verify', help: 're-check an address\'s emails offline' },
+    { key: '8', cmd: 'check', label: 'check', help: null },
+    { key: '9', cmd: 'check-file', label: 'check .eml', help: 'check a saved email file' },
+    { key: '10', cmd: 'verify-bundle', label: 'verify-bundle', help: null },
+  ] },
+  { title: 'Share and keep', items: [
+    { key: '11', cmd: 'export', label: 'export', help: null },
+    { key: '12', cmd: 'stamp', label: 'seal', help: null },
+    { key: '13', cmd: 'backup', label: 'backup', help: null },
+  ] },
+  { title: 'Clean up', items: [
+    { key: '14', cmd: 'forget', label: 'forget', help: 'delete stored mail content' },
+    { key: '15', cmd: 'prune', label: 'prune', help: 'drop old history from the trail' },
+  ] },
+  { title: 'Setup', items: [
+    { key: '16', cmd: 'status', label: 'status', help: null },
+    { key: '17', cmd: 'config', label: 'config', help: null },
+    { key: '18', cmd: 'update', label: 'update', help: null },
+    { key: '19', cmd: 'mcp', label: 'mcp', help: null },
+  ] },
+];
+
+/** Every menu item, flat. */
+export const MENU_ITEMS = MENU_GROUPS.flatMap((g) => g.items);
+
+/** The keys of the short line shown after an action (every item is still accepted at the prompt). */
+export const SHORT_KEYS = ['1', '3', '5', '7', '11', '16'];
+
+/** Other names a menu item answers to, beside its label and command. */
+export const MENU_ALIASES = /** @type {const} */ ([['eml', 'check-file'], ['check-eml', 'check-file'], ['checkfile', 'check-file']]);
 
 /**
  * A time for a header: `19:21Z` within a day of now, `11-09 19:21Z` otherwise.
@@ -44,7 +89,7 @@ export function actionLine(st, items) {
  */
 
 /**
- * The header of the main menu: a rule, the identity line, the counts line, a rule, the action line.
+ * The header of the main menu: a rule, the identity line, the counts line, a rule.
  * @param {import('./style.js').Style} st
  * @param {HeaderFacts} h
  * @param {Date} now
@@ -77,21 +122,41 @@ export function mainHeader(st, h, now) {
   parts.push(`seal ${sealWord}${z.state === 'off' ? '' : next}`);
   parts.push(`watch ${h.watch ? st.green('on') : st.dim('off')}`);
 
-  return [st.rule(), id, parts.join(sep), st.rule(), mainActionLine(st, h.manyAccounts)];
+  return [st.rule(), id, parts.join(sep), st.rule()];
 }
 
 /**
- * The compact action line of the main menu (`1 sync  2 people ... q quit`), keys green.
+ * The full menu: every command on its own line with its help, in groups; shown at the start and on `?`.
+ * @param {import('./style.js').Style} st
+ * @param {boolean} manyAccounts
+ * @returns {string[]}
+ */
+export function fullMenu(st, manyAccounts) {
+  const w = Math.max(...MENU_ITEMS.map((i) => i.label.length));
+  /** @type {string[]} */
+  const lines = [];
+  for (const g of MENU_GROUPS) {
+    lines.push(` ${st.bold(g.title)}`);
+    if (g.title === 'Setup') {
+      const cells = g.items.map((i) => `${st.key(i.key)} ${i.label}`);
+      if (manyAccounts) cells.push(`${st.key('a')} account`);
+      lines.push(`  ${cells.join('   ')}`);
+    } else for (const i of g.items) lines.push(`${' '.repeat(Math.max(0, 4 - i.key.length))}${st.key(i.key)} ${i.label.padEnd(w)}  ${st.dim(p(i.help ?? summaryOf(i.cmd)))}`);
+  }
+  lines.push('', `  ${st.key('q')} quit`);
+  return lines;
+}
+
+/**
+ * The short line printed after an action: a few numbers, then `? all` and `q quit`.
  * @param {import('./style.js').Style} st
  * @param {boolean} manyAccounts
  * @returns {string}
  */
-export function mainActionLine(st, manyAccounts) {
-  /** @type {Array<readonly [string, string]>} */
-  const keys = MAIN_ITEMS.map(([k, , label]) => /** @type {const} */ ([k, label]));
-  if (manyAccounts) keys.push(['a', 'account']);
-  keys.push(['?', 'more'], ['q', 'quit']);
-  return actionLine(st, keys);
+export function shortLine(st, manyAccounts) {
+  const items = SHORT_KEYS.map((k) => MENU_ITEMS.find((i) => i.key === k)).filter((i) => i !== undefined).map((i) => `${st.key(i.key)} ${i.label}`);
+  const tail = [...(manyAccounts ? [`${st.key('a')} account`] : []), `${st.key('?')} all`, `${st.key('q')} quit`];
+  return `  ${items.join('  ')}  ${st.sym.dot} ${tail.join(` ${st.sym.dot} `)}`;
 }
 
 /**

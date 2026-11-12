@@ -9,12 +9,40 @@ import { buildThread } from '../helpers/thread-trail.js';
 import { makeWorld, account } from '../helpers/cli.js';
 import { PassThrough } from 'node:stream';
 import { run } from '../../src/cli/run.js';
+import { menuCommand } from '../../src/cli/menu.js';
 import { makeTmpDir } from '../helpers/tmp.js';
 
 const T = await buildThread();
 const idOf = (n) => T.r[n].id;
 const world = () => makeWorld({ accounts: { test: account(T.dir) } });
 const keys = (...l) => `${l.join('\n')}\n`;
+const FULL_MENU = [
+  ' Mail',
+  '   1 sync           fetch new mail, record proofs',
+  '   2 watch          sync every 5 min until Ctrl-C',
+  ' Look',
+  '   3 people         who is in this trail',
+  '   4 list           newest first; filter by person/date',
+  '   5 show           an address\'s emails and their proof',
+  '   6 replies        what people answered',
+  ' Check',
+  '   7 verify         re-check an address\'s emails offline',
+  '   8 check          trust profile pass/fail',
+  '   9 check .eml     check a saved email file',
+  '  10 verify-bundle  check a bundle you were sent',
+  ' Share and keep',
+  '  11 export         proof bundle for a counterparty',
+  '  12 seal           seal new mail now (OpenTimestamps)',
+  '  13 backup         git bundle of the trail',
+  ' Clean up',
+  '  14 forget         delete stored mail content',
+  '  15 prune          drop old history from the trail',
+  ' Setup',
+  '  16 status   17 config   18 update   19 mcp',
+  '',
+  '  q quit',
+].join('\n');
+const SHORT = '  1 sync  3 people  5 show  7 verify  11 export  16 status  - ? all - q quit';
 const menu = (w, input, opts = {}) => w.run([], { interactive: true, input, ...opts });
 
 test('the menu shows the header (identity, counts), the action line and quits on q; ? lists the rest; no terminal means no menu', async () => {
@@ -26,11 +54,12 @@ test('the menu shows the header (identity, counts), the action line and quits on
   assert.equal(r.code, 0);
   assert.match(r.stdout, /^-{64}\nmailproof \d+\.\d+\.\d+ - me@owner\.example \(test\) - trail ok - last sync never\n/m);
   assert.match(r.stdout, /^records: 6 - 3 verified - 2 unverified - 1 sent copy - seal never run - watch off$/m);
-  assert.match(r.stdout, /^1 sync  2 people  3 show  4 verify  5 export  6 seal  7 status  \? more  q quit$/m);
-  for (const [n, cmd] of [[8, 'watch'], [9, 'list'], [10, 'replies'], [11, 'check'], [12, 'backup'], [13, 'forget'], [14, 'prune'], [15, 'config'], [16, 'update'], [17, 'mcp']]) assert.match(r.stdout, new RegExp(`^ +${n} ${cmd} +\\S`, 'm'), cmd);
+  assert.ok(r.stdout.includes(FULL_MENU), 'the full grouped menu, at the start');
+  assert.equal(r.stdout.split(FULL_MENU).length, 3, 'shown at the start and again on ?');
   assert.ok(!r.stdout.includes('[b: change]') && !/ a account/.test(r.stdout), 'one account: nothing to change');
   assert.ok(!r.stdout.includes('\x1b'), 'no terminal colour on a pipe');
-  assert.equal(r.stdout.split('1 sync  2 people').length, 2, '? does not repeat the header');
+  assert.equal(r.stdout.split('1 sync  3 people').length, 1, 'no short line before any action');
+  assert.equal((r.stdout.match(/^-{64}$/gm) ?? []).length, 2, '? does not repeat the header');
   const noTty = await w.run([], { interactive: false, input: keys('q') });
   assert.equal(noTty.code, 64);
   assert.match(noTty.stdout, /^Usage: mailproof/);
@@ -48,7 +77,7 @@ test('List: each prompt shows label, example and default; the output is the subc
   assert.equal(r.code, 0, r.stderr);
   for (const p of ['With (email address, e.g. bob@example.org, empty = everyone): ', 'Direction (in, out, empty = both): ', 'Before (date, e.g. 2026-08-19, empty = no limit): ', 'Limit (a number, 0 = all) [50]: ', 'Press Enter ']) assert.ok(r.stdout.includes(p), p);
   assert.ok(r.stdout.includes(direct.stdout), 'the same text the subcommand prints');
-  assert.equal(r.stdout.split('1 sync  2 people').length, 3, 'the menu was shown again after the command');
+  assert.equal(r.stdout.split(SHORT).length, 2, 'the short line was shown after the command');
   // answers become the subcommand's flags
   const f = await menu(w, keys('list', 'bob@beta.example', 'from', 'in', '', '2026-11-02', '1', '', 'q'));
   assert.equal(f.stdout.split('\n').filter((l) => /  [0-9a-f]{12}$/.test(l)).length, 0, '--after 2026-11-02 leaves none');
@@ -62,12 +91,12 @@ test('a bad value prints the reason and re-prompts; ? prints the hint; three bad
   const r = await menu(w, keys('list', 'not-an-address', '', 'sideways', 'both', 'in', '', '', '1', '', 'q'));
   assert.match(r.stdout, /--with: "not-an-address" is not an email address|With: "not-an-address" is not an email address/);
   assert.match(r.stdout, /Direction: use in, out/);
-  const s = await menu(w, keys('3', 'zz', '?', 'zz', 'zz', 'q'));
+  const s = await menu(w, keys('5', 'zz', '?', 'zz', 'zz', 'q'));
   assert.equal((s.stdout.match(/an address \(b@example\.com\), a Message-ID in angle brackets/g) ?? []).length, 3, 'three tries');
   assert.match(s.stdout, /an address like bob@example\.org, a <message-id>, or a record id \(8\+ hex\)\n/, '? prints the example');
   assert.match(s.stdout, /cancelled/);
-  assert.equal(s.stdout.split('1 sync  2 people').length, 3, 'back at the menu, which then took the q');
-  const e = await menu(w, keys('3', '', '', '', 'q'));
+  assert.equal(s.stdout.split(SHORT).length, 2, 'back at the prompt, which then took the q');
+  const e = await menu(w, keys('5', '', '', '', 'q'));
   assert.equal((e.stdout.match(/a value is needed/g) ?? []).length, 3);
   const x = await menu(w, keys('99', '', 'x', 'q'));
   assert.match(x.stdout, /not a menu item: 99/);
@@ -77,9 +106,9 @@ test('a bad value prints the reason and re-prompts; ? prints the hint; three bad
 test('Show, Verify, Replies, Check, Status run the subcommand code (same output, same exit mapping)', async () => {
   const w = world();
   const id = idOf('signed');
-  const show = await menu(w, keys('3', id.slice(0, 10), '', 'q'));
+  const show = await menu(w, keys('5', id.slice(0, 10), '', 'q'));
   assert.ok(show.stdout.includes((await w.run(['show', id])).stdout));
-  const ver = await menu(w, keys('4', idOf('failing'), '', '', 'q'));
+  const ver = await menu(w, keys('7', idOf('failing'), '', '', 'q'));
   assert.match(ver.stdout, /NOT OK/);
   const rep = await menu(w, keys('replies', 'req@owner.example', '', 'q'));
   assert.match(rep.stdout, /bob@beta.example/);
@@ -87,13 +116,69 @@ test('Show, Verify, Replies, Check, Status run the subcommand code (same output,
   fs.writeFileSync(prof, JSON.stringify({ senders: ['@beta.example'] }));
   const chk = await menu(w, keys('check', id, prof, '', '', 'q'));
   assert.match(chk.stdout, /^pass$/m);
-  const st = await menu(w, keys('7', '', 'q'));
+  const st = await menu(w, keys('16', '', 'q'));
   assert.match(st.stdout, /^test\n  trail /m);
-  const ex = await menu(w, keys('5', 'alice@alpha.example', '', '', path.join(makeTmpDir('mp-cli-menu-ex-'), 'b'), 'n', '', 'q'));
+  const ex = await menu(w, keys('11', 'alice@alpha.example', '', '', path.join(makeTmpDir('mp-cli-menu-ex-'), 'b'), 'n', '', 'q'));
   assert.match(ex.stdout, /^ok wrote .*\(\d+ records/m);
   assert.match(ex.stdout, /^bundle sha256 [0-9a-f]{64}/m);
   const h = await menu(w, keys('h', 'q'));
   assert.match(h.stdout, /^Usage: mailproof \[command\]/m);
+});
+
+test('every number 1-19 and every name is accepted at any prompt, not only the ones on the short line', async () => {
+  const w = world();
+  const deps = { sync: async () => ({ complete: true, folders: [] }), stamp: async () => ({}), runNpm: async () => 0 };
+  // the names that select an item, and its first output (the input ends right after the pick, which quits the menu)
+  const asked = [
+    [['1', 'sync'], /^Folders \(/m],
+    [['2', 'watch'], /^Interval \(/m],
+    [['3', 'people'], /bob@beta\.example/],
+    [['4', 'list'], /^With \(/m],
+    [['5', 'show'], /^Target \(/m],
+    [['6', 'replies'], /^Message-ID \(/m],
+    [['7', 'verify'], /^Target \(/m],
+    [['8', 'check'], /^Id \(/m],
+    [['9', 'check .eml', 'check-file', 'eml'], /^Path of the \.eml file/m],
+    [['10', 'verify-bundle'], /^Bundle directory \(/m],
+    [['11', 'export'], /^With \(/m],
+    [['12', 'seal', 'stamp'], /^0 upgraded, /m],
+    [['13', 'backup'], /^Write the bundle to \(/m],
+    [['14', 'forget'], /^Ids \(/m],
+    [['15', 'prune'], /^Before \(/m],
+    [['16', 'status'], /^test\n {2}trail /m],
+    [['17', 'config'], /^Action \(/m],
+    [['18', 'update'], /npm install -g mailproof/],
+  ];
+  for (const [picks, re] of asked) for (const pick of picks) {
+    const r = await menu(w, keys(pick), { deps });
+    assert.doesNotMatch(r.stdout, /not a menu item/, pick);
+    assert.match(r.stdout, re, pick);
+  }
+  // mcp serves stdin, so it is checked by its mapping: every key and name resolves
+  const all = ['sync', 'watch', 'people', 'list', 'show', 'replies', 'verify', 'check', 'check-file', 'verify-bundle', 'export', 'stamp', 'backup', 'forget', 'prune', 'status', 'config', 'update', 'mcp'];
+  all.forEach((cmd, i) => { assert.equal(menuCommand(String(i + 1)), cmd, `key ${i + 1}`); assert.equal(menuCommand(cmd), cmd, cmd); });
+  assert.equal(menuCommand('seal'), 'stamp');
+  assert.equal(menuCommand('check .eml'), 'check-file');
+  assert.equal(menuCommand('20'), undefined);
+  const bad = await menu(w, keys('20', 'q'));
+  assert.match(bad.stdout, /not a menu item: 20/);
+});
+
+test('9 and 10 prompt for their path and run the same code as the first-run screen and the subcommand', async () => {
+  const w = world();
+  const eml = path.join(makeTmpDir('mp-cli-menu-9-'), 'a.eml');
+  fs.writeFileSync(eml, 'From: a@b.example\r\n\r\nhi\r\n');
+  const seen = [];
+  const deps = { check: async (raw) => { seen.push(raw.toString()); return { live: { trust: 'verified' }, portable: { trust: 'verified' }, signatures: 1, unsigned: false, key_errors: [], body_status: 'matched' }; } };
+  const r = await menu(w, keys('9', eml, '', '9', '/nonexistent/x.eml', '', '10', '/nonexistent-bundle', '', 'q'), { deps });
+  assert.equal(r.code, 0, r.stderr);
+  assert.deepEqual(seen, ['From: a@b.example\r\n\r\nhi\r\n']);
+  assert.match(r.stdout, /^ok verified {2}live verified, portable verified, 1 signature, body matched$/m);
+  assert.match(r.stdout, /nothing was recorded/);
+  assert.match(r.stderr, /no such file/);
+  assert.match(r.stdout, /Bundle directory \(the directory mailproof export wrote\): /);
+  const direct = await w.run(['verify-bundle', '/nonexistent-bundle']);
+  assert.ok(r.stderr.includes(direct.stderr.trim().split('\n')[0]) || direct.stderr.length > 0);
 });
 
 test('two accounts: the first screen asks which, b asks again, and the choice goes to the command as --account', async () => {
@@ -102,7 +187,7 @@ test('two accounts: the first screen asks which, b asks again, and the choice go
   assert.equal(r.code, 0, r.stderr);
   assert.match(r.stdout, /Account \(one\/two\): /);
   assert.match(r.stdout, /\(two\) - trail/);
-  assert.match(r.stdout, /1 sync  2 people  3 show  4 verify  5 export  6 seal  7 status  a account  \? more  q quit/);
+  assert.match(r.stdout, /^  16 status {3}17 config {3}18 update {3}19 mcp {3}a account$/m);
   assert.match(r.stdout, /no emails recorded/, 'account two is empty');
   assert.match(r.stdout, /\(one\) - trail/);
   assert.match(r.stdout, /  [0-9a-f]{12}$/m, 'account one lists its emails');

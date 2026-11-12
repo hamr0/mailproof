@@ -312,4 +312,4 @@ Not tools: `watch` (a loop: call `sync` again), `config add-account` (it handles
 - **`ERR_TRAIL_LOCKED` / `ERR_SYNC_LOCKED` (75):** another run holds the trail lock. If none is running, see "Recovery" in the [Usage guide](usage-guide.md#concurrency-locks-and-recovery).
 - **`ERR_INDEX_UNAVAILABLE`:** the `better-sqlite3` native addon could not load; `list` and `replies` need it, `show` and `verify` do not.
 - **`ERR_TRAIL_LAYOUT`:** a pre-3.0 flat trail; it is not converted, create a new one.
-- **The menu:** `mailproof` with no arguments on a terminal shows a menu with every command above (sync, list, show, verify, backup, update and more). Menu and subcommands run the same code, so use whichever you prefer.
+- **The menu:** `mailproof` with no arguments on a terminal shows a grouped menu of every command (Mail, Look, Check, Share and keep, Clean up, Setup; numbered 1 to 19, one line of help each; `?` shows it again, and after an action a short line of the common ones). Pick by number or by name; the menu also checks a saved `.eml` (9) and a bundle you were sent (10). Menu and subcommands run the same code, so use whichever you prefer.

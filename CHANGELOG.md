@@ -21,6 +21,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > the first free clean minor, `1.3.0`.) See
 > [`archive/v1/docs/DESIGN.md`](archive/v1/docs/DESIGN.md) for the phasing.
 
+## [Unreleased]
+
+### Changed
+- The `mailproof` menu shows every command at once, grouped (Mail, Look, Check, Share and keep, Clean up, Setup), one per line with its help, numbered 1 to 19; after an action only a short line of the common ones follows. The numbers changed (`3` is now `people`, `5` `show`, `7` `verify`, `11` `export`, `16` `status`); names still work. New items: `9` check a saved `.eml` and `10` `verify-bundle`.
+
 ## [3.3.0] - 2026-11-11
 
 ### Added

@@ -209,17 +209,17 @@ test('id hints: a flag-looking or too-short id says ids are positional and shows
 
 test('menu: People lists them, numbered; one prompt takes the person and s/v/e; Show and Verify take an address', async () => {
   const keys = (...l) => `${l.join('\n')}\n`;
-  const m = await w.run([], { interactive: true, input: keys('2', 'bob@beta.example v', '', 'q') });
+  const m = await w.run([], { interactive: true, input: keys('3', 'bob@beta.example v', '', 'q') });
   assert.match(m.stdout, /^ +\d+ bob@beta\.example +4 +2 +2026-11-01 +ok$/m, 'the people table, each row numbered');
   assert.match(m.stdout, /pick a person \(number or address\), then s show  v verify  e export/);
   assert.match(m.stdout, /received: 2 verified, 1 not/);
-  const byNumber = await w.run([], { interactive: true, input: keys('2', '1', '', 'q') });
+  const byNumber = await w.run([], { interactive: true, input: keys('3', '1', '', 'q') });
   assert.match(byNumber.stdout, /^#1 of /m, 'the default action is show');
-  const bad = await w.run([], { interactive: true, input: keys('2', '99', 'bob@beta.example s', '', 'q') });
+  const bad = await w.run([], { interactive: true, input: keys('3', '99', 'bob@beta.example s', '', 'q') });
   assert.match(bad.stdout, /choose 1 to \d+/);
-  const s = await w.run([], { interactive: true, input: keys('3', BOB, '', 'q') });
+  const s = await w.run([], { interactive: true, input: keys('5', BOB, '', 'q') });
   assert.ok(s.stdout.includes((await w.run(['show', BOB])).stdout));
-  const ex = await w.run([], { interactive: true, input: keys('2', `${BOB} e`, '', '', '/nonexistent-dir/xx', '', 'q') });
+  const ex = await w.run([], { interactive: true, input: keys('3', `${BOB} e`, '', '', '/nonexistent-dir/xx', '', 'q') });
   assert.match(ex.stdout, /Write the bundle to/);
 });
 

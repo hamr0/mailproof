@@ -805,11 +805,34 @@ Path: `--config <path>`, else `$XDG_CONFIG_HOME/mailproof/config.json`, else `~/
 mailproof 3.x · ana@gmail.com (personal) · trail ✓ · last sync 19:21Z (2 h ago)
 records: 5 · 3 verified · 1 unverified · 1 sent copy · seal pending (next 01:21Z, in 4 h) · watch off
 ----------------------------------------------------------------
-1 sync  2 people  3 show  4 verify  5 export  6 seal  7 status  ? more  q quit
+ Mail
+   1 sync           fetch new mail, record proofs
+   2 watch          sync every 5 min until Ctrl-C
+ Look
+   3 people         who is in this trail
+   4 list           newest first; filter by person/date
+   5 show           an address's emails and their proof
+   6 replies        what people answered
+ Check
+   7 verify         re-check an address's emails offline
+   8 check          trust profile pass/fail
+   9 check .eml     check a saved email file
+  10 verify-bundle  check a bundle you were sent
+ Share and keep
+  11 export         proof bundle for a counterparty
+  12 seal           seal new mail now (OpenTimestamps)
+  13 backup         git bundle of the trail
+ Clean up
+  14 forget         delete stored mail content
+  15 prune          drop old history from the trail
+ Setup
+  16 status   17 config   18 update   19 mcp
+
+  q quit
 >
 ```
 
-`records` count received emails as verified (live trust `verified`) or unverified, and sent copies apart. `?` lists the rest, numbered 8 to 17: `watch`, `list`, `replies`, `check`, `backup`, `forget`, `prune`, `config`, `update`, `mcp` (`h` prints the full help). An item is chosen by number or by name (`seal` is the `stamp` command).
+`records` count received emails as verified (live trust `verified`) or unverified, and sent copies apart. The **full menu** (every command, one per line with its one-line help, grouped) is shown under the header at the start and again on `?`; with several accounts the Setup row also carries `a account`. After an action the menu is not repeated: a short line follows, `  1 sync  3 people  5 show  7 verify  11 export  16 status  · ? all · q quit` (same numbers as the full list). **Every number 1 to 19 and every name is accepted at any prompt**, not only the ones on the short line; a name is the label shown, the command name, or an alias (`seal` is the `stamp` command; `eml` and `check-file` are `9`). `h` prints the full help. The menu table (key, command, label, help) is one definition in `src/cli/menu-header.js` (`MENU_GROUPS`); a help line is the command table's `summary` (commands.js) unless the menu words it differently. `9` is the library `check()` on a saved `.eml` (the first-run item `2`: asks for a path, nothing recorded) and `10` is the `verify-bundle` subcommand (asks for the directory; needs no account).
 
 **First run** (no config file; any other config problem is reported once and exits 64):
 
@@ -825,7 +848,7 @@ mailproof records a re-checkable proof of every email you send and receive.
 
 - **Each item prompts for exactly the parameters its subcommand takes**, in the same order, then runs the same code path as the subcommand (the menu builds the argument vector and calls the command function; there is no second implementation). Each prompt shows a label, an example and the default in brackets: `With (email address, e.g. bob@example.org, empty = everyone):`, `Before (date, e.g. 2026-08-19):`, `Interval [5m]:`. Input is validated with the subcommand's own validators; a bad value prints the reason and **re-prompts** (up to 3 times, then back to the menu); an empty answer takes the default, and `?` re-prints the hint. A required value with no default re-prompts on empty.
 - **People** prints the `people` table numbered, then one prompt takes the person (a number or an address) and optionally `s` show, `v` verify or `e` export (default show).
-- **After a command (on a terminal)** there is no `Press Enter`. The pager (`src/cli/pager.js`, the one helper) holds an action's output back until the action ends (or until its next prompt, which flushes it), then prints it and, directly below, the compact action line and the `>` prompt; no screen clear, so the output stays visible. The header is not reprinted every time: only when the action changed state (`sync`, `seal`, `update`, `forget`, `prune`, `config`, an account switch) the two header lines are printed again above the action line. Output longer than the screen (`stdout.rows`, default 24, minus the action line and the prompt; a long line counts as its wrapped height) is paged: one screen, then a dim footer `Enter more · q menu` (keys green); Enter shows the next page, `q` or Esc goes straight back to the action line, the last page returns by itself. Sub-flows (People: pick a person, then `s`/`v`/`e`) return to the main action line. A pipe or non-terminal stdout has no pager: the menu keeps `Press Enter` and the full header every time. The output is the human output of B11.7. Errors (exit-code classes B11.8) print on the menu and return to it; the menu itself exits only on `q`, Ctrl-D or a closed stdin (exit 0). Ctrl-C during a running command stops the command (as for the subcommand) and returns to the menu; Ctrl-C at a prompt quits.
+- **After a command (on a terminal)** there is no `Press Enter`. The pager (`src/cli/pager.js`, the one helper) holds an action's output back until the action ends (or until its next prompt, which flushes it), then prints it and, directly below, the short line and the `>` prompt; no screen clear, so the output stays visible. The header is not reprinted every time: only when the action changed state (`sync`, `seal`, `update`, `forget`, `prune`, `config`, an account switch) the two header lines are printed again above the short line. Output longer than the screen (`stdout.rows`, default 24, minus the short line and the prompt; a long line counts as its wrapped height) is paged: one screen, then a dim footer `Enter more · q menu` (keys green); Enter shows the next page, `q` or Esc goes straight back to the short line, the last page returns by itself. Sub-flows (People: pick a person, then `s`/`v`/`e`) return to the main short line. A pipe or non-terminal stdout has no pager: the menu keeps `Press Enter` and the full header (then the short line) every time. The output is the human output of B11.7. Errors (exit-code classes B11.8) print on the menu and return to it; the menu itself exits only on `q`, Ctrl-D or a closed stdin (exit 0). Ctrl-C during a running command stops the command (as for the subcommand) and returns to the menu; Ctrl-C at a prompt quits.
 - **Destructive items** (`forget`, `prune`, and `backup --push`): the menu first runs the dry-run summary (B11.5), then requires the user to **type the account name** to proceed; anything else cancels with "nothing changed". `backup --push` shows the warning in B11.6 and asks `y/N`.
 
 ### B11.5 Commands

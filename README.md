@@ -83,7 +83,7 @@ Run `mailproof` with no arguments on a terminal for a menu with a live header (r
 
 ```bash
 mailproof config add-account     # asks a few questions, shows the result, writes the config only after you say yes
-mailproof                        # the menu: sync, list, show, verify, backup, ...
+mailproof                        # the menu: every command, grouped, one line of help each
 mailproof sync --account personal
 mailproof list --with bob@example.org --after 2026-01-01
 mailproof people                 # who is in your trail
