@@ -34,7 +34,7 @@ test('ASCII fallback in a non-UTF-8 locale: words and plain dashes, still one me
   assert.match(r.stdout, /^-{64}\nmailproof \S+ - me@owner\.example \(test\) - trail ok - last sync never$/m);
   assert.ok(!/[✓✗·─]/.test(r.stdout));
   const v = await w.run(['verify', 'bob@beta.example'], { env: { LANG: 'C' } });
-  assert.match(v.stdout, /x NOT OK/);
+  assert.match(v.stdout, /x unverified/);
   assert.match(v.stdout, /x NOT VERIFIED/);
 });
 
@@ -42,7 +42,7 @@ test('verify: the verdict is an inverse badge only on the last line, with a symb
   const c = await w.run(['verify', 'bob@beta.example'], { env: { ...UTF, FORCE_COLOR: '1' } });
   assert.ok(c.stdout.includes('\x1b[7;31m✗ NOT VERIFIED\x1b[0m'));
   assert.equal(c.stdout.split('\x1b[7;').length, 2, 'one badge');
-  assert.ok(c.stdout.includes('\x1b[31m✗ NOT OK\x1b[0m'), 'red cross and the words NOT OK');
+  assert.ok(c.stdout.includes('\x1b[33m✗ unverified'), 'a symbol and the word, never colour alone');
   const p = await w.run(['verify', 'bob@beta.example'], { env: UTF });
   assert.equal(stripStyle(c.stdout), p.stdout);
   const j = await w.run(['verify', 'bob@beta.example', '--json'], { env: { ...UTF, FORCE_COLOR: '1' }, tty: true });

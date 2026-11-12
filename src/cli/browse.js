@@ -10,10 +10,11 @@ import { Cancel } from './prompt.js';
 import { UsageError } from './errors.js';
 import { parseChoice, parseDate } from './parse.js';
 import { printable as p } from './printable.js';
-import { rel } from './style.js';
-import { otherParty } from './target.js';
 import { SCREEN_JOBS } from './menu-header.js';
 import { expandHome, ensureDefaultDir } from './paths.js';
+import { pageLines, partyOf } from './rows.js';
+
+export { pageLines };
 
 /** @typedef {import('./session.js').Ctx} Ctx */
 /** @typedef {import('../proof/describe.js').Facts} Facts */
@@ -41,57 +42,6 @@ import { expandHome, ensureDefaultDir } from './paths.js';
 export const PAGE = 5;
 const RAW_MAX = 1 << 20;
 const DASH = (/** @type {BrowseEnv} */ e) => ` ${e.st.sym.dot} `;
-
-/** @param {string} iso @param {Date} now @returns {string} `11-01 10:06Z`, with the year when it is not this one. */
-const whenText = (iso, now) => `${iso.slice(iso.slice(0, 4) === String(now.getUTCFullYear()) ? 5 : 0, 10)} ${iso.slice(11, 16)}Z`;
-
-/** The other party of an email, lower case (the From of a received one, the first To or Cc of a sent one): the library's `otherParty`. @param {Facts} f @returns {string | null} */
-const partyOf = (f) => otherParty(f.direction, [...f.from.map((a) => ({ role: 'from', address: a.address.toLowerCase() })), ...f.to.map((a) => ({ role: 'to', address: a.address.toLowerCase() })), ...f.cc.map((a) => ({ role: 'cc', address: a.address.toLowerCase() }))]);
-
-/**
- * The lines of a page of emails: a header, then three lines each (row, subject, short reason). Every mail-derived string is escaped before any
- * style is applied and cut at the terminal width.
- * @param {BrowseEnv} e
- * @param {Array<{ facts: Facts, tag?: string }>} items
- * @param {number} first  The number of the first row.
- * @returns {string[]}
- */
-export function pageLines(e, items, first) {
-  const { st } = e;
-  const now = e.now();
-  const width = st.width;
-  const pre = items.map(({ facts: f, tag }) => {
-    const ago = rel(f.captured, now).replace(/ ago$/, '');
-    const live = f.trust.live;
-    const party = partyOf(f);
-    return {
-      when: whenText(f.captured, now), ago, ok: live === 'verified', verdict: `${live === 'verified' ? st.sym.ok : st.sym.bad} ${live ?? '-'}`,
-      who: p(`${f.direction === 'out' ? 'to ' : ''}${party ?? '-'}`), tag, subject: p(f.subject.value ?? '(no subject)'), noSubject: f.subject.value === null, unsigned: f.subject.value !== null && f.subject.coverage !== 'signed',
-      why: p(f.reason, { max: 80 }), att: f.attachments.length,
-    };
-  });
-  const whenW = Math.max(4, ...pre.map((x) => x.when.length));
-  const ageW = Math.max(3, ...pre.map((x) => x.ago.length));
-  const verW = Math.max(7, ...pre.map((x) => [...x.verdict].length));
-  const indent = '    ';
-  /** @type {string[]} */
-  const out = [];
-  out.push(st.dim(` #  ${'when'.padEnd(whenW)}  ${'age'.padEnd(ageW)}  ${'verdict'.padEnd(verW)}  from`));
-  pre.forEach((x, i) => {
-    const n = String(first + i).padStart(2);
-    const left = `${n}  ${x.when.padEnd(whenW)}  ${x.ago.padEnd(ageW)}  ${x.verdict.padEnd(verW)}  `;
-    const tag = x.tag ? `  ${x.tag}` : '';
-    const room = Math.max(8, width - [...left].length - [...tag].length);
-    const verdict = x.ok ? st.green(x.verdict.padEnd(verW)) : st.yellow(x.verdict.padEnd(verW));
-    out.push(`${n}  ${x.when.padEnd(whenW)}  ${st.dim(x.ago.padEnd(ageW))}  ${verdict}  ${st.fit(x.who, room)}${x.tag ? st.dim(tag) : ''}`);
-    const mark = x.unsigned ? `  ${st.sym.dot} subject not signed` : '';
-    const subject = st.fit(x.subject, Math.max(8, width - indent.length - [...mark].length));
-    out.push(`${indent}${x.noSubject ? st.dim(subject) : subject}${x.unsigned ? st.dim(mark) : ''}`);
-    const att = x.att ? `${DASH(e)}${x.att} attachment${x.att === 1 ? '' : 's'}` : '';
-    out.push(`${indent}${st.dim(st.fit(`${x.why}${att}`, width - indent.length))}`);
-  });
-  return out;
-}
 
 /**
  * The facts of the emails with these ids, in order; an id with no record is left out.

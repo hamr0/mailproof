@@ -113,7 +113,9 @@ test('replies: the flat bundles; none is a message and exit 0', async () => {
   assert.equal(json(await sp(['replies', 'nobody@x.example', '--json'])).length, 0);
   const addrText = await sp(['replies', 'bob@beta.example']);
   assert.equal(addrText.code, 0);
-  assert.match(addrText.stdout, /^\S+  bob@beta\.example  dkim-aligned pass  link signed  verified\/verified  body proven$/m);
+  assert.match(addrText.stdout, /^ 1 .* bob@beta\.example$/m, 'browse rows (rows.js)');
+  assert.match(addrText.stdout, /^ {4}link signed [·-] verifies$/m, 'the link and the short reason, in plain words');
+  assert.ok(!/dkim-aligned|verified\/verified/.test(addrText.stdout), 'no field names');
   const text = await sp(['replies', '<req@owner.example>']);
   assert.equal(text.code, 0);
   assert.match(text.stdout, /bob@beta.example/);
@@ -131,7 +133,11 @@ test('check: a profile file or a name; 0 pass, 2 fail with the failed rules; a b
   fs.writeFileSync(f, JSON.stringify({ senders: ['@gamma.example'] }));
   const fail = await sp(['check', id('signed'), '--profile', f]);
   assert.equal(fail.code, 2);
-  assert.match(fail.stdout, /^FAIL\n  sender/m);
+  assert.match(fail.stdout, /^(x|✗) FAIL\n  (x|✗) sender /m, 'a verdict, then one line per rule with a plain reason');
+  assert.match(fail.stdout, /^ {2}(x|✗) sender .* is not @gamma\.example$/m);
+  const ok2 = await sp(['check', id('signed'), '--profile', 'default']);
+  assert.equal(ok2.code, 0, 'the built-in default profile needs no file');
+  assert.match(ok2.stdout, /^(ok|✓) pass\n {2}(ok|✓) DKIM signature verifies and covers the From$/m);
   // a bare name is looked up in <configDir>/profiles/<name>.json
   fs.mkdirSync(path.join(world.cfgDir, 'mailproof', 'profiles'), { recursive: true });
   fs.writeFileSync(path.join(world.cfgDir, 'mailproof', 'profiles', 'beta.json'), JSON.stringify({ senders: ['@beta.example'] }));

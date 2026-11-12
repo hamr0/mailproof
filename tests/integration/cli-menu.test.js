@@ -107,12 +107,12 @@ test('Show, Verify, Replies, Check, Status run the subcommand code (same output,
   const ver = await menu(w, keys('7', idOf('failing'), '', '', 'q'));
   assert.match(ver.stdout, /NOT OK/);
   const rep = await menu(w, keys('replies', 'bob@beta.example', '', 'q'));
-  assert.match(rep.stdout, /bob@beta.example  dkim-aligned pass/);
+  assert.match(rep.stdout, /link signed [·-] verifies/);
   assert.ok(!rep.stdout.includes('no replies recorded'));
   const prof = path.join(makeTmpDir('mp-cli-menu-'), 'p.json');
   fs.writeFileSync(prof, JSON.stringify({ senders: ['@beta.example'] }));
-  const chk = await menu(w, keys('check', id, prof, '', '', 'q'));
-  assert.match(chk.stdout, /^pass$/m);
+  const chk = await menu(w, keys('check', id, prof, '', 'q'));
+  assert.match(chk.stdout, /^(ok|✓) pass$/m);
   const st = await menu(w, keys('16', '', 'q'));
   assert.match(st.stdout, /^test\n  trail /m);
   const ex = await menu(w, keys('11', 'alice@alpha.example', '', '', path.join(makeTmpDir('mp-cli-menu-ex-'), 'b'), 'n', '', 'q'));
@@ -134,7 +134,7 @@ test('every number 1-19 and every name is accepted at any prompt, not only the o
     [['5', 'show'], /^Target \(/m],
     [['6', 'replies'], /^Address or Message-ID \(/m],
     [['7', 'verify'], /^Target \(/m],
-    [['8', 'check'], /^Id \(/m],
+    [['8', 'check'], /^Who \(/m],
     [['9', 'check .eml', 'check-file', 'eml'], /^Path of the \.eml file/m],
     [['10', 'verify-bundle'], /^Bundle directory \(/m],
     [['11', 'export'], /^With \(/m],
@@ -170,8 +170,10 @@ test('9 and 10 prompt for their path and run the same code as the first-run scre
   const r = await menu(w, keys('9', eml, '', '9', '/nonexistent/x.eml', '', '10', '/nonexistent-bundle', '', 'q'), { deps });
   assert.equal(r.code, 0, r.stderr);
   assert.deepEqual(seen, ['From: a@b.example\r\n\r\nhi\r\n']);
-  assert.match(r.stdout, /^ok verified {2}live verified, portable verified, 1 signature, body matched$/m);
-  assert.match(r.stdout, /nothing was recorded/);
+  assert.match(r.stdout, /^(ok|✓) verified: the signature checks out$/m);
+  assert.match(r.stdout, /^ {2}Signatures +1$/m);
+  assert.match(r.stdout, /^ {2}Body +matched$/m);
+  assert.match(r.stdout, /checked only, not recorded/);
   assert.match(r.stderr, /no such file/);
   assert.match(r.stdout, /Bundle directory \(the directory mailproof export wrote, empty = back\): /);
   const direct = await w.run(['verify-bundle', '/nonexistent-bundle']);
@@ -322,7 +324,9 @@ test('first run: "check a .eml file" asks for a path, calls the library check (i
   const r = await menu(none, keys('2', eml, '', '2', '/nonexistent/x.eml', '', '3', '/nonexistent-bundle', '', 'q'), { deps });
   assert.equal(r.code, 0, r.stderr);
   assert.deepEqual(seen, ['From: a@b.example\r\n\r\nhi\r\n']);
-  assert.match(r.stdout, /^ok verified {2}live verified, portable verified, 1 signature, body matched$/m);
+  assert.match(r.stdout, /^(ok|✓) verified: the signature checks out$/m);
+  assert.match(r.stdout, /^ {2}Signatures +1$/m);
+  assert.match(r.stdout, /^ {2}Body +matched$/m);
   assert.match(r.stdout, /nothing was recorded/);
   assert.match(r.stderr, /no such file/);
   assert.ok(!fs.existsSync(none.configFile), 'nothing was written');

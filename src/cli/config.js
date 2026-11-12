@@ -8,6 +8,7 @@ import path from 'node:path';
 import { UsageError, PermError } from './errors.js';
 import { TRAIL_NAME_RE } from '../proof/trail.js';
 import { STAMP_EVERY_HOURS_MIN, STAMP_EVERY_HOURS_MAX } from '../proof/limits.js';
+import { DEFAULT_PROFILE, profileSummary } from './profile-text.js';
 
 /**
  * @typedef {Object} Account
@@ -398,8 +399,33 @@ export async function loadProfile(spec, env) {
   const file = isName ? path.join(configDir(env), 'profiles', `${spec}.json`) : path.resolve(spec);
   let text;
   try { text = await fs.readFile(file, 'utf8'); }
-  catch (e) { throw new UsageError(`--profile: cannot read ${file} (${/** @type {any} */ (e).code ?? 'error'})${isName ? '; a bare name is looked up in the profiles directory, use a path for another place' : ''}`); }
+  catch (e) {
+    if (spec === 'default' && /** @type {any} */ (e).code === 'ENOENT') return DEFAULT_PROFILE;   // the built-in baseline, unless the person made their own `default.json`
+    throw new UsageError(`--profile: cannot read ${file} (${/** @type {any} */ (e).code ?? 'error'})${isName ? '; a bare name is looked up in the profiles directory, use a path for another place' : ''}`);
+  }
   try { return JSON.parse(text); } catch (e) { throw new UsageError(`--profile: ${file} is not valid JSON: ${/** @type {Error} */ (e).message}`); }
+}
+
+/**
+ * The profiles a person can name: the built-in `default` (unless their own `default.json` replaces it) and every `<configDir>/profiles/<name>.json`,
+ * each with its one-line meaning. A file that cannot be read or parsed is listed with that said, never thrown.
+ * @param {Record<string, string | undefined>} env
+ * @returns {Promise<Array<{ name: string, summary: string, builtin: boolean }>>}
+ */
+export async function listProfiles(env) {
+  const dir = path.join(configDir(env), 'profiles');
+  /** @type {string[]} */
+  let files = [];
+  try { files = (await fs.readdir(dir)).filter((f) => /^[A-Za-z0-9][A-Za-z0-9_-]*\.json$/.test(f)).sort(); } catch { /* no profiles directory */ }
+  /** @type {Array<{ name: string, summary: string, builtin: boolean }>} */
+  const out = [];
+  if (!files.includes('default.json')) out.push({ name: 'default', summary: profileSummary(DEFAULT_PROFILE), builtin: true });
+  for (const f of files) {
+    const name = f.slice(0, -5);
+    try { out.push({ name, summary: profileSummary(JSON.parse(await fs.readFile(path.join(dir, f), 'utf8'))), builtin: false }); }
+    catch { out.push({ name, summary: 'cannot be read or is not JSON', builtin: false }); }
+  }
+  return out;
 }
 
 /**

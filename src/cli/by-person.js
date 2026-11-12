@@ -5,7 +5,8 @@ import { UsageError, EX_OK, EX_ERR, EX_NO } from './errors.js';
 import { parseDate, parseLimit } from './parse.js';
 import { print, warn, printJson } from './session.js';
 import { printable as p } from './printable.js';
-import { render, whyText, accountFacts, jsonFacts } from './detail.js';
+import { render, accountFacts, jsonFacts } from './detail.js';
+import { pageLines } from './rows.js';
 import { sealText } from './seal.js';
 import { styleOf } from './style.js';
 import { factsOfRecord, minute } from './target.js';
@@ -90,19 +91,20 @@ export async function verifyMany(a, ctx, mp, t, at) {
   const st = styleOf(ctx);
   const { sym } = st;
   print(ctx, `${rows.length} of ${total} email${total === 1 ? '' : 's'} with ${label(t)} re-checked offline${at ? ` as of ${p(at.toISOString())}` : ''}`);
-  for (const r of rows) {
-    const dir = r.direction === 'out' ? 'sent    ' : 'received';
-    const verdict = r.ok ? st.green(`${sym.ok} OK    `) : st.red(`${sym.bad} NOT OK`);
-    const trust = p(r.trust).padEnd(10);
-    const subject = r.subject === null ? st.dim('(no signed subject)') : p(r.subject, { max: 80 });
-    print(ctx, `${minute(r.captured)}  ${dir}  ${verdict}  ${r.ok ? trust : st.yellow(trust)}  ${subject}${r.counted ? '' : st.dim('  (sent copy, not counted)')}`);
-    if (!r.ok && r.why) print(ctx, `   ${st.dim('why:')} ${whyText(st, r.why)}`);
-  }
+  // the rows are the browse rows (rows.js): the facts of the same selection give the other party and the subject; the verdict is this re-check's own
+  const { records: described } = await mp.describe(t, { limit: f.limit, ...(f.after ? { after: f.after } : {}), ...(f.before ? { before: f.before } : {}) });
+  const factsById = new Map(described.map((x) => [x.id, x]));
+  const items = rows.flatMap((r) => {
+    const facts = factsById.get(r.id);
+    return facts ? [{ facts, verdict: { ok: r.ok, word: r.trust }, ...(r.counted ? {} : { extra: 'sent copy, not counted' }), ...(!r.ok && r.why ? { note: r.why } : {}) }] : [];
+  });
+  for (const l of pageLines({ st, now: ctx.deps.now ?? (() => new Date()) }, items, 1)) print(ctx, l);
   print(ctx, '');
   print(ctx, `${st.dim('received:')} ${inbound.verified ? st.green(`${inbound.verified} verified`) : `${inbound.verified} verified`}, ${inbound.failed ? st.red(`${inbound.failed} not`) : `${inbound.failed} not`}`);
   if (outbound.verified + outbound.failed) {
     print(ctx, `${st.dim('sent:')} ${outbound.verified} verified, ${outbound.failed} not${all ? '' : ' (not counted: providers normally keep Sent copies unsigned; --all counts them)'}`);
   }
+  print(ctx, '');
   const badge = ok ? st.badge('green', `${sym.ok} VERIFIED`) : st.badge('red', `${sym.bad} NOT VERIFIED`);
   if (checkedCounted === 0) print(ctx, `${badge}  nothing to verify: no received email names this address (use --all to count sent copies)`);
   else {

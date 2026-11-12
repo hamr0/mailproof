@@ -11,6 +11,8 @@ import { render, accountFacts, jsonFacts } from './detail.js';
 import { styleOf } from './style.js';
 import { classifyTarget, otherParty, minute } from './target.js';
 import { showMany, verifyMany, peopleRun } from './by-person.js';
+import { replyLines } from './rows.js';
+import { ruleLines } from './profile-text.js';
 
 /** @typedef {import('./session.js').Ctx} Ctx */
 /** @typedef {import('./session.js').Args} Args */
@@ -128,10 +130,9 @@ export async function repliesCmd(a, ctx) {
     const rows = await mp.replyFacts(t.kind === 'address' ? { address: t.value } : { messageId: t.value });
     if (a.values.json) { printJson(ctx, rows); return EX_OK; }
     if (!rows.length) { print(ctx, 'no replies recorded'); return EX_OK; }
-    for (const r of rows) {
-      print(ctx, `${p(r.captured)}  ${p(r.from)}  dkim-aligned ${p(r.fromDkimAligned)}  link ${p(r.link)}  ${p(r.live)}/${p(r.portable)}  body ${p(r.bodyProven)}`);
-      print(ctx, `  ${r.firstLine ? cut(r.firstLine, 100) : '(no text stored)'}  [${short(r.recordId)}]`);
-    }
+    // the library's short reason for each reply's record (the one the list rows use), then the shared reply rows
+    const reasons = await Promise.all(rows.map(async (r) => (await mp.describe(String(r.recordId))).records[0]?.reason ?? 'no record'));
+    for (const l of replyLines({ st: styleOf(ctx), now: ctx.deps.now ?? (() => new Date()) }, rows.map((row, i) => ({ row, reason: reasons[i] })))) print(ctx, l);
     return EX_OK;
   });
 }
@@ -145,8 +146,10 @@ export async function checkCmd(a, ctx) {
     const id = await resolveId(a.positionals[0], mp.root);
     const r = await mp.checkProfile(id, /** @type {any} */ (profile), parent ? { parent } : undefined);
     if (a.values.json) { printJson(ctx, { id, ...r }); return r.ok ? EX_OK : EX_NO; }
-    print(ctx, r.ok ? 'pass' : 'FAIL');
-    for (const f of r.failed) print(ctx, `  ${p(f.rule)}: wanted ${p(JSON.stringify(f.want))}, got ${p(JSON.stringify(f.got))}`);
+    // the verdict, then one line per rule the profile names, each ✓ or ✗ with a plain reason (profile-text.js)
+    const st = styleOf(ctx);
+    print(ctx, r.ok ? `${st.green(st.sym.ok)} pass` : `${st.red(st.sym.bad)} FAIL`);
+    for (const l of ruleLines(profile, r.failed)) print(ctx, `  ${l.ok ? st.green(st.sym.ok) : st.red(st.sym.bad)} ${l.text}`);
     return r.ok ? EX_OK : EX_NO;
   });
 }

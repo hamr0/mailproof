@@ -6,20 +6,21 @@ import { UsageError, EX_USAGE } from './errors.js';
 import { createPrompter, askValue, confirm, Cancel, isTerminal } from './prompt.js';
 import { parseDate, parseAddress, parseDuration, parseChoice, MIN_INTERVAL_MS, FULL_ID_RE } from './parse.js';
 import { loadCtxConfig, openAccount, print, warn } from './session.js';
-import { browseList } from './browse.js';
+import { browseList, PAGE } from './browse.js';
+import { pageLines } from './rows.js';
 import { makeFrame } from './frame.js';
 import { printable } from './printable.js';
 import { defaultBundlePath, PUSH_WARNING, redactUrl } from './backup.js';
 import { version } from './misc.js';
 import { defaultBundleOut } from './bundle.js';
-import { tilde as tildeOf } from './paths.js';
+import { tilde as tildeOf, expandHome } from './paths.js';
 import { classifyTarget } from './target.js';
 import { styleOf } from './style.js';
 import { makePager } from './pager.js';
 import { headerFacts } from './status.js';
 import { mainHeader, fullMenu, shortLine, firstRun, jobOf, SCREEN_JOBS, MENU_ITEMS, MENU_ALIASES } from './menu-header.js';
 import { checkFileCmd } from './check-file.js';
-import { configPath } from './config.js';
+import { configPath, listProfiles, loadProfile } from './config.js';
 
 /** @typedef {import('./session.js').Ctx} Ctx */
 
@@ -78,10 +79,10 @@ export async function runMenu(ctx, exec, opts = {}) {
   const afterAction = async () => (pager ? pager.show() : (await p.ask('Press Enter ')) !== null);
   /** Check a saved .eml: the same path as the first-run screen, nothing is recorded. */
   /** @param {string[]} [lead] The crumb path up to the command (the menu item, or the first-run item). */
-  const checkEml = async (lead = [step('check-file')]) => {
+  const checkEml = async (lead = [step('check-file')], haveAccount = true) => {
     const file = await ask({ label: 'Path of the .eml file', example: 'e.g. {~/Downloads/mail.eml}' });
     crumb([...lead, file]);
-    await checkFileCmd(file, base).catch((e) => { warn(base, `mailproof: ${/** @type {Error} */ (e).message}`); });
+    await checkFileCmd(file, base, { account: haveAccount }).catch((e) => { warn(base, `mailproof: ${/** @type {Error} */ (e).message}`); });
   };
   /** Verify a bundle: the `verify-bundle` subcommand, which needs no account. */
   /** @param {string[]} [lead] */
@@ -110,7 +111,7 @@ export async function runMenu(ctx, exec, opts = {}) {
           try { return (await loadCtxConfig(cfgArgs, ctx)).config; } catch { continue; }
         } else if (c === '2') {
           crumb(['2 check .eml'], jobOf('check-file'));
-          await checkEml(['2 check .eml']);
+          await checkEml(['2 check .eml'], false);   // no account yet: the closing line points at setting one up
         } else if (c === '3') {
           crumb(['3 verify-bundle'], jobOf('verify-bundle'));
           await verifyBundleCmd(['3 verify-bundle']);
@@ -234,10 +235,33 @@ export async function runMenu(ctx, exec, opts = {}) {
         await go(['replies', target]);
       },
       check: async () => {
-        const id = await ask({ label: 'Id', example: '32 hex characters, or a unique prefix of 8 or more', validate: idArg });
-        const profile = await ask({ label: 'Profile', example: 'a JSON file path, or a name in the profiles directory' });
-        const parent = await ask({ label: 'Request Message-ID', example: 'for a profile that requires a link, empty = none', optional: true });
-        crumb([step('check'), id]);
+        // who, then that person's latest five as browse rows to pick from (a record id is also accepted), then the profile
+        const who = await ask({ label: 'Who', example: 'an address like {bob@example.org}, or a record id', validate: (s) => { if (classifyTarget(s).kind === 'message-id') throw new UsageError('give an address or a record id'); return s.trim(); } });
+        crumb([step('check'), who]);
+        /** @type {string} */
+        let id;
+        if (classifyTarget(who).kind === 'id') id = idArg(who);
+        else {
+          const session = await openAccount({ cmd: 'list', values: { config: opts.configFlag, account }, positionals: [] }, base);
+          try {
+            const rows = (await session.mp.list({ with: who.toLowerCase(), limit: PAGE })).map((r) => r.id);
+            const facts = (await Promise.all(rows.map((r) => session.mp.describe(r)))).flatMap((d) => d.records);
+            if (!facts.length) { out(`no emails with ${printable(who)} in this trail`); return; }
+            for (const l of pageLines({ st, now }, facts.map((f) => ({ facts: f })), 1)) out(l);
+            const pick = await ask({ label: 'Email', example: `a number 1 to ${facts.length}, or a record id`, validate: (s) => { if (/^\d+$/.test(s)) { if (Number(s) < 1 || Number(s) > facts.length) throw new UsageError(`choose 1 to ${facts.length}`); return s; } return idArg(s); } });
+            id = /^\d+$/.test(pick) ? facts[Number(pick) - 1].id : pick;
+          } finally { await session.close(); }
+        }
+        out('');
+        out(st.dim('Profiles (what must hold for the email to pass):'));
+        for (const x of await listProfiles(ctx.env)) out(`  ${st.key(x.name)}  ${st.dim(printable(x.summary, { max: 120 }))}${x.builtin ? st.dim('  (built in)') : ''}`);
+        const profile = await ask({ label: 'Profile', example: 'a name above, or the path of a JSON file', def: 'default' });
+        /** @type {any} */
+        let spec;
+        try { spec = await loadProfile(/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(profile) ? profile : expandHome(profile, ctx.env), ctx.env); }
+        catch (e) { if (!(e instanceof UsageError)) throw e; out(printable(e.message)); return; }
+        const parent = spec && Array.isArray(spec.link) ? await ask({ label: 'Request Message-ID', example: 'this profile requires a link to the request, empty = none', optional: true }) : '';
+        crumb([step('check'), id.slice(0, 8)]);
         await go(['check', id, '--profile', profile, ...(parent ? ['--parent', parent] : [])]);
       },
       forget: async () => {

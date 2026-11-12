@@ -34,17 +34,17 @@ test('wizard: the password-source choice, yes/no examples, defaults and the [y/N
   const w2 = makeWorld({ config: null });
   const c = await w2.run(['config', 'add-account'], { input: script(ALL), env: { ...UTF, FORCE_COLOR: '1' } });
   assert.equal(c.code, 0, c.stderr);
-  assert.ok(c.stdout.includes(`${G('1')} = a command, ${G('2')} = a file, ${G('3')} = an OAuth2 token command)`), 'password source');
+  assert.ok(c.stdout.includes(`${G('1')} = a command, ${G('2')} = a file, ${G('3')} = an OAuth2 token command, q = back)`), 'password source');
   assert.ok(c.stdout.includes(`[${G('1')}]: `), 'default in brackets');
-  assert.ok(c.stdout.includes(`(${G('y')}/${G('n')}) [${G('y')}]: `), 'y/n example and default');
+  assert.ok(c.stdout.includes(`(${G('y')}/${G('n')}, q = back) [${G('y')}]: `), 'y/n example and default');
   assert.ok(c.stdout.includes(`[${G('y')}/${G('N')}] `), 'confirm letters');
   assert.ok(c.stdout.includes(`e.g. ${G('personal')}`), 'example input');
   assert.ok(c.stdout.includes(`${G('1')} Gmail`), 'provider keys');
   const w3 = makeWorld({ config: null });
   const p = await w3.run(['config', 'add-account'], { input: script(ALL), env: UTF });
   assert.ok(!p.stdout.includes('\x1b'));
-  assert.ok(p.stdout.includes('1 = a command, 2 = a file, 3 = an OAuth2 token command) [1]: '));
-  assert.ok(p.stdout.includes('(y/n) [y]: '));
+  assert.ok(p.stdout.includes('1 = a command, 2 = a file, 3 = an OAuth2 token command, q = back) [1]: '));
+  assert.ok(p.stdout.includes('(y/n, q = back) [y]: '));
   assert.ok(p.stdout.includes('[y/N] '));
 });
 

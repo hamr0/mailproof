@@ -72,8 +72,8 @@ test('replies (text): the first line cannot move the cursor, set the title or fo
   assert.equal(r.code, 0, r.stderr);
   noForbidden(r, 'replies');
   assert.ok(r.stdout.includes('yes\\x1b[1A\\x1b[2K'), r.stdout);
-  // one block of two lines per reply: nothing forged a line of its own
-  assert.equal(r.stdout.trim().split('\n').length, 4);
+  // the header, then one block of three lines per reply (sender, text, link): nothing forged a line of its own
+  assert.equal(r.stdout.trim().split("\n").length, 1 + 3 * 2);
 });
 
 test('replies (text): the one-line cut is by code points and does not split an escape', async () => {
@@ -83,7 +83,7 @@ test('replies (text): the one-line cut is by code points and does not split an e
   await mp2.close();
   const r = await run('replies', '<req@owner.example>');
   noForbidden(r, 'replies long');
-  assert.match(r.stdout, /(\\x1bx){50}\.\.\.\(\+\d+\)/, 'cut to 100 code points, then the count');
+  assert.match(r.stdout, /(\\x1bx){10}.*\.\.\.\(\+\d+\)/, 'cut by code points to the line, then the count: no escape is split');
 });
 
 test('check (text): rule values from the mail are escaped', async () => {

@@ -139,9 +139,16 @@ test('verify <address>: one line per email, exit 2 when a RECEIVED one fails, se
   assert.match(r.stdout, /^received: 2 verified, 1 not$/m);
   assert.match(r.stdout, /^sent: 1 verified, 0 not \(not counted/m);
   assert.match(r.stdout, /^x NOT VERIFIED  1 received email does not verify$/m);
-  assert.match(r.stdout, /^ +why: .*offline re-check of beta\.example/m, 'the reason is on its own line under the email');
-  assert.match(r.stdout, /^2026-.*  received  x NOT OK  unverified {1,}.*$/m);
-  assert.equal(r.stdout.split('\n').filter((l) => /^2026-/.test(l)).length, 4);
+  assert.match(r.stdout, /^\n?x NOT VERIFIED/m);
+  assert.ok(r.stdout.includes('\n\nx NOT VERIFIED'), 'a blank line before the final verdict');
+  assert.ok(r.stdout.includes('\n\nreceived: 2 verified'), 'a blank line before the totals');
+  const text = r.stdout.replace(/\n {4}/g, ' ');   // wrapped lines joined
+  assert.match(text, /offline re-check of beta\.example/, 'the long reason is under the row');
+  assert.match(r.stdout, /^ {4}[^\n]*offline re-check|^ {4}(DKIM fail|[a-zA-Z(])/m, 'the long reason is indented under its row');
+  assert.match(r.stdout, /^ 2 {2}11-01 10:04Z .* x unverified {2}bob@beta\.example$/m, 'the browse row: number, when, age, verdict, from');
+  assert.ok(r.stdout.split('\n').every((l) => [...l].length <= 120 && !/^ {4}.{110,}$/.test(l)), 'the long reason wraps (no 110-column line)');
+  assert.match(r.stdout, /^ {4}verifies [·-] sent copy, not counted$/m, 'a sent copy says it is not counted');
+  assert.equal(r.stdout.split('\n').filter((l) => /^ ?\d  /.test(l)).length, 4);
   assert.ok(!r.stdout.includes('\x1b'), 'a pipe: no ANSI');
   assert.equal((await w.run(['verify', BOB, '--all'])).code, 2);
   const ok = await w.run(['verify', 'alice@alpha.example']);
