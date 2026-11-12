@@ -284,11 +284,13 @@ claude mcp add mailproof-dev -- node ~/src/mailproof/bin/mailproof.js mcp
 
 Then start a **new** Claude Code session (servers are loaded at start). Try: "List my last 10 emails with bob@example.com", "Verify record 3f2a9c1d", "Sync my gmail account and tell me how many were recorded", "What did Bob reply to message <abc@example.com>?".
 
-The 24 tools, named like the library methods:
+The 29 tools, named like the library methods (every CLI command that fits MCP has one):
 
-- **read** (18): `accounts`, `list`, `get`, `describe`, `copies`, `counterparties`, `linked`, `verify`, `verifyWith`, `verifyRecord`, `proofParts`, `checkProfile`, `replyFacts`, `matchBody`, `matchFile`, `rawEmail`, `attachment`, `check`
-- **write** (4): `record`, `replyText`, `sync`, `upgradeStamps`
+- **read** (20): `accounts`, `status`, `list`, `get`, `describe`, `copies`, `counterparties`, `linked`, `verify`, `verifyWith`, `verifyRecord`, `verifyBundle`, `proofParts`, `checkProfile`, `replyFacts`, `matchBody`, `matchFile`, `rawEmail`, `attachment`, `check`
+- **write** (7): `record`, `replyText`, `sync`, `stamp`, `upgradeStamps`, `export`, `backup`. `export` and `backup` only preview until called again with `confirm: true`, and then write only into the config's `mcp.outputDir`, under a plain name you give (never a path). `backup` with `push` contacts the account's `backupRemote` (never forced). `stamp` sends one 32-byte hash to the OpenTimestamps calendars.
 - **destructive** (2): `forget`, `prune`. They only preview until called again with `confirm: true`.
+
+Not tools: `watch` (a loop: call `sync` again), `config add-account` (it handles your password; run it yourself), `update`, `help`, `mcp`. `status` returns the config check, the installed version and the upgrade command. `verifyBundle` reads a bundle folder only from inside `mcp.inputDirs`. `export` shows you who it would disclose (the addresses and subjects of the whole exchange, the signed headers and keys) in its preview: read it before you confirm.
 
 `describe` is what `mailproof show` prints, as data: give it an address, a `<Message-ID>` or a record id and it returns the facts of each email (who it names and whether a signature really covers it, date and subject, DKIM/DMARC/SPF/ARC, both trust levels, why it is not verified in plain words, body proof, attachments, seal); the body text only with `full: true`. `verifyWith` is `mailproof verify <address>`: whether every received email with an address verifies. Ask your agent to show them however suits you (a table, a summary). Notes: with two accounts every tool call takes `account`. `stamp`, `export` and `verify-bundle` are **not** MCP tools; use the CLI. Claude Code does not act on the read-only/destructive hints (F30), so scope by tool name (for example allow only `mcp__mailproof__list`, `get`, `verify`), or use `mailproof mcp --account <name>` for one server per account. `rawEmail` and `attachment` are read-only but hand over other people's mail. Paths for files go in only from `mcp.inputDirs` and out only into `mcp.outputDir`, both off until set in the config. Remove with `claude mcp remove mailproof`. Details: [Usage guide, MCP](usage-guide.md#ai-agents-the-mcp-server-mailproof-mcp).
 
