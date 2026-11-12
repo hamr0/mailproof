@@ -5,8 +5,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  validateConfig, parseConfig, loadConfig, selectAccount, mailproofOptions, configPath, configDir, expandHome, loadProfile, writeConfigAtomic, TEMPLATE, ConfigError,
+  validateConfig, parseConfig, loadConfig, selectAccount, mailproofOptions, configPath, configDir, expandHome, writeConfigAtomic, TEMPLATE, ConfigError,
 } from '../../src/cli/config.js';
+import { loadProfile } from '../../src/cli/profiles.js';
 import { UsageError, PermError } from '../../src/cli/errors.js';
 import { makeTmpDir } from '../helpers/tmp.js';
 import { resolveAuth } from '../../src/cli/secrets.js';

@@ -1,7 +1,8 @@
 // Bytes in and bytes out (SPEC B12.6). JSON carries strings, not bytes, and a record id is the sha256 of the exact bytes,
 // so a raw email arrives as `base64` or as a `path` the server reads itself. A `path` is read at the model's request, so it
-// is bounded: absolute, resolving (symlinks followed) to a regular file inside `mcp.inputDirs`, checked again at open time on
-// the descriptor. Bytes out are written only into `mcp.outputDir`, never overwriting.
+// is bounded: absolute, resolving (symlinks followed) to a regular file inside the input folders (`~/mailproof` unless `mcp.inputDirs`
+// says otherwise), checked again at open time on the descriptor. Bytes out are written only into the output folder (`~/mailproof/<kind>`
+// unless `mcp.outputDir` says otherwise), never overwriting.
 
 import fs from 'node:fs/promises';
 import { constants } from 'node:fs';
@@ -38,8 +39,8 @@ export function decodeBase64(s) {
  */
 async function resolveAllowed(p, o, what) {
   if (typeof p !== 'string' || !p || p.includes('\0') || !path.isAbsolute(p)) throw badArgument('path must be an absolute path');
-  if (!o.inputDirs.length) throw new ToolError('ERR_PATH_NOT_ALLOWED', 'reading files by path is turned off: the owner lists folders in mcp.inputDirs of the mailproof config; pass the content as base64 instead');
-  const refused = () => new ToolError('ERR_PATH_NOT_ALLOWED', `the path is not ${what} inside the folders listed in mcp.inputDirs`);
+  if (!o.inputDirs.length) throw new ToolError('ERR_PATH_NOT_ALLOWED', 'reading files by path is turned off (mcp.inputDirs is empty in the mailproof config); pass the content as base64 instead');
+  const refused = () => new ToolError('ERR_PATH_NOT_ALLOWED', `the path is not ${what} inside the MCP input folders (~/mailproof, or mcp.inputDirs)`);
   /** @type {string} */
   let real;
   try { real = await fs.realpath(p); } catch { throw refused(); }
@@ -59,7 +60,7 @@ async function resolveAllowed(p, o, what) {
 export async function resolveAllowedBundle(p, o) {
   const real = await resolveAllowed(p, o, 'a bundle folder or .tar file');
   const st = await fs.lstat(real).catch(() => null);
-  if (!st || !(st.isDirectory() || (st.isFile() && (real.endsWith('.tar') || await isTarFile(real))))) throw new ToolError('ERR_PATH_NOT_ALLOWED', 'the path is not a bundle folder or .tar file inside the folders listed in mcp.inputDirs');
+  if (!st || !(st.isDirectory() || (st.isFile() && (real.endsWith('.tar') || await isTarFile(real))))) throw new ToolError('ERR_PATH_NOT_ALLOWED', 'the path is not a bundle folder or .tar file inside the MCP input folders (~/mailproof, or mcp.inputDirs)');
   return real;
 }
 
@@ -71,7 +72,7 @@ export async function resolveAllowedBundle(p, o) {
  */
 export async function readAllowedFile(p, o) {
   const real = await resolveAllowed(p, o, 'a readable regular file');
-  const refused = () => new ToolError('ERR_PATH_NOT_ALLOWED', 'the path is not a readable regular file inside the folders listed in mcp.inputDirs');
+  const refused = () => new ToolError('ERR_PATH_NOT_ALLOWED', 'the path is not a readable regular file inside the MCP input folders (~/mailproof, or mcp.inputDirs)');
   const before = await fs.lstat(real).catch(() => null);
   if (!before || !before.isFile()) throw refused();
   if (before.size > MAX_TOTAL_BYTES) throw new ToolError('ERR_TOO_LARGE', `the file is ${before.size} bytes; the limit is ${MAX_TOTAL_BYTES}`);
@@ -117,7 +118,7 @@ export async function readBytes(args, o, optional = false) {
  * @returns {Promise<string>}  The absolute path (the folder's real path joined with the name).
  */
 export async function outputPath(name, outputDir, arg = 'saveTo') {
-  if (!outputDir) throw new ToolError('ERR_PATH_NOT_ALLOWED', 'saving files is turned off: the owner sets mcp.outputDir in the mailproof config');
+  if (!outputDir) throw new ToolError('ERR_PATH_NOT_ALLOWED', 'saving files is turned off (mcp.outputDir is null in the mailproof config)');
   if (typeof name !== 'string' || !name || name.length > 255 || /[\\/\0]/.test(name) || name === '.' || name === '..') throw badArgument(`${arg} must be a plain file name, not a path`);
   const dir = await fs.realpath(outputDir).catch(() => null);
   if (!dir || !(await fs.stat(dir)).isDirectory()) throw new ToolError('ERR_PATH_NOT_ALLOWED', 'mcp.outputDir is not a folder that exists');

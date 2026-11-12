@@ -164,6 +164,9 @@ export const REPLY_FACTS_MAX = 200;
 
 /** Default cadence of the automatic stamp job, in hours, and the range `stamp.everyHours` accepts. */
 export const STAMP_EVERY_HOURS = 6;
+
+/** The longest `status({ refresh: true })` waits for the trail lock to catch the index up (ms): a writer holding it must not make a status call hang; the read-only answer follows. */
+export const STATUS_REFRESH_LOCK_MS = 500;
 export const STAMP_EVERY_HOURS_MIN = 1;
 export const STAMP_EVERY_HOURS_MAX = 720;
 

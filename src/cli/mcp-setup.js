@@ -8,7 +8,7 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { printable as p } from './printable.js';
 import { tilde, ensureUserDir, userDir } from './paths.js';
-import { mcpSettings } from './config.js';
+import { mcpSettings, userRoot } from './config.js';
 import { stateDir, mcpLogFile } from './state.js';
 
 /** The block every MCP client that reads an `mcpServers` map takes. */
@@ -51,7 +51,7 @@ export async function mcpFacts(ctx, config) {
   const got = await run(['mcp', 'get', 'mailproof']);
   const text = got ? `${got.stdout}\n${got.stderr}` : '';
   const grab = (/** @type {string} */ key) => new RegExp(`^\\s*${key}:\\s*(.+)$`, 'mi').exec(text)?.[1]?.trim() ?? null;
-  const mcp = mcpSettings(config);
+  const mcp = mcpSettings(config, ctx.env);
   return {
     claude: got === null ? /** @type {const} */ ('missing') : got.code === 0 ? /** @type {const} */ ('registered') : /** @type {const} */ ('not registered'),
     scope: got?.code === 0 ? grab('Scope') : null,
@@ -60,7 +60,10 @@ export async function mcpFacts(ctx, config) {
     thisInstall: fs.realpathSync(path.resolve(import.meta.dirname, '..', '..', 'bin', 'mailproof.js')),
     logFile: mcpLogFile(stateDir(ctx.env)),
     inputDirs: mcp.inputDirs,
-    outputDir: mcp.outputDir,
+    inputDefault: config.mcp?.inputDirs === undefined,
+    // the folders writes go into, as one display string: the config's folder, null (off), or the three default kinds
+    outputDir: mcp.outputDir === undefined ? `${userRoot(ctx.env)}/{exports,backups,saved}` : mcp.outputDir,
+    outputDefault: mcp.outputDir === undefined,
   };
 }
 
@@ -95,8 +98,8 @@ export function mcpStatusLines(f, st, env, configFile) {
     row('Command', f.onPath ? `${t(f.onPath)} ${st.dim('(on your PATH)')}` : st.yellow(`mailproof is not on your PATH; this install is ${t(f.thisInstall)}`)),
     row('Config', t(configFile)),
     row('Log', t(f.logFile)),
-    row('Input dirs', f.inputDirs.length ? f.inputDirs.map(t).join(', ') : st.dim('none (a tool cannot read a file by path)')),
-    row('Output dir', f.outputDir ? t(f.outputDir) : st.dim('none (a tool cannot save a file)')),
+    row('Input dirs', f.inputDirs.length ? `${f.inputDirs.map(t).join(', ')}${f.inputDefault ? st.dim(' (default)') : ''}` : st.dim('none (a tool cannot read a file by path)')),
+    row('Output dir', f.outputDir ? `${t(f.outputDir)}${f.outputDefault ? st.dim(' (default)') : ''}` : st.dim('none (a tool cannot save a file)')),
   ];
 }
 

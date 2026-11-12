@@ -10,6 +10,9 @@ import { syncOnce } from '../cli/sync-op.js';
 import { readBytes, readAllowedFile, resolveAllowedBundle, saveBytes, outputPath } from './input.js';
 import { accountStatus, configFacts } from '../cli/status.js';
 import { UPDATE_COMMAND } from '../cli/version.js';
+import { installFacts } from '../cli/install.js';
+import { resolveProfile, listProfiles, profilesDir } from '../cli/profiles.js';
+import { tilde, tildeText, ensureUserDir } from '../cli/paths.js';
 import { bundleName } from '../cli/bundle.js';
 import { backupName } from '../cli/backup.js';
 import { otsOptionFromEnv } from '../cli/secrets.js';
@@ -38,7 +41,7 @@ export const EXPORT_DISCLOSURE = 'The bundle holds, for every email it includes:
  * @typedef {Object} HandlerCtx
  * @property {import('../cli/config.js').Account | null} account  Null for a tool with no account.
  * @property {() => Mailproof} mp  The account's instance, opened on first use.
- * @property {import('../cli/config.js').McpConfig} settings
+ * @property {ReturnType<typeof import('../cli/config.js').mcpSettings>} settings
  * @property {import('./input.js').InputOptions} input
  * @property {() => Promise<Output>} accounts  The `accounts` tool.
  * @property {string} state  The state directory (sync updates the account's state.json there).
@@ -91,8 +94,8 @@ const orNotFound = (v) => json(v ?? { found: false });
 async function bytesOut(c, bytes, what, saveTo) {
   if (!bytes) return json({ found: false });
   const meta = { id: what.key, bytes: bytes.length, sha256: crypto.createHash('sha256').update(bytes).digest('hex') };
-  if (saveTo !== undefined) return json({ ...meta, saved: await saveBytes(saveTo, bytes, c.settings.outputDir) });
-  if (bytes.length > c.settings.maxBinaryBytes) throw new ToolError('ERR_TOO_LARGE', `the content is ${bytes.length} bytes, over the ${c.settings.maxBinaryBytes} byte limit for a returned blob; call again with saveTo (needs mcp.outputDir)`);
+  if (saveTo !== undefined) return json({ ...meta, saved: await saveBytes(saveTo, bytes, await outFolder(c, 'saved')) });
+  if (bytes.length > c.settings.maxBinaryBytes) throw new ToolError('ERR_TOO_LARGE', `the content is ${bytes.length} bytes, over the ${c.settings.maxBinaryBytes} byte limit for a returned blob; call again with saveTo`);
   const uri = `mailproof://${c.account?.name}/${what.kind === 'raw' ? 'raw' : 'attachment'}/${what.key}`;
   return {
     content: [
@@ -101,6 +104,18 @@ async function bytesOut(c, bytes, what, saveTo) {
     ],
     outcome: 'ok',
   };
+}
+
+/**
+ * The folder a write of this kind goes into: the config's `mcp.outputDir` when set (null: writing is off), else the CLI's own `~/mailproof/<kind>`,
+ * created (0700) on first use.
+ * @param {HandlerCtx} c
+ * @param {'exports' | 'backups' | 'saved'} kind
+ * @returns {Promise<string | null>}
+ */
+async function outFolder(c, kind) {
+  const o = c.settings.outputDir;
+  return o === undefined ? ensureUserDir(c.env, kind) : o;
 }
 
 /** @typedef {(c: HandlerCtx, a: Record<string, any>) => Promise<Output>} Handler */
@@ -144,8 +159,12 @@ export const HANDLERS = {
   checkProfile: async (c, a) => {
     const mp = c.mp();
     const opts = { ...(a.at !== undefined ? { at: dateArg(a.at, 'at') } : {}), ...(a.parent !== undefined ? { parent: messageIdOf(a.parent) } : {}) };
-    return json(await mp.checkProfile(await idArg(a, 'id', mp), a.profile, Object.keys(opts).length ? opts : undefined));
+    /** @type {any} */
+    let profile;
+    try { profile = await resolveProfile(a.profile, c.env); } catch (e) { throw badArgument(tildeText(/** @type {Error} */ (e).message, c.env)); }
+    return json(await mp.checkProfile(await idArg(a, 'id', mp), profile, Object.keys(opts).length ? opts : undefined));
   },
+  profiles: async (c) => json({ dir: tilde(profilesDir(c.env), c.env), profiles: await listProfiles(c.env) }),
   replyFacts: async (c, a) => {
     if ((a.messageId === undefined) === (a.address === undefined)) throw badArgument('give messageId or address, one of them');
     return json(await c.mp().replyFacts(a.address !== undefined ? { address: a.address } : { messageId: messageIdOf(a.messageId) }));
@@ -189,8 +208,8 @@ export const HANDLERS = {
   upgradeStamps: async (c) => json(await c.mp().upgradeStamps()),
   status: async (c) => {
     const account = /** @type {import('../cli/config.js').Account} */ (c.account);
-    const s = await accountStatus(account, c.mp(), c.state);
-    return json({ ...s, config: c.configFile ? await configFacts(c.configFile, c.env) : null, version: c.version, updateCommand: UPDATE_COMMAND });
+    const s = await accountStatus(account, c.mp(), c.state, { refresh: true });
+    return json({ ...s, config: c.configFile ? await configFacts(c.configFile, c.env) : null, version: c.version, install: installFacts(c.deps, c.env), updateCommand: UPDATE_COMMAND });
   },
   stamp: async (c) => {
     const r = await c.mp().stamp();
@@ -210,9 +229,10 @@ export const HANDLERS = {
     const addrs = /** @type {string[]} */ (a.with).map((x) => parseAddress(x, 'with'));
     const tar = a.tar === true;
     let name = a.out ?? bundleName(account.name, now, tar);
-    await outputPath(name, c.settings.outputDir, 'out');   // the name as given must be plain, whatever suffix follows
+    const folder = await outFolder(c, 'exports');
+    await outputPath(name, folder, 'out');   // the name as given must be plain, whatever suffix follows
     if (tar && !name.endsWith('.tar')) name += '.tar';
-    const out = await outputPath(name, c.settings.outputDir, 'out');
+    const out = await outputPath(name, folder, 'out');
     const opts = { with: addrs, ...(a.after !== undefined ? { after: dateArg(a.after, 'after') } : {}), ...(a.before !== undefined ? { before: dateArg(a.before, 'before') } : {}), out, tar };
     if (a.confirm !== true) {
       const plan = await mp.export({ ...opts, dryRun: true });
@@ -232,9 +252,10 @@ export const HANDLERS = {
     const now = (c.deps.now ?? (() => new Date()))();
     if (a.push === true && !account.backupRemote) throw badArgument('this account has no backupRemote in the config: push needs one');
     let name = a.out ?? backupName(account.name, now);
-    await outputPath(name, c.settings.outputDir, 'out');   // the name as given must be plain, whatever suffix follows
+    const folder = await outFolder(c, 'backups');
+    await outputPath(name, folder, 'out');   // the name as given must be plain, whatever suffix follows
     if (!name.endsWith('.bundle')) name += '.bundle';
-    const out = await outputPath(name, c.settings.outputDir, 'out');
+    const out = await outputPath(name, folder, 'out');
     const opts = { out, withContent: a.withContent === true, ...(a.push === true ? { push: true, remote: /** @type {string} */ (account.backupRemote) } : {}) };
     if (a.confirm !== true) {
       const plan = await mp.backup({ ...opts, dryRun: true });

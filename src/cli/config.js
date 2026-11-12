@@ -8,7 +8,6 @@ import path from 'node:path';
 import { UsageError, PermError } from './errors.js';
 import { TRAIL_NAME_RE } from '../proof/trail.js';
 import { STAMP_EVERY_HOURS_MIN, STAMP_EVERY_HOURS_MAX } from '../proof/limits.js';
-import { DEFAULT_PROFILE, profileSummary } from './profile-text.js';
 
 /**
  * @typedef {Object} Account
@@ -29,8 +28,8 @@ import { DEFAULT_PROFILE, profileSummary } from './profile-text.js';
 /**
  * The server-wide `mcp` block (SPEC B12.2). Absent from the file: the defaults of `mcpSettings`.
  * @typedef {Object} McpConfig
- * @property {string[]} inputDirs  Absolute folders a tool may read a `path` from; empty refuses every path.
- * @property {string | null} outputDir  The one folder `saveTo` may write into; null refuses `saveTo`.
+ * @property {string[]} [inputDirs]  Absolute folders a tool may read a `path` from; absent: `~/mailproof`; `[]` refuses every path.
+ * @property {string | null} [outputDir]  The one folder export, backup and `saveTo` may write into; absent: `~/mailproof/exports`, `~/mailproof/backups` and `~/mailproof/saved`; `null` refuses every write.
  * @property {number} maxResponseBytes  Cap on a result's text.
  * @property {number} maxBinaryBytes  Cap on a returned raw email or attachment.
  */
@@ -93,7 +92,7 @@ export const TEMPLATE_NOTES = Object.freeze({
   ots: 'true: seal records with OpenTimestamps (needs the ots program); false: off',
   stamp: 'seal options: mode and everyHours (how often the seal job runs)',
   backupRemote: 'a git remote that `backup --push` sends the trail to (no password in the URL)',
-  mcp: 'settings for `mailproof mcp`: inputDirs, outputDir and the response caps',
+  mcp: 'settings for `mailproof mcp`: inputDirs, outputDir (default ~/mailproof; null/[] turn them off) and the response caps',
 });
 
 /**
@@ -123,6 +122,9 @@ export class ConfigError extends UsageError {
  * @returns {string}
  */
 export const homeOf = (env) => env.HOME || os.homedir();
+
+/** `<home>/mailproof`: the folder everything mailproof makes for the person goes under (paths.js: `userDir`), and the MCP server's default input folder. @param {Record<string, string | undefined>} env @returns {string} */
+export const userRoot = (env) => path.join(homeOf(env), 'mailproof');
 
 /**
  * @param {Record<string, string | undefined>} env
@@ -315,21 +317,26 @@ function validateMcp(raw, env, problems) {
   if (!isObj(raw)) { problems.push('mcp: must be an object'); return undefined; }
   const before = problems.length;
   for (const k of Object.keys(raw)) if (!MCP_KEYS.has(k)) problems.push(`mcp.${k}: unknown key`);
-  /** @type {string[]} */
-  const inputDirs = [];
+  /** @type {string[] | undefined} */
+  let inputDirs;
   if (raw.inputDirs !== undefined) {
     if (!Array.isArray(raw.inputDirs)) problems.push('mcp.inputDirs: must be an array of absolute directories');
-    else raw.inputDirs.forEach((d, i) => {
-      const dir = typeof d === 'string' ? expandHome(d, env) : '';
-      if (!dir || !path.isAbsolute(dir)) problems.push(`mcp.inputDirs[${i}]: must be an absolute path (or start with ~/)`);
-      else inputDirs.push(path.resolve(dir));
-    });
+    else {
+      const dirs = /** @type {string[]} */ ([]);
+      inputDirs = dirs;
+      raw.inputDirs.forEach((d, i) => {
+        const dir = typeof d === 'string' ? expandHome(d, env) : '';
+        if (!dir || !path.isAbsolute(dir)) problems.push(`mcp.inputDirs[${i}]: must be an absolute path (or start with ~/)`);
+        else dirs.push(path.resolve(dir));
+      });
+    }
   }
-  /** @type {string | null} */
-  let outputDir = null;
-  if (raw.outputDir !== undefined) {
+  /** @type {string | null | undefined} */
+  let outputDir;
+  if (raw.outputDir === null) outputDir = null;
+  else if (raw.outputDir !== undefined) {
     const dir = typeof raw.outputDir === 'string' ? expandHome(raw.outputDir, env) : '';
-    if (!dir || !path.isAbsolute(dir)) problems.push('mcp.outputDir: must be an absolute path (or start with ~/)');
+    if (!dir || !path.isAbsolute(dir)) problems.push('mcp.outputDir: must be an absolute path (or start with ~/), or null to turn saving off');
     else outputDir = path.resolve(dir);
   }
   /** @type {{ maxResponseBytes: number, maxBinaryBytes: number }} */
@@ -340,16 +347,25 @@ function validateMcp(raw, env, problems) {
     if (!Number.isInteger(v) || /** @type {number} */ (v) < 1024) problems.push(`mcp.${k}: must be an integer of at least 1024`);
     else sizes[k] = /** @type {number} */ (v);
   }
-  return problems.length === before ? { inputDirs, outputDir, ...sizes } : undefined;
+  return problems.length === before ? { ...(inputDirs ? { inputDirs } : {}), ...(outputDir !== undefined ? { outputDir } : {}), ...sizes } : undefined;
 }
 
 /**
- * The `mcp` settings with the defaults filled in.
+ * The `mcp` settings with the defaults filled in (SPEC B12.2). Folders the config does not set follow the CLI's: the server reads under `~/mailproof`, and
+ * writes into `~/mailproof/exports`, `backups` and `saved` (`outputDir` is `undefined`: the handlers pick the folder by kind). `outputDir: null` and
+ * `inputDirs: []` in the file turn writing and path-reading off.
  * @param {Config} config
- * @returns {McpConfig}
+ * @param {Record<string, string | undefined>} env
+ * @returns {{ inputDirs: string[], outputDir: string | null | undefined, maxResponseBytes: number, maxBinaryBytes: number }}
  */
-export function mcpSettings(config) {
-  return config.mcp ?? { inputDirs: [], outputDir: null, ...MCP_DEFAULTS };
+export function mcpSettings(config, env) {
+  const m = config.mcp;
+  return {
+    inputDirs: m?.inputDirs ?? [userRoot(env)],
+    outputDir: m?.outputDir,
+    maxResponseBytes: m?.maxResponseBytes ?? MCP_DEFAULTS.maxResponseBytes,
+    maxBinaryBytes: m?.maxBinaryBytes ?? MCP_DEFAULTS.maxBinaryBytes,
+  };
 }
 
 /**
@@ -423,46 +439,6 @@ export function selectAccount(config, flag) {
  */
 export function mailproofOptions(a) {
   return { trailDir: a.trailDir, trail: a.trail, otsBin: a.otsBin, ...(Object.keys(a.stamp).length ? { stamp: a.stamp } : {}), ...(Object.keys(a.content).length ? { content: a.content } : {}) };
-}
-
-/**
- * A profile: a path as given, else `<configDir>/profiles/<name>.json`. Profiles hold no secrets, so no mode check.
- * @param {string} spec
- * @param {Record<string, string | undefined>} env
- * @returns {Promise<unknown>}  The parsed JSON.
- */
-export async function loadProfile(spec, env) {
-  const isName = /^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(spec);
-  const file = isName ? path.join(configDir(env), 'profiles', `${spec}.json`) : path.resolve(spec);
-  let text;
-  try { text = await fs.readFile(file, 'utf8'); }
-  catch (e) {
-    if (spec === 'default' && /** @type {any} */ (e).code === 'ENOENT') return DEFAULT_PROFILE;   // the built-in baseline, unless the person made their own `default.json`
-    throw new UsageError(`--profile: cannot read ${file} (${/** @type {any} */ (e).code ?? 'error'})${isName ? '; a bare name is looked up in the profiles directory, use a path for another place' : ''}`);
-  }
-  try { return JSON.parse(text); } catch (e) { throw new UsageError(`--profile: ${file} is not valid JSON: ${/** @type {Error} */ (e).message}`); }
-}
-
-/**
- * The profiles a person can name: the built-in `default` (unless their own `default.json` replaces it) and every `<configDir>/profiles/<name>.json`,
- * each with its one-line meaning. A file that cannot be read or parsed is listed with that said, never thrown.
- * @param {Record<string, string | undefined>} env
- * @returns {Promise<Array<{ name: string, summary: string, builtin: boolean }>>}
- */
-export async function listProfiles(env) {
-  const dir = path.join(configDir(env), 'profiles');
-  /** @type {string[]} */
-  let files = [];
-  try { files = (await fs.readdir(dir)).filter((f) => /^[A-Za-z0-9][A-Za-z0-9_-]*\.json$/.test(f)).sort(); } catch { /* no profiles directory */ }
-  /** @type {Array<{ name: string, summary: string, builtin: boolean }>} */
-  const out = [];
-  if (!files.includes('default.json')) out.push({ name: 'default', summary: profileSummary(DEFAULT_PROFILE), builtin: true });
-  for (const f of files) {
-    const name = f.slice(0, -5);
-    try { out.push({ name, summary: profileSummary(JSON.parse(await fs.readFile(path.join(dir, f), 'utf8'))), builtin: false }); }
-    catch { out.push({ name, summary: 'cannot be read or is not JSON', builtin: false }); }
-  }
-  return out;
 }
 
 /**

@@ -30,7 +30,7 @@ import { COMMANDS } from '../cli/commands.js';
  * @property {Annotations} annotations
  * @property {Record<string, ParamSpec>} params
  * @property {string[]} required
- * @property {boolean} [noAccount]  Takes no `account` (`accounts`, `verifyRecord`).
+ * @property {boolean} [noAccount]  Takes no `account` (`accounts`, `profiles`, `verifyRecord`).
  * @property {string | null} [primitive]  Name in primitives.json; default `Mailproof#<name>`; null: the tool has its own `description`.
  * @property {string} [description]  Only for a tool with no primitive.
  */
@@ -52,11 +52,11 @@ const ID = { type: 'string', description: 'a record id: 32 hex characters, or a 
 /** @type {ParamSpec} */
 const TARGET = { type: 'string', description: 'one exact email address (bob@example.com), a Message-ID in angle brackets (<abc@mail.example>), or a record id (8 to 32 hex characters)' };
 /** @type {ParamSpec} */
-const PATH = { type: 'string', description: 'absolute path of a file inside one of the server\'s input folders (mcp.inputDirs in the config); give this or base64' };
+const PATH = { type: 'string', description: 'absolute path of a file inside one of the server\'s input folders (~/mailproof by default, or mcp.inputDirs in the config); give this or base64' };
 /** @type {ParamSpec} */
 const B64 = { type: 'string', description: 'the exact bytes, base64-encoded; give this or path' };
 /** @type {ParamSpec} */
-const SAVE_TO = { type: 'string', description: 'a file name (not a path): write the bytes into the server\'s output folder (mcp.outputDir) instead of returning them' };
+const SAVE_TO = { type: 'string', description: 'a file name (not a path): write the bytes into the server\'s output folder (~/mailproof/saved by default, or mcp.outputDir in the config) instead of returning them' };
 /** @type {ParamSpec} */
 const CONFIRM = { type: 'boolean', description: 'true to do it; without it nothing changes and a preview is returned' };
 /** @type {ParamSpec} */
@@ -117,13 +117,17 @@ export const TOOLS = {
   },
   proofParts: { cls: 'read', title: 'Re-check the stored parts of a record', annotations: READ, params: { id: ID }, required: ['id'] },
   checkProfile: {
-    cls: 'read', title: 'Check a record against a trust profile', annotations: READ, required: ['id', 'profile'],
+    cls: 'read', title: 'Check a record against a trust profile', annotations: READ, required: ['id'],
     params: {
       id: ID,
-      profile: { type: 'object', description: 'a trust profile written inline (senders, checks, body, link; SPEC B8)' },
+      profile: { type: ['string', 'object'], description: 'a profile name (`default` when omitted, or one the profiles tool lists), or a trust profile written inline (senders, checks, body, link; SPEC B8)' },
       at: AT,
       parent: { type: 'string', description: flag('check', 'parent') },
     },
+  },
+  profiles: {
+    cls: 'read', title: 'List the trust profiles', annotations: READ, params: {}, required: [], noAccount: true, primitive: null,
+    description: 'List the trust profiles `checkProfile` accepts by name, as { dir, profiles: [{ name, summary, builtin }] }: the built-in `default` (the DKIM baseline, unless the owner made their own default.json) and every file in the owner\'s profiles folder, each with one line saying what it requires. Opens no trail.',
   },
   replyFacts: {
     cls: 'read', title: 'Facts about the replies to an email', annotations: READ, required: [],
@@ -166,7 +170,7 @@ export const TOOLS = {
       with: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 20, description: 'the exact email addresses to export the exchange with (a union: any email naming one of them on From, To, Cc or Reply-To)' },
       after: { type: 'string', description: flag('export', 'after') },
       before: { type: 'string', description: flag('export', 'before') },
-      out: { type: 'string', description: 'a folder name (not a path) to create inside the server\'s output folder (mcp.outputDir); default mailproof-bundle-<account>-<time>' },
+      out: { type: 'string', description: 'a folder name (not a path) to create inside the server\'s output folder (~/mailproof/exports by default, or mcp.outputDir in the config); default mailproof-bundle-<account>-<time>' },
       tar: { type: 'boolean', description: 'true: one .tar file instead of a folder' },
       confirm: CONFIRM,
     },
@@ -174,7 +178,7 @@ export const TOOLS = {
   backup: {
     cls: 'write', title: 'Back up the trail', annotations: hints(false, false, false, true), required: [],
     params: {
-      out: { type: 'string', description: 'a file name (not a path) for the bundle inside the server\'s output folder (mcp.outputDir); default <account>-<time>.bundle' },
+      out: { type: 'string', description: 'a file name (not a path) for the bundle inside the server\'s output folder (~/mailproof/backups by default, or mcp.outputDir in the config); default <account>-<time>.bundle' },
       withContent: { type: 'boolean', description: 'true: also write the stored raw emails as an unencrypted .content.tar beside it' },
       push: { type: 'boolean', description: 'true: also push the trail to the account\'s backup remote (never forced; contacts that host)' },
       confirm: CONFIRM,
@@ -183,7 +187,7 @@ export const TOOLS = {
   verifyBundle: {
     cls: 'read', title: 'Check a proof bundle', annotations: READ, noAccount: true, primitive: 'verifyBundle', required: ['dir'],
     params: {
-      dir: { type: 'string', description: 'absolute path of the bundle folder, or of the .tar file `export` writes, inside one of the server\'s input folders (mcp.inputDirs)' },
+      dir: { type: 'string', description: 'absolute path of the bundle folder, or of the .tar file `export` writes, inside one of the server\'s input folders (~/mailproof by default, or mcp.inputDirs in the config)' },
       expect: { type: 'string', description: flag('verify-bundle', 'expect') },
       strict: { type: 'boolean', description: flag('verify-bundle', 'strict') },
     },

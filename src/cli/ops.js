@@ -4,7 +4,7 @@
 
 import { UsageError, EX_OK, EX_ERR, EX_NO, EX_USAGE } from './errors.js';
 import { parseDate, parseAddress, parseLimit, parseChoice, resolveId, messageIdOf } from './parse.js';
-import { loadProfile } from './config.js';
+import { loadProfile } from './profiles.js';
 import { withAccount, print, warn, printJson } from './session.js';
 import { printable as p } from './printable.js';
 import { render, accountFacts, jsonFacts } from './detail.js';

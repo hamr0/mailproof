@@ -21,7 +21,8 @@ import { headerFacts } from './status.js';
 import { mainHeader, fullMenu, shortLine, firstRun, jobOf, SCREEN_JOBS, MENU_ITEMS, MENU_ALIASES } from './menu-header.js';
 import { checkFileCmd } from './check-file.js';
 import { mcpFacts, mcpStatusLines, writeOtherClients, runClaude, CLAUDE_ADD, CLAUDE_REMOVE } from './mcp-setup.js';
-import { configPath, listProfiles, loadProfile, annotatedTemplate } from './config.js';
+import { configPath, annotatedTemplate } from './config.js';
+import { listProfiles, loadProfile } from './profiles.js';
 import { configSummary, editUntilValid, openEditor, editorCommand } from './config-screen.js';
 
 /** @typedef {import('./session.js').Ctx} Ctx */

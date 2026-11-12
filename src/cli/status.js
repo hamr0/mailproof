@@ -1,5 +1,5 @@
-// `status` (SPEC B11.5): what a trail holds and how it is kept. Never opens IMAP and writes nothing but the trail index: it brings that up to date first (an incremental
-// catch-up, so it can show the real in/out and verified counts). The one command that may run on every account at once (B11.3). The library's `status()` and the MCP tool stay read-only.
+// `status` (SPEC B11.5): what a trail holds and how it is kept. Never opens IMAP and writes nothing but the trail index: the library's `status({ refresh: true })`
+// brings that up to date first (an incremental catch-up, so it shows the real in/out and verified counts); the MCP tool asks for the same. The one command that may run on every account at once (B11.3).
 
 import path from 'node:path';
 import { Mailproof } from '../index.js';
@@ -23,10 +23,11 @@ import { indexOverview } from '../proof/index-db.js';
  * @param {import('./config.js').Account} account
  * @param {import('../index.js').Mailproof} mp
  * @param {string} state  The state directory.
+ * @param {{ refresh?: boolean }} [opts]  `refresh`: the library catches the trail index up first (the CLI and the MCP tool both do).
  * @returns {Promise<{ user: string, trail: string, records: import('../proof/status.js').TrailStatus['records'], lastSync: import('./state.js').AccountState['lastSync'], content: import('../proof/status.js').TrailStatus['content'], index: import('../proof/status.js').TrailStatus['index'], pendingStamps: number | null, seal: import('../proof/status.js').TrailStatus['seal'], lastBackup: import('./state.js').AccountState['lastBackup'], watch: { running: boolean, pid?: number } }>}
  */
-export async function accountStatus(account, mp, state) {
-  const [lib, st] = await Promise.all([mp.status(), readState(state, account.name)]);
+export async function accountStatus(account, mp, state, opts = {}) {
+  const [lib, st] = await Promise.all([mp.status(opts.refresh ? { refresh: true } : undefined), readState(state, account.name)]);
   return {
     user: account.user, trail: lib.trail, records: lib.records, lastSync: st.lastSync, content: lib.content, index: lib.index,
     pendingStamps: lib.pendingStamps, seal: lib.seal, lastBackup: st.lastBackup,
@@ -46,20 +47,14 @@ export async function configFacts(file, env) {
 }
 
 /**
- * The facts `status` prints: the library's and the state file's, with the trail index brought up to date first (a `list` of one row, which
- * catches it up with HEAD under the writer lock; it is incremental, so cheap; SPEC B11.5). A failure there is not an error: the read-only
- * overview below says what the index is.
+ * The facts `status` prints: the library's (with the trail index caught up first, SPEC B11.5) and the state file's.
  * @param {import('./config.js').Account} account
  * @param {import('./session.js').Ctx} ctx
  * @returns {Promise<Awaited<ReturnType<typeof accountStatus>>>}
  */
 async function statusOf(account, ctx) {
-  // a short lock wait: another process writing the trail must not make `status` hang (the catch-up then just does not happen)
-  const mp = ctx.deps.makeMailproof ? ctx.deps.makeMailproof(account) : new Mailproof({ ...mailproofOptions(account), lockTimeoutMs: 500 });
-  try {
-    await mp.list({ limit: 1 }).catch(() => []);
-    return await accountStatus(account, mp, stateDir(ctx.env));
-  } finally { await mp.close(); }
+  const mp = ctx.deps.makeMailproof ? ctx.deps.makeMailproof(account) : new Mailproof(mailproofOptions(account));
+  try { return await accountStatus(account, mp, stateDir(ctx.env), { refresh: true }); } finally { await mp.close(); }
 }
 
 /**

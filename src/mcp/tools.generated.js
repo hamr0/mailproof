@@ -351,11 +351,10 @@ export const GENERATED_TOOLS = Object.freeze(/** @type {GeneratedTool[]} */ (/**
       "idempotentHint": true,
       "openWorldHint": false
     },
-    "description": "Use to gate which recorded email an agent may act on, by id: allowed senders, required checks, required body level, required link strength. Same rules as the pure `checkProfile()`; this one reads the record from the trail first. Local, free, deterministic: re-run it later for the same answer. Rejects with `ERR_BAD_PROFILE` for an invalid profile. An id that is not in the trail gives `ok: false` with a failed `record` rule, not a throw.",
+    "description": "Check one recorded email, by id, against a trust profile (senders, checks, body level, link strength). `profile` is a name (`default` is the DKIM baseline; others are the owner's files, listed by the `profiles` tool) or an inline object; omitted means `default`. Returns `ok` and each failed rule with what was wanted and found. Local and deterministic.",
     "noAccount": false,
     "required": [
-      "id",
-      "profile"
+      "id"
     ],
     "properties": {
       "id": {
@@ -363,8 +362,11 @@ export const GENERATED_TOOLS = Object.freeze(/** @type {GeneratedTool[]} */ (/**
         "description": "a record id: 32 hex characters, or a unique prefix of at least 8"
       },
       "profile": {
-        "type": "object",
-        "description": "a trust profile written inline (senders, checks, body, link; SPEC B8)"
+        "type": [
+          "string",
+          "object"
+        ],
+        "description": "a profile name (`default` when omitted, or one the profiles tool lists), or a trust profile written inline (senders, checks, body, link; SPEC B8)"
       },
       "at": {
         "type": "string",
@@ -375,6 +377,22 @@ export const GENERATED_TOOLS = Object.freeze(/** @type {GeneratedTool[]} */ (/**
         "description": "the request's Message-ID, for a profile that requires a link"
       }
     }
+  },
+  {
+    "name": "profiles",
+    "method": "profiles",
+    "cls": "read",
+    "title": "List the trust profiles",
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    },
+    "description": "List the trust profiles `checkProfile` accepts by name, as { dir, profiles: [{ name, summary, builtin }] }: the built-in `default` (the DKIM baseline, unless the owner made their own default.json) and every file in the owner's profiles folder, each with one line saying what it requires. Opens no trail.",
+    "noAccount": true,
+    "required": [],
+    "properties": {}
   },
   {
     "name": "replyFacts",
@@ -424,7 +442,7 @@ export const GENERATED_TOOLS = Object.freeze(/** @type {GeneratedTool[]} */ (/**
       },
       "path": {
         "type": "string",
-        "description": "absolute path of a file inside one of the server's input folders (mcp.inputDirs in the config); give this or base64"
+        "description": "absolute path of a file inside one of the server's input folders (~/mailproof by default, or mcp.inputDirs in the config); give this or base64"
       },
       "base64": {
         "type": "string",
@@ -455,7 +473,7 @@ export const GENERATED_TOOLS = Object.freeze(/** @type {GeneratedTool[]} */ (/**
       },
       "path": {
         "type": "string",
-        "description": "absolute path of a file inside one of the server's input folders (mcp.inputDirs in the config); give this or base64"
+        "description": "absolute path of a file inside one of the server's input folders (~/mailproof by default, or mcp.inputDirs in the config); give this or base64"
       },
       "base64": {
         "type": "string",
@@ -486,7 +504,7 @@ export const GENERATED_TOOLS = Object.freeze(/** @type {GeneratedTool[]} */ (/**
       },
       "saveTo": {
         "type": "string",
-        "description": "a file name (not a path): write the bytes into the server's output folder (mcp.outputDir) instead of returning them"
+        "description": "a file name (not a path): write the bytes into the server's output folder (~/mailproof/saved by default, or mcp.outputDir in the config) instead of returning them"
       }
     }
   },
@@ -513,7 +531,7 @@ export const GENERATED_TOOLS = Object.freeze(/** @type {GeneratedTool[]} */ (/**
       },
       "saveTo": {
         "type": "string",
-        "description": "a file name (not a path): write the bytes into the server's output folder (mcp.outputDir) instead of returning them"
+        "description": "a file name (not a path): write the bytes into the server's output folder (~/mailproof/saved by default, or mcp.outputDir in the config) instead of returning them"
       }
     }
   },
@@ -534,7 +552,7 @@ export const GENERATED_TOOLS = Object.freeze(/** @type {GeneratedTool[]} */ (/**
     "properties": {
       "path": {
         "type": "string",
-        "description": "absolute path of a file inside one of the server's input folders (mcp.inputDirs in the config); give this or base64"
+        "description": "absolute path of a file inside one of the server's input folders (~/mailproof by default, or mcp.inputDirs in the config); give this or base64"
       },
       "base64": {
         "type": "string",
@@ -561,7 +579,7 @@ export const GENERATED_TOOLS = Object.freeze(/** @type {GeneratedTool[]} */ (/**
     "properties": {
       "path": {
         "type": "string",
-        "description": "absolute path of a file inside one of the server's input folders (mcp.inputDirs in the config); give this or base64"
+        "description": "absolute path of a file inside one of the server's input folders (~/mailproof by default, or mcp.inputDirs in the config); give this or base64"
       },
       "base64": {
         "type": "string",
@@ -652,7 +670,7 @@ export const GENERATED_TOOLS = Object.freeze(/** @type {GeneratedTool[]} */ (/**
       "idempotentHint": true,
       "openWorldHint": false
     },
-    "description": "What the trail holds and how it is kept, read-only and offline: `records` (total, in, out, verified, unverified, oldest and newest capture; the in/out/verified counts are null until the index is current, call `list` once to bring it up to date), `content` (stored files and bytes, or \"off\"), `index` state, `pendingStamps`, and the `seal` (mode, last run, next due, manifests, those without a proof, proofs not yet anchored, chain state). The tool adds last sync, last backup, whether a watch runs, the config check and the installed version. Never connects to the mailbox, builds the index or takes a lock; an unreadable part is reported in its own field.",
+    "description": "What the trail holds and how it is kept, offline: `records` (total, in, out, verified, unverified, oldest and newest capture; the tool catches the trail index up first, so these are the real counts unless a writer holds the lock or the index cannot be built, then null), `content` (stored files and bytes, or \"off\"), `index` state, `pendingStamps`, and the `seal` (mode, last run, next due, manifests, proofs not yet anchored, chain state). The tool adds last sync, last backup, a running watch, the config check, the version and `install` (`dev-link` or `npm`, with the folder). Never connects to the mailbox.",
     "noAccount": false,
     "required": [],
     "properties": {}
@@ -725,7 +743,7 @@ export const GENERATED_TOOLS = Object.freeze(/** @type {GeneratedTool[]} */ (/**
       },
       "out": {
         "type": "string",
-        "description": "a folder name (not a path) to create inside the server's output folder (mcp.outputDir); default mailproof-bundle-<account>-<time>"
+        "description": "a folder name (not a path) to create inside the server's output folder (~/mailproof/exports by default, or mcp.outputDir in the config); default mailproof-bundle-<account>-<time>"
       },
       "tar": {
         "type": "boolean",
@@ -754,7 +772,7 @@ export const GENERATED_TOOLS = Object.freeze(/** @type {GeneratedTool[]} */ (/**
     "properties": {
       "out": {
         "type": "string",
-        "description": "a file name (not a path) for the bundle inside the server's output folder (mcp.outputDir); default <account>-<time>.bundle"
+        "description": "a file name (not a path) for the bundle inside the server's output folder (~/mailproof/backups by default, or mcp.outputDir in the config); default <account>-<time>.bundle"
       },
       "withContent": {
         "type": "boolean",
@@ -789,7 +807,7 @@ export const GENERATED_TOOLS = Object.freeze(/** @type {GeneratedTool[]} */ (/**
     "properties": {
       "dir": {
         "type": "string",
-        "description": "absolute path of the bundle folder, or of the .tar file `export` writes, inside one of the server's input folders (mcp.inputDirs)"
+        "description": "absolute path of the bundle folder, or of the .tar file `export` writes, inside one of the server's input folders (~/mailproof by default, or mcp.inputDirs in the config)"
       },
       "expect": {
         "type": "string",

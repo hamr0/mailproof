@@ -59,7 +59,7 @@ export function createMcp(o) {
   /** The accounts this server may use (all, or the one `--account` named). @type {Account[]} */
   const accounts = o.accountFlag === undefined ? Object.values(all) : [selectAccount(o.config, o.accountFlag)];
   const names = accounts.map((a) => a.name);
-  const settings = mcpSettings(o.config);
+  const settings = mcpSettings(o.config, o.env);
   const deps = o.deps ?? {};
   const state = stateDir(o.env);
   const now = deps.now ?? (() => new Date());
@@ -154,7 +154,7 @@ export function createMcp(o) {
   };
 
   const serverInfo = { name: 'mailproof', title: `mailproof (${names.join(', ')})`, version: o.version };
-  const instructions = `mailproof records a re-checkable proof of each email. Accounts: ${names.join(', ')}. ${UNTRUSTED} Tools that change anything are marked in their annotations; forget and prune delete data, and export and backup write files: they only act with confirm: true (without it they return a preview and change nothing).`;
+  const instructions = `mailproof records a re-checkable proof of each email. Accounts: ${names.join(', ')}. ${UNTRUSTED} Tools that change anything are marked in their annotations; forget and prune delete data, and export and backup write files (under ~/mailproof/exports and ~/mailproof/backups unless the owner set mcp.outputDir): they only act with confirm: true (without it they return a preview and change nothing).`;
   const protocol = createProtocol({ serverInfo, instructions, listTools, callTool, log });
 
   /** Close every opened `Mailproof` (the shared worker ends with the last). @returns {Promise<void>} */

@@ -39,7 +39,8 @@ test('not registered: status, the choice line under the rule, install runs exact
   assert.match(no.stdout, /^Claude Code +not registered$/m);
   assert.match(no.stdout, /^Config +\S+config\.json$/m);
   assert.match(no.stdout, /^Log +\S+mcp\.log$/m);
-  assert.match(no.stdout, /^Input dirs +none/m);
+  assert.match(no.stdout, /^Input dirs +\S*mailproof \(default\)$/m, 'the effective folders: the CLI\'s own');
+  assert.match(no.stdout, /^Output dir +\S*mailproof\/\{exports,backups,saved\} \(default\)$/m);
   assert.match(no.stdout, /^[─-]+\n1 install in Claude Code {2}3 other clients$/m, 'C10: the rule above the choice line; nothing to uninstall');
   assert.match(no.stdout, /^nothing changed$/m);
   assert.deepEqual(calls.filter((a) => a[1] !== 'get'), []);

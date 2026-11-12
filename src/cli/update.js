@@ -3,30 +3,18 @@
 // (`npm view`, a short timeout, offline says so) so nothing is installed that already is; npm's own output is shown only when it fails.
 
 import { spawn, execFile } from 'node:child_process';
-import fs from 'node:fs';
-import path from 'node:path';
 import { EX_OK, EX_ERR } from './errors.js';
 import { print, warn, printJson } from './session.js';
 import { printable as p } from './printable.js';
 import { styleOf } from './style.js';
 import { tilde } from './paths.js';
+import { installInfo } from './install.js';
 import { version, NPM_ARGS, UPDATE_COMMAND } from './version.js';
 
 /** @typedef {import('./session.js').Ctx} Ctx */
 /** @typedef {import('./session.js').Args} Args */
 
 const LOOKUP_TIMEOUT_MS = 10_000;
-
-/**
- * Where this copy of mailproof lives, and whether it is a development link: its real folder is outside any `node_modules` or has a `.git`
- * (an `npm link` or a checkout), so npm must not replace it.
- * @returns {{ dev: boolean, dir: string }}
- */
-export function installInfo() {
-  const dir = fs.realpathSync(path.resolve(import.meta.dirname, '..', '..'));
-  const dev = !dir.split(path.sep).includes('node_modules') || fs.existsSync(path.join(dir, '.git'));
-  return { dev, dir };
-}
 
 /**
  * The latest version on npm, or null when it cannot be reached (offline, no npm, slow).

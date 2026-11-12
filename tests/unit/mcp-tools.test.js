@@ -15,10 +15,10 @@ test('the table is complete: every method and exported function is a tool or exc
   for (const [k, why] of Object.entries(EXCLUDED)) assert.ok(why.length > 10, k);
 });
 
-test('29 tools: 20 read, 7 write, 2 destructive; every tool has all four hints, set explicitly', () => {
+test('30 tools: 21 read, 7 write, 2 destructive; every tool has all four hints, set explicitly', () => {
   const t = Object.values(TOOLS);
-  assert.equal(t.length, 29);
-  assert.deepEqual(['read', 'write', 'destructive'].map((c) => t.filter((x) => x.cls === c).length), [20, 7, 2]);
+  assert.equal(t.length, 30);
+  assert.deepEqual(['read', 'write', 'destructive'].map((c) => t.filter((x) => x.cls === c).length), [21, 7, 2]);
   for (const [name, x] of Object.entries(TOOLS)) {
     assert.deepEqual(Object.keys(x.annotations).sort(), ['destructiveHint', 'idempotentHint', 'openWorldHint', 'readOnlyHint'], name);
     assert.equal(x.annotations.readOnlyHint, x.cls === 'read', `${name}: readOnly iff class read`);

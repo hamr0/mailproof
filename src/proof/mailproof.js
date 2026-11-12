@@ -12,7 +12,7 @@ import { engine } from './verdict.js';
 import { createOts, DEFAULT_OTS_TIMEOUT_MS } from './ots.js';
 import { runStamp, parseStampOptions } from './stamp.js';
 import { findSeal } from './seal.js';
-import { STAMP_OTS_TIMEOUT_MS } from './limits.js';
+import { STAMP_OTS_TIMEOUT_MS, STATUS_REFRESH_LOCK_MS } from './limits.js';
 import { verifyRecord, matchBodyRecord, matchFileRecord } from './recheck.js';
 import { checkProfile } from './profile.js';
 import { TRAIL_NAME_RE, RECORD_ID_RE, DEFAULT_LOCK_TIMEOUT_MS, commitRecord, commitFiles, readRecord, withTrailLock, trailLockFile } from './trail.js';
@@ -634,20 +634,30 @@ class Mailproof {
     return runExport({ root: this.root, trail: this.trail, contentDir: this.contentDir, lockTimeoutMs: this.lockTimeoutMs, now: this.now, indexCfg: this._indexCfg(), ...this._exportSeams }, opts);
   }
 
-  /** @mcp Mailproof#status What the trail holds and how it is kept, read-only and offline: `records` (total, in, out, verified, unverified, oldest and newest capture; the in/out/verified counts are null until the index is current, call `list` once to bring it up to date), `content` (stored files and bytes, or "off"), `index` state, `pendingStamps`, and the `seal` (mode, last run, next due, manifests, those without a proof, proofs not yet anchored, chain state). The tool adds last sync, last backup, whether a watch runs, the config check and the installed version. Never connects to the mailbox, builds the index or takes a lock; an unreadable part is reported in its own field. */
+  /** @mcp Mailproof#status What the trail holds and how it is kept, offline: `records` (total, in, out, verified, unverified, oldest and newest capture; the tool catches the trail index up first, so these are the real counts unless a writer holds the lock or the index cannot be built, then null), `content` (stored files and bytes, or "off"), `index` state, `pendingStamps`, and the `seal` (mode, last run, next due, manifests, proofs not yet anchored, chain state). The tool adds last sync, last backup, a running watch, the config check, the version and `install` (`dev-link` or `npm`, with the folder). Never connects to the mailbox. */
   /**
-   * What the trail holds and how it is kept: read-only, offline, no lock, no index build.
+   * What the trail holds and how it is kept: offline; read-only unless `refresh` is set.
+   * @param {{ refresh?: boolean }} [opts]  `refresh`: first bring the trail index up to date (an incremental catch-up under the trail lock, waiting at most 500 ms), so the in/out and verified counts and the dates are filled in; a failure there (a writer holds the lock, the index cannot be opened) is not an error: the read-only answer follows.
    * @returns {Promise<import('./status.js').TrailStatus>}
    * @name Mailproof#status
-   * @when Use to see at a glance what a trail holds and how it is kept, without reading it: how many records (in and out, verified and not, oldest and newest capture), the size of the content store, whether the trail index is current, how many OpenTimestamps proofs are not yet anchored, and the seal (mode, last run, when the next is due, manifests and those without a proof, whether the manifest chain is intact). It reads the trail's HEAD, one aggregate query on a current index (otherwise a count of the record files at HEAD, with in/out and dates null) and the manifest chain; it never builds or catches up the index, takes no lock, makes no network call and runs no `ots`. Facts about the account rather than the trail (last sync, last backup, a running watch, the config file) belong to whoever owns the config; the `mailproof` CLI and the MCP server add them.
+   * @when Use to see at a glance what a trail holds and how it is kept, without reading it: how many records (in and out, verified and not, oldest and newest capture), the size of the content store, whether the trail index is current, how many OpenTimestamps proofs are not yet anchored, and the seal (mode, last run, when the next is due, manifests and those without a proof, whether the manifest chain is intact). It reads the trail's HEAD, one aggregate query on a current index (otherwise a count of the record files at HEAD, with in/out and dates null) and the manifest chain; by default it never builds or catches up the index, takes no lock, makes no network call and runs no `ots`. With `{ refresh: true }` it first catches the index up (the one write it may make, to the index cache outside git, under a lock wait of at most 500 ms), so the counts are current. Facts about the account rather than the trail (last sync, last backup, a running watch, the config file) belong to whoever owns the config; the `mailproof` CLI and the MCP server add them.
    * @category read
-   * @signature mp.status() => Promise<{ trail, records: { total, totalSource, in, out, oldest, newest, verified, unverified } | { error } | null, content: { files, bytes } | 'off', index: 'absent'|'present'|'stale'|'unreadable'|'unknown', pendingStamps: number | null, seal: { enabled, mode, everyHours, last, nextDue, error, manifests, unstamped, pending, chain } | null }>
-   * @fails Does not reject for a damaged part: `records` is `{ error }` when the index overview failed, `seal` is null when it could not be read, `content` is zeros when the store cannot be listed. `records` is null and `index` `'absent'` for a trail with no commit yet (nothing is created). `index` is `'unknown'` when the SQLite add-on cannot load and `'unreadable'` for an index file that cannot be opened (`list` rebuilds it when the directory is writable). `pendingStamps` and `seal.enabled` follow `otsBin`: with the seal off `pendingStamps` is null.
+   * @signature mp.status(opts?: { refresh?: boolean }) => Promise<{ trail, records: { total, totalSource, in, out, oldest, newest, verified, unverified } | { error } | null, content: { files, bytes } | 'off', index: 'absent'|'present'|'stale'|'unreadable'|'unknown', pendingStamps: number | null, seal: { enabled, mode, everyHours, last, nextDue, error, manifests, unstamped, pending, chain } | null }>
+   * @fails Does not reject for a damaged part: `records` is `{ error }` when the index overview failed, `seal` is null when it could not be read, `content` is zeros when the store cannot be listed. `records` is null and `index` `'absent'` for a trail with no commit yet (nothing is created). `index` is `'unknown'` when the SQLite add-on cannot load and `'unreadable'` for an index file that cannot be opened (`list` rebuilds it when the directory is writable). `pendingStamps` and `seal.enabled` follow `otsBin`: with the seal off `pendingStamps` is null. Throws a TypeError for an unknown option or a `refresh` that is not a boolean.
    * @example
-   * const s = await mp.status();   // s.records.total, s.index, s.seal.nextDue
+   * const s = await mp.status({ refresh: true });   // s.records.in, s.records.verified, s.index, s.seal.nextDue
    */
-  async status() {
-    return runStatus({ root: this.root, trail: this.trail, contentDir: this.contentDir, contentStore: this.content.store !== false, lockTimeoutMs: this.lockTimeoutMs, otsBin: this.otsBin, stamp: this.stampOpts });
+  async status(opts = {}) {
+    if (opts === null || typeof opts !== 'object') throw new TypeError('status: opts must be an object');
+    for (const k of Object.keys(opts)) if (k !== 'refresh') throw new TypeError(`status: unknown option ${k}`);
+    if (opts.refresh !== undefined && typeof opts.refresh !== 'boolean') throw new TypeError('status: refresh must be a boolean');
+    let lockTimeoutMs = this.lockTimeoutMs;
+    if (opts.refresh === true) {
+      lockTimeoutMs = Math.min(lockTimeoutMs, STATUS_REFRESH_LOCK_MS);
+      const { listIndex } = await import('./index-db.js');
+      await listIndex({ root: this.root, trail: this.trail, lockTimeoutMs }, { limit: 1 }).catch(() => []);
+    }
+    return runStatus({ root: this.root, trail: this.trail, contentDir: this.contentDir, contentStore: this.content.store !== false, lockTimeoutMs, otsBin: this.otsBin, stamp: this.stampOpts });
   }
 
   /** @mcp Mailproof#backup Write a git bundle of the whole trail (records, keys, replies, seals; never message bodies) to the server's output folder; restore with `git clone <file> <dir>`. `withContent: true` adds a separate unencrypted tar of the stored raw emails (other people's mail). `push: true` also pushes the trail to the account's configured backup remote, never with force, and contacts that host. Without `confirm: true` it returns a preview and writes nothing. `out` is a plain file name in the output folder. Fails with `ERR_BACKUP_EMPTY` (nothing to back up), `ERR_BACKUP_EXISTS` (pick another `out`), `ERR_BACKUP_BUNDLE`, `ERR_BACKUP_VERIFY` or `ERR_TRAIL_LOCKED`. */
@@ -887,6 +897,7 @@ class Mailproof {
     return linkedIndex(this._indexCfg(), id, { limit });
   }
 
+  /** @mcp Mailproof#checkProfile Check one recorded email, by id, against a trust profile (senders, checks, body level, link strength). `profile` is a name (`default` is the DKIM baseline; others are the owner's files, listed by the `profiles` tool) or an inline object; omitted means `default`. Returns `ok` and each failed rule with what was wanted and found. Local and deterministic. */
   /**
    * Evaluate a trust profile against a recorded email (or a record object).
    * @param {MpRecord | string} recordOrId  A record, its JSON text, or a trail id.

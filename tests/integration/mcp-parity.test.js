@@ -83,7 +83,7 @@ test('status(): a damaged index file is reported, never thrown', async () => {
 
 test('MCP status: deep-equals the library for the trail, adds the account facts, config check and version; read-only', async () => {
   const s = await setup();
-  const lib = await s.w.mp.status();
+  const lib = await s.w.mp.status({ refresh: true });
   const r = await s.m.call('status');
   assert.equal(r.isError, false, r.text);
   for (const k of Object.keys(lib)) assert.deepEqual(r.json[k], lib[k], k);
@@ -180,8 +180,8 @@ test('MCP verifyBundle: the .tar export writes is checked directly; any other fi
   await finish(s);
 });
 
-test('MCP verifyBundle: with no input folders configured, paths are refused', async () => {
-  const s = await setup({ mcp: { outputDir: makeTmpDir('mp-par-out-') } });
+test('MCP verifyBundle: with inputDirs [] paths are refused', async () => {
+  const s = await setup({ mcp: { outputDir: makeTmpDir('mp-par-out-'), inputDirs: [] } });
   assert.equal((await s.m.call('verifyBundle', { dir: '/tmp' })).error.code, 'ERR_PATH_NOT_ALLOWED');
   await finish(s);
 });
@@ -270,8 +270,8 @@ test('MCP export: only a plain name under the output folder; absolute, .., neste
   assert.equal((await s.m.call('export', { with: ['not an address'], out: 'two' })).error.code, 'ERR_BAD_ARGUMENT');
   assert.equal((await s.m.call('export', { with: [BOB], confirm: true })).isError, false, 'the default name is used');
   assert.ok(fs.readdirSync(s.outDir).some((n) => /^mailproof-bundle-work-\d{8}-\d{6}$/.test(n)));
-  // with no output folder configured nothing can be written
-  const none = await setup({ mcp: { inputDirs: [makeTmpDir('mp-par-in-')] } });
+  // with outputDir null nothing can be written
+  const none = await setup({ mcp: { inputDirs: [makeTmpDir('mp-par-in-')], outputDir: null } });
   assert.equal((await none.m.call('export', { with: [BOB], out: 'x' })).error.code, 'ERR_PATH_NOT_ALLOWED');
   assert.equal((await none.m.call('backup', {})).error.code, 'ERR_PATH_NOT_ALLOWED');
   await finish(none); await finish(s);

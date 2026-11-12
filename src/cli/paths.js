@@ -4,7 +4,7 @@
 
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { expandHome, homeOf } from './config.js';
+import { expandHome, homeOf, userRoot } from './config.js';
 
 export { expandHome };
 
@@ -43,7 +43,7 @@ export function tildeText(text, env) {
  * @param {UserKind} kind
  * @returns {string}
  */
-export const userDir = (env, kind) => path.join(homeOf(env), 'mailproof', kind);
+export const userDir = (env, kind) => path.join(userRoot(env), kind);
 
 /**
  * Create `<home>/mailproof/<kind>` (mode 0700; an existing `~/mailproof` keeps its mode) and return it.
