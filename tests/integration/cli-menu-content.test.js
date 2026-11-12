@@ -138,3 +138,63 @@ test('B8 seal: plain words for a run and the one-line no-op; B9 backup: path, si
   assert.match(b.stdout, /^ {2}[\d.]+ KiB, \d+ commits$/m);
   assert.match(b.stdout, /^restore with:\n {2}git clone ~\/mailproof\/backups\/test-\S+\.bundle <dir>$/m);
 });
+
+test('B12 status: the account line, bold labels, ~/ paths, short relative times, human sizes, plain plurals, the real counts (the index is caught up by status itself)', async () => {
+  const F = await buildThread();   // a fresh trail: no index, no seal run yet
+  const w = makeWorld({ accounts: { test: account(F.dir) } });
+  const s = await w.run(['status'], { tty: true, columns: 80, env: { FORCE_COLOR: '1', LANG: 'en_US.UTF-8' }, deps: { now: () => new Date('2026-11-12T14:00:00Z') } });
+  assert.ok(s.stdout.includes('\x1b[1mrecords     \x1b[0m'), 'labels are bold');
+  const t = s.stdout.replace(/\x1b\[[0-9;]*m/g, '').replace(/\x1b\]8;[^\x07\x1b]*(\x1b\\|\x07)/g, '');
+  assert.match(t, /^test · me@owner\.example$/m, 'the account line');
+  assert.match(t, /^ {2}records {6}6 \(5 in, 1 out\) · 3 verified, 2 unverified · 2026-11-01 to 2026-11-01$/m);
+  assert.match(t, /^ {2}content {6}6 files, [\d.]+ KiB$/m, 'human sizes');
+  assert.match(t, /^ {2}seal {9}one batch every 6 h; never run \(due at the next sync or `mailproof seal`\); 0 manifests$/m);
+  const home = makeWorld({ accounts: { h: account('~/mailproof/h') } });
+  const h = await home.run(['status']);
+  assert.match(h.stdout, /^ {2}trail {8}~\/mailproof\/h\/default$/m, 'a path under HOME prints as ~/');
+  assert.match(h.stdout, /no trail yet/);
+});
+
+test('B12 header: the "(verified count after the next list)" placeholder is gone; the real counts show once the index is current; status brings it up to date', async () => {
+  const F = await buildThread();
+  const w = makeWorld({ accounts: { test: account(F.dir) } });
+  const cold = await menu(w, keys('q'));
+  assert.ok(!cold.stdout.includes('verified count after the next list'));
+  assert.match(cold.stdout, /^records: 6 - seal never run/m);
+  const warm = await menu(w, keys('16', '', 'q'));   // status catches the index up
+  assert.match(warm.stdout, /^records: 6 - 3 verified - 2 unverified - 1 sent copy - /m, 'the header after status has the real counts');
+});
+
+test('B10 forget: Who first, then dates; the preview in browse rows shown once, then the account-name confirmation, then the result with plain counts; ids are the advanced way', async () => {
+  const F = await buildThread();
+  const w = makeWorld({ accounts: { test: account(F.dir) } });
+  const r = await menu(w, keys('14', 'bob@beta.example', '', '', 'test', '', 'q'));
+  assert.equal(r.code, 0, r.stderr);
+  assert.match(r.stdout, /^Who \(an address like bob@example\.org, or ids to give record ids \(advanced\), empty = back\): /m);
+  assert.ok(r.stdout.indexOf('Who (') < r.stdout.indexOf('Before ('), 'who before the dates');
+  assert.match(r.stdout, /^Forget on account test: 4 emails, 4 with a stored raw email\./m);
+  assert.match(r.stdout, /^ #  when +age +verdict +from$/m);
+  assert.match(r.stdout, /^ {4}Re: please sign/m, 'the subject under each row');
+  assert.match(r.stdout, /^and 0 more|^$/m);
+  assert.equal((r.stdout.match(/Forget on account test/g) ?? []).length, 1, 'shown once');
+  assert.ok(r.stdout.indexOf('Forget on account') < r.stdout.indexOf('Type the account name'), 'preview, then the confirmation');
+  assert.ok(r.stdout.indexOf('Type the account name') < r.stdout.indexOf('forgot '), 'then the result');
+  assert.match(r.stdout, /^forgot 4 stored emails and \d+ attachment files; the proofs are unchanged$/m);
+  assert.ok(!/\(s\)/.test(r.stdout), 'no (s)');
+});
+
+test('B11 prune: the date, then the preview (count, span, rows); nothing to remove says so and stops (no confirmation); then the backup question, then the confirmation; dates as 2026-08-19', async () => {
+  const F = await buildThread();
+  const w = makeWorld({ accounts: { test: account(F.dir) } });
+  const none = await menu(w, keys('15', '2000-01-01', '', 'q'));
+  assert.match(none.stdout, /Permanently remove proofs captured before a date \(forget only removes content\)/);
+  assert.match(none.stdout, /^nothing is captured before 2000-01-01: nothing to prune$/m);
+  assert.ok(!none.stdout.includes('Also delete the pre-prune backup') && !none.stdout.includes('Type the account name'), 'nothing to prune: no more questions');
+  const r = await menu(w, keys('15', '2026-11-01T10:04:00Z', 'n', 'test', '', 'q'));
+  assert.match(r.stdout, /^Prune would permanently remove 3 proofs captured before 2026-11-01 \(2026-11-01 to 2026-11-01\) and keep 3\.$/m);
+  assert.match(r.stdout, /^ #  when +age +verdict +from$/m);
+  const at = (s) => r.stdout.indexOf(s);
+  assert.ok(at('Prune would') < at('Also delete the pre-prune backup') && at('Also delete the pre-prune backup') < at('Type the account name') && at('Type the account name') < at('pruned: removed'), 'preview, backup option, confirmation, result');
+  assert.equal((r.stdout.match(/Prune would permanently remove/g) ?? []).length, 1, 'the preview is shown once');
+  assert.match(r.stdout, /^pruned: removed 3 proofs, kept 3; new head \w+; content of 3 emails removed; the old trail is kept as /m);
+});

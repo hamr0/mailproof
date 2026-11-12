@@ -141,11 +141,11 @@ export async function runMenu(ctx, exec, opts = {}) {
     }));
     let account = await pickAccount();
 
-    /** Run a command with the account, Ctrl-C cutting the command and not the menu. @param {string[]} argv @returns {Promise<number>} */
-    const go = async (argv) => {
+    /** Run a command with the account, Ctrl-C cutting the command and not the menu. @param {string[]} argv @param {Partial<Ctx>} [extra] @returns {Promise<number>} */
+    const go = async (argv, extra = {}) => {
       const ac = new AbortController();
       p.onInterrupt(() => ac.abort());
-      try { return await exec([...pre, ...argv, '--account', account], { ...base, signal: ac.signal }); }
+      try { return await exec([...pre, ...argv, '--account', account], { ...base, ...extra, signal: ac.signal }); }
       finally { p.onInterrupt(null); }
     };
     /** Type the account name to confirm a destructive step. @returns {Promise<boolean>} */
@@ -155,10 +155,10 @@ export async function runMenu(ctx, exec, opts = {}) {
       out('nothing changed');
       return false;
     };
-    /** @param {string[]} argv The destructive command with its parameters: summary first, then the typed name, then --yes. */
+    /** @param {string[]} argv The destructive command with its parameters: the preview ONCE, then the typed name, then --yes (which does not print the preview again). */
     const destructive = async (argv) => {
-      await go([...argv, '--dry-run']);
-      if (await typedName()) await go([...argv, '--yes']);
+      if ((await go([...argv, '--dry-run'])) !== 0) return;
+      if (await typedName()) await go([...argv, '--yes'], { previewed: true });
     };
 
     /** The export questions for the given addresses (shared by the Export item and People). @param {string} who */
@@ -269,19 +269,30 @@ export async function runMenu(ctx, exec, opts = {}) {
         await go(['check', id, '--profile', profile, ...(parent ? ['--parent', parent] : [])]);
       },
       forget: async () => {
-        /** @param {string[]} argv */
-        const run = async (argv) => { await destructive(argv); };
-        const ids = await ask({ label: 'Ids', example: 'record ids separated by spaces; empty = by person', optional: true, validate: (s) => { s.split(/\s+/).forEach(idArg); return s; } });
-        if (ids) { await run(['forget', ...ids.split(/\s+/)]); return; }
-        const who = await ask({ label: 'With', example: 'email address, e.g. {bob@example.org}', validate: (s) => parseAddress(s, 'With') });
+        // who first, then the dates; record ids are the advanced way in
+        const who = await ask({ label: 'Who', example: 'an address like {bob@example.org}, or {ids} to give record ids (advanced)', validate: (s) => (s.toLowerCase() === 'ids' ? 'ids' : parseAddress(s, 'Who')) });
+        if (who === 'ids') {
+          const ids = await ask({ label: 'Ids', example: 'record ids separated by spaces', validate: (s) => { s.split(/\s+/).forEach(idArg); return s; } });
+          crumb([step('forget'), 'ids']);
+          await destructive(['forget', ...ids.split(/\s+/)]);
+          return;
+        }
         const before = await askDate('Before', '--before');
         const after = await askDate('After', '--after');
-        await run(['forget', '--with', who, ...(before ? ['--before', before] : []), ...(after ? ['--after', after] : [])]);
+        crumb([step('forget'), who]);
+        await destructive(['forget', '--with', who, ...(before ? ['--before', before] : []), ...(after ? ['--after', after] : [])]);
       },
       prune: async () => {
+        // the date, then the preview; with nothing to remove it ends there. Only then the backup question and the typed name.
         const before = await ask({ label: 'Before', example: 'date, e.g. {2026-08-19}', validate: (s) => { parseDate(s, '--before'); return s; } });
+        crumb([step('prune'), `before ${before}`]);
+        const session = await openAccount({ cmd: 'prune', values: { config: opts.configFlag, account }, positionals: [] }, base);
+        let none;
+        try { none = (await session.mp.list({ before: parseDate(before, '--before'), limit: 1 })).length === 0; } finally { await session.close(); }
+        await go(['prune', '--before', before, '--dry-run']);
+        if (none) return;
         const del = await askYes('Also delete the pre-prune backup afterwards (the removal is only final then)?');
-        await destructive(['prune', '--before', before, ...(del ? ['--delete-backup'] : [])]);
+        if (await typedName()) await go(['prune', '--before', before, ...(del ? ['--delete-backup'] : []), '--yes'], { previewed: true });
       },
       backup: async () => {
         const dflt = tilde(defaultBundlePath(ctx.env, account, now()));   // computed once: the name offered is the name written

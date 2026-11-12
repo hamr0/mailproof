@@ -102,7 +102,7 @@ mailproof backup --with-content  # a git bundle of the proofs, plus a tar of the
 mailproof stamp --account personal                       # seal and upgrade first, so the proofs are as far along as they can be
 mailproof export --account personal --with bob@example.org --after 2026-01-01
 #   wrote ~/mailproof/exports/mailproof-bundle-personal-20261112-093000 (41 records, ...)
-#   bundle sha256 3f2a...  (tell the recipient this out of band)
+#   sha256 3f2a...  (tell the recipient this, by another channel)
 mailproof verify-bundle ~/mailproof/exports/mailproof-bundle-personal-20261112-093000 --expect 3f2a...   # on the other side, with no account
 ```
 

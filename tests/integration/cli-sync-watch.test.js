@@ -100,7 +100,7 @@ test('sync with OTS on: the run ends with the stamp job, its result is `ots` (a 
   const deps = { sync: async (mp) => ({ ...result(), stamp: await mp._autoStamp() }) };
   const st0 = JSON.parse((await w.run(['status', '--json'])).stdout).acme;
   assert.deepEqual([st0.pendingStamps, st0.seal.enabled, st0.seal.manifests, st0.seal.last], [0, true, 0, null]);
-  assert.match((await w.run(['status'])).stdout, /seal +batch every 6h; never run/);
+  assert.match((await w.run(['status'])).stdout, /seal +one batch every 6 h; never run/);
   assert.match((await w.run(['show', rec.id])).stdout, /^seal +unsealed$/m);
   const first = JSON.parse((await w.run(['sync', '--json'], { deps })).stdout).ots;
   assert.deepEqual([first.ran, first.manifests.length, first.manifests[0].records, first.stamped, first.upgraded, first.pending, first.unstamped, first.unsealed], [true, 1, 1, 1, 0, 1, 0, 0]);
@@ -111,7 +111,7 @@ test('sync with OTS on: the run ends with the stamp job, its result is `ots` (a 
   assert.match(sh, /^seal +manifest 1, stamped by manifest 1 \(pending\)$/m);
   const st1 = JSON.parse((await w.run(['status', '--json'])).stdout).acme;
   assert.deepEqual([st1.seal.manifests, st1.seal.unstamped, st1.seal.pending, st1.seal.chain, st1.pendingStamps], [1, 0, 1, 'ok', 1]);
-  assert.match((await w.run(['status'])).stdout, /seal +batch every 6h; last \d{4}-.*next due .*; 1 manifests \(0 without a proof\); 1 proofs not yet anchored/);
+  assert.match((await w.run(['status'])).stdout, /seal +one batch every 6 h; last run \d\d:\d\dZ \(.*\), next due \d\d:\d\dZ \(in .*\); 1 manifest; 1 waiting for its Bitcoin anchor/);
   // `stamp` runs the job now, whatever the cadence: it upgrades once the calendars have it
   fs.writeFileSync(marker, '');
   const s1 = await w.run(['stamp', '--json']);

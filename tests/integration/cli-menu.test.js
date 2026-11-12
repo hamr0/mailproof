@@ -48,7 +48,7 @@ const menu = (w, input, opts = {}) => w.run([], { interactive: true, input, ...o
 test('the menu shows the header (identity, counts), the action line and quits on q; ? lists the rest; no terminal means no menu', async () => {
   const w = world();
   const cold = await menu(w, keys('q'));
-  assert.match(cold.stdout, /^records: 6 - \(verified count after the next list\) - seal never run - watch off$/m, 'no index yet: the header reads it as it is and never builds it');
+  assert.match(cold.stdout, /^records: 6 - seal never run - watch off$/m, 'no index yet: the header shows the total and never builds it (no "verified count" placeholder)');
   await w.run(['list']);   // builds the index
   const r = await menu(w, keys('?', 'q'));
   assert.equal(r.code, 0);
@@ -114,7 +114,7 @@ test('Show, Verify, Replies, Check, Status run the subcommand code (same output,
   const chk = await menu(w, keys('check', id, prof, '', 'q'));
   assert.match(chk.stdout, /^(ok|✓) pass$/m);
   const st = await menu(w, keys('16', '', 'q'));
-  assert.match(st.stdout, /^test\n  trail /m);
+  assert.match(st.stdout, /^test [·-] me@owner\.example\n {2}trail /m);
   const ex = await menu(w, keys('11', 'alice@alpha.example', '', '', path.join(makeTmpDir('mp-cli-menu-ex-'), 'b'), 'n', 'y', '', 'q'));
   assert.match(ex.stdout, /^(ok|✓) saved to .*\/b$/m);
   assert.match(ex.stdout, /^sha256 [0-9a-f]{64}/m);
@@ -140,9 +140,9 @@ test('every number 1-19 and every name is accepted at any prompt, not only the o
     [['11', 'export'], /^With \(/m],
     [['12', 'seal', 'stamp'], /^the Bitcoin anchor is pending/m],
     [['13', 'backup'], /^Write the bundle to \(/m],
-    [['14', 'forget'], /^Ids \(/m],
+    [['14', 'forget'], /^Who \(/m],
     [['15', 'prune'], /^Before \(/m],
-    [['16', 'status'], /^test\n {2}trail /m],
+    [['16', 'status'], /^test [·-] me@owner\.example\n {2}trail /m],
     [['17', 'config'], /^Action \(/m],
     [['18', 'update'], /npm install -g mailproof/],
   ];
@@ -200,31 +200,33 @@ test('Forget is destructive: the summary first, then the account name must be ty
   const id = idOf('unsigned');
   const raw = async () => (await w.run(['show', id, '--raw'])).code;
   assert.equal(await raw(), 0);
-  const wrong = await menu(w, keys('forget', id, 'nope', '', 'q'));
-  assert.match(wrong.stdout, /forget on account test: 1 record\(s\), 1 with a stored raw email/);
+  const wrong = await menu(w, keys('forget', 'ids', id, 'nope', '', 'q'));
+  assert.match(wrong.stdout, /Forget on account test: 1 email, 1 with a stored raw email/);
   assert.ok(wrong.stdout.includes('Type the account name (test) to proceed'));
   assert.match(wrong.stdout, /nothing changed/);
   assert.equal(await raw(), 0, 'still stored');
-  const eofAtConfirm = await menu(w, keys('forget', id));
+  const eofAtConfirm = await menu(w, keys('forget', 'ids', id));
   assert.equal(eofAtConfirm.code, 0);
   assert.equal(await raw(), 0);
-  const ok = await menu(w, keys('forget', id, 'test', '', 'q'));
-  assert.match(ok.stdout, /forgot 1 stored email\(s\)/);
+  const ok = await menu(w, keys('forget', 'ids', id, 'test', '', 'q'));
+  assert.match(ok.stdout, /forgot 1 stored email and 0 attachment files; the proofs are unchanged/);
+  assert.equal((ok.stdout.match(/Forget on account test/g) ?? []).length, 1, 'the preview is shown ONCE');
   assert.equal(await raw(), 1, 'the content is gone');
   assert.equal((await w.run(['show', id, '--json'])).code, 0, 'the proof stays');
 });
 
 test('Forget by person asks with/before/after; Prune asks the cutoff, shows the summary, needs the typed name', async () => {
   const w = world();
-  const wrong = await menu(w, keys('forget', '', 'bob@beta.example', '', '', 'test', '', 'q'));
-  assert.match(wrong.stdout, /forgot \d+ stored email/);
+  const wrong = await menu(w, keys('forget', 'bob@beta.example', '', '', 'test', '', 'q'));
+  assert.match(wrong.stdout, /forgot \d+ stored emails?/);
   const p = await menu(w, keys('prune', '2026-11-01T10:04:00Z', 'n', 'no', '', 'q'));
-  assert.match(p.stdout, /records removed 3, kept 3/);
+  assert.match(p.stdout, /Prune would permanently remove 3 proofs captured before 2026-11-01/);
   assert.match(p.stdout, /nothing changed/);
   assert.equal(JSON.parse((await w.run(['list', '--json'])).stdout).length, 6, 'nothing was pruned');
   const bad = await menu(w, keys('prune', 'tomorrow-ish', '2026-11-01T10:04:00Z', 'n', 'test', '', 'q'));
   assert.match(bad.stdout, /--before: "tomorrow-ish" is not a date/);
-  assert.match(bad.stdout, /pruned: removed 3, kept 3/);
+  assert.match(bad.stdout, /pruned: removed 3 proofs, kept 3/);
+  assert.equal((bad.stdout.match(/Prune would permanently remove/g) ?? []).length, 1, 'the preview is shown ONCE');
   assert.equal(JSON.parse((await w.run(['list', '--json'])).stdout).length, 3);
 });
 

@@ -11,8 +11,10 @@ import { render, accountFacts, jsonFacts } from './detail.js';
 import { styleOf } from './style.js';
 import { classifyTarget, otherParty, minute } from './target.js';
 import { showMany, verifyMany, peopleRun } from './by-person.js';
-import { replyLines } from './rows.js';
+import { replyLines, pageLines } from './rows.js';
 import { ruleLines } from './profile-text.js';
+import { count } from './words.js';
+import { tilde } from './paths.js';
 
 /** @typedef {import('./session.js').Ctx} Ctx */
 /** @typedef {import('./session.js').Args} Args */
@@ -154,7 +156,24 @@ export async function checkCmd(a, ctx) {
   });
 }
 
-const MORE = (/** @type {number} */ n) => `and ${n} more`;
+/** The most emails a destructive preview lists as rows (the count is always complete). */
+const PREVIEW_ROWS = 5;
+
+/** `2026-08-19`: a date as people write it. @param {string} iso @returns {string} */
+const day = (iso) => p(iso.slice(0, 10));
+
+/**
+ * The rows of a preview: the newest `PREVIEW_ROWS` of these records as browse rows, and how many more there are.
+ * @param {import('../index.js').Mailproof} mp @param {string[]} ids  Newest first. @param {Ctx} ctx @returns {Promise<string[]>}
+ */
+async function previewRows(mp, ids, ctx) {
+  const shown = ids.slice(0, PREVIEW_ROWS);
+  const facts = (await Promise.all(shown.map((i) => mp.describe(i)))).flatMap((d) => d.records);
+  const st = styleOf(ctx);
+  const lines = pageLines({ st, now: ctx.deps.now ?? (() => new Date()) }, facts.map((f) => ({ facts: f })), 1);
+  if (ids.length > shown.length) lines.push(st.dim(`and ${ids.length - shown.length} more`));
+  return lines;
+}
 
 /** @param {Args} a @param {Ctx} ctx @returns {Promise<number>} */
 export async function forgetCmd(a, ctx) {
@@ -168,34 +187,38 @@ export async function forgetCmd(a, ctx) {
     const target = ids ?? { with: /** @type {string} */ (f.with), ...(f.before ? { before: f.before } : {}), ...(f.after ? { after: f.after } : {}) };
     const plan = await mp.forget(target, { dryRun: true });   // the library's own preview: one definition (SPEC B12.5)
     const sum = { ids: plan.ids ?? [], stored: plan.removed };
-    const lines = [
-      `forget on account ${p(account.name)}: ${sum.ids.length} record(s), ${sum.stored} with a stored raw email (attachment files no other stored email needs go too). Proofs stay.`,
-      ...sum.ids.slice(0, 20).map((i) => `  ${short(i)}`),
-      ...(sum.ids.length > 20 ? [`  ${MORE(sum.ids.length - 20)}`] : []),
-    ];
+    // the preview: the count in plain words, then the emails as browse rows (the menu shows it once, then asks, then runs with --yes)
+    const preview = async () => [
+      `Forget on account ${p(account.name)}: ${count(sum.ids.length, 'email')}, ${sum.stored} with a stored raw email. Attachment files no other stored email needs go too. The proofs stay.`,
+      ...(await previewRows(mp, sum.ids, ctx)),
+    ].join('\n');
     if (v['dry-run']) {
-      if (v.json) printJson(ctx, { dryRun: true, records: sum.ids, stored: sum.stored }); else print(ctx, lines.join('\n'));
+      if (v.json) printJson(ctx, { dryRun: true, records: sum.ids, stored: sum.stored }); else print(ctx, await preview());
       return EX_OK;
     }
-    if (!v.yes) { warn(ctx, `${lines.join('\n')}\nadd --yes to proceed`); return EX_USAGE; }
-    if (!v.json) print(ctx, lines.join('\n'));
+    if (!v.yes) { warn(ctx, `${await preview()}\nadd --yes to proceed`); return EX_USAGE; }
+    if (!v.json && !ctx.previewed) print(ctx, await preview());
     const res = await mp.forget(target);
-    if (v.json) printJson(ctx, res); else print(ctx, `forgot ${res.removed} stored email(s) and ${res.attachments} attachment file(s); the proofs are unchanged`);
+    if (v.json) printJson(ctx, res); else print(ctx, `forgot ${count(res.removed, 'stored email')} and ${count(res.attachments, 'attachment file')}; the proofs are unchanged`);
     return EX_OK;
   });
 }
 
 /**
- * @param {import('../proof/prune.js').PruneResult} r
- * @returns {string}
+ * The preview of a prune in plain words: how many proofs go, over which dates, the newest as browse rows; or that nothing is captured before the date.
+ * @param {import('../index.js').Mailproof} mp @param {import('../proof/prune.js').PruneResult} r @param {Ctx} ctx
+ * @returns {Promise<string>}
  */
-function pruneLines(r) {
-  if (r.noop) return `nothing is captured before ${p(r.cutoff)}: nothing to prune`;
+async function pruneText(mp, r, ctx) {
+  const st = styleOf(ctx);
+  if (r.noop) return `nothing is captured before ${day(r.cutoff)}: nothing to prune`;
+  const old = await mp.list({ before: new Date(r.cutoff) });   // newest first
+  const span = old.length ? ` (${day(old[old.length - 1].captured)} to ${day(old[0].captured)})` : '';
   return [
-    `${r.dryRun ? 'prune would' : 'prune did'} remove everything captured before ${p(r.cutoff)}`,
-    `  records removed ${r.removed}, kept ${r.kept}; reply rows dropped ${r.dropped}`,
-    `  stragglers kept although older (${r.stragglers.length}): ${r.stragglers.slice(0, 5).map(short).join(', ') || '-'}${r.stragglers.length > 5 ? ', ...' : ''}`,
-    `  the old trail stays as ${p(r.backup ?? '(deleted)')} until you delete it`,
+    `${r.dryRun ? 'Prune would permanently remove' : 'Prune removes'} ${count(r.removed, 'proof')} captured before ${day(r.cutoff)}${span} and keep ${r.kept}.`,
+    ...(await previewRows(mp, old.map((x) => x.id), ctx)),
+    ...(r.stragglers.length ? [`${count(r.stragglers.length, 'older email')} stays, because it sits after a newer one: ${r.stragglers.slice(0, 5).map(short).join(', ')}${r.stragglers.length > 5 ? ', ...' : ''}`] : []),
+    st.dim(`The old trail stays as ${p(tilde(r.backup ?? '', ctx.env) || '(deleted)')} until you delete it.`),
   ].join('\n');
 }
 
@@ -207,14 +230,14 @@ export async function pruneCmd(a, ctx) {
   return withAccount(a, ctx, async ({ mp }) => {
     const plan = await mp.prune({ before, dryRun: true });
     if (plan.noop || v['dry-run']) {
-      if (v.json) printJson(ctx, plan); else print(ctx, pruneLines(plan));
+      if (v.json) printJson(ctx, plan); else print(ctx, await pruneText(mp, plan, ctx));
       return EX_OK;
     }
-    if (!v.yes) { warn(ctx, `${pruneLines(plan)}\nadd --yes to proceed`); return EX_USAGE; }
-    if (!v.json) print(ctx, pruneLines(plan));
+    if (!v.yes) { warn(ctx, `${await pruneText(mp, plan, ctx)}\nadd --yes to proceed`); return EX_USAGE; }
+    if (!v.json && !ctx.previewed) print(ctx, await pruneText(mp, plan, ctx));
     const res = await mp.prune({ before, ...(v['delete-backup'] ? { deleteBackup: true } : {}) });
     if (v.json) printJson(ctx, res);
-    else print(ctx, `pruned: removed ${res.removed}, kept ${res.kept}; new head ${res.head ? short(res.head) : '-'}; content removed ${res.content.removed}${res.backup ? `; backup ${p(res.backup)}` : ''}`);
+    else print(ctx, `pruned: removed ${count(res.removed, 'proof')}, kept ${res.kept}; new head ${res.head ? short(res.head) : '-'}; content of ${count(res.content.removed, 'email')} removed${res.backup ? `; the old trail is kept as ${p(tilde(res.backup, ctx.env))}` : '; the old trail was deleted'}`);
     return EX_OK;
   });
 }

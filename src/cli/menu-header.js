@@ -134,8 +134,7 @@ export function mainHeader(st, h, now) {
   if (!r) parts.push('records: none yet');
   else {
     parts.push(`records: ${r.total}`);
-    if (r.verified === null || r.unverified === null) parts.push(st.dim('(verified count after the next list)'));
-    else {
+    if (r.verified !== null && r.unverified !== null) {   // not known until the index is current (a `list` or `status` catches it up): then the total stands alone
       parts.push(st.green(`${r.verified} verified`), r.unverified ? st.yellow(`${r.unverified} unverified`) : `${r.unverified} unverified`);
       if (r.out !== null) parts.push(`${r.out} sent cop${r.out === 1 ? 'y' : 'ies'}`);
     }

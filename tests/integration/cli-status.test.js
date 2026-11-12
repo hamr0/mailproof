@@ -1,5 +1,6 @@
-// `mailproof status` is truly read-only (SPEC B11.5, B11.14): it never builds, creates or catches up the trail index and
-// never takes the trail lock. With a current index the counts come from one aggregate query; otherwise from git.
+// `mailproof status` (SPEC B11.5, B11.14) brings the trail index up to date itself (an incremental catch-up under a short lock wait), so it
+// shows the real in/out, verified and date counts; where it cannot (the index is unreadable, the SQLite add-on is missing, the lock is
+// held) the read-only overview answers from git and the hint says why. It never opens IMAP and never changes the trail.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -18,40 +19,36 @@ const statusOf = async (dir) => {
 };
 const extra = (n) => Buffer.from(`From: Y <y@y.example>\r\nTo: me@owner.example\r\nMessage-ID: <y${n}@y.example>\r\n\r\nhi\r\n`);
 
-test('status: an absent index is reported and never created; counts come from git, in/out and dates are null', async () => {
+test('status: an absent index is built by status itself; the counts are the index\'s (in/out, dates), the trail is untouched', async () => {
   const T = await buildThread();
   const idx = path.join(T.dir, '.default.index.sqlite');
   assert.equal(fs.existsSync(idx), false, 'record() alone never creates it');
   const head = git(T.dir + '/default', 'rev-parse', 'HEAD');
   const s = await statusOf(T.dir);
-  assert.equal(s.index, 'absent');
-  assert.deepEqual(s.records, { total: 6, totalSource: 'git', in: null, out: null, oldest: null, newest: null });
-  assert.equal(fs.existsSync(idx), false, 'status did not create the index');
-  assert.equal(git(T.dir + '/default', 'rev-parse', 'HEAD'), head);
-  const text = await makeWorld({ accounts: { test: account(T.dir) } }).spawn(['status']);
-  assert.match(text.stdout, /records +6 files at HEAD \(no index yet; run `mailproof list` for in\/out and dates\)/);
-  assert.match(text.stdout, /index +absent/);
-  await T.mp.list();
-  assert.equal(fs.existsSync(idx), true, 'list() builds it');
+  assert.equal(s.index, 'present');
+  assert.deepEqual([s.records.total, s.records.totalSource, s.records.in, s.records.out], [6, 'index', 5, 1]);
+  assert.match(s.records.oldest, /^2026-/);
+  assert.equal(fs.existsSync(idx), true, 'status brought the index up to date');
+  assert.equal(git(T.dir + '/default', 'rev-parse', 'HEAD'), head, 'the trail itself is untouched');
+  assert.equal(Object.hasOwn(s.records, 'verified'), false, '--json keeps its shape');
   fs.rmSync(idx);
-  assert.equal((await statusOf(T.dir)).index, 'absent', 'a deleted index file reads absent again');
-  assert.equal(fs.existsSync(idx), false);
+  fs.rmSync(idx + '-wal', { force: true });
+  fs.rmSync(idx + '-shm', { force: true });
+  const text = await makeWorld({ accounts: { test: account(T.dir) } }).spawn(['status']);
+  assert.match(text.stdout, /^ {2}records +6 \(5 in, 1 out\) [·-] 3 verified, 2 unverified [·-] 2026-\d\d-\d\d to 2026-\d\d-\d\d$/m, 'the text has the verified counts and the span');
+  assert.match(text.stdout, /^test [·-] me@owner\.example$/m, 'the account line');
+  assert.match(text.stdout, /^ {2}index +present$/m);
 });
 
-test('status: a stale index stays untouched, counts come from git', async () => {
+test('status: a stale index is caught up (the new record counts, in/out and dates known)', async () => {
   const T = await buildThread();
   await T.mp.list();
   await T.rec('extra', extra(1), 'in', 10);
   const idx = path.join(T.dir, '.default.index.sqlite');
-  const before = fs.statSync(idx);
+  assert.ok(fs.existsSync(idx));
   const s = await statusOf(T.dir);
-  assert.equal(s.index, 'stale');
-  assert.deepEqual(s.records, { total: 7, totalSource: 'git', in: null, out: null, oldest: null, newest: null });
-  const after = fs.statSync(idx);
-  assert.equal(after.mtimeMs, before.mtimeMs);
-  assert.equal(after.size, before.size);
-  await T.mp.list();
-  assert.equal((await statusOf(T.dir)).index, 'present', 'a read brought it up to date');
+  assert.equal(s.index, 'present');
+  assert.deepEqual([s.records.total, s.records.totalSource, s.records.in, s.records.out], [7, 'index', 6, 1]);
 });
 
 test('status: a current index answers the counts and dates, equal to list()', async () => {
@@ -64,7 +61,7 @@ test('status: a current index answers the counts and dates, equal to list()', as
   assert.deepEqual([s.records.in, s.records.out], [5, 1]);
 });
 
-test('status: succeeds at once while another process holds the trail lock (no wait, no lock file change)', async () => {
+test('status: succeeds at once while another process holds the trail lock (a short wait, then the overview from git, no lock file change)', async () => {
   const T = await buildThread();
   await T.mp.list();
   await T.rec('extra', extra(2), 'in', 10); // stale: a list() would now need the lock
@@ -73,7 +70,7 @@ test('status: succeeds at once while another process holds the trail lock (no wa
   fs.writeFileSync(lock, held);
   const t0 = Date.now();
   const s = await statusOf(T.dir);
-  assert.ok(Date.now() - t0 < 20000, 'did not wait for the lock');
+  assert.ok(Date.now() - t0 < 5000, 'did not wait for the lock');
   assert.equal(s.index, 'stale');
   assert.equal(s.records.total, 7);
   assert.equal(fs.readFileSync(lock, 'utf8'), held, 'the lock file is untouched');
@@ -102,7 +99,7 @@ test('status: a present index leaves the trail unchanged and adds at most -wal/-
   assert.deepEqual(added.filter((f) => !/\.sqlite-(wal|shm)$/.test(f)), [], 'only SQLite side files may appear');
 });
 
-test('status: a committed unreadable record counts from git (N+1) until the index is built (N)', async () => {
+test('status: a committed unreadable record: the catch-up builds the index without it (N), where the git count would be N+1', async () => {
   const T = await buildThread();
   await T.mp.list();
   const trail = T.dir + '/default';
@@ -110,13 +107,6 @@ test('status: a committed unreadable record counts from git (N+1) until the inde
   fs.writeFileSync(path.join(trail, 'records', 'ab', 'ab000000000000000000000000000000.json'), '{not json');
   git(trail, 'add', '-A');
   git(trail, '-c', 'user.name=t', '-c', 'user.email=t@t.example', 'commit', '-q', '-m', 'corrupt');
-  const s = await statusOf(T.dir);
-  assert.equal(s.index, 'stale');
-  assert.equal(s.records.total, 7);
-  assert.equal(s.records.totalSource, 'git');
-  const text = await makeWorld({ accounts: { test: account(T.dir) } }).spawn(['status']);
-  assert.match(text.stdout, /records +7 files at HEAD \(index stale; run `mailproof list` for in\/out and dates\)/);
-  await T.mp.list();
   const f = await statusOf(T.dir);
   assert.equal(f.index, 'present');
   assert.equal(f.records.total, 6);
@@ -149,11 +139,9 @@ test('status: a garbage index file is unreadable, counted from git', async () =>
   const T = await buildThread();
   fs.writeFileSync(path.join(T.dir, '.default.index.sqlite'), 'this is not a sqlite database, '.repeat(50));
   const s = await statusOf(T.dir);
-  assert.equal(s.index, 'unreadable');
+  assert.equal(s.index, 'present', 'a corrupt index in a writable directory is rebuilt by the catch-up');
   assert.equal(s.records.total, 6);
-  assert.equal(s.records.totalSource, 'git');
-  await T.mp.list();
-  assert.equal((await statusOf(T.dir)).index, 'present', 'list rebuilds a corrupt index in a writable directory');
+  assert.equal(s.records.totalSource, 'index');
 });
 
 test('status: an index whose SQLite add-on cannot load is unknown, and the hint says so (not "run mailproof list")', async () => {

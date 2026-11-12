@@ -1,5 +1,5 @@
-// `status` (SPEC B11.5): what a trail holds and how it is kept. Read-only: never opens IMAP, never takes the trail lock, never builds or catches up the index. The one command that may
-// run on every account at once (B11.3).
+// `status` (SPEC B11.5): what a trail holds and how it is kept. Never opens IMAP and writes nothing but the trail index: it brings that up to date first (an incremental
+// catch-up, so it can show the real in/out and verified counts). The one command that may run on every account at once (B11.3). The library's `status()` and the MCP tool stay read-only.
 
 import path from 'node:path';
 import { Mailproof } from '../index.js';
@@ -10,6 +10,8 @@ import { printable as p } from './printable.js';
 import { styleOf, fileUrl, rel } from './style.js';
 import { readState, stateDir } from './state.js';
 import { tilde } from './paths.js';
+import { clock } from './menu-header.js';
+import { count, humanSize } from './words.js';
 import { pidAlive, headOf, trailIndexFile } from '../proof/trail.js';
 import { sealStatus } from '../proof/stamp.js';
 import { STAMP_EVERY_HOURS } from '../proof/limits.js';
@@ -44,67 +46,71 @@ export async function configFacts(file, env) {
 }
 
 /**
+ * The facts `status` prints: the library's and the state file's, with the trail index brought up to date first (a `list` of one row, which
+ * catches it up with HEAD under the writer lock; it is incremental, so cheap; SPEC B11.5). A failure there is not an error: the read-only
+ * overview below says what the index is.
  * @param {import('./config.js').Account} account
  * @param {import('./session.js').Ctx} ctx
- * @returns {Promise<Record<string, unknown>>}
+ * @returns {Promise<Awaited<ReturnType<typeof accountStatus>>>}
  */
 async function statusOf(account, ctx) {
-  const mp = ctx.deps.makeMailproof ? ctx.deps.makeMailproof(account) : new Mailproof(mailproofOptions(account));
+  // a short lock wait: another process writing the trail must not make `status` hang (the catch-up then just does not happen)
+  const mp = ctx.deps.makeMailproof ? ctx.deps.makeMailproof(account) : new Mailproof({ ...mailproofOptions(account), lockTimeoutMs: 500 });
   try {
-    const s = await accountStatus(account, mp, stateDir(ctx.env));
-    // the verified/unverified counts are the library's and the menu's; `status` has never printed them
-    const r = s.records && !('error' in s.records) ? (({ verified, unverified, ...rest }) => rest)(s.records) : s.records;
-    return { ...s, records: r };
+    await mp.list({ limit: 1 }).catch(() => []);
+    return await accountStatus(account, mp, stateDir(ctx.env));
   } finally { await mp.close(); }
 }
 
 /**
- * The seal line (SPEC B13.1.12): mode, last and next due, manifests and those without a proof, proofs not yet anchored.
+ * The seal line in plain words (SPEC B13.1.12): the cadence, when it last ran and when the next run is due, how many manifests are not stamped yet
+ * and how many proofs wait for their Bitcoin anchor.
  * @param {Record<string, any> | null} z
+ * @param {Date} now
  * @returns {string}
  */
-function sealText(z) {
+function sealText(z, now) {
   if (!z) return 'unknown';
   if (!z.enabled) return 'off (ots: false)';
   if (z.chain !== 'ok') return `chain broken at seq ${z.chain.brokenAt}: ${p(z.chain.why)}`;
-  const when = z.last ? `last ${p(z.last.replace(/\.\d+Z$/, 'Z'))}, next due ${p(z.nextDue.replace(/\.\d+Z$/, 'Z'))}` : 'never run (due at the next sync or `mailproof stamp`)';
-  const parts = [`${z.mode} every ${z.everyHours}h`, when];
-  if (z.mode === 'batch') parts.push(`${z.manifests} manifests (${z.unstamped} without a proof)`);
-  parts.push(`${z.pending} proofs not yet anchored`);
+  const when = z.last ? `last run ${clock(z.last, now)} (${rel(z.last, now)}), next due ${clock(z.nextDue, now)} (${rel(z.nextDue, now)})` : 'never run (due at the next sync or `mailproof seal`)';
+  const parts = [`${z.mode === 'batch' ? 'one batch' : 'one per record'} every ${z.everyHours} h`, when];
+  if (z.mode === 'batch') parts.push(`${count(z.manifests, 'manifest')}${z.unstamped ? ` (${z.unstamped} not stamped yet)` : ''}`);
+  if (z.pending) parts.push(`${z.pending} waiting for ${z.pending === 1 ? 'its' : 'their'} Bitcoin anchor`);
   if (z.error) parts.push(`last run: ${p(z.error)}`);
   return parts.join('; ');
 }
 
 /**
- * @param {Record<string, any>} s
- * @param {import('./style.js').Style} st
- * @param {Date} now
- * @param {Record<string, string | undefined>} env
+ * @param {string} name @param {Record<string, any>} s @param {import('./style.js').Style} st @param {Date} now @param {Record<string, string | undefined>} env
  * @returns {string}
  */
-function statusText(s, st, now, env) {
+function statusText(name, s, st, now, env) {
   const r = s.records;
-  const hint = s.index === 'unreadable' ? 'the index cannot be opened: check permissions on the trail directory; if it is writable, `mailproof list` rebuilds it'
+  const hint = s.index === 'unreadable' ? 'the index cannot be opened: check permissions on the trail directory'
     : s.index === 'unknown' ? 'the SQLite add-on (better-sqlite3) cannot load, so `mailproof list` fails too: reinstall or rebuild it (npm rebuild better-sqlite3)'
-      : 'index stale; run `mailproof list` for in/out and dates';
+      : 'the index could not be brought up to date';
+  const span = r && !r.error && r.oldest ? ` ${st.sym.dot} ${r.oldest.slice(0, 10)} to ${r.newest?.slice(0, 10) ?? '-'}` : '';
   const rec = r === null ? 'no trail yet' : r.error ? `unavailable (${p(r.error)})`
-    : r.totalSource === 'git' ? `${r.total} files at HEAD (${s.index === 'absent' ? 'no index yet; run `mailproof list` for in/out and dates' : hint})`
-      : `${r.total} (${r.in} in, ${r.out} out), oldest ${r.oldest?.slice(0, 10) ?? '-'}, newest ${r.newest?.slice(0, 10) ?? '-'}`;
-  const c = s.content === 'off' ? 'off' : `${s.content.files} files, ${(s.content.bytes / 1048576).toFixed(1)} MiB`;
+    : r.totalSource === 'git' ? `${count(r.total, 'file')} at HEAD (${hint})`
+      : `${r.total} (${r.in} in, ${r.out} out) ${st.sym.dot} ${st.green(`${r.verified} verified`)}, ${r.unverified ? st.yellow(`${r.unverified} unverified`) : '0 unverified'}${span}`;
+  const c = s.content === 'off' ? 'off' : `${count(s.content.files, 'file')}, ${humanSize(s.content.bytes)}`;
   const ls = s.lastSync;
   const sync = !ls ? st.dim('never')
-    : `${ls.error ? st.red(st.sym.bad) : ls.complete ? st.green(st.sym.ok) : st.yellow(st.sym.warn)} ${p(ls.at)} ${st.dim(`(${rel(ls.at, now)})`)}${ls.complete ? '' : ' (not complete)'}${ls.error ? ` error ${p(ls.error)}` : ''}`;
+    : `${ls.error ? st.red(st.sym.bad) : ls.complete ? st.green(st.sym.ok) : st.yellow(st.sym.warn)} ${clock(ls.at, now)} ${st.dim(`(${rel(ls.at, now)})`)}${ls.complete ? '' : ' (not complete)'}${ls.error ? ` error ${p(ls.error)}` : ''}`;
   const sealWord = (/** @type {string} */ t) => (/^off|never|unknown/.test(t) ? st.dim(t) : /broken/.test(t) ? st.red(t) : t);
   /** @param {string} label @param {string} v */
-  const row = (label, v) => `  ${st.dim(label.padEnd(13))} ${v}`;
+  const row = (label, v) => `  ${st.bold(label.padEnd(12))} ${v}`;
+  const bk = s.lastBackup;
   return [
+    `${st.bold(p(name))} ${st.sym.dot} ${p(s.user)}`,
     row('trail', st.link(p(tilde(s.trail, env)), fileUrl(s.trail))),
     row('records', rec),
     row('last sync', sync),
     row('content', c),
     row('index', s.index === 'present' ? st.green(s.index) : st.yellow(s.index)),
-    row('seal', sealWord(sealText(s.seal))),
-    row('last backup', s.lastBackup ? `${p(s.lastBackup.at)}  ${st.link(p(tilde(String(s.lastBackup.path), env)), fileUrl(String(s.lastBackup.path)))}` : st.dim('never')),
+    row('seal', sealWord(sealText(s.seal, now))),
+    row('last backup', bk ? `${st.link(p(tilde(String(bk.path), env)), fileUrl(String(bk.path)))} ${st.dim(`(${clock(bk.at, now)}, ${rel(bk.at, now)})`)}` : st.dim('never')),
     row('watch', s.watch.running ? st.green(`running (pid ${s.watch.pid})`) : st.dim('not running')),
   ].join('\n');
 }
@@ -113,13 +119,17 @@ function statusText(s, st, now, env) {
 export async function statusCmd(a, ctx) {
   const { config } = await loadCtxConfig(a, ctx);
   const names = a.values.account === undefined ? Object.keys(config.accounts) : [selectAccount(config, a.values.account).name];
-  /** @type {Record<string, Record<string, unknown>>} */
+  /** @type {Record<string, Awaited<ReturnType<typeof accountStatus>>>} */
   const all = {};
   for (const n of names) all[n] = await statusOf(config.accounts[n], ctx);
-  if (a.values.json) { printJson(ctx, all); return EX_OK; }
+  if (a.values.json) {
+    // the shape `status --json` has always had: the verified/unverified counts are in the text and the MCP tool, not here
+    printJson(ctx, Object.fromEntries(Object.entries(all).map(([n, s]) => [n, { ...s, records: s.records && !('error' in s.records) ? (({ verified: _v, unverified: _u, ...rest }) => rest)(s.records) : s.records }])));
+    return EX_OK;
+  }
   const st = styleOf(ctx);
   const now = (ctx.deps.now ?? (() => new Date()))();
-  for (const n of names) print(ctx, `${st.bold(p(n))}\n${statusText(all[n], st, now, ctx.env)}`);
+  for (const n of names) print(ctx, statusText(n, all[n], st, now, ctx.env));
   return EX_OK;
 }
 

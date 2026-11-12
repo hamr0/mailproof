@@ -168,7 +168,7 @@ test('status: one account, --json keyed by account, read-only (HEAD and tree unc
   assert.equal(j.test.index, 'present');
   const text = await sp(['status']);
   assert.equal(text.code, 0);
-  assert.match(text.stdout, /^test\n  trail /);
+  assert.match(text.stdout, /^test [·-] me@owner\.example\n {2}trail /);
   assert.match(text.stdout, /records +6 \(5 in, 1 out\)/);
   assert.equal(git(T.dir + '/default', 'rev-parse', 'HEAD'), head);
   assert.equal(git(T.dir + '/default', 'status', '--porcelain'), '');
@@ -179,12 +179,13 @@ test('forget: refuses without --yes (64, nothing changed), --dry-run prints and 
   assert.equal(before.code, 0);
   const no = await sp(['forget', id('plain')]);
   assert.equal(no.code, 64);
-  assert.match(no.stderr, /1 record\(s\), 1 with a stored raw email/);
+  assert.match(no.stderr, /Forget on account \w+: 1 email, 1 with a stored raw email\./, 'plain counts: no (s)');
+  assert.match(no.stderr, /^ #  when +age +verdict +from$/m, 'the preview rows');
   assert.match(no.stderr, /add --yes to proceed/);
   assert.equal(no.stdout, '');
   const dry = await sp(['forget', id('plain'), '--dry-run']);
   assert.equal(dry.code, 0);
-  assert.match(dry.stdout, /1 record\(s\)/);
+  assert.match(dry.stdout, /1 email, 1 with a stored raw email/);
   assert.equal((await sp(['show', id('plain'), '--raw'])).code, 0, 'still there');
   assert.equal((await sp(['forget'])).code, 64, 'no target: there is no "forget everything"');
   assert.equal((await sp(['forget', '--yes'])).code, 64);
@@ -205,7 +206,9 @@ test('prune: refuses without --yes, --dry-run changes nothing, --yes prunes and 
   assert.equal((await sp(['prune', '--before', 'soon'])).code, 64);
   const no = await sp(['prune', '--before', '2026-11-01T10:04:00Z']);
   assert.equal(no.code, 64);
-  assert.match(no.stderr, /records removed 3, kept 3/);
+  assert.match(no.stderr, /Prune would permanently remove 3 proofs captured before 2026-11-01 \(2026-11-01 to 2026-11-01\) and keep 3\./);
+  assert.match(no.stderr, /^ #  when +age +verdict +from$/m, 'the preview rows');
+  assert.match(no.stderr, /The old trail stays as .*pre-prune/);
   assert.match(no.stderr, /add --yes to proceed/);
   assert.equal(git(root, 'rev-parse', 'HEAD'), head);
   const dry = json(await sp(['prune', '--before', '2026-11-01T10:04:00Z', '--dry-run', '--json']));

@@ -32,6 +32,7 @@ import { styleOf, allowStyle } from './style.js';
  * @property {AbortSignal} signal  Aborted by SIGINT/SIGTERM (watch stops, a running command is cut short).
  * @property {Deps} deps
  * @property {import('./prompt.js').Prompter} [prompter]  Set by the menu: one reader of stdin shared by every prompt.
+ * @property {boolean} [previewed]  Set by the menu for a destructive command it already showed the preview of: the command does not print it a second time.
  */
 
 /**
