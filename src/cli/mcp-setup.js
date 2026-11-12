@@ -65,6 +65,18 @@ export async function mcpFacts(ctx, config) {
 }
 
 /**
+ * The scope `claude mcp get` names, in plain words (`User config (available in all your projects)` becomes `for all your projects (user scope)`).
+ * @param {string} scope @returns {string}
+ */
+export function scopeWords(scope) {
+  const k = scope.trim().toLowerCase();
+  if (k.startsWith('user')) return 'for all your projects (user scope)';
+  if (k.startsWith('project')) return 'for this project (project scope)';
+  if (k.startsWith('local')) return 'for you in one project (local scope)';
+  return p(scope, { max: 60 });
+}
+
+/**
  * The status block, one labelled line each.
  * @param {Awaited<ReturnType<typeof mcpFacts>>} f
  * @param {import('./style.js').Style} st
@@ -76,7 +88,7 @@ export function mcpStatusLines(f, st, env, configFile) {
   const t = (/** @type {string} */ x) => p(tilde(x, env));
   const row = (/** @type {string} */ label, /** @type {string} */ v) => `${st.bold(label.padEnd(13))}${v}`;
   const claude = f.claude === 'missing' ? st.dim('the `claude` command was not found')
-    : f.claude === 'registered' ? `${st.green(st.sym.ok)} registered${f.scope ? ` (${p(f.scope, { max: 60 })})` : ''}${f.command ? `: ${p(f.command, { max: 80 })}` : ''}`
+    : f.claude === 'registered' ? `${st.green(st.sym.ok)} registered${f.scope ? ` ${scopeWords(f.scope)}` : ''}${f.command ? `: ${p(f.command, { max: 80 })}` : ''}`
       : 'not registered';
   return [
     row('Claude Code', claude),

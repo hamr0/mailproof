@@ -356,17 +356,25 @@ export async function runMenu(ctx, exec, opts = {}) {
           await writeOtherClients(base, out, st);
           return;
         }
-        frame.foot(`${st.key('1')} install in Claude Code  ${st.key('2')} uninstall  ${st.key('3')} other clients`);
-        const c = await ask({ label: 'Choice', example: '{1}, {2} or {3}', validate: (s) => parseChoice(s, 'Choice', '1', '2', '3') });
+        const reg = f.claude === 'registered';
+        frame.foot(reg ? `${st.key('1')} reinstall  ${st.key('2')} uninstall  ${st.key('3')} other clients` : `${st.key('1')} install in Claude Code  ${st.key('3')} other clients`);
+        const c = await ask({ label: 'Choice', example: reg ? '{1}, {2} or {3}' : '{1} or {3}', validate: (s) => parseChoice(s, 'Choice', ...(reg ? ['1', '2', '3'] : ['1', '3'])) });
         const run = ctx.deps.claude ?? runClaude;
         if (c === '3') { out(''); await writeOtherClients(base, out, st); return; }
-        const args = c === '1' ? CLAUDE_ADD : CLAUDE_REMOVE;
-        out(`This changes your Claude Code settings (user scope): claude ${args.join(' ')}`);
+        const args = c === '2' ? CLAUDE_REMOVE : CLAUDE_ADD;
+        out(`This changes your Claude Code settings (user scope): ${(reg && c === '1' ? [CLAUDE_REMOVE, CLAUDE_ADD] : [args]).map((x) => `claude ${x.join(' ')}`).join('; ')}`);
         frame.sep();
-        if (!(await askYes(c === '1' ? 'Register mailproof in Claude Code?' : 'Remove mailproof from Claude Code?'))) { out('nothing changed'); return; }
-        const r = await run(args);
-        if (r && r.code === 0) out(`${st.green(st.sym.ok)} ${c === '1' ? 'registered in Claude Code (user scope); restart Claude Code to load it' : 'removed from Claude Code'}`);
-        else err(`mailproof: claude ${args.slice(0, 2).join(' ')} failed${r ? `: ${printable((r.stderr || r.stdout).trim(), { keepNewline: true, max: 600 })}` : ''}`);
+        if (!(await askYes(c === '2' ? 'Remove mailproof from Claude Code?' : reg ? 'Reinstall mailproof in Claude Code (remove, then add)?' : 'Register mailproof in Claude Code?'))) { out('nothing changed'); return; }
+        /** @param {string[]} a @returns {Promise<boolean>} */
+        const step = async (a) => {
+          const r = await run(a);
+          if (r && r.code === 0) return true;
+          err(`mailproof: claude ${a.slice(0, 2).join(' ')} failed${r ? `: ${printable((r.stderr || r.stdout).trim(), { keepNewline: true, max: 600 })}` : ''}`);
+          return false;
+        };
+        if (reg && c === '1' && !(await step(CLAUDE_REMOVE))) return;
+        if (!(await step(args))) return;
+        out(`${st.green(st.sym.ok)} ${c === '2' ? 'removed from Claude Code' : 'registered in Claude Code (user scope); restart Claude Code to load it'}`);
       },
     };
 

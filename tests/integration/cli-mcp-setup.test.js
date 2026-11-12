@@ -40,7 +40,7 @@ test('not registered: status, the choice line under the rule, install runs exact
   assert.match(no.stdout, /^Config +\S+config\.json$/m);
   assert.match(no.stdout, /^Log +\S+mcp\.log$/m);
   assert.match(no.stdout, /^Input dirs +none/m);
-  assert.match(no.stdout, /^[─-]+\n1 install in Claude Code {2}2 uninstall {2}3 other clients$/m, 'C10: the rule above the choice line');
+  assert.match(no.stdout, /^[─-]+\n1 install in Claude Code {2}3 other clients$/m, 'C10: the rule above the choice line; nothing to uninstall');
   assert.match(no.stdout, /^nothing changed$/m);
   assert.deepEqual(calls.filter((a) => a[1] !== 'get'), []);
   const yes = await menu(w, keys('19', '1', 'y', 'q'), fake(GET_NO, calls));
@@ -52,13 +52,40 @@ test('registered: status shows scope and command; uninstall runs claude mcp remo
   const w = world();
   const calls = [];
   const r = await menu(w, keys('19', '2', 'y', 'q'), fake(GET_OK, calls));
-  assert.match(r.stdout, /^Claude Code +(ok|✓) registered \(User config \(available in all your projects\)\): mailproof mcp$/m);
+  assert.match(r.stdout, /^[─-]+\n1 reinstall {2}2 uninstall {2}3 other clients$/m, 'registered: reinstall, uninstall, other');
+  assert.match(r.stdout, /^Claude Code +(ok|✓) registered for all your projects \(user scope\): mailproof mcp$/m);
   assert.deepEqual(calls.filter((a) => a[1] !== 'get').at(-1), ['mcp', 'remove', '--scope', 'user', 'mailproof']);
   assert.match(r.stdout, /removed from Claude Code/);
   const other = await menu(w, keys('19', '3', 'q'), fake(GET_OK, calls));
   assert.match(other.stdout, /^(ok|✓) saved to ~\/mailproof\/mcp\/mcp\.json$/m);
   const back = await menu(w, keys('19', '', 'q'), fake(GET_OK, calls));
   assert.equal(back.code, 0);
+});
+
+test('the other scopes read plain too', async () => {
+  const w = world();
+  for (const [scope, want] of [['Project config (shared via .mcp.json)', /registered for this project \(project scope\)/], ['Local config (private to you in this project)', /registered for you in one project \(local scope\)/]]) {
+    const r = await menu(w, keys('19', '', 'q'), fake({ ...GET_OK, stdout: GET_OK.stdout.replace(/Scope: .*/, `Scope: ${scope}`) }, []));
+    assert.match(r.stdout, want);
+  }
+});
+
+test('not registered: 2 is not a choice (nothing to uninstall)', async () => {
+  const w = world();
+  const calls = [];
+  await menu(w, keys('19', '2', 'q'), fake(GET_NO, calls));
+  assert.deepEqual(calls.filter((a) => a[1] !== 'get'), []);
+});
+
+test('reinstall: asks first, then removes and adds (user scope), in that order', async () => {
+  const w = world();
+  const calls = [];
+  const no = await menu(w, keys('19', '1', 'n', 'q'), fake(GET_OK, calls));
+  assert.match(no.stdout, /^nothing changed$/m);
+  assert.deepEqual(calls.filter((a) => a[1] !== 'get'), []);
+  const yes = await menu(w, keys('19', '1', 'y', 'q'), fake(GET_OK, calls));
+  assert.deepEqual(calls.filter((a) => a[1] !== 'get'), [['mcp', 'remove', '--scope', 'user', 'mailproof'], ['mcp', 'add', '--scope', 'user', 'mailproof', '--', 'mailproof', 'mcp']]);
+  assert.match(yes.stdout, /registered in Claude Code \(user scope\); restart Claude Code/);
 });
 
 test('a failing claude is reported, not hidden', async () => {
