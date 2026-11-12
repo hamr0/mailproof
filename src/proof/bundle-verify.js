@@ -149,6 +149,7 @@ function entriesOf(m, cache) {
 /** @returns {BundleSeal} */
 const sealOf = (/** @type {BundleSeal['state']} */ state, /** @type {Partial<BundleSeal>} */ more = {}) => ({ state, via: null, listed_in: null, stamped_by: null, ...more });
 
+/** @mcp verifyBundle Check a pair bundle someone made with `export`: pass `dir`, the bundle's folder, which must be inside one of the server's input folders. Offline: it re-checks every record's signature against its archived key, the file hashes, the manifest chain and each seal (locally, with `ots info`), and reports `ok`, the `failed` checks and one line per record. Pass `expect` (the 64-hex `bundle_sha256` the sender gave you another way) to pin the bundle; `strict` also fails unless every record is verified and every seal anchored. A bad bundle is `ok: false`, not an error. It does not prove completeness: the sender chose the emails. */
 /**
  * Check a pair bundle (SPEC B13.3). Resolves to a result for every directory that can be examined, never rejecting for a bad
  * bundle; a bad argument is a `TypeError`.

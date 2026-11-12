@@ -1,7 +1,6 @@
 // sync (the command), update, config, export, mcp: the commands that are mostly text.
 
 import { spawn } from 'node:child_process';
-import fs from 'node:fs';
 import path from 'node:path';
 import { UsageError, EX_OK, EX_ERR, EX_USAGE } from './errors.js';
 import { parseFolders, parseSent } from './parse.js';
@@ -14,12 +13,12 @@ import { printable as p } from './printable.js';
 import { stampText } from './sync-op.js';
 import { styleOf } from './style.js';
 import { progressLine } from './progress.js';
+import { version, NPM_ARGS, UPDATE_COMMAND } from './version.js';
 
 /** @typedef {import('./session.js').Ctx} Ctx */
 /** @typedef {import('./session.js').Args} Args */
 
-/** @returns {string} The installed version. */
-export const version = () => JSON.parse(fs.readFileSync(new URL('../../package.json', import.meta.url), 'utf8')).version;
+export { version };
 
 /** @param {Args} a @param {Ctx} ctx @returns {Promise<number>} */
 export async function syncCmd(a, ctx) {
@@ -54,8 +53,6 @@ export async function stampCmd(a, ctx) {
   } finally { await s.close(); }
 }
 
-const NPM_ARGS = ['install', '-g', 'mailproof@latest'];
-
 /**
  * Run npm with the output streaming through (no shell).
  * @param {string[]} args
@@ -71,7 +68,7 @@ function spawnNpm(args) {
 
 /** @param {Args} a @param {Ctx} ctx @returns {Promise<number>} */
 export async function updateCmd(a, ctx) {
-  const cmd = `npm ${NPM_ARGS.join(' ')}`;
+  const cmd = UPDATE_COMMAND;
   if (!a.values.run) {
     if (a.values.json) printJson(ctx, { installed: version(), command: cmd }); else print(ctx, `mailproof ${version()} installed. To upgrade: ${cmd}`);
     return EX_OK;

@@ -25,6 +25,8 @@ import { hashDocument } from './hash.js';
 import { runPrune } from './prune.js';
 import { runUpgradeStamps } from './ots-upgrade.js';
 import { runExport } from './bundle-export.js';
+import { runStatus } from './status.js';
+import { runBackup } from './backup.js';
 import { describe as describeTarget, verifyWith as verifyWithTarget } from './describe.js';
 
 const OTS_MIN_TIMEOUT_MS = 5000; // floor for the `ots` timeout, however short lockTimeoutMs is
@@ -129,6 +131,8 @@ class Mailproof {
     this.upgradeStamps = this.upgradeStamps.bind(this);
     this.export = this.export.bind(this);
     this.stamp = this.stamp.bind(this);
+    this.status = this.status.bind(this);
+    this.backup = this.backup.bind(this);
     this.close = this.close.bind(this);
   }
 
@@ -568,6 +572,7 @@ class Mailproof {
     return runUpgradeStamps({ root: this.root, trail: this.trail, ots: this.jobOts, lockTimeoutMs: this.lockTimeoutMs, hooks: this._stampHooks });
   }
 
+  /** @mcp Mailproof#stamp Seal what was recorded since the last run: write a manifest of the new record files' hashes, commit it, and stamp it once with OpenTimestamps. Only one 32-byte hash (a manifest of file hashes: no addresses, subjects or content) is sent to the public OpenTimestamps calendars. Needs the `ots` binary: without it the manifest is still committed and `error` says so. Does nothing (`enabled: false`) when the account has the seal off. `sync` runs this automatically when due. Idempotent. Fails with `ERR_STAMP_LOCKED` (another job is running), `ERR_TRAIL_LOCKED` (retry later) or `ERR_STAMP_CHAIN` (stop and tell the user). */
   /**
    * Run the stamp job (SPEC B13.1): write a manifest listing, by sha256, the record and reply-text files added since the last
    * manifest, commit it, stamp the newest manifest once with OpenTimestamps (a Bitcoin-anchored time proof), and upgrade older
@@ -585,21 +590,55 @@ class Mailproof {
     return runStamp(this._stampCtx());
   }
 
+  /** @mcp Mailproof#export Make a pair bundle for a counterparty: the signed headers, signatures, archived keys and seals of every email naming one of the addresses in `with`, checkable offline with `verifyBundle`. It discloses the addresses and subjects of that whole exchange to whoever gets it; no bodies or attachments, and it does not prove completeness. Without `confirm: true` it returns a preview and writes nothing: show it to the user, and confirm only after they agreed. `out` is a folder name created in the output folder. Fails with `ERR_EXPORT_EMPTY`, `ERR_EXPORT_TOO_BIG`, `ERR_EXPORT_EXISTS` (pick another `out`), `ERR_EXPORT_REWRITTEN` (run again) or `ERR_EXPORT_SELF_CHECK`. */
   /**
    * Make a pair bundle (SPEC B13.2): a directory of proof records about the emails that name any of the given addresses, for a counterparty
    * to check with `verifyBundle` on their own machine.
-   * @param {{ with: string[], after?: Date | number | string, before?: Date | number | string, out: string, tar?: boolean }} opts
+   * @param {{ with: string[], after?: Date | number | string, before?: Date | number | string, out: string, tar?: boolean, dryRun?: boolean }} opts
    * @returns {Promise<import('./bundle-export.js').ExportResult>}
    * @name Mailproof#export
-   * @when Use to hand a counterparty the proof of what you exchanged with them (or with several of their addresses): a directory of the signed headers, signatures, archived keys and seals of every email that names one of `with` on From, To, Cc or Reply-To (a union), optionally within `after` (inclusive) and `before` (exclusive) capture time. Not the emails: no bodies or attachments. The recipient runs `verifyBundle` (or `mailproof verify-bundle`) with nothing of yours. It proves each record's signatures and seal, NOT completeness: you chose what to include. Run `stamp()` first so the seals are anchored; it never stamps or runs `ots` itself. Tell the recipient `bundle_sha256` by another channel so they can pass `--expect`.
+   * @when Use to hand a counterparty the proof of what you exchanged with them (or with several of their addresses): a directory of the signed headers, signatures, archived keys and seals of every email that names one of `with` on From, To, Cc or Reply-To (a union), optionally within `after` (inclusive) and `before` (exclusive) capture time. Not the emails: no bodies or attachments. The recipient runs `verifyBundle` (or `mailproof verify-bundle`) with nothing of yours. It proves each record's signatures and seal, NOT completeness: you chose what to include. Run `stamp()` first so the seals are anchored; it never stamps or runs `ots` itself. Tell the recipient `bundle_sha256` by another channel so they can pass `--expect`. With `dryRun: true` it does everything except put the bundle at `out` (the same selection, seal decisions and self-check, in a private temp directory that is removed) and returns the same summary plus `dryRun: true` and `selection` (id, captured, direction, from, subject of each record it would hold): use it to show a person what is about to be disclosed.
    * @category verify
-   * @signature mp.export(opts: { with: string[], after?: Date|number|string, before?: Date|number|string, out: string, tar?: boolean }) => Promise<{ out, bytes, files, head, bundle_sha256, records, replies, keys, manifests, seals: { anchored, pending, unstamped, unsealed }, content: { stored, absent } }>
+   * @signature mp.export(opts: { with: string[], after?: Date|number|string, before?: Date|number|string, out: string, tar?: boolean, dryRun?: boolean }) => Promise<{ out, bytes, files, head, bundle_sha256, records, replies, keys, manifests, seals: { anchored, pending, unstamped, unsealed }, content: { stored, absent }, dryRun?, selection? }>
    * @fails Rejects with `ERR_EXPORT_EMPTY` (nothing matches; nothing written), `ERR_EXPORT_TOO_BIG` (over 10,000 records or 256 MiB: narrow with `after`/`before`), `ERR_EXPORT_EXISTS` (`out` exists and is not an empty directory you own, or is inside the trail, the content store or another bundle; an export never overwrites), `ERR_EXPORT_REWRITTEN` (the trail was pruned or restored while it read: retry), `ERR_EXPORT_SELF_CHECK` (the bundle did not verify, so it was not delivered: the trail is damaged), `ERR_EXPORT_TAR` (`tar` missing or failed), `ERR_STAMP_CHAIN` (a manifest chain that cannot be walked), `ERR_TRAIL_LOCKED` or `ERR_INDEX_UNAVAILABLE` (from the index catch-up), `ERR_TRAIL_LAYOUT`, or a `TypeError` for a bad option (including an `out` whose parent directory does not exist). Read-only on the trail: it holds no lock while reading, makes no commit, runs no `ots` and uses no network; the bundle is built in a private temp directory next to `out` (mode 0700/0600) and moved into place, so a failure leaves nothing at `out`.
    * @example
    * const r = await mp.export({ with: ['bob@example.org'], out: './bundle-bob' });   // r.bundle_sha256, r.seals, r.records
    */
   async export(opts) {
     return runExport({ root: this.root, trail: this.trail, contentDir: this.contentDir, lockTimeoutMs: this.lockTimeoutMs, now: this.now, indexCfg: this._indexCfg(), ...this._exportSeams }, opts);
+  }
+
+  /** @mcp Mailproof#status What the trail holds and how it is kept, read-only and offline: `records` (total, in, out, verified, unverified, oldest and newest capture; the in/out/verified counts are null until the index is current, call `list` once to bring it up to date), `content` (stored files and bytes, or "off"), `index` state, `pendingStamps`, and the `seal` (mode, last run, next due, manifests, those without a proof, proofs not yet anchored, chain state). The tool adds last sync, last backup, whether a watch runs, the config check and the installed version. Never connects to the mailbox, builds the index or takes a lock; an unreadable part is reported in its own field. */
+  /**
+   * What the trail holds and how it is kept: read-only, offline, no lock, no index build.
+   * @returns {Promise<import('./status.js').TrailStatus>}
+   * @name Mailproof#status
+   * @when Use to see at a glance what a trail holds and how it is kept, without reading it: how many records (in and out, verified and not, oldest and newest capture), the size of the content store, whether the trail index is current, how many OpenTimestamps proofs are not yet anchored, and the seal (mode, last run, when the next is due, manifests and those without a proof, whether the manifest chain is intact). It reads the trail's HEAD, one aggregate query on a current index (otherwise a count of the record files at HEAD, with in/out and dates null) and the manifest chain; it never builds or catches up the index, takes no lock, makes no network call and runs no `ots`. Facts about the account rather than the trail (last sync, last backup, a running watch, the config file) belong to whoever owns the config; the `mailproof` CLI and the MCP server add them.
+   * @category read
+   * @signature mp.status() => Promise<{ trail, records: { total, totalSource, in, out, oldest, newest, verified, unverified } | { error } | null, content: { files, bytes } | 'off', index: 'absent'|'present'|'stale'|'unreadable'|'unknown', pendingStamps: number | null, seal: { enabled, mode, everyHours, last, nextDue, error, manifests, unstamped, pending, chain } | null }>
+   * @fails Does not reject for a damaged part: `records` is `{ error }` when the index overview failed, `seal` is null when it could not be read, `content` is zeros when the store cannot be listed. `records` is null and `index` `'absent'` for a trail with no commit yet (nothing is created). `index` is `'unknown'` when the SQLite add-on cannot load and `'unreadable'` for an index file that cannot be opened (`list` rebuilds it when the directory is writable). `pendingStamps` and `seal.enabled` follow `otsBin`: with the seal off `pendingStamps` is null.
+   * @example
+   * const s = await mp.status();   // s.records.total, s.index, s.seal.nextDue
+   */
+  async status() {
+    return runStatus({ root: this.root, trail: this.trail, contentDir: this.contentDir, contentStore: this.content.store !== false, lockTimeoutMs: this.lockTimeoutMs, otsBin: this.otsBin, stamp: this.stampOpts });
+  }
+
+  /** @mcp Mailproof#backup Write a git bundle of the whole trail (records, keys, replies, seals; never message bodies) to the server's output folder; restore with `git clone <file> <dir>`. `withContent: true` adds a separate unencrypted tar of the stored raw emails (other people's mail). `push: true` also pushes the trail to the account's configured backup remote, never with force, and contacts that host. Without `confirm: true` it returns a preview and writes nothing. `out` is a plain file name in the output folder. Fails with `ERR_BACKUP_EMPTY` (nothing to back up), `ERR_BACKUP_EXISTS` (pick another `out`), `ERR_BACKUP_BUNDLE`, `ERR_BACKUP_VERIFY` or `ERR_TRAIL_LOCKED`. */
+  /**
+   * Back up the trail: a git bundle, optionally the content store as a tar, optionally a push that never forces.
+   * @param {{ out?: string, withContent?: boolean, push?: boolean, remote?: string, dryRun?: boolean, mkdir?: boolean }} [opts]  `out`: the bundle file (default `<trailDir>/.<trail>.backups/<trail>-<UTC time>.bundle`; its directory is created); `withContent`: also `<out minus .bundle>.content.tar`; `push`: push to `remote`; `remote`: the git remote (a URL or path; the library keeps none); `dryRun`: plan only; `mkdir`: create the directory of an explicit `out`.
+   * @returns {Promise<import('./backup.js').BackupResult>}
+   * @name Mailproof#backup
+   * @when Use to keep a copy of the proofs somewhere else: it writes a git bundle of the whole trail (records, keys, replies, stamps, manifests; never message bodies) made under the trail lock, verified with `git bundle verify`, mode 0600, and never overwrites a file. `withContent` adds a separate, unencrypted `<name>.content.tar` of the stored raw emails (other people's mail: encrypt it or the disk yourself). `push` also pushes the trail to `remote` (`git push --all`, then `--tags`, never forced): after a prune the remote keeps the history from before it as an archive and the push is refused. The library holds no remote: the caller passes it (an account config key in the CLI and MCP server). The result names the bundle, its size, the commit count, the content archive, and the remote with any credentials hidden. `dryRun: true` runs every check and returns what would be written (and where it would push) without writing, creating or pushing anything. Restore with `git clone <bundle> <dir>`.
+   * @category proof
+   * @signature mp.backup(opts?: { out?: string, withContent?: boolean, push?: boolean, remote?: string, dryRun?: boolean, mkdir?: boolean }) => Promise<{ dryRun?, bundle, bytes, commits, content: { path, bytes } | null, contentNote?, contentError?, pushed: { remote, host, refs } | null, pushError?: { kind, message } }>
+   * @fails Rejects with `ERR_BACKUP_EMPTY` (the trail has no commit), `ERR_BACKUP_EXISTS` (`out`, or the content archive beside it, exists: a backup never overwrites), `ERR_BACKUP_NO_DIR` (the directory of an explicit `out` does not exist and `mkdir` is not set), `ERR_BACKUP_BUNDLE` (git could not make the bundle), `ERR_BACKUP_VERIFY` (the bundle did not verify and was removed), `ERR_TRAIL_LOCKED` (a writer held the trail longer than `lockTimeoutMs`), or a TypeError for a bad option (including `push` without `remote`). A failing `tar` or push does not reject: the bundle is kept and the result carries `contentError`, or `pushError` (`kind` `rejected`: the remote holds history this trail no longer has; `network`: the connection or login failed; `other`); nothing is retried and no push is ever forced. Credentials in a remote URL are hidden in every field of the result.
+   * @example
+   * const r = await mp.backup({ out: '/mnt/usb/trail.bundle', withContent: true });   // r.bundle, r.bytes, r.commits
+   */
+  async backup(opts) {
+    return runBackup({ root: this.root, trail: this.trail, contentDir: this.contentDir, lockTimeoutMs: this.lockTimeoutMs, now: this.now }, opts);
   }
 
   /**

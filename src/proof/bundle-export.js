@@ -43,6 +43,8 @@ const COMPLETENESS = 'none: the owner chose the selection; nothing here shows th
  * @property {number} manifests
  * @property {{ anchored: number, pending: number, unstamped: number, unsealed: number }} seals  Records, as the trail shows them at export.
  * @property {{ stored: number, absent: number }} content  Records whose raw email the content store still holds / does not.
+ * @property {true} [dryRun]  Present only for a dry run: the bundle was built and verified in a private temp directory, which is removed; `out` is where it would be written and nothing is there.
+ * @property {Array<{ id: string, captured: string, direction: string, from: string | null, subject: string | null }>} [selection]  A dry run only: the records the bundle would hold, oldest first (`from` and `subject` are the signed header values the record carries; untrusted text).
  */
 
 /**
@@ -64,7 +66,7 @@ const rewritten = () => err('ERR_EXPORT_REWRITTEN', 'the trail was rewritten whi
 /**
  * @param {unknown} opts
  * @param {number} maxAddresses
- * @returns {{ with: string[], after: Date | null, before: Date | null, out: string, tar: boolean }}
+ * @returns {{ with: string[], after: Date | null, before: Date | null, out: string, tar: boolean, dryRun: boolean }}
  */
 function parseOptions(opts, maxAddresses) {
   if (!opts || typeof opts !== 'object' || Array.isArray(opts)) throw new TypeError('export: options must be an object');
@@ -80,7 +82,8 @@ function parseOptions(opts, maxAddresses) {
   if (after && before && after.getTime() >= before.getTime()) throw new TypeError('export: after must be earlier than before');
   if (typeof o.out !== 'string' || !o.out) throw new TypeError('export: out must be a path');
   if (o.tar !== undefined && typeof o.tar !== 'boolean') throw new TypeError('export: tar must be a boolean');
-  return { with: addrs, after, before, out: o.out, tar: o.tar === true };
+  if (o.dryRun !== undefined && typeof o.dryRun !== 'boolean') throw new TypeError('export: dryRun must be a boolean');
+  return { with: addrs, after, before, out: o.out, tar: o.tar === true, dryRun: o.dryRun === true };
 }
 
 /** @param {string} p @returns {Promise<string>} The real path of an existing path, else the path itself. */
@@ -355,6 +358,27 @@ async function runExport(ctx, rawOpts) {
       throw err('ERR_EXPORT_SELF_CHECK', `the bundle did not verify, so it was not delivered: ${check.failed.join(', ')}${first ? ` (${first.why})` : ''}`);
     }
 
+    /** @param {number} outBytes @returns {ExportResult} */
+    const summary = (outBytes) => {
+      /** @type {ExportResult['seals']} */
+      const seals = { anchored: 0, pending: 0, unstamped: 0, unsealed: 0 };
+      for (const s of sel) seals[/** @type {keyof typeof seals} */ (s.seal.state)]++;
+      let storedN = 0;
+      for (const s of sel) if (stored.get(s.id)) storedN++;
+      return {
+        out: target, bytes: outBytes, files: written.size, head: snapshot, bundle_sha256: bundleSha, records: sel.length,
+        replies: sel.reduce((n, s) => n + s.replies.length, 0), keys: keyFiles.size, manifests: [...written.keys()].filter((p) => /^manifests\/\d{8}\.json$/.test(p)).length,
+        seals, content: { stored: storedN, absent: sel.length - storedN },
+      };
+    };
+    // a dry run stops here: the bundle was built and verified in the temp directory (removed below), nothing is at `out`
+    if (o.dryRun) {
+      return {
+        ...summary(totalBytes), dryRun: true,
+        selection: sel.map((s) => ({ id: s.id, captured: String(s.captured), direction: String(s.direction), from: s.facts.from.length ? s.facts.from.map((/** @type {{ address: string }} */ x) => x.address).join(', ') : null, subject: s.facts.subject ?? null })),
+      };
+    }
+
     // 7. still the same history? then move it into place
     await ctx.hooks?.beforeMove?.();
     const head = await headOf(ctx.root);
@@ -372,16 +396,7 @@ async function runExport(ctx, rawOpts) {
     } else {
       await fs.rename(stage, target);
     }
-    /** @type {ExportResult['seals']} */
-    const seals = { anchored: 0, pending: 0, unstamped: 0, unsealed: 0 };
-    for (const s of sel) seals[/** @type {keyof typeof seals} */ (s.seal.state)]++;
-    let storedN = 0;
-    for (const s of sel) if (stored.get(s.id)) storedN++;
-    return {
-      out: target, bytes: outBytes, files: written.size, head: snapshot, bundle_sha256: bundleSha, records: sel.length,
-      replies: sel.reduce((n, s) => n + s.replies.length, 0), keys: keyFiles.size, manifests: [...written.keys()].filter((p) => /^manifests\/\d{8}\.json$/.test(p)).length,
-      seals, content: { stored: storedN, absent: sel.length - storedN },
-    };
+    return summary(outBytes);
   } finally {
     await fs.rm(tmp, { recursive: true, force: true }).catch(() => {});   // what is left of our own temp directory (empty after the move)
   }

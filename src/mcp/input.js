@@ -29,15 +29,16 @@ export function decodeBase64(s) {
 }
 
 /**
- * Read a file named by an absolute `path` inside one of the allowed folders.
+ * The real path of an absolute `path` that lies inside one of the allowed folders (symlinks followed), or a refusal.
  * @param {string} p
  * @param {InputOptions} o
- * @returns {Promise<Buffer>}
+ * @param {string} what  For the refusal: "a readable regular file" or "a folder".
+ * @returns {Promise<string>}
  */
-export async function readAllowedFile(p, o) {
+async function resolveAllowed(p, o, what) {
   if (typeof p !== 'string' || !p || p.includes('\0') || !path.isAbsolute(p)) throw badArgument('path must be an absolute path');
   if (!o.inputDirs.length) throw new ToolError('ERR_PATH_NOT_ALLOWED', 'reading files by path is turned off: the owner lists folders in mcp.inputDirs of the mailproof config; pass the content as base64 instead');
-  const refused = () => new ToolError('ERR_PATH_NOT_ALLOWED', 'the path is not a readable regular file inside the folders listed in mcp.inputDirs');
+  const refused = () => new ToolError('ERR_PATH_NOT_ALLOWED', `the path is not ${what} inside the folders listed in mcp.inputDirs`);
   /** @type {string} */
   let real;
   try { real = await fs.realpath(p); } catch { throw refused(); }
@@ -45,6 +46,31 @@ export async function readAllowedFile(p, o) {
   const dirs = [];
   for (const d of o.inputDirs) { try { dirs.push(await fs.realpath(d)); } catch { /* a folder that is gone allows nothing */ } }
   if (!dirs.some((d) => real.startsWith(d.endsWith(path.sep) ? d : d + path.sep))) throw refused();
+  return real;
+}
+
+/**
+ * A folder named by an absolute `path` inside one of the allowed folders (never the allowed folder itself).
+ * @param {string} p
+ * @param {InputOptions} o
+ * @returns {Promise<string>}  Its real path.
+ */
+export async function resolveAllowedDir(p, o) {
+  const real = await resolveAllowed(p, o, 'a folder');
+  const st = await fs.lstat(real).catch(() => null);
+  if (!st || !st.isDirectory()) throw new ToolError('ERR_PATH_NOT_ALLOWED', 'the path is not a folder inside the folders listed in mcp.inputDirs');
+  return real;
+}
+
+/**
+ * Read a file named by an absolute `path` inside one of the allowed folders.
+ * @param {string} p
+ * @param {InputOptions} o
+ * @returns {Promise<Buffer>}
+ */
+export async function readAllowedFile(p, o) {
+  const real = await resolveAllowed(p, o, 'a readable regular file');
+  const refused = () => new ToolError('ERR_PATH_NOT_ALLOWED', 'the path is not a readable regular file inside the folders listed in mcp.inputDirs');
   const before = await fs.lstat(real).catch(() => null);
   if (!before || !before.isFile()) throw refused();
   if (before.size > MAX_TOTAL_BYTES) throw new ToolError('ERR_TOO_LARGE', `the file is ${before.size} bytes; the limit is ${MAX_TOTAL_BYTES}`);
@@ -83,6 +109,21 @@ export async function readBytes(args, o, optional = false) {
 }
 
 /**
+ * The path of a plain name inside the output folder (nothing is created): the one rule for every MCP output, a file or a folder.
+ * @param {string} name
+ * @param {string | null} outputDir
+ * @param {string} [arg]  The argument's name, for the refusal.
+ * @returns {Promise<string>}  The absolute path (the folder's real path joined with the name).
+ */
+export async function outputPath(name, outputDir, arg = 'saveTo') {
+  if (!outputDir) throw new ToolError('ERR_PATH_NOT_ALLOWED', 'saving files is turned off: the owner sets mcp.outputDir in the mailproof config');
+  if (typeof name !== 'string' || !name || name.length > 255 || /[\\/\0]/.test(name) || name === '.' || name === '..') throw badArgument(`${arg} must be a plain file name, not a path`);
+  const dir = await fs.realpath(outputDir).catch(() => null);
+  if (!dir || !(await fs.stat(dir)).isDirectory()) throw new ToolError('ERR_PATH_NOT_ALLOWED', 'mcp.outputDir is not a folder that exists');
+  return path.join(dir, name);
+}
+
+/**
  * Write bytes into the output folder under a plain file name: never overwrite, mode 0600.
  * @param {string} name
  * @param {Uint8Array} bytes
@@ -90,11 +131,7 @@ export async function readBytes(args, o, optional = false) {
  * @returns {Promise<string>}  The path written.
  */
 export async function saveBytes(name, bytes, outputDir) {
-  if (!outputDir) throw new ToolError('ERR_PATH_NOT_ALLOWED', 'saving files is turned off: the owner sets mcp.outputDir in the mailproof config');
-  if (typeof name !== 'string' || !name || name.length > 255 || /[\\/\0]/.test(name) || name === '.' || name === '..') throw badArgument('saveTo must be a plain file name, not a path');
-  const dir = await fs.realpath(outputDir).catch(() => null);
-  if (!dir || !(await fs.stat(dir)).isDirectory()) throw new ToolError('ERR_PATH_NOT_ALLOWED', 'mcp.outputDir is not a folder that exists');
-  const file = path.join(dir, name);
+  const file = await outputPath(name, outputDir);
   /** @type {import('node:fs/promises').FileHandle} */
   let fh;
   try { fh = await fs.open(file, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600); }

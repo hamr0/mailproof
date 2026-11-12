@@ -39,12 +39,12 @@ test('lifecycle: versions, notifications, ping, tools/list, protocol errors, bat
   assert.deepEqual((await s.request('ping')).result, {});
 
   const tl = (await s.request('tools/list')).result.tools;
-  assert.equal(tl.length, 24);
+  assert.equal(tl.length, 29);
   for (const x of tl) {
     assert.equal(x.inputSchema.type, 'object'); assert.equal(x.inputSchema.additionalProperties, false);
     assert.match(x.description, /untrusted data/);
     assert.deepEqual(Object.keys(x.annotations).sort(), ['destructiveHint', 'idempotentHint', 'openWorldHint', 'readOnlyHint', 'title']);
-    if (!['accounts', 'verifyRecord'].includes(x.name)) assert.deepEqual(x.inputSchema.properties.account.enum, ['personal']);
+    if (!['accounts', 'verifyRecord', 'verifyBundle'].includes(x.name)) assert.deepEqual(x.inputSchema.properties.account.enum, ['personal']);
   }
   const by = Object.fromEntries(tl.map((x) => [x.name, x]));
   assert.equal(by.forget.annotations.destructiveHint, true); assert.equal(by.prune.annotations.destructiveHint, true);
@@ -179,7 +179,7 @@ test('two accounts: account is required and an enum; unknown names list the choi
   assert.ok(list.inputSchema.required.includes('account'));
   assert.equal(tl.find((x) => x.name === 'accounts').inputSchema.properties.account, undefined);
   assert.equal(tl.find((x) => x.name === 'verifyRecord').inputSchema.properties.account, undefined);
-  assert.equal(tl.length, 24);
+  assert.equal(tl.length, 29);
   const no = await s.call('list');
   assert.equal(no.error.code, 'ERR_BAD_ARGUMENT'); assert.match(no.error.message, /personal, work/);
   const bad = await s.call('list', { account: 'nope' });

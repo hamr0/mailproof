@@ -15,10 +15,10 @@ test('the table is complete: every method and exported function is a tool or exc
   for (const [k, why] of Object.entries(EXCLUDED)) assert.ok(why.length > 10, k);
 });
 
-test('24 tools: 18 read, 4 write, 2 destructive; every tool has all four hints, set explicitly', () => {
+test('29 tools: 20 read, 7 write, 2 destructive; every tool has all four hints, set explicitly', () => {
   const t = Object.values(TOOLS);
-  assert.equal(t.length, 24);
-  assert.deepEqual(['read', 'write', 'destructive'].map((c) => t.filter((x) => x.cls === c).length), [18, 4, 2]);
+  assert.equal(t.length, 29);
+  assert.deepEqual(['read', 'write', 'destructive'].map((c) => t.filter((x) => x.cls === c).length), [20, 7, 2]);
   for (const [name, x] of Object.entries(TOOLS)) {
     assert.deepEqual(Object.keys(x.annotations).sort(), ['destructiveHint', 'idempotentHint', 'openWorldHint', 'readOnlyHint'], name);
     assert.equal(x.annotations.readOnlyHint, x.cls === 'read', `${name}: readOnly iff class read`);
@@ -27,13 +27,22 @@ test('24 tools: 18 read, 4 write, 2 destructive; every tool has all four hints, 
 });
 
 test('the hints are exactly the B12.3 table', () => {
-  const open = ['check', 'record', 'sync', 'upgradeStamps'];
-  const notIdem = ['sync', 'upgradeStamps'];
+  const open = ['check', 'record', 'sync', 'upgradeStamps', 'stamp', 'backup'];
+  const notIdem = ['sync', 'upgradeStamps', 'export', 'backup'];
   for (const [name, x] of Object.entries(TOOLS)) {
     assert.equal(x.annotations.openWorldHint, open.includes(name), `${name} openWorld`);
     assert.equal(x.annotations.idempotentHint, !notIdem.includes(name), `${name} idempotent`);
   }
   assert.deepEqual(Object.keys(TOOLS).filter((n) => TOOLS[n].cls === 'destructive'), ['forget', 'prune']);
+});
+
+test('CLI parity: every CLI command that fits MCP has a tool, the rest are excluded with a reason (SPEC B12.3)', () => {
+  // commands with a library method of the same name are tools; the others are named in EXCLUDED
+  for (const t of ['status', 'stamp', 'export', 'backup', 'verifyBundle']) assert.ok(TOOLS[t], t);
+  for (const k of ['watch', 'config add-account', 'help', 'mcp']) assert.ok(EXCLUDED[k], k);
+  assert.equal(TOOLS.export.cls, 'write');
+  assert.ok(TOOLS.export.params.confirm && TOOLS.backup.params.confirm, 'export and backup preview unless confirmed');
+  assert.equal(TOOLS.verifyBundle.noAccount, true);
 });
 
 test('tools.generated.js is fresh (npm run build:mcp-tools)', () => {

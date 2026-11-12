@@ -3,16 +3,31 @@
 // blob or a saved file. `forget` and `prune` preview unless `confirm: true` (B12.5).
 
 import crypto from 'node:crypto';
-import { verifyRecord } from '../index.js';
+import path from 'node:path';
+import { verifyRecord, verifyBundle } from '../index.js';
 import { parseDate, parseAddress, resolveId, messageIdOf } from '../cli/parse.js';
 import { syncOnce } from '../cli/sync-op.js';
-import { readBytes, readAllowedFile, saveBytes } from './input.js';
+import { readBytes, readAllowedFile, resolveAllowedDir, saveBytes, outputPath } from './input.js';
+import { accountStatus, configFacts } from '../cli/status.js';
+import { UPDATE_COMMAND } from '../cli/version.js';
+import { defaultBundleOut } from '../cli/bundle.js';
+import { defaultBundlePath } from '../cli/backup.js';
+import { otsOptionFromEnv } from '../cli/secrets.js';
+import { updateState } from '../cli/state.js';
+import { stamp as isoStamp } from '../cli/session.js';
+import { PUSH_WARNING } from '../proof/backup.js';
 import { ToolError, badArgument } from './errors.js';
 
 /** Messages read per folder in one `sync` call unless the caller lowers it (SPEC B12.12: about 8 s for 100 signed 40 KB messages, F30). */
 export const SYNC_MAX_MESSAGES_DEFAULT = 100;
 /** Message count the `maxMessages` argument may not exceed (the library caps a folder at 1,000 anyway). */
 export const SYNC_MAX_MESSAGES_CEILING = 1000;
+
+/** The most records an `export` preview lists (the count is always complete). */
+const EXPORT_PREVIEW_ROWS = 200;
+
+/** What an export hands over, said to the person before they confirm (B13.2). */
+export const EXPORT_DISCLOSURE = 'The bundle holds, for every email it includes: the sender and recipient addresses, the signed subject and headers, the DKIM signature, the archived signing key and the seal. The seal manifests show every other record of the trail only as a hash. Message bodies and attachments are not copied (the bundle only says whether you still hold them). Whoever receives it learns who you exchanged mail with in this selection. It does not prove completeness: you chose which emails to include.';
 
 /** @typedef {import('../index.js').Mailproof} Mailproof */
 /** @typedef {{ type: 'text', text: string } | { type: 'resource', resource: { uri: string, mimeType: string, blob: string } }} Content */
@@ -30,6 +45,7 @@ export const SYNC_MAX_MESSAGES_CEILING = 1000;
  * @property {import('../cli/session.js').Deps} deps
  * @property {Record<string, string | undefined>} env
  * @property {string} configFile
+ * @property {string} version  The installed mailproof version.
  */
 
 /** @param {unknown} v @param {string} [outcome] @returns {Output} */
@@ -167,6 +183,71 @@ export const HANDLERS = {
     return json({ ...r.result, ots: r.ots }, `ok recorded ${recorded}${r.result.complete ? '' : ' (not complete)'}`);
   },
   upgradeStamps: async (c) => json(await c.mp().upgradeStamps()),
+  status: async (c) => {
+    const account = /** @type {import('../cli/config.js').Account} */ (c.account);
+    const s = await accountStatus(account, c.mp(), c.state);
+    return json({ ...s, config: c.configFile ? await configFacts(c.configFile, c.env) : null, version: c.version, updateCommand: UPDATE_COMMAND });
+  },
+  stamp: async (c) => {
+    const r = await c.mp().stamp();
+    return json(r, r.error ? `ok (seal problem: ${r.error})` : `ok manifests ${r.manifests.length}`);
+  },
+  verifyBundle: async (c, a) => {
+    if (a.expect !== undefined && !/^[0-9a-fA-F]{64}$/.test(a.expect)) throw badArgument('expect must be the 64 hex characters of the bundle\'s sha256');
+    const dir = await resolveAllowedDir(a.dir, c.input);
+    const o = otsOptionFromEnv(c.env);
+    const r = await verifyBundle(dir, { ...(o.otsBin !== undefined ? { ots: o.otsBin } : {}), ...(a.expect !== undefined ? { expect: a.expect } : {}), ...(a.strict ? { strict: true } : {}) });
+    return json(r, r.ok ? 'ok verified' : `ok not verified: ${r.failed.join(', ')}`);
+  },
+  export: async (c, a) => {
+    const mp = c.mp();
+    const account = /** @type {import('../cli/config.js').Account} */ (c.account);
+    const now = (c.deps.now ?? (() => new Date()))();
+    const addrs = /** @type {string[]} */ (a.with).map((x) => parseAddress(x, 'with'));
+    const tar = a.tar === true;
+    let name = a.out ?? path.basename(defaultBundleOut(account.name, now, tar));
+    await outputPath(name, c.settings.outputDir, 'out');   // the name as given must be plain, whatever suffix follows
+    if (tar && !name.endsWith('.tar')) name += '.tar';
+    const out = await outputPath(name, c.settings.outputDir, 'out');
+    const opts = { with: addrs, ...(a.after !== undefined ? { after: dateArg(a.after, 'after') } : {}), ...(a.before !== undefined ? { before: dateArg(a.before, 'before') } : {}), out, tar };
+    if (a.confirm !== true) {
+      const plan = await mp.export({ ...opts, dryRun: true });
+      const { selection = [], ...rest } = plan;
+      return json({
+        executed: false,
+        preview: { ...rest, selection: selection.slice(0, EXPORT_PREVIEW_ROWS), ...(selection.length > EXPORT_PREVIEW_ROWS ? { selectionMore: selection.length - EXPORT_PREVIEW_ROWS } : {}), disclosure: EXPORT_DISCLOSURE },
+        next: 'show the user the disclosure and the emails, then call again with the same arguments and confirm: true to write the bundle',
+      }, `preview ${plan.records} record(s)`);
+    }
+    const res = await mp.export(opts);
+    return json({ executed: true, result: res }, `executed ${res.records} record(s), bundle_sha256 ${res.bundle_sha256}`);
+  },
+  backup: async (c, a) => {
+    const mp = c.mp();
+    const account = /** @type {import('../cli/config.js').Account} */ (c.account);
+    const now = (c.deps.now ?? (() => new Date()))();
+    if (a.push === true && !account.backupRemote) throw badArgument('this account has no backupRemote in the config: push needs one');
+    let name = a.out ?? path.basename(defaultBundlePath('', account.name, now));
+    await outputPath(name, c.settings.outputDir, 'out');   // the name as given must be plain, whatever suffix follows
+    if (!name.endsWith('.bundle')) name += '.bundle';
+    const out = await outputPath(name, c.settings.outputDir, 'out');
+    const opts = { out, withContent: a.withContent === true, ...(a.push === true ? { push: true, remote: /** @type {string} */ (account.backupRemote) } : {}) };
+    if (a.confirm !== true) {
+      const plan = await mp.backup({ ...opts, dryRun: true });
+      return json({
+        executed: false,
+        preview: {
+          bundle: plan.bundle, commits: plan.commits, content: plan.content, ...(plan.contentNote ? { contentNote: plan.contentNote } : {}),
+          push: plan.pushed ? { remote: plan.pushed.remote, host: plan.pushed.host, forced: false } : null,
+          disclosure: `${plan.pushed ? `${PUSH_WARNING} ` : ''}The bundle holds the whole trail's signed headers (addresses, subjects, dates, Message-IDs), never message bodies.${plan.content ? ' The content archive holds other people\'s raw mail and is not encrypted.' : ''}`,
+        },
+        next: 'show the user this, then call again with the same arguments and confirm: true to write it',
+      }, `preview ${plan.commits} commit(s)${plan.pushed ? ` push to ${plan.pushed.host ?? 'a local remote'}` : ''}`);
+    }
+    const res = await mp.backup(opts);
+    await updateState(c.state, account.name, { lastBackup: { at: isoStamp(now), path: res.bundle } });
+    return json({ executed: true, result: res }, `executed ${res.commits} commit(s)${res.pushed ? ' pushed' : ''}${res.pushError ? ` push failed (${res.pushError.kind})` : ''}${res.contentError ? ' content archive failed' : ''}`);
+  },
   forget: async (c, a) => {
     const mp = c.mp();
     const hasIds = a.ids !== undefined;

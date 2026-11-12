@@ -153,7 +153,37 @@ export const TOOLS = {
       maxMessages: { type: 'integer', minimum: 1, description: 'most messages to read per folder in this call (default set by the server); call again while complete is false' },
     },
   },
+  status: { cls: 'read', title: 'Status of the account and its trail', annotations: READ, params: {}, required: [] },
+  stamp: { cls: 'write', title: 'Seal new mail (OpenTimestamps)', annotations: hints(false, false, true, true), params: {}, required: [] },
   upgradeStamps: { cls: 'write', title: 'Upgrade OpenTimestamps stamps', annotations: hints(false, false, false, true), params: {}, required: [] },
+  export: {
+    cls: 'write', title: 'Export a proof bundle for a counterparty', annotations: hints(false, false, false, false), required: ['with'],
+    params: {
+      with: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 20, description: 'the exact email addresses to export the exchange with (a union: any email naming one of them on From, To, Cc or Reply-To)' },
+      after: { type: 'string', description: flag('export', 'after') },
+      before: { type: 'string', description: flag('export', 'before') },
+      out: { type: 'string', description: 'a folder name (not a path) to create inside the server\'s output folder (mcp.outputDir); default mailproof-bundle-<account>-<time>' },
+      tar: { type: 'boolean', description: 'true: one .tar file instead of a folder' },
+      confirm: CONFIRM,
+    },
+  },
+  backup: {
+    cls: 'write', title: 'Back up the trail', annotations: hints(false, false, false, true), required: [],
+    params: {
+      out: { type: 'string', description: 'a file name (not a path) for the bundle inside the server\'s output folder (mcp.outputDir); default <account>-<time>.bundle' },
+      withContent: { type: 'boolean', description: 'true: also write the stored raw emails as an unencrypted .content.tar beside it' },
+      push: { type: 'boolean', description: 'true: also push the trail to the account\'s backup remote (never forced; contacts that host)' },
+      confirm: CONFIRM,
+    },
+  },
+  verifyBundle: {
+    cls: 'read', title: 'Check a proof bundle', annotations: READ, noAccount: true, primitive: 'verifyBundle', required: ['dir'],
+    params: {
+      dir: { type: 'string', description: 'absolute path of the bundle folder, inside one of the server\'s input folders (mcp.inputDirs)' },
+      expect: { type: 'string', description: flag('verify-bundle', 'expect') },
+      strict: { type: 'boolean', description: flag('verify-bundle', 'strict') },
+    },
+  },
   forget: {
     cls: 'destructive', title: 'Forget stored mail content', annotations: hints(false, true, true, false), required: [],
     params: {
@@ -178,9 +208,10 @@ export const TOOLS = {
 export const EXCLUDED = {
   'Mailproof': 'construction: the server builds one instance per account from the config.',
   'Mailproof#close': 'lifecycle: the server owns it; an agent calling it would end its own worker.',
-  'Mailproof#stamp': 'deferred (SPEC B13.1.9): sync already runs the seal when due, and the pair export (B13.2) is deliberately not an MCP tool either; an owner who wants stamp in MCP adds one row to the table.',
-  'Mailproof#export': 'a human act (SPEC B13.2): it hands another person a directory with the addresses and subjects of a whole exchange, and writes it to a path the owner chooses; an agent that could do that unasked is a leak. Deliberately not offered over MCP.',
-  'verifyBundle': 'the recipient\'s check of a bundle someone else made (SPEC B13.3): account-free, so it has no trail to serve; the CLI and the library cover it (a bundle path is an agent-supplied input the MCP input policy, B12.6, would have to gate, and nothing needs it).',
+  'watch': 'the CLI command mailproof watch is a long-running loop that never returns; over MCP call sync again (it also runs the seal when due).',
+  'config add-account': 'the CLI wizard is interactive and handles the account secret; an agent must never be given one. status reports whether the config validates.',
+  'help': 'the tool list and every description already are the help.',
+  'mcp': 'the server itself.',
   'Mailproof#expireContent': 'policy, not an agent need: sync enforces retention every sweepDays and forget is the on-demand tool.',
   'hashDocument': 'a pure helper; matchFile answers the real question and a model cannot usefully hand it bytes.',
   'checkProfile': 'the method of the same name covers it by id: one tool per name.',

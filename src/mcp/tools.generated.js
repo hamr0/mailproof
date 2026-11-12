@@ -636,6 +636,38 @@ export const GENERATED_TOOLS = Object.freeze(/** @type {GeneratedTool[]} */ (/**
     }
   },
   {
+    "name": "status",
+    "method": "status",
+    "cls": "read",
+    "title": "Status of the account and its trail",
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    },
+    "description": "What the trail holds and how it is kept, read-only and offline: `records` (total, in, out, verified, unverified, oldest and newest capture; the in/out/verified counts are null until the index is current, call `list` once to bring it up to date), `content` (stored files and bytes, or \"off\"), `index` state, `pendingStamps`, and the `seal` (mode, last run, next due, manifests, those without a proof, proofs not yet anchored, chain state). The tool adds last sync, last backup, whether a watch runs, the config check and the installed version. Never connects to the mailbox, builds the index or takes a lock; an unreadable part is reported in its own field.",
+    "noAccount": false,
+    "required": [],
+    "properties": {}
+  },
+  {
+    "name": "stamp",
+    "method": "stamp",
+    "cls": "write",
+    "title": "Seal new mail (OpenTimestamps)",
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    },
+    "description": "Seal what was recorded since the last run: write a manifest of the new record files' hashes, commit it, and stamp it once with OpenTimestamps. Only one 32-byte hash (a manifest of file hashes: no addresses, subjects or content) is sent to the public OpenTimestamps calendars. Needs the `ots` binary: without it the manifest is still committed and `error` says so. Does nothing (`enabled: false`) when the account has the seal off. `sync` runs this automatically when due. Idempotent. Fails with `ERR_STAMP_LOCKED` (another job is running), `ERR_TRAIL_LOCKED` (retry later) or `ERR_STAMP_CHAIN` (stop and tell the user).",
+    "noAccount": false,
+    "required": [],
+    "properties": {}
+  },
+  {
     "name": "upgradeStamps",
     "method": "upgradeStamps",
     "cls": "write",
@@ -650,6 +682,118 @@ export const GENERATED_TOOLS = Object.freeze(/** @type {GeneratedTool[]} */ (/**
     "noAccount": false,
     "required": [],
     "properties": {}
+  },
+  {
+    "name": "export",
+    "method": "export",
+    "cls": "write",
+    "title": "Export a proof bundle for a counterparty",
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false
+    },
+    "description": "Make a pair bundle for a counterparty: the signed headers, signatures, archived keys and seals of every email naming one of the addresses in `with`, checkable offline with `verifyBundle`. It discloses the addresses and subjects of that whole exchange to whoever gets it; no bodies or attachments, and it does not prove completeness. Without `confirm: true` it returns a preview and writes nothing: show it to the user, and confirm only after they agreed. `out` is a folder name created in the output folder. Fails with `ERR_EXPORT_EMPTY`, `ERR_EXPORT_TOO_BIG`, `ERR_EXPORT_EXISTS` (pick another `out`), `ERR_EXPORT_REWRITTEN` (run again) or `ERR_EXPORT_SELF_CHECK`.",
+    "noAccount": false,
+    "required": [
+      "with"
+    ],
+    "properties": {
+      "with": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "minItems": 1,
+        "maxItems": 20,
+        "description": "the exact email addresses to export the exchange with (a union: any email naming one of them on From, To, Cc or Reply-To)"
+      },
+      "after": {
+        "type": "string",
+        "description": "captured on or after this date"
+      },
+      "before": {
+        "type": "string",
+        "description": "captured before this date"
+      },
+      "out": {
+        "type": "string",
+        "description": "a folder name (not a path) to create inside the server's output folder (mcp.outputDir); default mailproof-bundle-<account>-<time>"
+      },
+      "tar": {
+        "type": "boolean",
+        "description": "true: one .tar file instead of a folder"
+      },
+      "confirm": {
+        "type": "boolean",
+        "description": "true to do it; without it nothing changes and a preview is returned"
+      }
+    }
+  },
+  {
+    "name": "backup",
+    "method": "backup",
+    "cls": "write",
+    "title": "Back up the trail",
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "description": "Write a git bundle of the whole trail (records, keys, replies, seals; never message bodies) to the server's output folder; restore with `git clone <file> <dir>`. `withContent: true` adds a separate unencrypted tar of the stored raw emails (other people's mail). `push: true` also pushes the trail to the account's configured backup remote, never with force, and contacts that host. Without `confirm: true` it returns a preview and writes nothing. `out` is a plain file name in the output folder. Fails with `ERR_BACKUP_EMPTY` (nothing to back up), `ERR_BACKUP_EXISTS` (pick another `out`), `ERR_BACKUP_BUNDLE`, `ERR_BACKUP_VERIFY` or `ERR_TRAIL_LOCKED`.",
+    "noAccount": false,
+    "required": [],
+    "properties": {
+      "out": {
+        "type": "string",
+        "description": "a file name (not a path) for the bundle inside the server's output folder (mcp.outputDir); default <account>-<time>.bundle"
+      },
+      "withContent": {
+        "type": "boolean",
+        "description": "true: also write the stored raw emails as an unencrypted .content.tar beside it"
+      },
+      "push": {
+        "type": "boolean",
+        "description": "true: also push the trail to the account's backup remote (never forced; contacts that host)"
+      },
+      "confirm": {
+        "type": "boolean",
+        "description": "true to do it; without it nothing changes and a preview is returned"
+      }
+    }
+  },
+  {
+    "name": "verifyBundle",
+    "method": "verifyBundle",
+    "cls": "read",
+    "title": "Check a proof bundle",
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    },
+    "description": "Check a pair bundle someone made with `export`: pass `dir`, the bundle's folder, which must be inside one of the server's input folders. Offline: it re-checks every record's signature against its archived key, the file hashes, the manifest chain and each seal (locally, with `ots info`), and reports `ok`, the `failed` checks and one line per record. Pass `expect` (the 64-hex `bundle_sha256` the sender gave you another way) to pin the bundle; `strict` also fails unless every record is verified and every seal anchored. A bad bundle is `ok: false`, not an error. It does not prove completeness: the sender chose the emails.",
+    "noAccount": true,
+    "required": [
+      "dir"
+    ],
+    "properties": {
+      "dir": {
+        "type": "string",
+        "description": "absolute path of the bundle folder, inside one of the server's input folders (mcp.inputDirs)"
+      },
+      "expect": {
+        "type": "string",
+        "description": "the bundle sha256 its owner told you by another channel: fails when bundle.json is not the one they made"
+      },
+      "strict": {
+        "type": "boolean",
+        "description": "also fail unless every email is DKIM-verified and every seal is anchored (also fails when ots is missing)"
+      }
+    }
   },
   {
     "name": "forget",
