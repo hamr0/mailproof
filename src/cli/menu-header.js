@@ -21,13 +21,13 @@ export function clock(iso, now) {
 }
 
 /**
- * An action line: each key in cyan, then its label, two spaces apart.
+ * An action line: each key in bold green (st.key), then its label, two spaces apart.
  * @param {import('./style.js').Style} st
  * @param {Array<readonly [string, string]>} items  key, label
  * @returns {string}
  */
 export function actionLine(st, items) {
-  return items.map(([k, label]) => `${st.cyan(k)} ${label}`).join('  ');
+  return items.map(([k, label]) => `${st.key(k)} ${label}`).join('  ');
 }
 
 /**
@@ -77,11 +77,21 @@ export function mainHeader(st, h, now) {
   parts.push(`seal ${sealWord}${z.state === 'off' ? '' : next}`);
   parts.push(`watch ${h.watch ? st.green('on') : st.dim('off')}`);
 
+  return [st.rule(), id, parts.join(sep), st.rule(), mainActionLine(st, h.manyAccounts)];
+}
+
+/**
+ * The compact action line of the main menu (`1 sync  2 people ... q quit`), keys green.
+ * @param {import('./style.js').Style} st
+ * @param {boolean} manyAccounts
+ * @returns {string}
+ */
+export function mainActionLine(st, manyAccounts) {
   /** @type {Array<readonly [string, string]>} */
   const keys = MAIN_ITEMS.map(([k, , label]) => /** @type {const} */ ([k, label]));
-  if (h.manyAccounts) keys.push(['a', 'account']);
+  if (manyAccounts) keys.push(['a', 'account']);
   keys.push(['?', 'more'], ['q', 'quit']);
-  return [st.rule(), id, parts.join(sep), st.rule(), actionLine(st, keys)];
+  return actionLine(st, keys);
 }
 
 /**

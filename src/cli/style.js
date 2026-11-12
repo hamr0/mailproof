@@ -52,6 +52,10 @@ export function makeStyle({ env = {}, isTTY = false, columns } = {}) {
   return {
     on, links, utf8, width,
     bold: sgr('1'), dim: sgr('2'), green: sgr('32'), yellow: sgr('33'), red: sgr('31'), cyan: sgr('36'),
+    /** A selectable key or choice token (a menu number or letter, `y`, a default value, an example input): bold green, the ONE colour for all of them. */
+    key: sgr('1;32'),
+    /** Text with `{token}` marks: each token is a key, the braces are dropped (and with colour off the text is the same without them). The text is our own constant; escape mail-derived text before it gets here. @param {string} s @returns {string} */
+    choices: (s) => s.replace(/\{([^{}]*)\}/g, (_, t) => sgr('1;32')(t)),
     inverse: sgr('7'),
     /** A reversed badge in a colour, `badge('green', '✓ VERIFIED')`; plain text otherwise. @param {'green' | 'red' | 'yellow'} colour @param {string} s */
     badge: (colour, s) => (on ? `${ESC}[7;${{ green: 32, red: 31, yellow: 33 }[colour]}m${s}${ESC}[0m` : s),

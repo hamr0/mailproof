@@ -3,7 +3,7 @@
 
 import readline from 'node:readline';
 import { UsageError } from './errors.js';
-import { allowStyle } from './style.js';
+import { allowStyle, makeStyle } from './style.js';
 
 /** Output backstop for what a prompt writes (typed input is echoed back, validators quote it): F28. It keeps only the style sequences style.js makes. @param {string} s @returns {string} */
 const safe = allowStyle;
@@ -92,7 +92,7 @@ export function createPrompter(input, output, terminal) {
 /**
  * @typedef {Object} ValueSpec
  * @property {string} label  `With`
- * @property {string} [example]  `email address, e.g. bob@example.org, empty = everyone`
+ * @property {string} [example]  `email address, e.g. {bob@example.org}, empty = everyone`; each `{token}` is a choice or an example input, shown green
  * @property {string} [def]  The default: an empty answer takes it.
  * @property {boolean} [optional]  An empty answer is allowed and gives ''.
  * @property {string} [hint]  Printed for `?`.
@@ -105,11 +105,12 @@ export function createPrompter(input, output, terminal) {
  * @param {Prompter} p
  * @param {{ write: (s: string) => unknown }} out
  * @param {ValueSpec} spec
+ * @param {import('./style.js').Style} [st]  The style of the stream (default: plain).
  * @returns {Promise<string>}
  * @throws {Cancel}
  */
-export async function askValue(p, out, spec) {
-  const label = `${spec.label}${spec.example ? ` (${spec.example})` : ''}${spec.def !== undefined && spec.def !== '' ? ` [${spec.def}]` : ''}: `;
+export async function askValue(p, out, spec, st = makeStyle()) {
+  const label = `${spec.label}${spec.example ? ` (${st.choices(spec.example)})` : ''}${spec.def !== undefined && spec.def !== '' ? ` [${st.key(spec.def)}]` : ''}: `;
   for (let tries = 0; tries < 3;) {
     const ans = await p.ask(label);
     if (ans === null) throw new Cancel('eof');
@@ -137,10 +138,11 @@ export async function askValue(p, out, spec) {
  * @param {Prompter} p
  * @param {string} question
  * @param {boolean} [defYes]
+ * @param {import('./style.js').Style} [st]  The style of the stream (default: plain).
  * @returns {Promise<boolean>}  False for anything but yes, and for the end of input.
  */
-export async function confirm(p, question, defYes = false) {
-  const ans = await p.ask(`${question} ${defYes ? '[Y/n]' : '[y/N]'} `);
+export async function confirm(p, question, defYes = false, st = makeStyle()) {
+  const ans = await p.ask(`${question} ${defYes ? `[${st.key('Y')}/${st.key('n')}]` : `[${st.key('y')}/${st.key('N')}]`} `);
   if (ans === null) return false;
   const t = ans.trim().toLowerCase();
   return t === '' ? defYes : t === 'y' || t === 'yes';

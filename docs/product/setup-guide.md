@@ -99,7 +99,7 @@ What the answers mean: the provider fixes the host (`imap.gmail.com` or `outlook
 
 The wizard writes only fields that differ from the defaults (port 993, Sent on, trail `default`, content store on, 730 days, OpenTimestamps on). That is expected, not a lost answer. `~/` is expanded for every path in the config; versions up to 3.3.0 expanded it only for the trail directory, so there use the full path for the password file.
 
-**Colour and links.** On a terminal mailproof uses colour, symbols (`✓ ! ✗`) and clickable links. `NO_COLOR=1` turns colour off, `MAILPROOF_NO_LINKS=1` turns the links off, a pipe gets plain text with the same words, and a locale that is not UTF-8 gets `ok ! x` instead of the symbols. `--json` is never styled.
+**Colour and links.** On a terminal mailproof uses colour (every key or choice you can type, defaults and examples are green), symbols (`✓ ! ✗`) and clickable links. `NO_COLOR=1` turns colour off, `MAILPROOF_NO_LINKS=1` turns the links off, a pipe gets plain text with the same words, and a locale that is not UTF-8 gets `ok ! x` instead of the symbols. `--json` is never styled.
 
 **3.4 Check it.**
 
@@ -284,13 +284,13 @@ claude mcp add mailproof-dev -- node ~/src/mailproof/bin/mailproof.js mcp
 
 Then start a **new** Claude Code session (servers are loaded at start). Try: "List my last 10 emails with bob@example.com", "Verify record 3f2a9c1d", "Sync my gmail account and tell me how many were recorded", "What did Bob reply to message <abc@example.com>?".
 
-The 22 tools, named like the library methods:
+The 24 tools, named like the library methods:
 
-- **read** (16): `accounts`, `list`, `get`, `copies`, `counterparties`, `linked`, `verify`, `verifyRecord`, `proofParts`, `checkProfile`, `replyFacts`, `matchBody`, `matchFile`, `rawEmail`, `attachment`, `check`
+- **read** (18): `accounts`, `list`, `get`, `describe`, `copies`, `counterparties`, `linked`, `verify`, `verifyWith`, `verifyRecord`, `proofParts`, `checkProfile`, `replyFacts`, `matchBody`, `matchFile`, `rawEmail`, `attachment`, `check`
 - **write** (4): `record`, `replyText`, `sync`, `upgradeStamps`
 - **destructive** (2): `forget`, `prune`. They only preview until called again with `confirm: true`.
 
-Notes: with two accounts every tool call takes `account`. `stamp`, `export` and `verify-bundle` are **not** MCP tools; use the CLI. Claude Code does not act on the read-only/destructive hints (F30), so scope by tool name (for example allow only `mcp__mailproof__list`, `get`, `verify`), or use `mailproof mcp --account <name>` for one server per account. `rawEmail` and `attachment` are read-only but hand over other people's mail. Paths for files go in only from `mcp.inputDirs` and out only into `mcp.outputDir`, both off until set in the config. Remove with `claude mcp remove mailproof`. Details: [Usage guide, MCP](usage-guide.md#ai-agents-the-mcp-server-mailproof-mcp).
+`describe` is what `mailproof show` prints, as data: give it an address, a `<Message-ID>` or a record id and it returns the facts of each email (who it names and whether a signature really covers it, date and subject, DKIM/DMARC/SPF/ARC, both trust levels, why it is not verified in plain words, body proof, attachments, seal); the body text only with `full: true`. `verifyWith` is `mailproof verify <address>`: whether every received email with an address verifies. Ask your agent to show them however suits you (a table, a summary). Notes: with two accounts every tool call takes `account`. `stamp`, `export` and `verify-bundle` are **not** MCP tools; use the CLI. Claude Code does not act on the read-only/destructive hints (F30), so scope by tool name (for example allow only `mcp__mailproof__list`, `get`, `verify`), or use `mailproof mcp --account <name>` for one server per account. `rawEmail` and `attachment` are read-only but hand over other people's mail. Paths for files go in only from `mcp.inputDirs` and out only into `mcp.outputDir`, both off until set in the config. Remove with `claude mcp remove mailproof`. Details: [Usage guide, MCP](usage-guide.md#ai-agents-the-mcp-server-mailproof-mcp).
 
 ## 12. Troubleshooting
 

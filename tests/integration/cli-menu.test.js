@@ -1,6 +1,7 @@
 // The menu (SPEC B11.4), driven in-process through scripted stdin with the interactive flag on: prompts with defaults,
 // re-prompt on bad input, quit, typed-name confirmation for the destructive items, and "the menu runs the same code".
 import test from 'node:test';
+import { stripStyle } from '../../src/cli/style.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -208,8 +209,8 @@ function terminalMenu(w, deps) {
   stdout.on('data', (d) => { text += d; });
   const stderr = { write: () => true, isTTY: false };
   const done = run([], { stdout, stderr, stdin, interactive: true, env: w.env, signal: new AbortController().signal, deps });
-  const until = async (re) => { const t0 = Date.now(); while (!re.test(text) && Date.now() - t0 < 15_000) await new Promise((r) => setTimeout(r, 10)); assert.match(text, re); };
-  return { stdin, done, until, text: () => text };
+  const until = async (re) => { const t0 = Date.now(); while (!re.test(stripStyle(text)) && Date.now() - t0 < 15_000) await new Promise((r) => setTimeout(r, 10)); assert.match(stripStyle(text), re); };
+  return { stdin, done, until, text: () => stripStyle(text) };
 }
 
 test('Ctrl-C: during a running command it stops the command and the menu stays; at a prompt it quits', async () => {
@@ -223,9 +224,7 @@ test('Ctrl-C: during a running command it stops the command and the menu stays; 
   await m.until(/ ok recorded 0/);
   assert.equal(syncs, 1);
   m.stdin.write('\x03');   // ^C while the watch sleeps
-  await m.until(/Press Enter/);
-  m.stdin.write('\n');
-  await m.until(/> \x1b\[3G$/);   // the menu is back
+  await m.until(/> \x1b\[3G$/);   // the menu is back (no Press Enter on a terminal)
   assert.match(m.text(), /Interval/);
   m.stdin.write('\x03');   // ^C at the menu prompt
   assert.equal(await m.done, 0);

@@ -23,7 +23,7 @@ import { styleOf, allowStyle } from './style.js';
 
 /**
  * @typedef {Object} Ctx
- * @property {{ write: (s: string | Uint8Array) => unknown, isTTY?: boolean, columns?: number }} stdout
+ * @property {{ write: (s: string | Uint8Array) => unknown, isTTY?: boolean, columns?: number, rows?: number }} stdout
  * @property {{ write: (s: string) => unknown, isTTY?: boolean, columns?: number }} stderr
  * @property {NodeJS.ReadableStream | null} stdin  Only the menu and `config add-account` read it.
  * @property {boolean} interactive  stdin and stdout are terminals (the menu may start).

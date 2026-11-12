@@ -1,6 +1,7 @@
 // `config add-account` (SPEC B11.2, B11.12): scripted stdin in, a config file out. Nothing is written before the final
 // yes; the file is 0600, written atomically, other accounts kept; a password is never asked for or stored.
 import test from 'node:test';
+import { stripStyle } from '../../src/cli/style.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -240,7 +241,7 @@ test('on a terminal the typed secret is not echoed (echo off), and it is written
   stdout.on('data', (d) => { text += d; });
   const done = run(['config', 'add-account'], { stdout, stderr: { write: () => true }, stdin, interactive: true, env: w.env, signal: new AbortController().signal, deps: {} });
   let mark = 0;
-  const until = async (re) => { const t0 = Date.now(); while (!re.test(text.slice(mark)) && Date.now() - t0 < 15_000) await new Promise((r) => setTimeout(r, 10)); assert.match(text.slice(mark), re); mark = text.length; };
+  const until = async (re) => { const t0 = Date.now(); while (!re.test(stripStyle(text.slice(mark))) && Date.now() - t0 < 15_000) await new Promise((r) => setTimeout(r, 10)); assert.match(stripStyle(text.slice(mark)), re); mark = text.length; };
   const say = async (re, line) => { await until(re); stdin.write(`${line}\n`); };
   await say(/Mail provider[^\n]*\[1\]: /, '1');
   await say(/Account name[^\n]*: /, 'gmx');

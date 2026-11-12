@@ -97,3 +97,12 @@ test('allowStyle keeps the sequences this module made and escapes everything els
   assert.ok(!allowStyle('\x1b]8;;https://evil.example\x1b\\x').includes('\x1b]8;;https'), 'a forged link opener (no nonce) is escaped');
   assert.equal(allowStyle(`${on.green('ok')}\x1b]0;title\x07`), `${on.green('ok')}\\x1b]0;title\\x07`, 'an OSC title next to ours is escaped');
 });
+
+test('key and choices: bold green on, the same words (braces dropped) off', () => {
+  const on = makeStyle({ env: { FORCE_COLOR: '1' } });
+  const off = makeStyle({ env: { NO_COLOR: '1' } });
+  assert.equal(on.key('s'), '\x1b[1;32ms\x1b[0m');
+  assert.equal(on.choices('then {s} or {e}, e.g. {3 v}'), 'then \x1b[1;32ms\x1b[0m or \x1b[1;32me\x1b[0m, e.g. \x1b[1;32m3 v\x1b[0m');
+  assert.equal(off.key('s'), 's');
+  assert.equal(off.choices('then {s} or {e}, e.g. {3 v}'), 'then s or e, e.g. 3 v');
+});

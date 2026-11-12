@@ -16,7 +16,7 @@ test('header: FORCE_COLOR styles it; stripping the styles gives exactly the plai
   const plain = await menu({ env: UTF });
   const color = await menu({ env: { ...UTF, FORCE_COLOR: '1' } });
   assert.ok(color.stdout.includes('\x1b[32m3 verified\x1b[0m'), 'verified in green, with its word');
-  assert.ok(color.stdout.includes('\x1b[36m1\x1b[0m sync'), 'keys in cyan');
+  assert.ok(color.stdout.includes('\x1b[1;32m1\x1b[0m sync'), 'keys in bold green');
   assert.ok(color.stdout.includes('\x1b[1mmailproof\x1b[0m'));
   assert.ok(!plain.stdout.includes('\x1b'));
   assert.equal(stripStyle(color.stdout), plain.stdout, 'same content, no colour');

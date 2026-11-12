@@ -37,10 +37,10 @@ export function makeWorld({ accounts, config } = {}) {
     root, home, cfgDir, state, env, configFile, write,
     stateDir: path.join(state, 'mailproof'),
     /** In-process: no IMAP, streams captured. `input`: scripted stdin lines; `tty`/`columns`/`stderrTty`: what the output streams claim to be (style.js reads them). */
-    async run(argv, { input, interactive = false, deps = {}, euid, env: extra, signal, tty = false, columns, stderrTty = false } = {}) {
+    async run(argv, { input, interactive = false, deps = {}, euid, env: extra, signal, tty = false, columns, stderrTty = false, rows } = {}) {
       const out = []; const err = [];
       const ctx = {
-        stdout: { write: (s) => { out.push(Buffer.from(s)); return true; }, isTTY: tty, ...(columns ? { columns } : {}) },
+        stdout: { write: (s) => { out.push(Buffer.from(s)); return true; }, isTTY: tty, ...(columns ? { columns } : {}), ...(rows ? { rows } : {}) },
         stderr: { write: (s) => { err.push(Buffer.from(s)); return true; }, isTTY: stderrTty },
         stdin: input === undefined ? null : Readable.from([input]),
         interactive, env: { ...env, ...extra }, euid, signal: signal ?? new AbortController().signal,
