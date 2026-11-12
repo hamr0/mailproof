@@ -3,6 +3,7 @@
 // them; nothing downstream recomputes a fact. Everything is the record, the content store and the trail: no DNS, no network.
 // Absent values are `null` (the CLI prints `N/A`). Body text and every string taken from an email are untrusted data.
 
+import fs from 'node:fs/promises';
 import path from 'node:path';
 import { participantsOf, signedHeaderValue, addressCoverage } from './participants.js';
 import { claimedHeader, headerText } from './header-text.js';
@@ -11,7 +12,7 @@ import { verifyRecord } from './recheck.js';
 import { explain, shortReason } from './explain.js';
 import { classifyTarget, targetRecords } from './target.js';
 import { readAnchored } from './ots-upgrade.js';
-import { manifestOtsPath } from './layout.js';
+import { manifestOtsPath, manifestPath } from './layout.js';
 
 /** @typedef {import('./types.js').MpRecord} MpRecord */
 /** @typedef {import('./mailproof.js').Mailproof} Mailproof */
@@ -19,7 +20,7 @@ import { manifestOtsPath } from './layout.js';
 /** @typedef {'signed' | 'failing' | 'none'} AddressCoverage */
 /** @typedef {{ address: string, signed: boolean, coverage: AddressCoverage }} FactsAddress  `address` as written; `signed` is true only for `coverage: 'signed'` (a verifying, aligned signature covers the line). */
 /** @typedef {{ value: string | null, coverage: 'signed' | 'failing' | 'claimed' | 'none' }} FactsHeader  `claimed`: only the stored raw email has it (the sender's word); `none`: nothing has it (`value` null). */
-/** @typedef {{ via: 'record' | 'manifest' | null, state: 'unsealed' | 'own-stamp' | 'not-stamped' | 'pending' | 'anchored', manifest: number | null, stamped_by: number | null, stamp: unknown, anchored: boolean, block: number | null }} FactsSeal */
+/** @typedef {{ via: 'record' | 'manifest' | null, state: 'unsealed' | 'own-stamp' | 'not-stamped' | 'pending' | 'anchored', manifest: number | null, stamped_by: number | null, stamp: unknown, anchored: boolean, block: number | null, sealed_at: string | null }} FactsSeal  `sealed_at`: when the stamping manifest was made (its own `created`, local data, no network); null without a manifest stamp. */
 /**
  * @typedef {Object} Facts
  * @property {string} id
@@ -51,7 +52,7 @@ import { manifestOtsPath } from './layout.js';
  * @property {string | null} body_proof  The record's `body_status`, verbatim.
  * @property {{ proof: 'proven' | 'partial' | 'not', stored: boolean, source: string | null, limit: string | null, text: string | null, more_lines: number }} body  `text`: the whole text with `full: true`, else its first 10 lines (`more_lines` says how many were cut); null when there is no stored raw email or no text part.
  * @property {Array<{ filename: string | null, size: number | null, sha256: string | null, stored: boolean, match: boolean | null }>} attachments
- * @property {{ raw_stored: boolean, raw_sha256: string | null }} content
+ * @property {{ raw_stored: boolean, raw_sha256: string | null, gone: { reason: 'forgotten' | 'expired' | 'never-stored', at: string | null } | null }} content
  * @property {FactsSeal | null} seal  Null when sealing is off for this instance.
  */
 /** @typedef {{ target: Target, total: number, more: boolean, records: Facts[] }} Described */
@@ -83,13 +84,15 @@ const str = (v) => (typeof v === 'string' && v !== '' ? v : null);
 export async function sealOf(mp, id) {
   if (!mp.otsBin) return null;
   const seal = await mp._findSeal(id).catch(() => null);
-  if (!seal) return { via: null, state: 'unsealed', manifest: null, stamped_by: null, stamp: null, anchored: false, block: null };
-  if (seal.via === 'record') return { via: 'record', state: 'own-stamp', manifest: null, stamped_by: null, stamp: seal.stamp, anchored: false, block: null };
-  if (!seal.stamp) return { via: 'manifest', state: 'not-stamped', manifest: seal.seq, stamped_by: null, stamp: null, anchored: false, block: null };
+  if (!seal) return { via: null, state: 'unsealed', manifest: null, stamped_by: null, stamp: null, anchored: false, block: null, sealed_at: null };
+  if (seal.via === 'record') return { via: 'record', state: 'own-stamp', manifest: null, stamped_by: null, stamp: seal.stamp, anchored: false, block: null, sealed_at: null };
+  if (!seal.stamp) return { via: 'manifest', state: 'not-stamped', manifest: seal.seq, stamped_by: null, stamp: null, anchored: false, block: null, sealed_at: null };
   const anchored = (await readAnchored(mp.root, mp.trail)).manifests.has(seal.stamp.seq);
   let block = null;
   if (anchored && mp.jobOts) block = await mp.jobOts.readBlockHeight(path.join(mp.root, manifestOtsPath(seal.stamp.seq))).catch(() => null);
-  return { via: 'manifest', state: anchored ? 'anchored' : 'pending', manifest: seal.seq, stamped_by: seal.stamp.seq, stamp: seal.stamp, anchored, block };
+  let sealedAt = null;
+  try { const c = JSON.parse(await fs.readFile(path.join(mp.root, manifestPath(seal.stamp.seq)), 'utf8')).created; sealedAt = typeof c === 'string' ? c : null; } catch { /* the manifest cannot be read: no time */ }
+  return { via: 'manifest', state: anchored ? 'anchored' : 'pending', manifest: seal.seq, stamped_by: seal.stamp.seq, stamp: seal.stamp, anchored, block, sealed_at: sealedAt };
 }
 
 /**
@@ -166,7 +169,7 @@ export async function factsOf(mp, rec, opts = {}) {
     attachments: (parts?.attachments ?? []).map((a) => ({
       filename: a.filename, size: typeof rec.attachments?.[a.index]?.size === 'number' ? rec.attachments[a.index].size : null, sha256: a.sha256, stored: a.stored, match: a.match,
     })),
-    content: { raw_stored: raw !== null, raw_sha256: str(m.raw_sha256) },
+    content: { raw_stored: raw !== null, raw_sha256: str(m.raw_sha256), gone: raw === null ? await mp._contentGone(id).catch(() => null) : null },
     seal,
   };
 }

@@ -1,4 +1,4 @@
-// Unpack a `.tar` pair bundle (what `export --tar` writes) into a private temp directory so `verifyBundle` can check it (SPEC B13.3.6).
+// Unpack a `.tar` pair bundle (what `export --tar` writes) into a private temp directory so `verifyBundle` can check it (SPEC B13.3.10).
 // The tar is hostile input, so this is a small reader of our own and not the system `tar`: every header is validated BEFORE anything
 // is written, and only regular files and directories are ever created (never a link, device or FIFO, which GNU and BSD tar differ on),
 // by a path we build ourselves from checked components, with `O_EXCL`, so nothing a name says can leave the temp directory.

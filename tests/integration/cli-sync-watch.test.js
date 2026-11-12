@@ -108,7 +108,7 @@ test('sync with OTS on: the run ends with the stamp job, its result is `ots` (a 
   assert.deepEqual([again.ran, again.skipped, again.upgraded, again.pending], [false, 'not due', 0, 1], 'upgraded and pending keep their meaning');
   assert.match((await w.run(['sync'], { deps })).stdout, /^seal: next due \d\d:\d\dZ \(in [56] h\); 1 waiting for its Bitcoin anchor$/m, 'plain words: no `ots:`, no `skipped`, no counts of upgrades');
   const sh = (await w.run(['show', rec.id])).stdout;
-  assert.match(sh, /^seal +manifest 1, stamped by manifest 1 \(pending\)$/m);
+  assert.match(sh, /^seal +sealed \d\d-\d\d \d\d:\d\dZ [·-] anchor pending$/m);
   const st1 = JSON.parse((await w.run(['status', '--json'])).stdout).acme;
   assert.deepEqual([st1.seal.manifests, st1.seal.unstamped, st1.seal.pending, st1.seal.chain, st1.pendingStamps], [1, 0, 1, 'ok', 1]);
   assert.match((await w.run(['status'])).stdout, /seal +one batch every 6 h; last run \d\d:\d\dZ \(.*\), next due \d\d:\d\dZ \(in .*\); 1 manifest; 1 waiting for its Bitcoin anchor/);
@@ -121,7 +121,7 @@ test('sync with OTS on: the run ends with the stamp job, its result is `ots` (a 
   const s2 = await w.run(['stamp']);
   assert.equal(s2.code, 0);
   assert.match(s2.stdout, /nothing new to seal/);
-  assert.match((await w.run(['show', rec.id])).stdout, /^seal +manifest 1, stamped by manifest 1 \(anchored, block 777\)$/m);
+  assert.match((await w.run(['show', rec.id])).stdout, /^seal +sealed \d\d-\d\d \d\d:\d\dZ [·-] anchored \(Bitcoin block 777\)$/m);
   assert.equal(JSON.parse((await w.run(['status', '--json'])).stdout).acme.pendingStamps, 0);
   // a held stamp lock is 75
   fs.writeFileSync(path.join(dir, '.default.stamp.lock'), JSON.stringify({ pid: process.pid, host: os.hostname(), started: new Date().toISOString() }));

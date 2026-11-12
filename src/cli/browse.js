@@ -7,6 +7,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { Cancel } from './prompt.js';
+import { goneText } from './detail.js';
 import { UsageError } from './errors.js';
 import { parseChoice, parseDate } from './parse.js';
 import { printable as p } from './printable.js';
@@ -190,7 +191,7 @@ async function openEmail(e, id, path) {
 /** The stored raw email, as text, through the pager (the library's `rawEmail`: re-hashed on read). @param {BrowseEnv} e @param {string} id */
 async function rawEmail(e, id) {
   const raw = await e.mp.rawEmail(id);
-  if (!raw) { e.out('the raw email is no longer stored (expired, forgotten or never stored)'); return; }
+  if (!raw) { const g = (await e.mp.describe(id)).records[0]?.content.gone ?? null; e.out(`the raw email is no longer stored: ${goneText(g, e.now())}`); return; }
   const cut = raw.length > RAW_MAX;
   e.out(raw.subarray(0, RAW_MAX).toString('utf8').replace(/\r\n/g, '\n').replace(/\t/g, '    ').replace(/\n$/, ''));
   if (cut) e.out(e.st.dim(`... cut at 1 MiB; the whole email is in the content store (${raw.length} bytes)`));

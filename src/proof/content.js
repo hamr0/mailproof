@@ -54,8 +54,35 @@ function parseContentOptions(o) {
 const contentDirOf = (root) => `${root}.content`;
 /** @param {string} dir @param {string} id @returns {string} */
 const rawPathOf = (dir, id) => path.join(dir, 'raw', id.slice(0, 2), `${id}.eml`);
+/** The note left where a raw email was removed on purpose, so a later view can say why it is gone. Outside git, beside the store. @param {string} dir @param {string} id @returns {string} */
+const gonePathOf = (dir, id) => path.join(dir, 'gone', id.slice(0, 2), `${id}.json`);
 /** @param {string} dir @param {string} hex @returns {string} */
 const attPathOf = (dir, hex) => path.join(dir, 'att', hex.slice(0, 2), hex);
+/**
+ * Note why a raw email was removed (`forgotten` by `forget`, `expired` by retention). Best effort: a failed note never blocks the removal.
+ * @param {string} dir @param {string} id @param {'forgotten' | 'expired'} reason @param {number} nowMs
+ * @returns {Promise<void>}
+ */
+async function markGone(dir, id, reason, nowMs) {
+  try {
+    const f = gonePathOf(dir, id);
+    await fs.mkdir(path.dirname(f), { recursive: true, mode: 0o700 });
+    await fs.writeFile(f, `${JSON.stringify({ reason, at: new Date(nowMs).toISOString() })}\n`, { mode: 0o600 });
+  } catch { /* a missing note only means the reason is unknown later */ }
+}
+
+/**
+ * Why the raw email of `id` is gone, when mailproof removed it and noted it; null when unknown. Never throws.
+ * @param {string} dir @param {string} id
+ * @returns {Promise<{ reason: 'forgotten' | 'expired', at: string } | null>}
+ */
+async function readGone(dir, id) {
+  try {
+    const j = JSON.parse(await fs.readFile(gonePathOf(dir, id), 'utf8'));
+    return (j.reason === 'forgotten' || j.reason === 'expired') && typeof j.at === 'string' ? { reason: j.reason, at: j.at } : null;
+  } catch { return null; }
+}
+
 /** @param {Buffer | string} bytes @returns {string} */
 const sha256Of = (bytes) => crypto.createHash('sha256').update(bytes).digest('hex');
 /** @param {string} p @returns {Promise<boolean>} */
@@ -361,7 +388,7 @@ async function expireStore(root, dir, days, nowMs, withLock, hooks = {}) {
     for (const id of expired) {
       const rec = await readRecord(root, id);
       if (!isExpired(rec)) { for (const h of attachmentHexes(rec)) kept.add(h); continue; }
-      try { await fs.unlink(rawPathOf(dir, id)); removed++; } catch { /* already gone */ }
+      try { await fs.unlink(rawPathOf(dir, id)); removed++; await markGone(dir, id, 'expired', nowMs); } catch { /* already gone */ }
     }
     return { removed, attachments: await unlinkAttachments(dir, candidates.filter((h) => !kept.has(h))) };
   });
@@ -379,9 +406,10 @@ async function expireStore(root, dir, days, nowMs, withLock, hooks = {}) {
  * @param {WithLock} withLock
  * @param {ScanHooks} [hooks]
  * @param {boolean} [dryRun]
+ * @param {() => number} [nowMs]  The library clock, for the note of when it was forgotten.
  * @returns {Promise<{ removed: number, attachments: number, dryRun?: true, ids?: string[] }>}
  */
-async function forgetIds(root, dir, ids, withLock, hooks = {}, dryRun = false) {
+async function forgetIds(root, dir, ids, withLock, hooks = {}, dryRun = false, nowMs = Date.now) {
   const want = new Set(ids);
   /** @type {Set<string>} */
   const candidates = new Set();
@@ -406,7 +434,7 @@ async function forgetIds(root, dir, ids, withLock, hooks = {}, dryRun = false) {
     }
     let removed = 0;
     for (const id of want) {
-      try { await fs.unlink(rawPathOf(dir, id)); removed++; } catch { /* not stored, or gone */ }
+      try { await fs.unlink(rawPathOf(dir, id)); removed++; await markGone(dir, id, 'forgotten', nowMs()); } catch { /* not stored, or gone */ }
     }
     return { removed, attachments: await unlinkAttachments(dir, [...candidates].filter((h) => !kept.has(h))) };
   });
@@ -515,6 +543,6 @@ function toMs(v, what, who = 'forget') {
 }
 
 export {
-  DAY_MS, parseContentOptions, contentDirOf, rawPathOf, attPathOf, sha256Of, storeContent, readRaw, readRawHead, readAttachment, storedStatus,
+  DAY_MS, parseContentOptions, contentDirOf, rawPathOf, gonePathOf, markGone, readGone, attPathOf, sha256Of, storeContent, readRaw, readRawHead, readAttachment, storedStatus,
   storedIds, expireStore, forgetIds, sweepOrphans, idsWith, toMs, exists,
 };

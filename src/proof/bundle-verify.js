@@ -20,7 +20,7 @@ import { RULES_VERSION } from './verdict.js';
 import * as LIM from './limits.js';
 import { unpackTar } from './bundle-tar.js';
 
-/** @typedef {{ state: 'anchored' | 'pending' | 'unstamped' | 'unsealed' | 'unchecked' | 'bad', via: 'record' | 'manifest' | null, listed_in: number | null, stamped_by: number | null, block?: number, merkle_root?: string, why?: string }} BundleSeal */
+/** @typedef {{ state: 'anchored' | 'pending' | 'unstamped' | 'unsealed' | 'unchecked' | 'bad', via: 'record' | 'manifest' | null, listed_in: number | null, stamped_by: number | null, sealed_at: string | null, block?: number, merkle_root?: string, why?: string }} BundleSeal */
 
 /**
  * @typedef {Object} BundleResult
@@ -149,7 +149,7 @@ function entriesOf(m, cache) {
 }
 
 /** @returns {BundleSeal} */
-const sealOf = (/** @type {BundleSeal['state']} */ state, /** @type {Partial<BundleSeal>} */ more = {}) => ({ state, via: null, listed_in: null, stamped_by: null, ...more });
+const sealOf = (/** @type {BundleSeal['state']} */ state, /** @type {Partial<BundleSeal>} */ more = {}) => ({ state, via: null, listed_in: null, stamped_by: null, sealed_at: null, ...more });
 
 /** @mcp verifyBundle Check a pair bundle someone made with `export`: pass `dir`, the bundle's folder or the `.tar` file `export` writes, which must be inside one of the server's input folders. Offline: it re-checks every record's signature against its archived key, the file hashes, the manifest chain and each seal (locally, with `ots info`), and reports `ok`, the `failed` checks and one line per record. Pass `expect` (the 64-hex `bundle_sha256` the sender gave you another way) to pin the bundle; `strict` also fails unless every record is verified and every seal anchored. A bad bundle is `ok: false`, not an error. It does not prove completeness: the sender chose the emails. */
 /**
@@ -184,7 +184,7 @@ async function verifyBundle(dir, opts = {}) {
 }
 
 /**
- * A `.tar` bundle (SPEC B13.3.6): unpacked by our own bounded reader into a private temp directory, checked like a folder, and removed
+ * A `.tar` bundle (SPEC B13.3.10): unpacked by our own bounded reader into a private temp directory, checked like a folder, and removed
  * again. A tar that is refused reads as a bundle with a `files` failure that says why.
  * @param {string} file @param {Parameters<typeof verifyBundle>[1] & {}} opts @param {Limits} L @returns {Promise<BundleResult>}
  */
@@ -506,7 +506,7 @@ async function verifyDir(root, st, opts, L, pre) {
     const p = manifestOtsPath(d.stamp.seq);
     const stamped = manifests.get(d.stamp.seq);
     if (!proofs.has(p) && stamped) proofs.set(p, { rel: p, stampedSha: stamped.sha256, state: null });
-    return { seal: sealOf('unchecked', { via: 'manifest', listed_in: d.seq, stamped_by: d.stamp.seq }), proof: p };
+    return { seal: sealOf('unchecked', { via: 'manifest', listed_in: d.seq, stamped_by: d.stamp.seq, sealed_at: stamped?.m?.created ?? null }), proof: p };
   }
   /** @type {Array<{ target: BundleSeal, proof: string | null, id: string | null }>} */
   const pending = [];

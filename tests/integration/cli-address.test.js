@@ -35,7 +35,7 @@ test('show <address>: every record naming it, newest first, each block with the 
   assert.deepEqual([...r.stdout.matchAll(/^id +([0-9a-f]{32})$/gm)].map((m) => m[1]), [id('grand'), id('failing'), id('signed'), id('req')], 'newest capture first');
   assert.equal([...r.stdout.matchAll(/^#\d of 4$/gm)].length, 4);
   const blocks = r.stdout.split(/^#\d of 4$/m).slice(1);
-  for (const b of blocks) for (const l of ['account', 'direction', 'date', 'captured', 'from', 'to', 'cc', 'reply-to', 'bcc', 'subject', 'trust', 'why', 'body proof', 'body', 'attachments', 'seal', 'message-id', 'id']) assert.ok(new RegExp(`^${l} +\\S`, 'm').test(b), `${l} in ${b}`);
+  for (const b of blocks) for (const l of ['account', 'direction', 'date', 'captured', 'from', 'to', 'cc', 'reply-to', 'bcc', 'subject', 'trust', 'why', 'body proof', 'dkim', 'dmarc', 'spf', 'arc', 'body', 'attachments', 'seal', 'message-id', 'id']) assert.ok(new RegExp(`^${l} +\\S`, 'm').test(b), `${l} in ${b}`);
   assert.match(blocks[2], /^account +me@owner\.example \(test\)$/m);
   assert.match(blocks[2], /^direction +received/m);
   assert.match(blocks[2], /^from +Bob@Beta\.Example \(signed\)$/m);
@@ -122,9 +122,25 @@ test('show: the body is cut to 10 lines in the multi view (--full shows all), HT
   assert.match(h.stdout, /^body +\(text\/html\)\n  Hello & welcome\n  second\n  line\n/m);
   await T.mp.forget([id('plain')]);
   const gone = await w.run(['show', id('plain')]);
-  assert.match(gone.stdout, /^body +N\/A \(not stored: expired, forgotten or the content store is off\)$/m);
-  assert.match(gone.stdout, /^content +N\/A \(raw email not stored\)$/m);
+  assert.match(gone.stdout, /^body +N\/A \(not stored: forgotten \d\d-\d\d \(mailproof forget\)\)$/m, 'C13: the reason mailproof noted');
+  assert.match(gone.stdout, /^content +N\/A \(raw email not stored: forgotten \d\d-\d\d \(mailproof forget\)\)$/m);
+  assert.deepEqual(JSON.parse((await w.run(['show', id('plain'), '--json'])).stdout).facts.content.gone.reason, 'forgotten');
   assert.equal((await w.run(['show', id('plain'), '--json'])).code, 0, 'the proof stays');
+});
+
+test('C12/C14/C15: the short coverage tags; dkim/dmarc/spf/arc in every block; tabs in a body become spaces, leading blank runs collapse; --raw and --json unchanged', async () => {
+  const t = await w.run(['show', BOB]);
+  assert.ok(!t.stdout.includes('covered by a signature that does not verify'), 'C12: the long note is gone');
+  assert.match(t.stdout, /\((signed|signed, failing|not signed)\)/);
+  const blocks = t.stdout.split(/^#\d of 4$/m).slice(1);
+  for (const b of blocks) assert.match(b, /^dkim +/m, 'C14');
+  const tabbed = await T.rec('tabbed', Buffer.from('From: Tab <tab@tab.example>\r\nTo: me@owner.example\r\nMessage-ID: <t1@tab.example>\r\nSubject: tabs\r\n\r\n\r\n\r\n\r\n\r\n\r\nSubject:\tGet 3 Audiobooks\r\nab\tc\r\n'), 'in', 9);
+  const r = await w.run(['show', tabbed.id]);
+  assert.ok(!r.stdout.includes('\\t'), 'C15: no literal \\t');
+  assert.match(r.stdout, /^ {2}Subject: {4}Get 3 Audiobooks$/m, 'a tab is spaces to the next 4-column stop');
+  assert.match(r.stdout, /^ {2}ab {2}c$/m);
+  assert.match(r.stdout, /^body +\(text\/plain\)\n {2}\n {2}Subject:/m, 'five blank lines at the start become one');
+  assert.ok(JSON.parse((await w.run(['show', tabbed.id, '--json', '--full'])).stdout).facts.body.text.includes('\t'), '--json keeps the tab');
 });
 
 test('htmlToText and bodyText: scripts and styles dropped, entities decoded, never throws', () => {
@@ -276,9 +292,9 @@ test('RFC 2047 subjects (B and Q, utf-8, an em dash) are decoded in list, show <
 
 test('a header covered only by a signature that does not verify is not shown as signed; one rule for every header line', async () => {
   const r = await w2.run(['show', rNoKey.id]);
-  assert.match(r.stdout, /^from +noreply@late\.example \(covered by a signature that does not verify\)$/m);
-  assert.match(r.stdout, /^to +me@owner\.example \(covered by a signature that does not verify\)$/m);
-  assert.match(r.stdout, /^subject +weekly — stats \(covered by a signature that does not verify\)$/m);
+  assert.match(r.stdout, /^from +noreply@late\.example \(signed, failing\)$/m);
+  assert.match(r.stdout, /^to +me@owner\.example \(signed, failing\)$/m);
+  assert.match(r.stdout, /^subject +weekly — stats \(signed, failing\)$/m);
   assert.ok(!/\(signed\)/.test(r.stdout.split('\n').filter((l) => /^(from|to|cc|date|subject) /.test(l)).join('\n')), r.stdout);
   const ok = await w2.run(['show', rGood.id]);
   assert.match(ok.stdout, /^from +ann@ok\.example \(signed\)$/m);

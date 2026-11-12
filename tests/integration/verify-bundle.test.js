@@ -261,7 +261,7 @@ test('seals: a deleted middle manifest makes the stamp unreachable (bad); a list
   assert.deepEqual(treeOf(out).filter((f) => f.startsWith('manifests/')), ['manifests/00000001.json', 'manifests/00000002.json', 'manifests/00000003.json', 'manifests/00000003.json.ots']);
   const ok = await verifyBundle(out, { ots: ots.bin });
   assert.ok(ok.ok, JSON.stringify(ok.problems));
-  assert.deepEqual(ok.records.find((x) => x.id === r1.id).seal, { state: 'pending', via: 'manifest', listed_in: 1, stamped_by: 3 });
+  assert.deepEqual(ok.records.find((x) => x.id === r1.id).seal, { state: 'pending', via: 'manifest', listed_in: 1, stamped_by: 3, sealed_at: '2026-11-01T08:00:03.000Z' });
   const d = copy(out);
   fs.rmSync(path.join(d, manifestPath(2)));
   regen(d);

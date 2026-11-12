@@ -16,7 +16,7 @@ import { STAMP_OTS_TIMEOUT_MS } from './limits.js';
 import { verifyRecord, matchBodyRecord, matchFileRecord } from './recheck.js';
 import { checkProfile } from './profile.js';
 import { TRAIL_NAME_RE, RECORD_ID_RE, DEFAULT_LOCK_TIMEOUT_MS, commitRecord, commitFiles, readRecord, withTrailLock, trailLockFile } from './trail.js';
-import { parseContentOptions, contentDirOf, storeContent, readRaw, readRawHead, readAttachment, expireStore, forgetIds, idsWith, exists, toMs, DAY_MS } from './content.js';
+import { parseContentOptions, contentDirOf, storeContent, readRaw, readRawHead, readAttachment, readGone, expireStore, forgetIds, idsWith, exists, toMs, DAY_MS } from './content.js';
 import { recordPath, recordOtsPath, assertTrailLayout } from './layout.js';
 import { STRIPPER, replyTextPath, extractReplyText, replyTextRecord } from './reply-text.js';
 import { replyBundle } from './reply-facts.js';
@@ -482,6 +482,14 @@ class Mailproof {
     return res;
   }
 
+  /** Why the raw email of `id` is not stored, as far as mailproof knows (SPEC B7): removed by forget or expiry (noted beside the store, outside git), never stored because the store is off, or null when unknown. @param {string} id @returns {Promise<{ reason: 'forgotten' | 'expired', at: string } | { reason: 'never-stored', at: null } | null>} */
+  async _contentGone(id) {
+    const g = await readGone(this.contentDir, id);
+    if (g) return g;
+    return this.content.store === false ? { reason: 'never-stored', at: null } : null;
+  }
+
+
   /**
    * Run `work` under the trail lock (the deletion phase of expiry and forget).
    * @template T
@@ -552,7 +560,7 @@ class Mailproof {
     if (!(await exists(this.contentDir))) return dryRun ? { removed: 0, attachments: 0, dryRun: true, ids: ids ? [...new Set(ids)] : [] } : { removed: 0, attachments: 0 };
     await assertTrailLayout(this.root);
     const list = ids ?? await idsWith(this.root, this.contentDir, /** @type {NonNullable<typeof query>} */ (query));   // the scan holds no lock
-    return forgetIds(this.root, this.contentDir, list, (w) => this._lock(w), this._scanHooks, dryRun);
+    return forgetIds(this.root, this.contentDir, list, (w) => this._lock(w), this._scanHooks, dryRun, () => this.now().getTime());
   }
 
   /** @mcp Mailproof#prune Remove everything captured before the date `before` (records, reply-text commits, stamps, stored content): the trail is rewritten, the old one is kept beside it as a backup. Rare and never scheduled. The result lists what is removed and kept and `stragglers`; `noop: true` means nothing was captured before `before`. It can take minutes on a big trail. Fails with `ERR_PRUNE_RUNNING` (another prune, retry later), `ERR_PRUNE_CUTOFF` (everything is older than `before`), `ERR_PRUNE_REWRITTEN` (run it again), `ERR_SYNC_LOCKED` or `ERR_TRAIL_LOCKED` (nothing changed, retry), `ERR_PRUNE_VERIFY`, `ERR_PRUNE_JOURNAL` or `ERR_TRAIL_LAYOUT` (stop and tell the user). */

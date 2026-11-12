@@ -4,7 +4,7 @@
 // per-record block of `show <address>`) is the same lines minus the long-tail facts. No DNS and no network.
 
 import { printable as p } from './printable.js';
-import { sealText } from './seal.js';
+import { sealPhrase } from './seal.js';
 import { makeStyle, rel } from './style.js';
 
 /** @typedef {import('../proof/describe.js').Facts} LibFacts */
@@ -33,7 +33,7 @@ export function jsonFacts(f, full) {
 }
 
 /** One rule for every header line: `signed` only when a verifying signature covers it. */
-const COVER = { signed: 'signed', failing: 'covered by a signature that does not verify', none: 'not signed' };
+const COVER = { signed: 'signed', failing: 'signed, failing', none: 'not signed' };
 /** @param {string | null} s @returns {string} */
 const link = (s) => (s ? `, link ${s}` : ', link not recorded');
 /** The DNS names of a DKIM key (`selector._domainkey.domain`) in already-escaped text. */
@@ -76,7 +76,7 @@ export function render(f, o = {}) {
   /** @param {Facts['from']} l @returns {string} */
   const addrText = (l) => (l.length ? l.map((x) => `${x.coverage === 'signed' ? st.bold(p(x.address)) : p(x.address)} (${COVER[x.coverage]})`).join(', ') : st.dim(NA));
   /** @param {{ value: string | null, coverage: string }} h */
-  const headText = (h, max = 300) => (h.value === null ? st.dim(NA) : `${h.coverage === 'signed' ? st.bold(p(h.value, { max })) : p(h.value, { max })} (${h.coverage === 'signed' ? 'signed' : h.coverage === 'failing' ? COVER.failing : 'claimed, not signed'})`);
+  const headText = (h, max = 300) => (h.value === null ? st.dim(NA) : `${h.coverage === 'signed' ? st.bold(p(h.value, { max })) : p(h.value, { max })} (${h.coverage === 'signed' ? COVER.signed : h.coverage === 'failing' ? COVER.failing : COVER.none})`);
   /** @param {string} t @param {string | null} v @returns {string} A trust word: green when verified, yellow otherwise (the word is always there). */
   const trustWord = (t, v) => (v === 'verified' ? st.green(t) : st.yellow(t));
 
@@ -108,7 +108,7 @@ export function render(f, o = {}) {
   row('trust', `live ${trustWord(p(f.trust.live ?? NA), f.trust.live)}, portable ${trustWord(p(f.trust.portable ?? NA), f.trust.portable)}${c ? '' : `; rules ${p(f.trust.rules ?? NA)}`}; re-check ${f.recheck.ok ? st.green('ok') : st.red('not ok')} (${p(f.recheck.trust)})`);
   row('why', f.why === null ? `${st.dim(NA)} (it verifies)` : whyText(st, f.why));
   row('body proof', f.body_proof === 'matched' ? st.green('matched') : f.body_proof === 'partial' ? st.yellow('partial (the signature covers only the first bytes)') : st.yellow(`not proven (${p(f.body_proof ?? NA)})`));
-  if (!c) {
+  {   // the same lines in every block (show <address> too): one definition
     row('dkim', f.dkim.length ? f.dkim.map((s) => `d=${p(s.d ?? NA)} s=${p(s.s ?? NA)} a=${p(s.a ?? NA)} result=${s.result === 'pass' ? st.green('pass') : p(s.result ?? NA)} aligned=${s.aligned === null ? NA : s.aligned ? 'yes' : 'no'} re-check=${p(s.recheck === null ? NA : s.recheck.ok ? 'ok' : `fails: ${s.recheck.why}`)} body=${p(s.body ?? NA)} key archived=${s.key_archived ? 'yes' : 'no'}`) : `${st.dim(NA)} (no DKIM signature)`);
     row('dmarc', f.dmarc ? `${p(f.dmarc.result ?? NA)}, policy ${p(f.dmarc.policy ?? NA)}, published ${f.dmarc.published ? 'yes' : 'no'}` : st.dim(NA));
     row('spf', f.spf ? p(f.spf.result) : st.dim(NA));
@@ -116,21 +116,49 @@ export function render(f, o = {}) {
   }
 
   section('Content');
-  if (!f.body.stored) row('body', val(`${NA} (not stored: expired, forgotten or the content store is off)`));
+  if (!f.body.stored) row('body', val(`${NA} (not stored: ${goneText(f.content.gone, now)})`));
   else if (f.body.text === null) row('body', val(`${NA} (${f.body.limit ? `over limit: ${p(f.body.limit)}` : 'no text part'})`));
   else {
     row('body', f.body.text === '' ? '(empty)' : `(${f.body.source})`);
-    for (const l of f.body.text === '' ? [] : f.body.text.split('\n')) out.push(`  ${p(l)}`);
+    for (const l of f.body.text === '' ? [] : bodyLines(f.body.text)) out.push(`  ${p(l)}`);
     if (f.body.more_lines) out.push(`  ${st.dim(`... ${f.body.more_lines} more lines, use show ${p(f.id.slice(0, 12))} --full`)}`);
   }
   row('attachments', f.attachments.length
     ? f.attachments.map((a) => `${p(a.filename ?? '(no name)', { max: 200 })}  ${a.size === null ? NA : `${a.size} bytes`}  ${a.sha256 ? hash(a.sha256) : NA}  stored ${a.stored ? 'yes' : 'no'}${a.match === null ? '' : a.match ? '  match yes' : `  ${st.red('match NO (differs)')}`}`)
     : val(`${NA} (none)`));
-  if (!c) row('content', f.content.raw_stored ? `raw email stored (${f.content.raw_sha256 ? hash(f.content.raw_sha256) : NA})` : val(`${NA} (raw email not stored)`));
+  if (!c) row('content', f.content.raw_stored ? `raw email stored (${f.content.raw_sha256 ? hash(f.content.raw_sha256) : NA})` : val(`${NA} (raw email not stored: ${goneText(f.content.gone, now)})`));
 
   section('Seal');
-  row('seal', f.seal === null ? val(`${NA} (sealing is off for this account)`) : sealText(f.seal));
+  row('seal', f.seal === null ? val(`${NA} (sealing is off for this account)`) : sealPhrase(f.seal, now, st.sym.dot));
   return out;
+}
+
+/** The short `11-12` of when content went (the year only when it is not this one). @param {string} iso @param {Date} now @returns {string} */
+const shortDay = (iso, now) => iso.slice(iso.slice(0, 4) === String(now.getUTCFullYear()) ? 5 : 0, 10);
+
+/**
+ * Why the raw email is not stored, in plain words, when mailproof knows (it noted the forget or the expiry, or the store is off); the generic
+ * sentence only when the reason is truly unknown. One definition for `show` and the browser's raw screen.
+ * @param {LibFacts['content']['gone']} gone @param {Date} now @returns {string}
+ */
+export function goneText(gone, now) {
+  if (!gone) return 'expired, forgotten or never stored';
+  if (gone.reason === 'never-stored') return 'never stored (content store off)';
+  const day = gone.at ? ` ${shortDay(gone.at, now)}` : '';
+  return gone.reason === 'forgotten' ? `forgotten${day} (mailproof forget)` : `expired${day} (retention)`;
+}
+
+/**
+ * The lines of a shown body: tabs become spaces up to the next 4-column stop (a literal `\t` in a mail reads badly), and a run of three or
+ * more blank lines at the very start becomes one. Display only: `--raw` and `--json` are untouched; every other control character is still
+ * escaped by printable().
+ * @param {string} text @returns {string[]}
+ */
+export function bodyLines(text) {
+  const lines = text.split('\n').map((l) => { let col = 0; let o = ''; for (const ch of l) { if (ch === '\t') { const n = 4 - (col % 4); o += ' '.repeat(n); col += n; } else { o += ch; col++; } } return o; });
+  let lead = 0;
+  while (lead < lines.length && lines[lead].trim() === '') lead++;
+  return lead >= 3 ? [lines[0], ...lines.slice(lead)] : lines;
 }
 
 /** The label column, for a test (the order of the labelled lines). */

@@ -12,6 +12,7 @@ import { styleOf, makeStyle, fileUrl } from './style.js';
 import { tilde, userDir, ensureDefaultDir } from './paths.js';
 import { count, humanSize } from './words.js';
 import { pageLines } from './rows.js';
+import { sealPhrase } from './seal.js';
 
 /** The most emails the export preview lists as rows (the count is always complete). */
 const PREVIEW_ROWS = 5;
@@ -84,8 +85,8 @@ export async function exportCmd(a, ctx) {
   });
 }
 
-/** @param {import('../proof/bundle-verify.js').BundleSeal} s @returns {string} */
-const sealText = (s) => `${s.state}${s.block !== undefined ? ` (block ${s.block})` : ''}`;
+/** @param {import('../proof/bundle-verify.js').BundleSeal} s @param {import('./style.js').Style} st @returns {string} */
+const sealText = (s, st) => sealPhrase(s, new Date(), st.sym.dot);
 
 /**
  * The text report of a bundle check (SPEC B13.3.5): the verdict line, the counts, what was not checked, one line per record, the
@@ -104,7 +105,7 @@ export function bundleText(r, st = makeStyle()) {
   else if (r.ots === 'out of time') out.push('seals NOT fully checked: the time budget for ots ran out (the rest are unchecked)');
   for (const x of r.records) {
     const first = x.problems[0];
-    out.push(`${p(x.id.slice(0, 12))}  ${p(x.captured ?? '-')}  ${p(x.direction ?? '-').padEnd(3)}  ${x.trust === 'verified' ? st.green(x.trust) : st.yellow(x.trust)}  seal ${sealText(x.seal)}${first ? `  -- ${p(first, { max: 200 })}` : ''}`);
+    out.push(`${p(x.id.slice(0, 12))}  ${p(x.captured ?? '-')}  ${p(x.direction ?? '-').padEnd(3)}  ${x.trust === 'verified' ? st.green(x.trust) : st.yellow(x.trust)}  seal ${sealText(x.seal, st)}${first ? `  -- ${p(first, { max: 200 })}` : ''}`);
   }
   const by = new Map();
   for (const x of r.problems) { const l = by.get(x.check) ?? []; l.push(x); by.set(x.check, l); }

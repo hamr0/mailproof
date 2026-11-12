@@ -35,7 +35,7 @@ cd ~/src/mailproof && npm install && npm link      # `mailproof` now runs your c
 npm unlink -g mailproof                              # undo
 ```
 
-Upgrade later with `mailproof update` (prints the command) or `mailproof update --run`.
+Upgrade later with `mailproof update` (prints the command), `mailproof update --check` (asks npm for the latest version) or `mailproof update --run` (upgrades only a newer version, then tells you to restart mailproof). A development link (`npm link`, a git checkout) is updated with git, and `update` says so.
 
 ## 3. A Gmail account (proven path)
 
@@ -272,7 +272,7 @@ Export errors: `ERR_EXPORT_EMPTY` (nothing matches), `ERR_EXPORT_TOO_BIG` (over 
 - **backup**: `mailproof backup --account gmail` writes a git bundle of the whole trail (records, keys, replies, stamps; never bodies) to `~/mailproof/backups/` and prints the path. Restore with `git clone <file>.bundle <dir>`. `--out <path>` chooses the file. `--with-content` adds an unencrypted `<file>.content.tar` of the stored raw emails (other people's mail: encrypt it or the disk). `--push --yes` pushes to the account's `backupRemote`, never with force.
 - **forget**: deletes stored mail content, never the proof. `mailproof forget <id>...` or `mailproof forget --with bob@example.com [--before d] [--after d]`. Without `--yes` it prints a summary and exits 64; `--dry-run` prints the summary only.
 - **prune**: `mailproof prune --before 2026-01-01 --dry-run`, then again with `--yes`. It rewrites the trail without everything older and keeps the old one as `<trail>.pre-prune-<date>` until you delete it (`--delete-backup`). Rare, explicit, never scheduled.
-- **update**: `mailproof update` prints the upgrade command; `--run` executes it.
+- **update**: `mailproof update` prints the upgrade command; `--check` looks up the latest version; `--run` upgrades when a newer one exists.
 
 ## 11. Use it from Claude Code (MCP)
 

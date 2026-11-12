@@ -118,7 +118,7 @@ test('r prints the stored raw email; when the content is gone it says so plainly
   await T2.mp.forget([T2.r.plain.id]);
   const w2 = makeWorld({ accounts: { test: account(T2.dir) } });
   const g = await menu(w2, keys('4', 'zed@zed.example', '1', 'r', '', '', 'q'));
-  assert.match(g.stdout, /the raw email is no longer stored \(expired, forgotten or never stored\)/);
+  assert.match(g.stdout, /the raw email is no longer stored: forgotten \d\d-\d\d \(mailproof forget\)/);
 });
 
 test('v re-checks the one email offline: the same text as `verify <id>`', async () => {

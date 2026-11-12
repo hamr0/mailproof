@@ -233,7 +233,9 @@ test('expiry: content goes after days from captured, shared attachment survives 
   assert.deepEqual(await mp.expireContent({ now: new Date(T0.getTime() + 19 * DAY) }), { removed: 0, attachments: 0 });
   // proofs untouched
   for (const id of [ra.id, rb.id]) { assert.ok(await mp.get(id)); assert.equal((await mp.verify(id)).ok, true); }
-  assert.equal(files(cdir).length, 0);
+  assert.equal(files(cdir).filter((f) => !f.includes('/gone/')).length, 0, 'no content left (only the notes of why it went)');
+  assert.equal(files(path.join(cdir, 'gone')).length, 2, 'C13: one note per expired email, beside the store, outside git');
+  assert.equal((await mp.describe(ra.id)).records[0].content.gone.reason, 'expired');
   await assert.rejects(mp.expireContent({ now: 'soon' }), TypeError);
 });
 
