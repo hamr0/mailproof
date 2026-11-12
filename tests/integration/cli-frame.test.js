@@ -108,7 +108,7 @@ test('~/mailproof/<kind>/: the export and backup defaults are the name written (
   const w = world();
   let t = Date.parse('2026-11-12T12:57:25Z');
   const deps = { now: () => new Date((t += 7000)) };   // every call is later: a recomputed name would differ
-  const ex = await menu(w, keys('11', 'alice@alpha.example', '', '', '', 'n', 'q'), { deps });
+  const ex = await menu(w, keys('11', 'alice@alpha.example', '', '', '', 'n', 'y', '', 'q'), { deps });   // the preview, then Write it? y
   assert.equal(ex.code, 0, ex.stderr);
   const dir = path.join(w.home, 'mailproof', 'exports');
   const written = fs.readdirSync(dir);
@@ -138,7 +138,7 @@ test('the subcommands default to the same folders, whatever the current director
   const bk = await w.run(['backup', '--json'], { deps: { now: () => new Date('2026-11-12T13:02:48Z') } });
   assert.equal(JSON.parse(bk.stdout).bundle, path.join(w.home, 'mailproof', 'backups', 'test-20261112T130248Z.bundle'));
   const text = await w.run(['backup'], { deps: { now: () => new Date('2026-11-12T13:05:00Z') } });
-  assert.match(text.stdout, /^bundle {3}~\/mailproof\/backups\/test-20261112T130500Z\.bundle /m);
+  assert.match(text.stdout, /^(ok|✓) saved to ~\/mailproof\/backups\/test-20261112T130500Z\.bundle$/m);
 });
 
 test('~ and ~/x expand in every path argument: export --out, backup --out, verify-bundle, check --profile', async () => {
@@ -147,7 +147,7 @@ test('~ and ~/x expand in every path argument: export --out, backup --out, verif
   assert.equal(ex.code, 0, ex.stderr);
   assert.ok(fs.existsSync(path.join(w.home, 'b1', 'bundle.json')));
   assert.ok(!fs.existsSync(path.join(process.cwd(), '~')), 'no folder named ~');
-  assert.match(ex.stdout, /^ok wrote ~\/b1 /m, 'the printed path uses ~/');
+  assert.match(ex.stdout, /^(ok|✓) saved to ~\/b1$/m, 'the printed path uses ~/');
   const v = await w.run(['verify-bundle', '~/b1']);
   assert.ok(!/no such|cannot read/i.test(v.stderr), v.stderr);
   const bk = await w.run(['backup', '--out', '~/bak.bundle']);

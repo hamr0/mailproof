@@ -170,7 +170,11 @@ export async function runMenu(ctx, exec, opts = {}) {
       const outPath = await ask({ label: 'Write the bundle to', example: 'a new directory', def: dflt });
       const tar = await askYes('Also pack it into one .tar file for mailing?');
       crumb([step('export'), who]);   // a second crumb: the answer that names the result below
-      await go(['export', '--with', who, ...(after ? ['--after', after] : []), ...(before ? ['--before', before] : []), '--out', tar && outPath === dflt ? `${dflt}.tar` : outPath, ...(tar ? ['--tar'] : [])]);
+      const argv = ['export', '--with', who, ...(after ? ['--after', after] : []), ...(before ? ['--before', before] : []), '--out', tar && outPath === dflt ? `${dflt}.tar` : outPath, ...(tar ? ['--tar'] : [])];
+      // the preview first (what it would hold and what it reveals), then the question, then the write: the same `export`, with and without --dry-run
+      if ((await go([...argv, '--dry-run'])) !== 0) return;
+      if (!(await askYes('Write it?'))) { out('nothing written'); return; }
+      await go(argv);
     };
     /** One target: an address, a Message-ID or a record id. */
     const askTarget = () => ask({ label: 'Target', example: 'an address like bob@example.org, a <message-id>, or a record id (8+ hex)', validate: (s) => { classifyTarget(s); return s.trim(); } });

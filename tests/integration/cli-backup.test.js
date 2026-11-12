@@ -38,8 +38,9 @@ test('the bundle: default path under ~/mailproof/backups, verifies, clones to th
   assert.equal(json(await w2.run(['verify', T.r.signed.id, '--json'])).ok, true, 'the restored records verify offline');
   // the text output names the path and how to restore
   const t = await w.run(['backup'], { deps: { now: () => new Date('2026-11-10T11:00:00Z') } });
-  assert.match(t.stdout, /^bundle +.*acme-20261110T110000Z\.bundle  \(\d+ bytes, \d+ commits\)$/m);
-  assert.match(t.stdout, /restore: git clone /);
+  assert.match(t.stdout, /^(ok|✓) saved to ~\/mailproof\/backups\/acme-20261110T110000Z\.bundle$/m);
+  assert.match(t.stdout, /^ {2}[\d.]+ KiB, \d+ commits$/m, 'size in KiB and the commit count');
+  assert.match(t.stdout, /^restore with:\n {2}git clone ~\/mailproof\/backups\/acme-20261110T110000Z\.bundle <dir>$/m, 'the restore command on its own line');
   // last backup is remembered for status
   assert.match(json(await w.run(['status', '--json'])).acme.lastBackup.path, /acme-20261110T110000Z\.bundle$/);
 });
@@ -114,7 +115,7 @@ test('--push: needs backupRemote (64), needs --yes (64, nothing pushed), pushes 
   const no = await w.run(['backup', '--push', '--account', 'acme', '--out', outs()]);
   assert.equal(no.code, 64);
   assert.match(no.stderr, /Proof records contain the signed headers of your mail/);
-  assert.match(no.stderr, /commit\(s\) would be pushed/);
+  assert.match(no.stderr, /\d+ commits would be pushed/);
   assert.match(no.stderr, /add --yes to proceed/);
   assert.equal(git(remote, 'branch', '--list'), '', 'nothing was pushed');
   const yes = await w.run(['backup', '--push', '--yes', '--account', 'acme', '--out', outs(), '--json']);
@@ -126,7 +127,7 @@ test('--push: needs backupRemote (64), needs --yes (64, nothing pushed), pushes 
   assert.ok(!git(remote, 'ls-tree', '-r', '--name-only', 'main').includes('.eml'), 'no content went to the remote');
   const text = await w.run(['backup', '--push', '--yes', '--account', 'acme', '--out', outs()]);
   assert.match(text.stdout, /^Proof records contain the signed headers/m, 'the warning is printed before a push');
-  assert.match(text.stdout, /^pushed +/m);
+  assert.match(text.stdout, /^ {2}pushed to /m);
 });
 
 test('after a prune the push is rejected, mailproof never forces, the remote keeps its history and the user is told why', async () => {

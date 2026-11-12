@@ -115,9 +115,9 @@ test('Show, Verify, Replies, Check, Status run the subcommand code (same output,
   assert.match(chk.stdout, /^(ok|✓) pass$/m);
   const st = await menu(w, keys('16', '', 'q'));
   assert.match(st.stdout, /^test\n  trail /m);
-  const ex = await menu(w, keys('11', 'alice@alpha.example', '', '', path.join(makeTmpDir('mp-cli-menu-ex-'), 'b'), 'n', '', 'q'));
-  assert.match(ex.stdout, /^ok wrote .*\(\d+ records/m);
-  assert.match(ex.stdout, /^bundle sha256 [0-9a-f]{64}/m);
+  const ex = await menu(w, keys('11', 'alice@alpha.example', '', '', path.join(makeTmpDir('mp-cli-menu-ex-'), 'b'), 'n', 'y', '', 'q'));
+  assert.match(ex.stdout, /^(ok|✓) saved to .*\/b$/m);
+  assert.match(ex.stdout, /^sha256 [0-9a-f]{64}/m);
   const h = await menu(w, keys('h', 'q'));
   assert.match(h.stdout, /^Usage: mailproof \[command\]/m);
 });
@@ -256,7 +256,7 @@ test('Backup prompts for the path with the ~/mailproof/backups default, and the 
   assert.ok(fs.existsSync(out) && fs.existsSync(out.replace(/\.bundle$/, '.content.tar')));
   const dflt = await menu(w, keys('backup', '', 'n', '', 'q'), { deps: { now: () => new Date('2026-11-10T10:15:30Z') } });
   assert.ok(fs.existsSync(path.join(w.home, 'mailproof', 'backups', 'test-20261110T101530Z.bundle')), 'the default path is used');
-  assert.match(dflt.stdout, /restore: git clone /);
+  assert.match(dflt.stdout, /^ {2}git clone ~\/mailproof\/backups\//m);
 });
 
 test('Config: validate and path run the subcommands; a missing config offers the wizard', async () => {

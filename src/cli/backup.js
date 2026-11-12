@@ -8,6 +8,8 @@ import { withAccount, print, warn, printJson, stamp } from './session.js';
 import { updateState } from './state.js';
 import { tilde, userDir, ensureDefaultDir } from './paths.js';
 import { printable as p } from './printable.js';
+import { styleOf, fileUrl } from './style.js';
+import { count, humanSize } from './words.js';
 import { PUSH_WARNING, redactUrl, classifyPush } from '../proof/backup.js';
 
 export { PUSH_WARNING, redactUrl, classifyPush };
@@ -55,7 +57,7 @@ export async function backupCmd(a, ctx) {
     try {
       if (v.push && !v.yes) {
         const plan = await mp.backup({ ...opts, dryRun: true });
-        warn(ctx, `backup --push to ${p(plan.pushed?.remote ?? '')}: ${plan.commits} commit(s) would be pushed.\n${PUSH_WARNING}\nadd --yes to proceed`);
+        warn(ctx, `backup --push to ${p(plan.pushed?.remote ?? '')}: ${count(plan.commits, 'commit')} would be pushed.\n${PUSH_WARNING}\nadd --yes to proceed`);
         return EX_USAGE;
       }
       r = await mp.backup(opts);
@@ -87,11 +89,16 @@ export async function backupCmd(a, ctx) {
     if (code !== EX_OK) { /* a failure: the message above is the output, stdout stays empty */ }
     else if (v.json) printJson(ctx, { bundle: r.bundle, bytes: r.bytes, commits: r.commits, content: r.content, pushed: r.pushed ? { remote: r.pushed.remote, refs: r.pushed.refs } : null });
     else {
-      print(ctx, `bundle   ${p(tilde(r.bundle, ctx.env))}  (${r.bytes} bytes, ${r.commits} commits)`);
-      if (r.content) print(ctx, `content  ${p(tilde(r.content.path, ctx.env))}  (${r.content.bytes} bytes; not encrypted: it holds other people's mail)`);
-      if (r.contentNote) print(ctx, r.contentNote);
-      if (r.pushed) print(ctx, `pushed   ${p(r.pushed.remote)}  (${r.pushed.refs.length} ref(s))`);
-      print(ctx, `restore: git clone ${p(tilde(r.bundle, ctx.env))} <dir>`);
+      const st = styleOf(ctx);
+      const file = p(tilde(r.bundle, ctx.env));
+      print(ctx, `${st.green(st.sym.ok)} saved to ${st.link(file, fileUrl(path.resolve(r.bundle)))}`);
+      print(ctx, `  ${humanSize(r.bytes ?? 0)}, ${count(r.commits ?? 0, 'commit')}`);
+      if (r.content) print(ctx, `  content archive ${p(tilde(r.content.path, ctx.env))}  (${humanSize(r.content.bytes ?? 0)}; not encrypted: it holds other people's mail)`);
+      if (r.contentNote) print(ctx, `  ${r.contentNote}`);
+      if (r.pushed) print(ctx, `  pushed to ${p(r.pushed.remote)}  (${count(r.pushed.refs.length, 'ref')})`);
+      print(ctx, '');
+      print(ctx, st.dim('restore with:'));
+      print(ctx, `  git clone ${file} <dir>`);
     }
     return code;
   });

@@ -10,15 +10,17 @@ import path from 'node:path';
 import { printable as p } from './printable.js';
 import { styleOf, makeStyle, fileUrl } from './style.js';
 import { tilde, userDir, ensureDefaultDir } from './paths.js';
+import { count, humanSize } from './words.js';
+import { pageLines } from './rows.js';
+
+/** The most emails the export preview lists as rows (the count is always complete). */
+const PREVIEW_ROWS = 5;
 
 /** @typedef {import('./session.js').Ctx} Ctx */
 /** @typedef {import('./session.js').Args} Args */
 
 /** @param {Date} d @returns {string} `20261112-093000` (UTC). */
 const compact = (d) => d.toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, '').replace('T', '-');
-
-/** @param {number} n @returns {string} */
-const size = (n) => (n < 1024 ? `${n} bytes` : n < 1024 * 1024 ? `${(n / 1024).toFixed(1)} KiB` : `${(n / 1024 / 1024).toFixed(1)} MiB`);
 
 /**
  * The name of a default export (a directory, or a .tar file with `tar`).
@@ -32,6 +34,9 @@ export const bundleName = (account, now, tar) => `mailproof-bundle-${account}-${
  */
 export const defaultBundleOut = (account, now, tar, env) => path.join(userDir(env, 'exports'), bundleName(account, now, tar));
 
+/** What a bundle reveals, in two short lines (the preview of `export`, and the same words as the MCP preview's disclosure). */
+const REVEALS = ['The bundle shows these emails\' addresses and subjects; your other mail appears only as hashes.', 'No bodies or attachments are copied. It does not prove that no other email exists.'];
+
 /** @param {Args} a @param {Ctx} ctx @returns {Promise<number>} */
 export async function exportCmd(a, ctx) {
   const v = a.values;
@@ -41,22 +46,40 @@ export async function exportCmd(a, ctx) {
   const after = v.after === undefined ? undefined : parseDate(v.after, '--after');
   const before = v.before === undefined ? undefined : parseDate(v.before, '--before');
   const tar = v.tar === true;
+  const dry = v['dry-run'] === true;
   return withAccount(a, ctx, async ({ mp, account }) => {
     const now = (ctx.deps.now ?? (() => new Date()))();
     const out = v.out !== undefined ? String(v.out) : defaultBundleOut(account.name, now, tar, ctx.env);
-    await ensureDefaultDir(out, ctx.env, 'exports');
-    const r = await mp.export({ with: addrs, ...(after ? { after } : {}), ...(before ? { before } : {}), out, tar });
+    await ensureDefaultDir(out, ctx.env, 'exports');   // also for the preview: the library checks the folder exists
+    const r = await mp.export({ with: addrs, ...(after ? { after } : {}), ...(before ? { before } : {}), out, tar, ...(dry ? { dryRun: true } : {}) });
     const behind = r.seals.pending + r.seals.unstamped + r.seals.unsealed;
+    const st = styleOf(ctx);
     if (v.json) printJson(ctx, r);
-    else {
-      const st = styleOf(ctx);
-      const n = (/** @type {number} */ v, /** @type {string} */ word) => (v > 0 ? st.yellow(`${v} ${word}`) : `${v} ${word}`);
-      print(ctx, `${st.green(st.sym.ok)} wrote ${st.link(p(tilde(r.out, ctx.env)), fileUrl(path.resolve(r.out)))} (${r.records} records, ${r.replies} replies, ${r.keys} keys, ${r.manifests} manifests, ${size(r.bytes)})`);
-      print(ctx, `${st.dim('bundle sha256')} ${r.bundle_sha256}  ${st.dim(`(tell the recipient this out of band; they can run: mailproof verify-bundle --expect ${r.bundle_sha256} <dir>)`)}`);
-      print(ctx, `${st.dim('seals:')} ${r.seals.anchored} anchored, ${n(r.seals.pending, 'pending')}, ${n(r.seals.unstamped, 'unstamped')}, ${n(r.seals.unsealed, 'unsealed')}`);
-      print(ctx, `${st.dim('raw emails still stored:')} ${r.content.stored} of ${r.records}`);
+    else if (dry) {
+      // the preview (SPEC B13.2.9): what would be written, as browse rows, and what it reveals; nothing is written
+      const sel = r.selection ?? [];
+      print(ctx, `${sel.length ? 'This would export' : 'Nothing to export:'} ${count(r.records, 'email')} with ${addrs.map((x) => p(x)).join(', ')}${after || before ? ` (${after ? `from ${after.toISOString().slice(0, 10)}` : ''}${after && before ? ' ' : ''}${before ? `before ${before.toISOString().slice(0, 10)}` : ''})` : ''}`);
+      if (sel.length) {
+        const shown = sel.slice(-PREVIEW_ROWS).reverse();   // the newest few, newest first, as the list shows them
+        const facts = (await Promise.all(shown.map((x) => mp.describe(x.id)))).flatMap((d) => d.records);
+        for (const l of pageLines({ st, now: () => now }, facts.map((f) => ({ facts: f })), 1)) print(ctx, l);
+        if (sel.length > shown.length) print(ctx, st.dim(`and ${sel.length - shown.length} older`));
+        print(ctx, '');
+        for (const l of REVEALS) print(ctx, l);
+        if (behind > 0) print(ctx, st.yellow(`${st.sym.warn} ${count(behind, 'record')} not anchored yet: run seal first for a stronger proof`));
+        print(ctx, st.dim('nothing is written yet'));
+      }
+    } else {
+      const n = (/** @type {number} */ c, /** @type {string} */ word) => (c > 0 ? st.yellow(`${c} ${word}`) : `${c} ${word}`);
+      print(ctx, `${st.green(st.sym.ok)} saved to ${st.link(p(tilde(r.out, ctx.env)), fileUrl(path.resolve(r.out)))}`);
+      print(ctx, `  ${count(r.records, 'record')}, ${count(r.replies, 'reply', 'replies')}, ${count(r.keys, 'key')}, ${count(r.manifests, 'manifest')}, ${humanSize(r.bytes)}`);
+      print(ctx, `  ${st.dim('seals:')} ${r.seals.anchored} anchored, ${n(r.seals.pending, 'pending')}, ${n(r.seals.unstamped, 'unstamped')}, ${n(r.seals.unsealed, 'unsealed')}`);
+      print(ctx, `  ${st.dim('raw emails still stored:')} ${r.content.stored} of ${r.records}`);
+      print(ctx, '');
+      print(ctx, `${st.dim('sha256')} ${r.bundle_sha256}  ${st.dim('(tell the recipient this, by another channel)')}`);
+      print(ctx, `${st.dim('they run:')} mailproof verify-bundle --expect ${r.bundle_sha256} ${p(path.basename(r.out))}`);
     }
-    if (behind > 0) warn(ctx, `mailproof: ${behind} of ${r.records} records are not anchored yet (pending, unstamped or unsealed): run \`mailproof stamp\` (it stamps and upgrades) and export again`);
+    if (behind > 0 && !dry) warn(ctx, `mailproof: ${behind} of ${r.records} records are not anchored yet (pending, unstamped or unsealed): run \`mailproof stamp\` (it stamps and upgrades) and export again`);
     return EX_OK;
   });
 }

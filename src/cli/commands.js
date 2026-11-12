@@ -160,6 +160,7 @@ export const COMMANDS = {
       before: { type: 'string', arg: '<date>', help: 'captured before this date' },
       out: { type: 'string', arg: '<path>', path: true, help: 'the new directory (default ~/mailproof/exports/mailproof-bundle-<account>-<UTC date and time>; with --tar, the .tar file)' },
       tar: { type: 'boolean', help: 'also pack the bundle into one .tar file for mailing (the tar binary)' },
+      'dry-run': { type: 'boolean', help: 'print the preview (the emails it would hold, and what it reveals) and write nothing' },
     },
   },
   'verify-bundle': {

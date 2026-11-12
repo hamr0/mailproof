@@ -380,6 +380,11 @@ export const HELP = Object.freeze({
           "name": "tar",
           "type": "boolean",
           "help": "also pack the bundle into one .tar file for mailing (the tar binary)"
+        },
+        {
+          "name": "dry-run",
+          "type": "boolean",
+          "help": "print the preview (the emails it would hold, and what it reveals) and write nothing"
         }
       ]
     },

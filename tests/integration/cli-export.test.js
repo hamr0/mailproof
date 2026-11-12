@@ -27,10 +27,13 @@ test('export: human output, --json is the ExportResult, the pending warning goes
   const out = path.join(dir, 'b');
   const r = await cli.run(['export', '--with', BOB, '--out', out]);
   assert.equal(r.code, 0, r.stderr);
-  assert.match(r.stdout, /^ok wrote .*b \(3 records, 0 replies, \d+ keys, \d+ manifests, [\d.]+ (KiB|bytes)\)$/m);
-  assert.match(r.stdout, /^bundle sha256 ([0-9a-f]{64})  \(tell the recipient this out of band; they can run: mailproof verify-bundle --expect \1 <dir>\)$/m);
-  assert.match(r.stdout, /^seals: 0 anchored, \d+ pending, 0 unstamped, 1 unsealed$/m);
-  assert.match(r.stdout, /^raw emails still stored: 3 of 3$/m);
+  assert.match(r.stdout, /^(ok|✓) saved to .*\/b$/m);
+  assert.match(r.stdout, /^ {2}3 records, 0 replies, \d+ keys, \d+ manifests?, [\d.]+ (KiB|bytes)$/m, 'plain plurals');
+  assert.match(r.stdout, /^sha256 ([0-9a-f]{64}) {2}\(tell the recipient this, by another channel\)$/m);
+  assert.match(r.stdout, /^they run: mailproof verify-bundle --expect [0-9a-f]{64} b$/m, 'the sha256 note is two short lines');
+  assert.match(r.stdout, /^ {2}seals: 0 anchored, \d+ pending, 0 unstamped, 1 unsealed$/m);
+  assert.match(r.stdout, /^ {2}raw emails still stored: 3 of 3$/m);
+  assert.ok(!r.stdout.includes(cli.home), 'no absolute home path');
   assert.match(r.stderr, /3 of 3 records are not anchored yet.*mailproof stamp/);
   const j = await cli.run(['export', '--with', BOB, '--out', path.join(dir, 'b2'), '--json']);
   const doc = JSON.parse(j.stdout);
@@ -39,6 +42,23 @@ test('export: human output, --json is the ExportResult, the pending warning goes
   const v = await cli.run(['verify-bundle', out, '--expect', JSON.parse((await cli.run(['export', '--with', BOB, '--out', path.join(dir, 'b3'), '--json'])).stdout).bundle_sha256]);
   assert.equal(v.code, 2, 'a different bundle_sha256 (created time differs) is a failed --expect');
   assert.match(v.stdout, /^FAILED: expect/);
+});
+
+test('export --dry-run: the preview (count, browse rows, what the bundle reveals), nothing is written; a date range is named', async () => {
+  const { cli, dir } = await cliWorld();
+  const out = path.join(dir, 'pv');
+  const r = await cli.run(['export', '--with', BOB, '--out', out, '--dry-run']);
+  assert.equal(r.code, 0, r.stderr);
+  assert.match(r.stdout, /^This would export 3 emails with bob@bob\.example$/m);
+  assert.match(r.stdout, /^ #  when +age +verdict +from$/m);
+  assert.match(r.stdout, /addresses and subjects; your other mail appears only as hashes/);
+  assert.match(r.stdout, /^nothing is written yet$/m);
+  assert.ok(!fs.existsSync(out), 'a dry run writes nothing');
+  assert.deepEqual(fs.readdirSync(cli.home), [], 'not even ~/mailproof/exports');
+  const ranged = await cli.run(['export', '--with', BOB, '--after', '2020-01-01', '--out', out, '--dry-run']);
+  assert.match(ranged.stdout, /^This would export 3 emails with bob@bob\.example \(from 2020-01-01\)$/m);
+  assert.equal(JSON.parse((await cli.run(['export', '--with', BOB, '--out', out, '--dry-run', '--json'])).stdout).dryRun, true);
+  assert.equal((await cli.run(['export', '--with', 'nobody@nowhere.example', '--out', out, '--dry-run'])).code, 1, 'nothing to export is the same refusal');
 });
 
 test('export: exit codes (64 usage and ERR_EXPORT_EXISTS, 1 empty), the default out under ~/mailproof/exports, --tar', async () => {

@@ -104,3 +104,37 @@ test('B6 check .eml: the verdict in plain words, then From, Subject, signatures,
   assert.ok(!r.stdout.includes('set up an account'));
   assert.ok(r.stdout.includes('\n\nchecked only, not recorded'), 'a blank line before the closing line');
 });
+
+test('B7 export: the preview first (browse rows, what it reveals), then Write it? [y/N]; n writes nothing; the result block is saved to ~/mailproof/exports/', async () => {
+  const w = world();
+  const dir = path.join(w.home, 'mailproof', 'exports');
+  const no = await menu(w, keys('11', 'alice@alpha.example', '', '', '', 'n', 'n', 'q'));
+  assert.equal(no.code, 0, no.stderr);
+  assert.match(no.stdout, /^This would export 1 email with alice@alpha\.example$/m, '1 email, not 1 emails');
+  assert.match(no.stdout, /^ #  when +age +verdict +from$/m);
+  assert.match(no.stdout, /addresses and subjects; your other mail appears only as hashes/);
+  assert.ok(no.stdout.indexOf('This would export') < no.stdout.indexOf('Write it? '), 'the preview comes before the question');
+  assert.match(no.stdout, /Write it\? \[y\/N\] /);
+  assert.match(no.stdout, /^nothing written$/m);
+  assert.deepEqual(fs.existsSync(dir) ? fs.readdirSync(dir) : [], [], 'nothing was written');
+  const yes = await menu(w, keys('11', 'alice@alpha.example', '', '', '', 'n', 'y', '', 'q'));
+  assert.match(yes.stdout, /^(ok|✓) saved to ~\/mailproof\/exports\/mailproof-bundle-test-\d{8}-\d{6}$/m);
+  assert.match(yes.stdout, /^ {2}1 record, 0 replies, \d+ keys?, \d+ manifests?, [\d.]+ (KiB|bytes)$/m);
+  assert.match(yes.stdout, /^sha256 [0-9a-f]{64} {2}\(tell the recipient this, by another channel\)$/m);
+  assert.match(yes.stdout, /^they run: mailproof verify-bundle --expect [0-9a-f]{64} mailproof-bundle-test-/m);
+  assert.equal(fs.readdirSync(dir).length, 1);
+});
+
+test('B8 seal: plain words for a run and the one-line no-op; B9 backup: path, size, commits, the restore command on its own line', async () => {
+  const w = world();
+  const s = await menu(w, keys('12', '', 'q'));
+  assert.match(s.stdout, /^(ok|✓) sealed 6 new records$/m);
+  assert.match(s.stdout, /^the Bitcoin anchor is pending \(usually a few hours\); it completes on the next sync or seal$/m);
+  const again = await menu(w, keys('12', '', 'q'));
+  assert.match(again.stdout, /^nothing new to seal$|^the Bitcoin anchor is pending/m, 'a second run: the no-op line or the pending note');
+  const b = await menu(w, keys('13', '', 'n', '', 'q'));
+  assert.match(b.stdout, /Save a copy of the trail as one file you can keep or restore/);
+  assert.match(b.stdout, /^(ok|✓) saved to ~\/mailproof\/backups\/test-\d{8}T\d{6}Z\.bundle$/m);
+  assert.match(b.stdout, /^ {2}[\d.]+ KiB, \d+ commits$/m);
+  assert.match(b.stdout, /^restore with:\n {2}git clone ~\/mailproof\/backups\/test-\S+\.bundle <dir>$/m);
+});
