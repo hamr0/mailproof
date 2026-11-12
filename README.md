@@ -101,9 +101,9 @@ mailproof backup --with-content  # a git bundle of the proofs, plus a tar of the
 ```bash
 mailproof stamp --account personal                       # seal and upgrade first, so the proofs are as far along as they can be
 mailproof export --account personal --with bob@example.org --after 2026-01-01
-#   wrote ./mailproof-bundle-personal-20261112-093000 (41 records, ...)
+#   wrote ~/mailproof/exports/mailproof-bundle-personal-20261112-093000 (41 records, ...)
 #   bundle sha256 3f2a...  (tell the recipient this out of band)
-mailproof verify-bundle ./mailproof-bundle-personal-20261112-093000 --expect 3f2a...   # on the other side, with no account
+mailproof verify-bundle ~/mailproof/exports/mailproof-bundle-personal-20261112-093000 --expect 3f2a...   # on the other side, with no account
 ```
 
 `export` writes a directory (`--tar` also packs it into one file) of the signed headers, signatures, archived keys and seals of every email that names any of the addresses you give, on From, To, Cc or Reply-To. It holds no email bodies and no attachments. `verify-bundle` re-checks every signature offline, that the files are the ones listed, the chain of seal manifests, and each seal with `ots info` (it never contacts a calendar or a Bitcoin node). Be clear about what that proves:

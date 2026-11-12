@@ -253,7 +253,7 @@ mailproof export --account gmail --with bob@example.com,bob@work.example \
     --after 2026-01-01 --before 2027-01-01 --out ~/proof-for-bob --tar
 ```
 
-`--with` is **comma separated** (not repeatable); an email is included when it names any of those exact addresses on From, To, Cc or Reply-To. `--after` (inclusive) and `--before` (exclusive) are optional. `--out` is the new directory (it must not exist or be empty; the parent must exist); without it the default is `./mailproof-bundle-<account>-<UTC time>`. With `--tar` the `--out` path is the `.tar` file to mail. `export` never stamps and never uses the network: it warns when seals are pending. It prints the number of records and a **`bundle_sha256`**: send that to the recipient **by another channel** than the bundle (a call, a different mail).
+`--with` is **comma separated** (not repeatable); an email is included when it names any of those exact addresses on From, To, Cc or Reply-To. `--after` (inclusive) and `--before` (exclusive) are optional. `--out` is the new directory (it must not exist or be empty; the parent must exist); without it the default is `~/mailproof/exports/mailproof-bundle-<account>-<UTC time>` (the folder is created on first use). With `--tar` the `--out` path is the `.tar` file to mail. `export` never stamps and never uses the network: it warns when seals are pending. It prints the number of records and a **`bundle_sha256`**: send that to the recipient **by another channel** than the bundle (a call, a different mail).
 
 The recipient needs no account and no trail:
 
@@ -269,7 +269,7 @@ Export errors: `ERR_EXPORT_EMPTY` (nothing matches), `ERR_EXPORT_TOO_BIG` (over 
 
 ## 10. Housekeeping
 
-- **backup**: `mailproof backup --account gmail` writes a git bundle of the whole trail (records, keys, replies, stamps; never bodies) to `~/.local/state/mailproof/backups/<account>/` and prints the path. Restore with `git clone <file>.bundle <dir>`. `--out <path>` chooses the file. `--with-content` adds an unencrypted `<file>.content.tar` of the stored raw emails (other people's mail: encrypt it or the disk). `--push --yes` pushes to the account's `backupRemote`, never with force.
+- **backup**: `mailproof backup --account gmail` writes a git bundle of the whole trail (records, keys, replies, stamps; never bodies) to `~/mailproof/backups/` and prints the path. Restore with `git clone <file>.bundle <dir>`. `--out <path>` chooses the file. `--with-content` adds an unencrypted `<file>.content.tar` of the stored raw emails (other people's mail: encrypt it or the disk). `--push --yes` pushes to the account's `backupRemote`, never with force.
 - **forget**: deletes stored mail content, never the proof. `mailproof forget <id>...` or `mailproof forget --with bob@example.com [--before d] [--after d]`. Without `--yes` it prints a summary and exits 64; `--dry-run` prints the summary only.
 - **prune**: `mailproof prune --before 2026-01-01 --dry-run`, then again with `--yes`. It rewrites the trail without everything older and keeps the old one as `<trail>.pre-prune-<date>` until you delete it (`--delete-backup`). Rare, explicit, never scheduled.
 - **update**: `mailproof update` prints the upgrade command; `--run` executes it.
