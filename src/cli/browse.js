@@ -26,6 +26,7 @@ import { otherParty } from './target.js';
  * @property {(spec: import('./prompt.js').ValueSpec) => Promise<string>} ask
  * @property {(label: string, flag: string, example?: string) => Promise<string>} askDate
  * @property {(s: string) => void} out  Text output, through the backstop.
+ * @property {(path: string[]) => void} crumb  Print the where-am-I breadcrumb for this path (after `mailproof`), preceded by a blank line (crumb.js).
  * @property {(argv: string[]) => Promise<number>} go  Run a subcommand on the account (the menu's own path).
  * @property {() => Promise<boolean>} showHeld  Show what a terminal pager holds back; false when the input ended.
  * @property {import('../index.js').Mailproof} mp
@@ -45,7 +46,7 @@ const whenText = (iso, now) => `${iso.slice(iso.slice(0, 4) === String(now.getUT
 const partyOf = (f) => otherParty(f.direction, [...f.from.map((a) => ({ role: 'from', address: a.address.toLowerCase() })), ...f.to.map((a) => ({ role: 'to', address: a.address.toLowerCase() })), ...f.cc.map((a) => ({ role: 'cc', address: a.address.toLowerCase() }))]);
 
 /**
- * The lines of a page of emails: a header, then three lines each (row, full subject, why). Every mail-derived string is escaped before any
+ * The lines of a page of emails: a header, then three lines each (row, subject, short reason). Every mail-derived string is escaped before any
  * style is applied and cut at the terminal width.
  * @param {BrowseEnv} e
  * @param {Array<{ facts: Facts, tag?: string }>} items
@@ -60,32 +61,31 @@ export function pageLines(e, items, first) {
     const ago = rel(f.captured, now).replace(/ ago$/, '');
     const live = f.trust.live;
     const party = partyOf(f);
-    const subject = f.subject.value === null ? '(no subject)' : `${f.subject.coverage === 'signed' ? '' : '~ '}${f.subject.value}`;
-    const why = f.why === null ? 'verifies' : f.why;
     return {
-      when: whenText(f.captured, now), ago, dir: f.direction === 'out' ? 'out' : 'in', ok: live === 'verified', verdict: `${live === 'verified' ? st.sym.ok : st.sym.bad} ${live ?? '-'}`,
-      who: p(`${f.direction === 'out' ? 'to ' : ''}${party ?? '-'}`), tag, subject: p(subject), noSubject: f.subject.value === null,
-      why: p(why, { max: 500 }), att: f.attachments.length,
+      when: whenText(f.captured, now), ago, ok: live === 'verified', verdict: `${live === 'verified' ? st.sym.ok : st.sym.bad} ${live ?? '-'}`,
+      who: p(`${f.direction === 'out' ? 'to ' : ''}${party ?? '-'}`), tag, subject: p(f.subject.value ?? '(no subject)'), noSubject: f.subject.value === null, unsigned: f.subject.value !== null && f.subject.coverage !== 'signed',
+      why: p(f.reason, { max: 80 }), att: f.attachments.length,
     };
   });
   const whenW = Math.max(4, ...pre.map((x) => x.when.length));
-  const ageW = Math.max(0, ...pre.map((x) => x.ago.length));
+  const ageW = Math.max(3, ...pre.map((x) => x.ago.length));
   const verW = Math.max(7, ...pre.map((x) => [...x.verdict].length));
   const indent = '    ';
   /** @type {string[]} */
   const out = [];
-  out.push(st.dim(` #  ${'when'.padEnd(whenW + 2 + ageW)}  dir  ${'verdict'.padEnd(verW)}  from`));
+  out.push(st.dim(` #  ${'when'.padEnd(whenW)}  ${'age'.padEnd(ageW)}  ${'verdict'.padEnd(verW)}  from`));
   pre.forEach((x, i) => {
     const n = String(first + i).padStart(2);
-    const left = `${n}  ${x.when.padEnd(whenW)}  ${x.ago.padEnd(ageW)}  ${x.dir.padEnd(3)}  ${x.verdict.padEnd(verW)}  `;
+    const left = `${n}  ${x.when.padEnd(whenW)}  ${x.ago.padEnd(ageW)}  ${x.verdict.padEnd(verW)}  `;
     const tag = x.tag ? `  ${x.tag}` : '';
     const room = Math.max(8, width - [...left].length - [...tag].length);
     const verdict = x.ok ? st.green(x.verdict.padEnd(verW)) : st.yellow(x.verdict.padEnd(verW));
-    out.push(`${n}  ${x.when.padEnd(whenW)}  ${st.dim(x.ago.padEnd(ageW))}  ${x.dir.padEnd(3)}  ${verdict}  ${st.fit(x.who, room)}${x.tag ? st.dim(tag) : ''}`);
-    const subject = st.fit(x.subject, width - indent.length);
-    out.push(`${indent}${x.noSubject ? st.dim(subject) : subject}`);
+    out.push(`${n}  ${x.when.padEnd(whenW)}  ${st.dim(x.ago.padEnd(ageW))}  ${verdict}  ${st.fit(x.who, room)}${x.tag ? st.dim(tag) : ''}`);
+    const mark = x.unsigned ? `  ${st.sym.dot} subject not signed` : '';
+    const subject = st.fit(x.subject, Math.max(8, width - indent.length - [...mark].length));
+    out.push(`${indent}${x.noSubject ? st.dim(subject) : subject}${x.unsigned ? st.dim(mark) : ''}`);
     const att = x.att ? `${DASH(e)}${x.att} attachment${x.att === 1 ? '' : 's'}` : '';
-    out.push(`${indent}${st.dim(st.fit(`why: ${x.why}${att}`, width - indent.length))}`);
+    out.push(`${indent}${st.dim(st.fit(`${x.why}${att}`, width - indent.length))}`);
   });
   return out;
 }
@@ -112,7 +112,7 @@ const listArgs = (f) => ({
  * One numbered screen: the latest five of `entries`, `m` for the next five, a number to open one email. With `filters` it also takes `f`
  * (role, direction, after, before) and `s` (subject text) and reloads the entries through `reload`.
  * @param {BrowseEnv} e
- * @param {{ entries: Entry[], filters?: Filters, reload?: (f: Filters) => Promise<Entry[]> }} o
+ * @param {{ path: string[], entries: Entry[], filters?: Filters, reload?: (f: Filters) => Promise<Entry[]>, crumbed?: boolean }} o  `path`: the breadcrumb of this screen (after `mailproof`); `crumbed`: the caller already printed it for the first page.
  * @returns {Promise<void>}
  */
 async function screen(e, o) {
@@ -122,13 +122,17 @@ async function screen(e, o) {
   const cache = new Map();
   let shown = 0;
   let from = 0;
+  let crumbed = Boolean(o.crumbed);
   /** @param {number} at */
-  const page = async (at) => {
+  /** @param {string} [step] */
+  const page = async (at, step) => {
     const slice = entries.slice(at, at + PAGE);
     await load(e, slice.map((x) => x.id), cache);
     const items = slice.flatMap((x) => { const facts = cache.get(x.id); return facts ? [{ facts, ...(x.tag ? { tag: x.tag } : {}) }] : []; });
     from = at;
     shown = at + slice.length;
+    if (!crumbed) e.crumb(step ? [...o.path, step] : o.path);
+    crumbed = false;
     if (!slice.length) e.out(entries.length ? 'that is all' : 'no emails match');
     else for (const l of pageLines(e, items, at + 1)) e.out(l);
     const k = (/** @type {string} */ s) => st.key(s);
@@ -144,11 +148,11 @@ async function screen(e, o) {
     if (/^\d+$/.test(c)) {
       const n = Number(c);
       if (n < 1 || n > shown) { e.out(`choose 1 to ${shown}`); continue; }
-      await openEmail(e, entries[n - 1].id);
+      await openEmail(e, entries[n - 1].id, [...o.path, `#${n}`]);
       await page(from);
     } else if (c === 'm') {
       if (shown >= entries.length) { e.out('that is all'); continue; }
-      await page(shown);
+      await page(shown, 'm more');
     } else if ((c === 'f' || c === 's') && o.filters && o.reload) {
       const f = o.filters;
       if (c === 'f') {
@@ -158,7 +162,7 @@ async function screen(e, o) {
         f.before = await e.askDate('Before', '--before', 'date, e.g. {2026-08-19}, empty = no limit');
       } else f.subject = await e.ask({ label: 'Subject contains', example: 'text, empty = any', optional: true });
       entries = await o.reload(f);
-      await page(0);
+      await page(0, c === 'f' ? 'f filter' : f.subject ? `s "${f.subject}"` : 's clear');
     } else e.out(`not a choice: ${p(c, { max: 40 })}`);
   }
 }
@@ -167,25 +171,28 @@ async function screen(e, o) {
  * The menu's list: ask nothing here (the caller asked Who), show the latest five for that person, or for everyone.
  * @param {BrowseEnv} e
  * @param {string} who  An exact address, or '' for everyone.
+ * @param {string[]} [path]  The breadcrumb to start from (after `mailproof`); the person view of an opened email continues its path.
+ * @param {boolean} [crumbed]  The caller already printed `path`.
  * @returns {Promise<void>}
  */
-export async function browseList(e, who) {
+export async function browseList(e, who, path = ['4 list', who || 'everyone'], crumbed = false) {
   /** @type {Filters} */
   const filters = { who, role: '', direction: '', after: '', before: '', subject: '' };
   /** @param {Filters} f @returns {Promise<Entry[]>} */
   const reload = async (f) => (await e.mp.list(listArgs(f))).map((r) => ({ id: r.id }));
-  await screen(e, { entries: await reload(filters), filters, reload });
+  await screen(e, { path, entries: await reload(filters), filters, reload, crumbed });
 }
 
 /**
  * One email, opened: the `show` text, then the actions. Enter goes back to where it was opened from.
- * @param {BrowseEnv} e @param {string} id
+ * @param {BrowseEnv} e @param {string} id @param {string[]} path  The breadcrumb of the open email (after `mailproof`).
  * @returns {Promise<void>}
  */
-async function openEmail(e, id) {
+async function openEmail(e, id, path) {
   const { st } = e;
   const k = (/** @type {string} */ s) => st.key(s);
   const action = `  ${k('r')} raw email${DASH(e)}${k('a')} save attachment${DASH(e)}${k('v')} verify again${DASH(e)}${k('t')} thread${DASH(e)}${k('p')} this person${DASH(e)}${k('Enter')} back to list`;
+  e.crumb(path);
   await e.go(['show', id]);
   if (!(await e.showHeld())) throw new Cancel('eof');
   const facts = (await e.mp.describe(id)).records[0];
@@ -196,11 +203,11 @@ async function openEmail(e, id) {
     if (a === null) throw new Cancel('eof');
     const c = a.trim().toLowerCase();
     if (c === '') return;
-    if (c === 'r') await rawEmail(e, id);
-    else if (c === 'a') await saveAttachment(e, facts);
-    else if (c === 'v') await e.go(['verify', id]);
-    else if (c === 't') await thread(e, id);
-    else if (c === 'p') await person(e, facts);
+    if (c === 'r') { e.crumb([...path, 'r raw']); await rawEmail(e, id); }
+    else if (c === 'a') { e.crumb([...path, 'a attachment']); await saveAttachment(e, facts); }
+    else if (c === 'v') { e.crumb([...path, 'v verify']); await e.go(['verify', id]); }
+    else if (c === 't') await thread(e, id, [...path, 't thread']);
+    else if (c === 'p') await person(e, facts, [...path, 'p this person']);
     else { e.out(`not a choice: ${p(c, { max: 40 })}`); continue; }
     if (!(await e.showHeld())) throw new Cancel('eof');
   }
@@ -247,8 +254,9 @@ async function saveAttachment(e, facts) {
   e.out('cancelled');
 }
 
-/** The parent and the direct replies of one email, graded by link, as a numbered screen. @param {BrowseEnv} e @param {string} id */
-async function thread(e, id) {
+/** The parent and the direct replies of one email, graded by link, as a numbered screen. @param {BrowseEnv} e @param {string} id @param {string[]} path */
+async function thread(e, id, path) {
+  e.crumb(path);
   const t = await e.mp.linked(id);
   const parents = (t?.parents ?? []);
   /** @type {Entry[]} */
@@ -259,20 +267,21 @@ async function thread(e, id) {
   const nParents = entries.length;
   for (const x of t?.children ?? []) if (!seen.has(x.id)) { seen.add(x.id); entries.push({ id: x.id, tag: `reply, ${x.strength}` }); }
   const nReplies = entries.length - nParents;
-  if (!entries.length && !lost.length) { e.out('no linked emails'); return; }
+  if (!entries.length && !lost.length) { e.out('no thread: no parent or replies recorded for this email'); return; }
   const n = (/** @type {number} */ c, /** @type {string} */ one, /** @type {string} */ many) => `${c} ${c === 1 ? one : many}`;
   e.out(`thread: ${n(nParents, 'parent', 'parents')}, ${n(nReplies, 'reply', 'replies')} ${e.st.dim('(signed: a verifying DKIM signature covers the reference; unsigned: the sender\'s word)')}`);
   for (const x of lost) e.out(e.st.dim(`  ${p(x.message_id, { max: 120 })} is named as a parent but is not in this trail (link ${x.strength})`));
-  if (entries.length) await screen(e, { entries });
+  if (entries.length) await screen(e, { path, entries, crumbed: true });
 }
 
-/** The counterparty row for the other party of this email (as the people list shows it), then the latest five with them. @param {BrowseEnv} e @param {Facts} facts */
-async function person(e, facts) {
+/** The counterparty row for the other party of this email (as the people list shows it), then the latest five with them. @param {BrowseEnv} e @param {Facts} facts @param {string[]} path */
+async function person(e, facts, path) {
+  e.crumb(path);
   const addr = partyOf(facts);
   if (!addr) { e.out('no other party is recorded for this email'); return; }
   const who = addr;
   const row = (await e.mp.counterparties()).find((r) => r.address === who);
   if (row) e.out(`${p(who)}  ${row.records} email${row.records === 1 ? '' : 's'}, ${row.verified} received verified, first ${row.first.slice(0, 10)}, last ${row.last.slice(0, 10)}`);
   e.out(`${e.st.dim('to send them what you hold:')} ${e.st.key('11')} export`);
-  await browseList(e, who);
+  await browseList(e, who, path, true);
 }

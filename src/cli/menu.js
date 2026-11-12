@@ -7,6 +7,7 @@ import { createPrompter, askValue, confirm, Cancel, isTerminal } from './prompt.
 import { parseDate, parseAddress, parseDuration, parseSent, parseFolders, parseChoice, MIN_INTERVAL_MS, FULL_ID_RE } from './parse.js';
 import { loadCtxConfig, openAccount, print, warn } from './session.js';
 import { browseList } from './browse.js';
+import { crumbLine } from './crumb.js';
 import { printable } from './printable.js';
 import { defaultBundlePath, PUSH_WARNING, redactUrl } from './backup.js';
 import { version } from './misc.js';
@@ -57,6 +58,10 @@ export async function runMenu(ctx, exec, opts = {}) {
   const base = { ...ctx, stdout: outStream, stderr: errStream, prompter: p };
   const out = (/** @type {string} */ s) => print(base, s);   // through the output backstop (F28)
   const err = (/** @type {string} */ s) => warn(base, s);
+  /** The where-am-I line (crumb.js) before an output block: a blank line, then the dim path. The screen is never cleared. @param {string[]} segs The path after `mailproof`. */
+  const crumb = (segs) => { out(''); out(crumbLine(st, segs)); };
+  /** `4 list`: the menu number and name of a command, the first step of every path. @param {string} cmd @returns {string} */
+  const step = (cmd) => { const i = MENU_ITEMS.find((x) => x.cmd === cmd); return i ? `${i.key} ${i.label}` : cmd; };
   /** @param {import('./prompt.js').ValueSpec} spec */
   const ask = (spec) => askValue(p, outStream, spec, st);
   /** A y/N question in the stream's style. @param {string} q @param {boolean} [d] */
@@ -71,9 +76,17 @@ export async function runMenu(ctx, exec, opts = {}) {
   /** After an action: on a terminal show its output (paged when long); on a pipe ask for Enter. @returns {Promise<boolean>} False when the input ended. */
   const afterAction = async () => (pager ? pager.show() : (await p.ask('Press Enter ')) !== null);
   /** Check a saved .eml: the same path as the first-run screen, nothing is recorded. */
-  const checkEml = async () => { await checkFileCmd(await ask({ label: 'Path of the .eml file', example: 'e.g. {~/Downloads/mail.eml}' }), base).catch((e) => { warn(base, `mailproof: ${/** @type {Error} */ (e).message}`); }); };
+  const checkEml = async (/** @type {boolean} */ inMenu = false) => {
+    const file = await ask({ label: 'Path of the .eml file', example: 'e.g. {~/Downloads/mail.eml}' });
+    if (inMenu) crumb([step('check-file'), file]);
+    await checkFileCmd(file, base).catch((e) => { warn(base, `mailproof: ${/** @type {Error} */ (e).message}`); });
+  };
   /** Verify a bundle: the `verify-bundle` subcommand, which needs no account. */
-  const verifyBundleCmd = async () => { await exec([...pre, 'verify-bundle', await ask({ label: 'Bundle directory', example: 'the directory mailproof export wrote' })], base); };
+  const verifyBundleCmd = async (/** @type {boolean} */ inMenu = false) => {
+    const dir = await ask({ label: 'Bundle directory', example: 'the directory mailproof export wrote' });
+    if (inMenu) crumb([step('verify-bundle'), dir]);
+    await exec([...pre, 'verify-bundle', dir], base);
+  };
   /**
    * The screen when there is no config: set up an account, check a saved .eml, verify a bundle.
    * @returns {Promise<import('./config.js').Config | number>}  The config once an account exists, or the menu's exit code.
@@ -148,6 +161,7 @@ export async function runMenu(ctx, exec, opts = {}) {
       const dflt = defaultBundleOut(account, (ctx.deps.now ?? (() => new Date()))(), false);
       const outPath = await ask({ label: 'Write the bundle to', example: 'a new directory', def: dflt });
       const tar = await askYes('Also pack it into one .tar file for mailing?');
+      crumb([step('export'), who]);
       await go(['export', '--with', who, ...(after ? ['--after', after] : []), ...(before ? ['--before', before] : []), ...(outPath === dflt ? [] : ['--out', outPath]), ...(tar ? ['--tar'] : [])]);
     };
     /** One target: an address, a Message-ID or a record id. */
@@ -158,30 +172,34 @@ export async function runMenu(ctx, exec, opts = {}) {
       sync: async () => {
         const folders = await ask({ label: 'Folders', example: 'comma separated, empty = the account\'s', optional: true, validate: (s) => { parseFolders(s); return s; } });
         const sent = await ask({ label: 'Sent', example: 'on, off or a folder path, empty = the account\'s', optional: true, validate: (s) => { parseSent(s); return s; } });
+        crumb([step('sync')]);
         await go(['sync', ...(folders ? ['--folders', folders] : []), ...(sent ? ['--sent', sent] : [])]);
       },
       watch: async () => {
         const interval = await ask({ label: 'Interval', example: '30s, 5m, 1h', def: '5m', validate: (s) => { parseDuration(s, 'Interval', ctx.deps.minIntervalMs ?? MIN_INTERVAL_MS); return s; } });
+        crumb([step('watch'), interval]);
         await go(['watch', '--interval', interval]);
       },
       list: async () => {
         const who = await ask({ label: 'Who', example: 'address, empty = everyone', optional: true, validate: (s) => parseAddress(s, 'Who') });
         const session = await openAccount({ cmd: 'list', values: { config: opts.configFlag, account }, positionals: [] }, base);
         try {
-          await browseList({ st, p, ask, askDate, out, go, mp: session.mp, tilde, now, home: ctx.env.HOME, showHeld: async () => (pager ? pager.show() : true) }, who.toLowerCase());
+          await browseList({ st, p, ask, askDate, out, crumb, go, mp: session.mp, tilde, now, home: ctx.env.HOME, showHeld: async () => (pager ? pager.show() : true) }, who.toLowerCase());
         } catch (e) {
           if (e instanceof Cancel || e instanceof UsageError) throw e;
           err(`mailproof: ${printable(/** @type {Error} */ (e).message, { keepNewline: true })}`);
         } finally { await session.close(); }
       },
-      show: async () => { await go(['show', await askTarget()]); },
+      show: async () => { const target = await askTarget(); crumb([step('show'), target]); await go(['show', target]); },
       verify: async () => {
         const target = await askTarget();
         const at = await askDate('At', '--at', 'judge as of this date, empty = the capture time');
+        crumb([step('verify'), target, ...(at ? [`at ${at}`] : [])]);
         await go(['verify', target, ...(at ? ['--at', at] : [])]);
       },
       people: async () => {
         // the table is the `people` command's own text, numbered here so a row can be picked; the rows come from the same `people --json`
+        crumb([step('people')]);
         /** @type {string[]} */
         const chunks = [];
         const code = await exec([...pre, 'people', '--json', '--account', account], { ...base, stdout: { write: (x) => { chunks.push(String(x)); return true; } } });
@@ -205,26 +223,35 @@ export async function runMenu(ctx, exec, opts = {}) {
           return `${n ?? parseAddress(first, 'Person')} ${act}`;
         } });
         const [pick, what] = answer.split(' ');
+        if (what !== 'export') crumb([step('people'), pick, what]);
         if (what === 'export') await exportFor(pick); else await go([what, pick]);
       },
-      replies: async () => { await go(['replies', await ask({ label: 'Address or Message-ID', example: 'an address like {bob@example.org}, or a request\'s {<q-123@mail.example>}', validate: (s) => { if (classifyTarget(s).kind === 'id') throw new UsageError('give an address or a Message-ID in angle brackets, not a record id'); return s.trim(); } })]); },
+      replies: async () => {
+        const target = await ask({ label: 'Address or Message-ID', example: 'an address like {bob@example.org}, or a request\'s {<q-123@mail.example>}', validate: (s) => { if (classifyTarget(s).kind === 'id') throw new UsageError('give an address or a Message-ID in angle brackets, not a record id'); return s.trim(); } });
+        crumb([step('replies'), target]);
+        await go(['replies', target]);
+      },
       check: async () => {
         const id = await ask({ label: 'Id', example: '32 hex characters, or a unique prefix of 8 or more', validate: idArg });
         const profile = await ask({ label: 'Profile', example: 'a JSON file path, or a name in the profiles directory' });
         const parent = await ask({ label: 'Request Message-ID', example: 'for a profile that requires a link, empty = none', optional: true });
+        crumb([step('check'), id]);
         await go(['check', id, '--profile', profile, ...(parent ? ['--parent', parent] : [])]);
       },
       forget: async () => {
+        /** @param {string[]} argv */
+        const run = async (argv) => { crumb([step('forget')]); await destructive(argv); };
         const ids = await ask({ label: 'Ids', example: 'record ids separated by spaces; empty = by person', optional: true, validate: (s) => { s.split(/\s+/).forEach(idArg); return s; } });
-        if (ids) { await destructive(['forget', ...ids.split(/\s+/)]); return; }
+        if (ids) { await run(['forget', ...ids.split(/\s+/)]); return; }
         const who = await ask({ label: 'With', example: 'email address, e.g. {bob@example.org}', validate: (s) => parseAddress(s, 'With') });
         const before = await askDate('Before', '--before');
         const after = await askDate('After', '--after');
-        await destructive(['forget', '--with', who, ...(before ? ['--before', before] : []), ...(after ? ['--after', after] : [])]);
+        await run(['forget', '--with', who, ...(before ? ['--before', before] : []), ...(after ? ['--after', after] : [])]);
       },
       prune: async () => {
         const before = await ask({ label: 'Before', example: 'date, e.g. {2026-08-19}', validate: (s) => { parseDate(s, '--before'); return s; } });
         const del = await askYes('Also delete the pre-prune backup afterwards (the removal is only final then)?');
+        crumb([step('prune')]);
         await destructive(['prune', '--before', before, ...(del ? ['--delete-backup'] : [])]);
       },
       backup: async () => {
@@ -237,24 +264,27 @@ export async function runMenu(ctx, exec, opts = {}) {
           out(PUSH_WARNING);
           if (!(await askYes('Is that remote one you trust to hold that?'))) { out('nothing changed'); return; }
         }
+        crumb([step('backup')]);
         await go(['backup', ...(outPath === dflt ? [] : ['--out', outPath]), ...(content ? ['--with-content'] : []), ...(push ? ['--push', '--yes'] : [])]);
       },
-      status: async () => { await go(['status']); },
+      status: async () => { crumb([step('status')]); await go(['status']); },
       update: async () => {
+        crumb([step('update')]);
         await go(['update']);
         if (await askYes('Run it now?')) await go(['update', '--run']);
       },
       config: async () => {
         const action = await ask({ label: 'Action', example: 'path, validate, template, add-account', def: 'validate', validate: (s) => parseChoice(s, 'Action', 'path', 'validate', 'template', 'add-account') });
+        crumb([step('config'), action]);
         await go(['config', action]);
       },
       export: async () => {
         await exportFor(await ask({ label: 'With', example: 'exact addresses, comma separated, e.g. {bob@example.org,bob@work.example}', validate: (s) => { s.split(',').map((x) => parseAddress(x.trim(), 'With')); return s; } }));
       },
-      stamp: async () => { await go(['stamp']); },
-      'check-file': checkEml,
-      'verify-bundle': verifyBundleCmd,
-      mcp: async () => { await go(['mcp']); },
+      stamp: async () => { crumb([step('stamp')]); await go(['stamp']); },
+      'check-file': () => checkEml(true),
+      'verify-bundle': () => verifyBundleCmd(true),
+      mcp: async () => { crumb([step('mcp')]); await go(['mcp']); },
     };
 
     // what the next turn prints above the `>`: the header and the full menu at the start; after an action the short line (on a
@@ -285,6 +315,7 @@ export async function runMenu(ctx, exec, opts = {}) {
       if (c === 'q') return 0;
       if (c === '') continue;
       if (c === 'h') {
+        crumb(['h help']);
         await exec([...pre, 'help'], base);
         if (pager) { if (!(await pager.show())) return 0; mode = 'compact'; }
         continue;

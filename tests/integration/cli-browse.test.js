@@ -28,26 +28,30 @@ test('item 4 asks only Who, then shows the latest 5 newest first: row line, full
   assert.equal(r.code, 0, r.stderr);
   assert.match(r.stdout, /^Who \(address, empty = everyone\): $/m);
   for (const gone of ['Role (', 'Direction (', 'Before (', 'After (', 'Limit (']) assert.ok(!r.stdout.includes(gone), `${gone} is not asked`);
-  assert.match(r.stdout, /^ #  when +dir  verdict +from$/m);
-  assert.match(r.stdout, /^ 1  11-01 10:06Z  54 min +in +x unverified +zed@zed\.example$/m);
-  assert.match(r.stdout, /^ 2  11-01 10:05Z  55 min +in +.*alice@alpha\.example$/m);
+  assert.match(r.stdout, /^ #  when +age +verdict +from$/m);
+  assert.match(r.stdout, /^ 1  11-01 10:06Z  54 min +x unverified +zed@zed\.example$/m);
+  assert.match(r.stdout, /^ 2  11-01 10:05Z  55 min +.*alice@alpha\.example$/m);
+  assert.ok(!/ dir /.test(r.stdout) && !/^ 1 .* in +x /m.test(r.stdout), 'no dir column');
   const order = [...r.stdout.matchAll(/^ ([1-6])  11-01 10:0(\d)Z/gm)].map((m) => [m[1], m[2]].join(':'));
   assert.deepEqual(order, ['1:6', '2:5', '3:4', '4:3', '5:2'], 'five rows, newest first, numbered from 1');
   assert.ok(!/^ 6  /m.test(r.stdout), 'the sixth is not shown yet');
-  assert.match(r.stdout, /^ {4}Re: please sign$/m, 'the full subject on its own line');
+  assert.match(r.stdout, /^ {4}Re: please sign$/m, 'a signed subject is the subject alone');
   assert.match(r.stdout, /^ {4}\(no subject\)$/m, 'unsigned mail without a Subject header');
   assert.match(r.stdout, /^5 of 6 - open: a number - m more - f filter - s subject search - Enter back$/m);
   const failing = await T.mp.describe(id('failing'));
   assert.ok(failing.records[0].why, 'the fixture has a why');
-  assert.ok(r.stdout.includes(`    why: ${failing.records[0].why.slice(0, 50)}`), 'the why line is the library describe() sentence, not re-derived');
-  assert.match(r.stdout, /^ {4}why: verifies$/m, 'a verified email says so');
+  assert.equal(failing.records[0].reason, 'signature fails');
+  assert.match(r.stdout, /^ {4}signature fails$/m, 'the why line is the library describe() short reason, not re-derived');
+  assert.match(r.stdout, /^ {4}no DKIM signature$/m, 'unsigned mail');
+  assert.match(r.stdout, /^ {4}verifies$/m, 'a verified email says so');
+  assert.ok(!r.stdout.includes('why:') && !r.stdout.includes('~ '), 'no why: prefix, no ~ marker');
   assert.match(r.stdout, /\n  1 sync  3 people/, 'Enter goes back to the menu: the short line');
 });
 
 test('m shows the next 5, numbers continue, the footer counts; at the end there is no m', async () => {
   const w = world();
   const r = await menu(w, keys('4', '', 'm', '', 'q'));
-  assert.match(r.stdout, /^ 6  11-01 10:01Z  59 min +out +.*to bob@beta\.example$/m, 'a sent copy shows who it went to');
+  assert.match(r.stdout, /^ 6  11-01 10:01Z  59 min +.*to bob@beta\.example$/m, 'a sent copy shows who it went to');
   assert.match(r.stdout, /^6 of 6 - open: a number - f filter - s subject search - Enter back$/m);
   const again = await menu(w, keys('4', '', 'm', 'm', '', 'q'));
   assert.match(again.stdout, /that is all/);
@@ -135,7 +139,8 @@ test('t shows the parent and the direct replies with the link, as numbered rows;
   assert.match(r.stdout, /^2 of 2 - open: a number - Enter back$/m, 'no m, f or s in a thread');
   assert.ok(r.stdout.includes((await w.run(['show', id('req')], { deps })).stdout.trimEnd()), 'a number in the thread opens that email');
   const lone = await menu(w, keys('4', 'zed@zed.example', '1', 't', '', '', 'q'));
-  assert.match(lone.stdout, /no linked emails/);
+  assert.match(lone.stdout, /no thread: no parent or replies recorded for this email/);
+  assert.ok(!lone.stdout.includes('no linked emails'));
   const unsigned = await menu(w, keys('4', 'carol@gamma.example', '1', 't', '', '', '', 'q'));
   assert.match(unsigned.stdout, /parent, unsigned/);
 });
@@ -192,8 +197,9 @@ test('terminal-safe: a subject or address with control characters reaches no sin
   const text = stripStyle(r.stdout);
   assert.ok(!text.includes('\x1b'), 'no raw escape');
   assert.ok(!text.includes('‮'));
-  const rows = text.split('\n').filter((l) => l.startsWith('    evil') || l.startsWith('    why:'));
-  assert.ok(rows.length >= 1);
+  const rows = text.split('\n').filter((l) => l.startsWith('    '));
+  assert.ok(rows.length >= 2, 'the subject line and the reason line');
+  assert.ok(rows.some((l) => l.endsWith('· subject not signed') || l.endsWith('- subject not signed')) === false, 'this subject is signed: no suffix');
   for (const l of rows) assert.ok([...l].length <= 60, `fits 60 columns: ${l.length}`);
 });
 
@@ -203,4 +209,85 @@ test('keys are bold green: the footer keys, the action line keys and the attachm
   const r = await menu(w, keys('4', '', '3', 'a', '', '', '', 'q'), { env: { FORCE_COLOR: '1' } });
   for (const k of ['a number', 'm', 'f', 's', 'Enter']) assert.ok(r.stdout.includes(g(k)), `footer key ${k}`);
   for (const k of ['r', 'a', 'v', 't', 'p']) assert.ok(r.stdout.includes(`  ${g(k)}`) || r.stdout.includes(` ${g(k)} `), `action key ${k}`);
+});
+
+test('rows: a subject no verifying signature covers gets the dim suffix `· subject not signed`; the suffix is never cut, the subject is', async () => {
+  const w = world();
+  const U = { env: { LANG: 'en_US.UTF-8' } };
+  const r = await menu(w, keys('4', '', '', 'q'), U);
+  assert.match(r.stdout, /^ {4}\(no subject\)$/m, 'no Subject header at all: no suffix');
+  const bob = await menu(w, keys('4', 'bob@beta.example', '', 'q'), U);
+  assert.match(bob.stdout, /^ {4}Re: please sign!  · subject not signed$/m, 'the failing signature covers the altered subject: not signed');
+  assert.match(bob.stdout, /^ {4}Approve\?$/m, 'a signed subject has no suffix');
+  assert.equal((bob.stdout.match(/subject not signed/g) ?? []).length, 1);
+  const d = (await T.mp.describe(id('failing'))).records[0];
+  assert.notEqual(d.subject.coverage, 'signed');
+  const narrow = await menu(w, keys('4', 'bob@beta.example', '', 'q'), { tty: true, columns: 40, rows: 40, ...U });
+  const line = stripStyle(narrow.stdout).split('\n').find((l) => l.endsWith('subject not signed'));
+  assert.ok(line && [...line].length <= 40, line);
+  assert.ok(line.includes('…'), 'the subject was cut, the suffix was not');
+  const dim = await menu(w, keys('4', 'bob@beta.example', '', 'q'), { env: { FORCE_COLOR: '1', LANG: 'en_US.UTF-8' } });
+  assert.ok(dim.stdout.includes('\x1b[2m  · subject not signed\x1b[0m'), 'dim suffix');
+});
+
+test('rows: attachments are counted after the short reason; the reason is the describe() field', async () => {
+  const dir = makeTmpDir('mp-browse-reason-');
+  const PDF = Buffer.from('%PDF-1.4\nx\n');
+  const m = await signedMail({ domain: 'att2.example', from: 'ann@att2.example', to: 'me@owner.example', subject: 'two files', signTime: new Date('2026-11-01T09:00:00Z'), attachment: { filename: 'c.pdf', bytes: PDF } });
+  const mp = new Mailproof({ trailDir: dir, resolver: m.resolver, worker: { size: 0 }, now: () => new Date('2026-11-01T10:00:00Z') });
+  const rec = (await mp.record(m.raw, { direction: 'in', source: 'test' })).record;
+  const f = (await mp.describe(rec.id)).records[0];
+  assert.equal(typeof f.reason, 'string');
+  const w = makeWorld({ accounts: { test: account(dir) } });
+  const r = await menu(w, keys('4', '', '', 'q'));
+  assert.ok(r.stdout.includes(`    ${f.reason} · 1 attachment\n`) || r.stdout.includes(`    ${f.reason} - 1 attachment\n`), r.stdout);
+});
+
+test('breadcrumb: a blank line and a dim path rule before every menu and browser output block; never a screen clear', async () => {
+  const w = world();
+  const r = await menu(w, keys('4', 'bob@beta.example', '3', 'v', 't', '', 'p', '', '', '', 'q'));
+  const L = lines(r.stdout);
+  const crumbs = L.filter((l) => /^(── |-- )mailproof/.test(l));
+  assert.ok(!r.stdout.includes('\x1b[2J') && !r.stdout.includes('\x1b[H') && !r.stdout.includes('\x1bc'), 'no clear');
+  const has = (re) => assert.ok(crumbs.some((c) => re.test(c)), `${re}\n${crumbs.join('\n')}`);
+  has(/^(── |-- )mailproof (› |> )4 list (› |> )bob@beta\.example /);
+  has(/4 list (› |> )bob@beta\.example (› |> )#3 /);
+  has(/#3 (› |> )v verify /);
+  has(/#3 (› |> )t thread /);
+  has(/#3 (› |> )p this person /);
+  for (const c of crumbs) { assert.ok([...c].length <= 64, c); const i = L.indexOf(c); assert.equal(L[i - 1], '', `a blank line before: ${c}`); }
+});
+
+test('breadcrumb: main-menu actions and the search, filter and more steps', async () => {
+  const w = world();
+  const a = await menu(w, keys('5', 'bob@beta.example', '', 'q'), { env: { LANG: 'en_US.UTF-8' } });
+  assert.match(a.stdout, /^── mailproof › 5 show › bob@beta\.example ─+$/m);
+  const b = await menu(w, keys('4', '', 's', 'weekly', '', 'q'), { env: { LANG: 'en_US.UTF-8' } });
+  assert.match(b.stdout, /^── mailproof › 4 list › everyone › s "weekly" ─+$/m);
+  const m = await menu(w, keys('4', '', 'm', '', 'q'), { env: { LANG: 'en_US.UTF-8' } });
+  assert.match(m.stdout, /^── mailproof › 4 list › everyone › m more ─+$/m);
+  const f = await menu(w, keys('4', '', 'f', '', 'in', '', '', '', 'q'), { env: { LANG: 'en_US.UTF-8' } });
+  assert.match(f.stdout, /^── mailproof › 4 list › everyone › f filter ─+$/m);
+  const s = await menu(w, keys('16', '', 'q'), { env: { LANG: 'en_US.UTF-8' } });
+  assert.match(s.stdout, /^── mailproof › 16 status ─+$/m);
+  const nt = await menu(w, keys('4', 'zed@zed.example', '1', 't', '', '', 'q'), { env: { LANG: 'en_US.UTF-8' } });
+  assert.match(nt.stdout, /^── mailproof › 4 list › zed@zed\.example › #1 › t thread ─+$/m);
+});
+
+test('breadcrumb: a thread row opened from a thread names the step; the ASCII locale uses - and >; subcommands print none', async () => {
+  const w = world();
+  const r = await menu(w, keys('4', 'bob@beta.example', '3', 't', '1', '', '', '', '', 'q'), { env: { LANG: 'en_US.UTF-8' } });
+  assert.match(r.stdout, /^── mailproof › 4 list › bob@beta\.example › #3 › t thread › #1 ─+$/m);
+  const a = await menu(w, keys('5', 'bob@beta.example', '', 'q'), { env: { LANG: 'C', LC_ALL: 'C' } });
+  assert.match(a.stdout, /^-- mailproof > 5 show > bob@beta\.example -+$/m);
+  const sub = await w.run(['show', id('signed')], { deps });
+  assert.ok(!sub.stdout.includes('mailproof ›') && !sub.stdout.includes('mailproof >'), 'subcommand output unchanged');
+});
+
+test('breadcrumb: an address from an email is escaped and the line fits a 40 column terminal', async () => {
+  const w = world();
+  const r = await menu(w, keys('4', 'bob@beta.example', '', 'q'), { tty: true, columns: 40, rows: 40, env: { LANG: 'en_US.UTF-8' } });
+  const c = stripStyle(r.stdout).split('\n').filter((l) => l.startsWith('── mailproof'));
+  assert.ok(c.length >= 1);
+  for (const l of c) assert.ok([...l].length <= 40, l);
 });
