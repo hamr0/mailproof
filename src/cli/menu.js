@@ -5,7 +5,9 @@
 import { UsageError, EX_USAGE } from './errors.js';
 import { createPrompter, askValue, confirm, Cancel, isTerminal } from './prompt.js';
 import { parseDate, parseAddress, parseDuration, parseSent, parseFolders, parseChoice, MIN_INTERVAL_MS, FULL_ID_RE } from './parse.js';
-import { loadCtxConfig, print, warn } from './session.js';
+import { loadCtxConfig, openAccount, print, warn } from './session.js';
+import { browseList } from './browse.js';
+import { printable } from './printable.js';
 import { defaultBundlePath, PUSH_WARNING, redactUrl } from './backup.js';
 import { version } from './misc.js';
 import { defaultBundleOut } from './bundle.js';
@@ -163,13 +165,14 @@ export async function runMenu(ctx, exec, opts = {}) {
         await go(['watch', '--interval', interval]);
       },
       list: async () => {
-        const who = await ask({ label: 'With', example: 'email address, e.g. {bob@example.org}, empty = everyone', optional: true, validate: (s) => parseAddress(s, 'With') });
-        const role = who ? await ask({ label: 'Role', example: 'from, to, cc, reply-to, empty = any', optional: true, validate: (s) => parseChoice(s, 'Role', 'from', 'to', 'cc', 'reply-to') }) : '';
-        const direction = await ask({ label: 'Direction', example: 'in, out, empty = both', optional: true, validate: (s) => parseChoice(s, 'Direction', 'in', 'out') });
-        const before = await askDate('Before', '--before', 'date, e.g. {2026-08-19}, empty = no limit');
-        const after = await askDate('After', '--after', 'date, e.g. {2026-01-01}, empty = no limit');
-        const limit = await ask({ label: 'Limit', example: 'a number, 0 = all', def: '50', validate: (s) => { if (!/^\d+$/.test(s)) throw new UsageError('a whole number'); return s; } });
-        await go(['list', ...(who ? ['--with', who] : []), ...(role ? ['--role', role] : []), ...(direction ? ['--direction', direction] : []), ...(before ? ['--before', before] : []), ...(after ? ['--after', after] : []), '--limit', limit]);
+        const who = await ask({ label: 'Who', example: 'address, empty = everyone', optional: true, validate: (s) => parseAddress(s, 'Who') });
+        const session = await openAccount({ cmd: 'list', values: { config: opts.configFlag, account }, positionals: [] }, base);
+        try {
+          await browseList({ st, p, ask, askDate, out, go, mp: session.mp, tilde, now, home: ctx.env.HOME, showHeld: async () => (pager ? pager.show() : true) }, who.toLowerCase());
+        } catch (e) {
+          if (e instanceof Cancel || e instanceof UsageError) throw e;
+          err(`mailproof: ${printable(/** @type {Error} */ (e).message, { keepNewline: true })}`);
+        } finally { await session.close(); }
       },
       show: async () => { await go(['show', await askTarget()]); },
       verify: async () => {
@@ -298,7 +301,7 @@ export async function runMenu(ctx, exec, opts = {}) {
         throw e;
       }
       pager?.setLive(false);
-      if (!(await afterAction())) return 0;
+      if (cmd === 'list' ? !(await (pager?.show() ?? true)) : !(await afterAction())) return 0;   // the list is a screen of its own: no "Press Enter" after it
       mode = nextMode(CHANGES_STATE.has(cmd));
     }
   } catch (e) {
