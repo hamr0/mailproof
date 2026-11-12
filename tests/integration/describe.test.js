@@ -138,7 +138,7 @@ test('counterparties is the one row the CLI people and the MCP tool both read: v
   const w = makeWorld({ accounts: { test: account(T.dir) } });
   const j = JSON.parse((await w.run(['people', '--json'])).stdout);
   assert.equal(j.find((p) => p.address === BOB).verified, bob.verified);
-  assert.equal(j.find((p) => p.address === BOB).emails, bob.records);
+  assert.equal(j.find((p) => p.address === BOB).records, bob.records);
 });
 
 test('MCP: describe and verifyWith return the library objects, read-only', async () => {

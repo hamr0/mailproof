@@ -195,7 +195,7 @@ export async function forgetCmd(a, ctx) {
       ...(await previewRows(mp, sum.ids, ctx)),
     ].join('\n');
     if (v['dry-run']) {
-      if (v.json) printJson(ctx, { dryRun: true, records: sum.ids, stored: sum.stored }); else print(ctx, await preview());
+      if (v.json) printJson(ctx, plan); else print(ctx, await preview());
       return EX_OK;
     }
     if (!v.yes) { warn(ctx, `${await preview()}\nadd --yes to proceed`); return EX_USAGE; }

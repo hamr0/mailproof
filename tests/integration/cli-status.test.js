@@ -30,7 +30,7 @@ test('status: an absent index is built by status itself; the counts are the inde
   assert.match(s.records.oldest, /^2026-/);
   assert.equal(fs.existsSync(idx), true, 'status brought the index up to date');
   assert.equal(git(T.dir + '/default', 'rev-parse', 'HEAD'), head, 'the trail itself is untouched');
-  assert.equal(Object.hasOwn(s.records, 'verified'), false, '--json keeps its shape');
+  assert.equal(typeof s.records.verified, 'number', '--json is the MCP object: it carries the verified counts');
   fs.rmSync(idx);
   fs.rmSync(idx + '-wal', { force: true });
   fs.rmSync(idx + '-shm', { force: true });
@@ -57,7 +57,7 @@ test('status: a current index answers the counts and dates, equal to list()', as
   const times = rows.map((r) => r.captured).sort();
   const s = await statusOf(T.dir);
   assert.equal(s.index, 'present');
-  assert.deepEqual(s.records, { total: rows.length, totalSource: 'index', in: rows.filter((r) => r.direction === 'in').length, out: rows.filter((r) => r.direction === 'out').length, oldest: times[0], newest: times[times.length - 1] });
+  assert.deepEqual({ ...s.records, verified: null, unverified: null }, { total: rows.length, totalSource: 'index', verified: null, unverified: null, in: rows.filter((r) => r.direction === 'in').length, out: rows.filter((r) => r.direction === 'out').length, oldest: times[0], newest: times[times.length - 1] });
   assert.deepEqual([s.records.in, s.records.out], [5, 1]);
 });
 

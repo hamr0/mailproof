@@ -198,4 +198,14 @@ THE EMAILS`;
   return `${lines.join('\n')}\n`;
 }
 
-export { factsOf, emailBlock, readmeText, wrap };
+/**
+ * One row of a preview selection (export's dry run, forget's dry run): id, captured, direction, the From addresses and the subject as
+ * text (`headerText`, the one decoder). Untrusted text: it comes from the email.
+ * @param {Record<string, any>} f  The facts of a record (`factsOf`).
+ * @returns {{ id: string, captured: string, direction: string, from: string | null, subject: string | null }}
+ */
+function selectionRow(f) {
+  return { id: f.id, captured: String(f.captured), direction: String(f.direction), from: f.from.length ? f.from.map((/** @type {{ address: string }} */ x) => x.address).join(', ') : null, subject: f.subject ?? null };
+}
+
+export { factsOf, emailBlock, readmeText, wrap, selectionRow };

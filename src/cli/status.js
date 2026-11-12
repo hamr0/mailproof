@@ -12,6 +12,7 @@ import { indexProgressLine } from './progress.js';
 import { readState, stateDir } from './state.js';
 import { tilde } from './paths.js';
 import { updateFacts } from './install.js';
+import { version } from './version.js';
 import { clock } from './menu-header.js';
 import { count, humanSize } from './words.js';
 import { pidAlive, headOf, trailIndexFile } from '../proof/trail.js';
@@ -38,6 +39,18 @@ export async function accountStatus(account, mp, state, opts = {}) {
 }
 
 /**
+ * The ONE per-account object `status --json` (CLI) and the MCP `status` tool return: `accountStatus` plus the config check, the version and the install facts.
+ * The two differ only in the refresh mode.
+ * @param {import('./config.js').Account} account
+ * @param {import('../index.js').Mailproof} mp
+ * @param {{ state: string, env: Record<string, string | undefined>, configFile: string, version: string, deps: { installInfo?: () => { dev: boolean, dir: string } }, refresh: boolean | 'bounded', onProgress?: (p: import('../proof/index-db.js').IndexProgress) => void }} o
+ */
+export async function statusFacts(account, mp, o) {
+  const s = await accountStatus(account, mp, o.state, { refresh: o.refresh, ...(o.onProgress ? { onProgress: o.onProgress } : {}) });
+  return { ...s, config: o.configFile ? await configFacts(o.configFile, o.env) : null, version: o.version, ...updateFacts(o.deps, o.env) };
+}
+
+/**
  * Does the config file pass `config validate`? (Permissions and every field; no secret is read.) For the MCP `status` tool.
  * @param {string} file
  * @param {Record<string, string | undefined>} env
@@ -52,12 +65,13 @@ export async function configFacts(file, env) {
  * The facts `status` prints: the library's (with the trail index caught up first, SPEC B11.5) and the state file's.
  * @param {import('./config.js').Account} account
  * @param {import('./session.js').Ctx} ctx
- * @returns {Promise<Awaited<ReturnType<typeof accountStatus>>>}
+ * @param {string} configFile
+ * @returns {Promise<Awaited<ReturnType<typeof statusFacts>>>}
  */
-async function statusOf(account, ctx) {
+async function statusOf(account, ctx, configFile) {
   const mp = ctx.deps.makeMailproof ? ctx.deps.makeMailproof(account) : new Mailproof(mailproofOptions(account));
   const progress = indexProgressLine(ctx);   // a rebuild can take ten seconds on a big trail: say so on a terminal
-  try { return await accountStatus(account, mp, stateDir(ctx.env), { refresh: true, ...(progress ? { onProgress: progress.update } : {}) }); } finally { progress?.clear(); await mp.close(); }
+  try { return await statusFacts(account, mp, { state: stateDir(ctx.env), env: ctx.env, configFile, version: version(), deps: ctx.deps, refresh: true, ...(progress ? { onProgress: progress.update } : {}) }); } finally { progress?.clear(); await mp.close(); }
 }
 
 /**
@@ -115,14 +129,13 @@ function statusText(name, s, st, now, env) {
 
 /** @param {import('./session.js').Args} a @param {import('./session.js').Ctx} ctx @returns {Promise<number>} */
 export async function statusCmd(a, ctx) {
-  const { config } = await loadCtxConfig(a, ctx);
+  const { config, file } = await loadCtxConfig(a, ctx);
   const names = a.values.account === undefined ? Object.keys(config.accounts) : [selectAccount(config, a.values.account).name];
-  /** @type {Record<string, Awaited<ReturnType<typeof accountStatus>>>} */
+  /** @type {Record<string, Awaited<ReturnType<typeof statusFacts>>>} */
   const all = {};
-  for (const n of names) all[n] = await statusOf(config.accounts[n], ctx);
+  for (const n of names) all[n] = await statusOf(config.accounts[n], ctx, file);
   if (a.values.json) {
-    // the shape `status --json` has always had: the verified/unverified counts are in the text and the MCP tool, not here
-    printJson(ctx, Object.fromEntries(Object.entries(all).map(([n, s]) => [n, { ...s, ...updateFacts(ctx.deps, ctx.env), records: s.records && !('error' in s.records) ? (({ verified: _v, unverified: _u, ...rest }) => rest)(s.records) : s.records }])));
+    printJson(ctx, all);   // each account's object is the one the MCP `status` tool returns (statusFacts)
     return EX_OK;
   }
   const st = styleOf(ctx);

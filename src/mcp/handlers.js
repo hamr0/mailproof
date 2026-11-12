@@ -8,8 +8,7 @@ import { verifyRecord, verifyBundle } from '../index.js';
 import { parseDate, parseAddress, resolveId, messageIdOf } from '../cli/parse.js';
 import { syncOnce, indexAfterSync } from '../cli/sync-op.js';
 import { readBytes, readAllowedFile, resolveAllowedBundle, saveBytes, outputPath } from './input.js';
-import { accountStatus, configFacts } from '../cli/status.js';
-import { updateFacts } from '../cli/install.js';
+import { statusFacts } from '../cli/status.js';
 import { resolveProfile, listProfiles, profilesDir } from '../cli/profiles.js';
 import { tilde, tildeText, ensureUserDir } from '../cli/paths.js';
 import { bundleName } from '../cli/bundle.js';
@@ -208,8 +207,7 @@ export const HANDLERS = {
   upgradeStamps: async (c) => json(await c.mp().upgradeStamps()),
   status: async (c) => {
     const account = /** @type {import('../cli/config.js').Account} */ (c.account);
-    const s = await accountStatus(account, c.mp(), c.state, { refresh: 'bounded' });
-    return json({ ...s, config: c.configFile ? await configFacts(c.configFile, c.env) : null, version: c.version, ...updateFacts(c.deps, c.env) });
+    return json(await statusFacts(account, c.mp(), { state: c.state, env: c.env, configFile: c.configFile, version: c.version, deps: c.deps, refresh: 'bounded' }));
   },
   stamp: async (c) => {
     const r = await c.mp().stamp();

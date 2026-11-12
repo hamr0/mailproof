@@ -12,6 +12,7 @@ import { engine } from './verdict.js';
 import { createOts, DEFAULT_OTS_TIMEOUT_MS } from './ots.js';
 import { runStamp, parseStampOptions } from './stamp.js';
 import { findSeal } from './seal.js';
+import { factsOf, selectionRow } from './bundle-readme.js';
 import { STAMP_OTS_TIMEOUT_MS, STATUS_REFRESH_LOCK_MS, INDEX_BOUNDED_RECORDS } from './limits.js';
 import { verifyRecord, matchBodyRecord, matchFileRecord } from './recheck.js';
 import { checkProfile } from './profile.js';
@@ -20,7 +21,7 @@ import { parseContentOptions, contentDirOf, storeContent, readRaw, readRawHead, 
 import { recordPath, recordOtsPath, assertTrailLayout } from './layout.js';
 import { STRIPPER, replyTextPath, extractReplyText, replyTextRecord } from './reply-text.js';
 import { replyBundle } from './reply-facts.js';
-import { REPLY_FACTS_MAX, LIST_CLAIMED_MAX, CLAIMED_HEAD_BYTES, INDEX_MAX_SUBJECT } from './limits.js';
+import { FORGET_SELECTION_MAX, REPLY_FACTS_MAX, LIST_CLAIMED_MAX, CLAIMED_HEAD_BYTES, INDEX_MAX_SUBJECT } from './limits.js';
 import { claimedSubject } from './header-text.js';
 import { hashDocument } from './hash.js';
 import { runPrune } from './prune.js';
@@ -40,7 +41,7 @@ const OTS_MIN_TIMEOUT_MS = 5000; // floor for the `ots` timeout, however short l
 /** @typedef {{ id: string, text: string, text_sha256: string, text_bytes: number, quote: 'found' | 'not-found' | 'inline', trailing: boolean, source: 'text/plain' | 'html-only', boundary: string | null, stripper: string, body_status: import('./types.js').BodyStatus, proven: boolean, commit: string, duplicate: boolean }} ReplyText */
 
 /** @typedef {import('./content.js').ContentResult} ContentResult */
-/** @typedef {{ removed: number, attachments: number, dryRun?: true, ids?: string[] }} Forgotten  A dry run adds `dryRun: true` and the `ids` it names; `removed` and `attachments` are then what would go. */
+/** @typedef {{ removed: number, attachments: number, dryRun?: true, ids?: string[], selection?: Array<{ id: string, captured: string, direction: string, from: string | null, subject: string | null }>, selectionMore?: number }} Forgotten  A dry run adds `dryRun: true`, the `ids` it names, a `selection` of rows for the first 200 of them (untrusted text) and `selectionMore`, how many ids it does not list; `removed` and `attachments` are then what would go. */
 
 /**
  * @typedef {Object} MailproofOptions
@@ -535,7 +536,7 @@ class Mailproof {
    * @name Mailproof#forget
    * @when Use to erase what you hold of other people's mail earlier than retention would: one email, a list, or everything with one correspondent. Only the raw email and attachment files not needed by any remaining stored email are deleted. The proof stays: headers, verdicts, hashes and archived keys still re-verify offline, and anyone who later produces the raw email (sha256 = the record id) or an attachment gets it re-checked.
    * @category content
-   * @signature mp.forget(target: string|string[]|{ with: string, before?, after? }, opts?: { dryRun?: boolean }) => Promise<{ removed: number, attachments: number, dryRun?: true, ids?: string[] }>
+   * @signature mp.forget(target: string|string[]|{ with: string, before?, after? }, opts?: { dryRun?: boolean }) => Promise<{ removed: number, attachments: number, dryRun?: true, ids?: string[], selection?: { id, captured, direction, from, subject }[], selectionMore?: number }>
    * @fails Throws a TypeError for a malformed id, an empty or non-string `with`, a bad `before`/`after`, or a bad `opts`/`dryRun`; `ERR_TRAIL_LOCKED` and `ERR_TRAIL_LAYOUT` as `expireContent()`. An id with nothing stored is not an error (`removed` counts only what was deleted), so it is idempotent. The counterparty is found from the From/To/Cc/Reply-To lines of the signed headers in the record, of the unsigned record's `from`, and of the stored raw email's header block; the match is exact, `bob@gmail.com` is not `bob@company.com`.
    * @example
    * await mp.forget(id);
@@ -557,10 +558,17 @@ class Mailproof {
       query = target;
     } else throw new TypeError('forget: target must be an id, an array of ids, or { with }');
     if (ids) for (const id of ids) if (typeof id !== 'string' || !RECORD_ID_RE.test(id)) throw new TypeError('forget: ids must be 32 hex characters');
-    if (!(await exists(this.contentDir))) return dryRun ? { removed: 0, attachments: 0, dryRun: true, ids: ids ? [...new Set(ids)] : [] } : { removed: 0, attachments: 0 };
+    if (!(await exists(this.contentDir))) return dryRun ? { removed: 0, attachments: 0, dryRun: true, ids: ids ? [...new Set(ids)] : [], selection: [], selectionMore: 0 } : { removed: 0, attachments: 0 };
     await assertTrailLayout(this.root);
     const list = ids ?? await idsWith(this.root, this.contentDir, /** @type {NonNullable<typeof query>} */ (query));   // the scan holds no lock
-    return forgetIds(this.root, this.contentDir, list, (w) => this._lock(w), this._scanHooks, dryRun, () => this.now().getTime());
+    const r = await forgetIds(this.root, this.contentDir, list, (w) => this._lock(w), this._scanHooks, dryRun, () => this.now().getTime());
+    if (!dryRun) return r;
+    // the preview rows: the same row export's dry run gives, for the first FORGET_SELECTION_MAX ids (the count is always complete)
+    const shown = (r.ids ?? []).slice(0, FORGET_SELECTION_MAX);
+    /** @type {NonNullable<Forgotten['selection']>} */
+    const selection = [];
+    for (const id of shown) { const rec = await readRecord(this.root, id).catch(() => null); if (rec) selection.push(selectionRow(factsOf(rec))); }
+    return { ...r, selection, selectionMore: (r.ids?.length ?? 0) - shown.length };
   }
 
   /** @mcp Mailproof#prune Remove everything captured before the date `before` (records, reply-text commits, stamps, stored content): the trail is rewritten, the old one is kept beside it as a backup. Rare and never scheduled. The result lists what is removed and kept and `stragglers`; `noop: true` means nothing was captured before `before`. It can take minutes on a big trail. Fails with `ERR_PRUNE_RUNNING` (another prune, retry later), `ERR_PRUNE_CUTOFF` (everything is older than `before`), `ERR_PRUNE_REWRITTEN` (run it again), `ERR_SYNC_LOCKED` or `ERR_TRAIL_LOCKED` (nothing changed, retry), `ERR_PRUNE_VERIFY`, `ERR_PRUNE_JOURNAL` or `ERR_TRAIL_LAYOUT` (stop and tell the user). */

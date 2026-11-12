@@ -87,7 +87,7 @@ export async function verifyMany(a, ctx, mp, t, at) {
   if (!total) { warn(ctx, `mailproof: ${nothing(t)}`); return EX_ERR; }
   const code = ok ? EX_OK : EX_NO;
   if (a.values.json) {
-    printJson(ctx, { target: t, ok, total, checked: res.checked, inbound, outbound, all, results: rows.map(({ subject: _s, why: _w, ...r }) => r) });
+    printJson(ctx, res);   // the library's verifyWith result, as the MCP tool returns it
     return code;
   }
   const st = styleOf(ctx);
@@ -127,9 +127,9 @@ export async function peopleRun(a, ctx, s) {
   const limit = a.values.limit === undefined ? 50 : parseLimit(a.values.limit, '--limit');
   const me = String(s.account.user ?? '').trim().toLowerCase();
   const rows = await s.mp.counterparties(limit > 0 ? { limit } : {});
+  if (a.values.json) { printJson(ctx, rows); return EX_OK; }   // the library's counterparties rows, as the MCP tool returns them
   const people = [];
   for (const r of rows) people.push({ address: r.address, emails: r.records, verified: r.verified, first: r.first, last: r.last, you: r.address === me });
-  if (a.values.json) { printJson(ctx, people); return EX_OK; }
   if (!people.length) { print(ctx, 'no emails recorded'); return EX_OK; }
   const st = styleOf(ctx);
   // a mark per address: verified (at least one received email verifies), not verified (received emails, none verifies) or sent only (the

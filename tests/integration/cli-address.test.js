@@ -212,7 +212,7 @@ test('people: one line per address with emails, received verified, first and las
   assert.match(r.stdout, /^carol@gamma\.example .* (ok|x|sent only)$/m);
   const j = JSON.parse((await w.run(['people', '--json', '--limit', '3'])).stdout);
   assert.equal(j.length, 3);
-  assert.deepEqual(Object.keys(j[0]), ['address', 'emails', 'verified', 'first', 'last', 'you']);
+  assert.deepEqual(Object.keys(j[0]).sort(), ['address', 'first', 'last', 'records', 'verified'], 'the library counterparties rows');
   assert.equal((await w.run(['people', '--limit', 'x'])).code, 64);
 });
 

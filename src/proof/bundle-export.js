@@ -21,7 +21,7 @@ import { decideSeal, sha256Hex, chainError } from './seal-core.js';
 import { readAnchored } from './ots-upgrade.js';
 import { storedStatus, toMs } from './content.js';
 import { participantsOf } from './participants.js';
-import { factsOf, emailBlock, readmeText } from './bundle-readme.js';
+import { factsOf, emailBlock, readmeText, selectionRow } from './bundle-readme.js';
 import { verifyBundle } from './bundle-verify.js';
 import * as LIM from './limits.js';
 
@@ -379,7 +379,7 @@ async function runExport(ctx, rawOpts) {
     if (o.dryRun) {
       return {
         ...summary(totalBytes), dryRun: true,
-        selection: sel.map((s) => ({ id: s.id, captured: String(s.captured), direction: String(s.direction), from: s.facts.from.length ? s.facts.from.map((/** @type {{ address: string }} */ x) => x.address).join(', ') : null, subject: s.facts.subject ?? null })),
+        selection: sel.map((s) => selectionRow(s.facts)),
       };
     }
 

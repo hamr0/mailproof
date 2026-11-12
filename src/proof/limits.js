@@ -160,6 +160,9 @@ export const PRUNE_JOURNAL_LIVE_MS = 60 * 60 * 1000;
 /** The most direct replies `replyFacts` returns for one Message-ID; more rejects with `ERR_TOO_MANY_REPLIES` (never a silent cut). */
 export const REPLY_FACTS_MAX = 200;
 
+/** The most preview rows a dry run of `forget` lists (the count of ids is always complete; `selectionMore` says how many rows are left out). */
+export const FORGET_SELECTION_MAX = 200;
+
 // ---- STAMP JOB (SPEC B13.1.13): the batch OpenTimestamps seal. ----
 
 /** Default cadence of the automatic stamp job, in hours, and the range `stamp.everyHours` accepts. */
