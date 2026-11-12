@@ -66,6 +66,8 @@ export async function runMenu(ctx, exec, opts = {}) {
   const step = (cmd) => { const i = MENU_ITEMS.find((x) => x.cmd === cmd); return i ? `${i.key} ${i.label}` : cmd; };
   /** Every menu prompt backs out on an empty answer or q (prompt.js `back`). @param {import('./prompt.js').ValueSpec} spec */
   const ask = (spec) => askValue(p, outStream, { back: true, ...spec }, st);
+  /** The main prompt: Ctrl-C at it quits like `q` (null = the input ended). @param {string} label @returns {Promise<string | null>} */
+  const askMain = async (label) => { try { return await p.ask(label); } catch (e) { if (e instanceof Cancel && e.reason === 'back') return null; throw e; } };
   /** A y/N question in the stream's style. @param {string} q @param {boolean} [d] */
   const askYes = (q, d) => confirm(p, q, d, st);
   const pre = opts.configFlag ? ['--config', opts.configFlag] : [];
@@ -99,7 +101,7 @@ export async function runMenu(ctx, exec, opts = {}) {
     for (;;) {
       out('');
       for (const l of firstRun(st, { version: version(), configFile: tilde(configPath(opts.configFlag, ctx.env)) })) out(l);
-      const choice = await p.ask('> ');
+      const choice = await askMain('> ');
       if (choice === null) return 0;
       const c = choice.trim().toLowerCase();
       if (c === 'q') return 0;
@@ -347,7 +349,7 @@ export async function runMenu(ctx, exec, opts = {}) {
         if (mode === 'full') for (const l of fullMenu(st, names.length > 1)) out(l); else out(shortLine(st, names.length > 1));
       }
       mode = 'full';
-      const choice = await p.ask('> ');
+      const choice = await askMain('> ');
       if (choice === null) return 0;
       const c = choice.trim().toLowerCase();
       if (c === 'q') return 0;

@@ -48,6 +48,7 @@ export async function watchCmd(a, ctx) {
     await updateState(s.state, name, { lastWatch: { at: stamp(now()), pid: process.pid, state: 'running' } });
     let failures = 0;
     let code = EX_OK;
+    let ticks = 0;
     while (!ctx.signal.aborted) {
       let wait = intervalMs;
       const at = stamp(now());
@@ -83,6 +84,7 @@ export async function watchCmd(a, ctx) {
       await appendWatchLog(s.state, name, p(line, { keepBackslash: true }));   // the log is a file people `tail`: nothing raw in it either
       if (json) printJson(ctx, { at, ...tick, nextInMs: stop ? null : wait });
       else {
+        if (ticks++ > 0) print(ctx, '');   // a blank line between ticks (C9)
         print(ctx, line);   // the log keeps this one line; the screen adds the per-folder counts, as `sync` prints them
         if (synced) for (const l of folderLines(synced, styleOf(ctx))) print(ctx, `  ${l}`);
       }

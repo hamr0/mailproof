@@ -172,8 +172,8 @@ test('watch: one line per tick, appended to watch.log, the interval between tick
   assert.deepEqual(r.sleeps, [30_000, 30_000, 30_000]);
   assert.equal(r.ticks, 3);
   const tick = (n, seen) => ['2026-11-10T12:00:00Z ok recorded ' + n, `  ok INBOX                    in    seen ${seen}  recorded ${n}  duplicate 0`];
-  assert.deepEqual(r.stdout.trim().split('\n'), [...tick(3, 3), ...tick(0, 0), ...tick(3, 3)], 'each tick: its line, then the per-folder counts as sync prints them (SPEC B11.9)');
-  assert.equal(readLog(w, 'acme'), r.stdout.split('\n').filter((l) => !l.startsWith('  ')).join('\n'), 'the log keeps one line per tick');
+  assert.deepEqual(r.stdout.trim().split('\n'), [...tick(3, 3), '', ...tick(0, 0), '', ...tick(3, 3)], 'each tick: its line, then the per-folder counts as sync prints them (SPEC B11.9), a blank line between ticks (C9)');
+  assert.equal(readLog(w, 'acme'), r.stdout.split('\n').filter((l) => l && !l.startsWith('  ')).join('\n') + '\n', 'the log keeps one line per tick');
   const st = readState(w, 'acme');
   assert.equal(st.lastWatch.state, 'stopped');
   assert.equal(st.lastWatch.pid, process.pid);
@@ -194,7 +194,7 @@ test('watch: a held lock is "skipped (locked)" and the next tick comes at the no
   const w = mk();
   const r = await watch(w, [async () => { throw failing('ERR_SYNC_LOCKED'); }, async () => { throw failing('ERR_TRAIL_LOCKED'); }, async () => result()]);
   assert.deepEqual(r.sleeps, [30_000, 30_000, 30_000]);
-  assert.match(r.stdout, /skipped \(locked\)\n.*skipped \(locked\)\n.* ok recorded 3\n {2}ok INBOX.*\n$/);
+  assert.match(r.stdout, /skipped \(locked\)\n\n.*skipped \(locked\)\n\n.* ok recorded 3\n {2}ok INBOX.*\n$/);
   assert.equal(r.code, 0);
 });
 

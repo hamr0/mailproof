@@ -344,3 +344,36 @@ test('? shows what the menu showed at the start: the header lines, then the grou
   assert.equal(r.stdout.slice(half).split(FULL_MENU).length, 2, 'the same grouped menu follows the second header');
   assert.ok(!r.stdout.slice(half).includes(SHORT), 'no short line after ?: the full menu was the last thing shown');
 });
+
+test('C1: Ctrl-C at a question goes back to the menu (it does not quit); Ctrl-C at the main prompt quits', async () => {
+  const w = world();
+  const m = terminalMenu(w, {});
+  await m.until(/> \x1b\[3G$/);
+  m.stdin.write('watch\n');
+  await m.until(/Interval \(30s, 5m, 1h, q = back\) \[5m\]: /);
+  m.stdin.write('\x03');   // ^C at the question: back, not quit
+  await m.until(/> \x1b\[3G$/);
+  let settled = false; m.done.then(() => { settled = true; });
+  await new Promise((r) => setTimeout(r, 100));
+  assert.equal(settled, false, 'the menu is still running');
+  m.stdin.write('watch\n');   // and it still answers
+  await m.until(/Interval \(30s, 5m, 1h, q = back\) \[5m\]: [\s\S]*Interval \(30s, 5m, 1h, q = back\) \[5m\]: /);
+  m.stdin.write('\x03');
+  await m.until(/> \x1b\[3G$/);
+  m.stdin.write('\x03');   // ^C at the main prompt
+  assert.equal(await m.done, 0);
+});
+
+test('C7: lines typed ahead in a terminal are kept: a fast answer is not lost', async () => {
+  const w = world();
+  let syncs = 0;
+  const m = terminalMenu(w, { sync: async () => { syncs++; return { complete: true, folders: [] }; } });
+  await m.until(/> \x1b\[3G$/);
+  m.stdin.write('watch\n\n');   // the item and its Interval answer (the default), in one write
+  await m.until(/ ok recorded 0/);
+  assert.equal(syncs, 1);
+  m.stdin.write('\x03');
+  await m.until(/> \x1b\[3G$/);
+  m.stdin.write('q\n');
+  assert.equal(await m.done, 0);
+});

@@ -96,7 +96,7 @@ async function screen(e, o) {
   };
   await page(0);
   for (;;) {
-    const a = await e.p.ask('> ');
+    const a = await line(e.p);
     if (a === null) throw new Cancel('eof');
     const c = a.trim().toLowerCase();
     if (c === '') return;
@@ -131,6 +131,11 @@ async function screen(e, o) {
   }
 }
 
+/** One `> ` line of a browse level: Ctrl-C reads as an empty answer, one level back. @param {import('./prompt.js').Prompter} p @returns {Promise<string | null>} */
+async function line(p) {
+  try { return await p.ask('> '); } catch (x) { if (x instanceof Cancel && x.reason === 'back') return ''; throw x; }
+}
+
 /**
  * The menu's list: ask nothing here (the caller asked Who), show the latest five for that person, or for everyone.
  * @param {BrowseEnv} e
@@ -163,7 +168,7 @@ async function openEmail(e, id, path) {
   if (!facts) return;
   for (;;) {
     e.foot(action);
-    const a = await e.p.ask('> ');
+    const a = await line(e.p);
     if (a === null) throw new Cancel('eof');
     const c = a.trim().toLowerCase();
     if (c === '') return;

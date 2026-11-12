@@ -42,6 +42,9 @@ export function createPrompter(input, output, terminal) {
   const queue = [];
   /** @type {((l: string | null) => void) | null} */
   let waiter = null;
+  /** What Ctrl-C does to the question being asked: it goes back one level (C1). */
+  /** @type {(() => void) | null} */
+  let abandon = null;
   let closed = false;
   /** @type {(() => void) | null} */
   let interrupt = null;
@@ -50,16 +53,19 @@ export function createPrompter(input, output, terminal) {
   const rlAny = /** @type {any} */ (rl);
   const origWrite = typeof rlAny._writeToOutput === 'function' ? rlAny._writeToOutput : null;
   if (terminal && origWrite) rlAny._writeToOutput = (/** @type {string} */ str) => { if (!muted) origWrite.call(rl, str); };
-  rl.on('line', (l) => { if (waiter) { const w = waiter; waiter = null; w(l); } else queue.push(l); });
+  rl.on('line', (l) => { if (waiter) { const w = waiter; waiter = null; abandon = null; w(l); } else queue.push(l); });
   rl.on('close', () => { closed = true; if (waiter) { const w = waiter; waiter = null; w(null); } });
-  rl.on('SIGINT', () => { if (interrupt) interrupt(); else rl.close(); });
+  // Ctrl-C: during a running command it cuts the command; at a question it backs out one level (a Cancel('back')); with neither it ends the input
+  rl.on('SIGINT', () => { if (interrupt) interrupt(); else if (abandon) abandon(); else rl.close(); });
   return {
     ask(label) {
       if (terminal) {
         if (closed) return Promise.resolve(null);
         rl.setPrompt(label);
         rl.prompt();
-        return new Promise((resolve) => { waiter = resolve; });
+        // typed ahead (a fast or pasted answer, C7): the line is already here, take it instead of waiting for one more
+        if (queue.length) return Promise.resolve(/** @type {string} */ (queue.shift()));
+        return new Promise((resolve, reject) => { waiter = resolve; abandon = () => { waiter = null; abandon = null; output.write('\n'); reject(new Cancel('back')); }; });
       }
       // not a terminal: nothing echoes the typed line, so it is echoed here and a transcript reads like a session
       output.write(safe(label));

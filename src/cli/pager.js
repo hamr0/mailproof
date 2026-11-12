@@ -42,7 +42,9 @@ export function makePager(real, p, st) {
       real.write(`${lines.slice(start, i).join('\n')}\n`);
       if (i >= lines.length) break;
       real.write(`${footer}\n`);
-      const a = await p.ask('');
+      /** @type {string | null} */
+      let a;
+      try { a = await p.ask(''); } catch { a = 'q'; }   // Ctrl-C at `Enter more` is q
       if (a === null) return false;
       if (a.trim().toLowerCase() === 'q' || a.includes('\x1b')) break;
     }
