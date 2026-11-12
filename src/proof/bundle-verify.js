@@ -9,6 +9,7 @@
 
 import fs from 'node:fs/promises';
 import { constants as FS } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { parseBundlePath, parseKeyPath, recordPath, recordOtsPath, manifestOtsPath, replyPath, BUNDLE_JSON } from './layout.js';
 import { parseManifest, decideSeal, sha256Hex } from './seal-core.js';
@@ -17,6 +18,7 @@ import { participantsOf } from './participants.js';
 import { infoProof } from './ots.js';
 import { RULES_VERSION } from './verdict.js';
 import * as LIM from './limits.js';
+import { unpackTar } from './bundle-tar.js';
 
 /** @typedef {{ state: 'anchored' | 'pending' | 'unstamped' | 'unsealed' | 'unchecked' | 'bad', via: 'record' | 'manifest' | null, listed_in: number | null, stamped_by: number | null, block?: number, merkle_root?: string, why?: string }} BundleSeal */
 
@@ -149,11 +151,11 @@ function entriesOf(m, cache) {
 /** @returns {BundleSeal} */
 const sealOf = (/** @type {BundleSeal['state']} */ state, /** @type {Partial<BundleSeal>} */ more = {}) => ({ state, via: null, listed_in: null, stamped_by: null, ...more });
 
-/** @mcp verifyBundle Check a pair bundle someone made with `export`: pass `dir`, the bundle's folder, which must be inside one of the server's input folders. Offline: it re-checks every record's signature against its archived key, the file hashes, the manifest chain and each seal (locally, with `ots info`), and reports `ok`, the `failed` checks and one line per record. Pass `expect` (the 64-hex `bundle_sha256` the sender gave you another way) to pin the bundle; `strict` also fails unless every record is verified and every seal anchored. A bad bundle is `ok: false`, not an error. It does not prove completeness: the sender chose the emails. */
+/** @mcp verifyBundle Check a pair bundle someone made with `export`: pass `dir`, the bundle's folder or the `.tar` file `export` writes, which must be inside one of the server's input folders. Offline: it re-checks every record's signature against its archived key, the file hashes, the manifest chain and each seal (locally, with `ots info`), and reports `ok`, the `failed` checks and one line per record. Pass `expect` (the 64-hex `bundle_sha256` the sender gave you another way) to pin the bundle; `strict` also fails unless every record is verified and every seal anchored. A bad bundle is `ok: false`, not an error. It does not prove completeness: the sender chose the emails. */
 /**
  * Check a pair bundle (SPEC B13.3). Resolves to a result for every directory that can be examined, never rejecting for a bad
  * bundle; a bad argument is a `TypeError`.
- * @param {string} dir  The bundle directory (a real directory, not a symlink).
+ * @param {string} dir  The bundle directory (a real directory, not a symlink), or the `.tar` file `export` writes: it is unpacked by a bounded reader into a private temp folder that is removed afterwards (a link, device, `..` or absolute entry refuses the tar).
  * @param {{ ots?: string | null, expect?: string, strict?: boolean, _limits?: Partial<Limits> }} [opts]  `ots`: the OpenTimestamps binary (default `ots` from PATH; `null`: do not run it, the seals are reported `unchecked`). `expect`: the 64-hex `bundle_sha256` the owner told you by another channel. `strict`: also fail unless every record is `verified` and every seal `anchored`. (`_limits` is a test seam.)
  * @returns {Promise<BundleResult>}
  * @name verifyBundle
@@ -176,7 +178,34 @@ async function verifyBundle(dir, opts = {}) {
   const root = path.resolve(dir);
   const st = await fs.lstat(root).catch(() => null);
   if (!st) throw new TypeError(`verifyBundle: ${dir} does not exist`);
-  if (!st.isDirectory() && !st.isSymbolicLink()) throw new TypeError(`verifyBundle: ${dir} is not a directory`);
+  if (st.isFile() && root.endsWith('.tar')) return verifyTar(root, opts, L);
+  if (!st.isDirectory() && !st.isSymbolicLink()) throw new TypeError(`verifyBundle: ${dir} is not a directory or a .tar file`);
+  return verifyDir(root, st, opts, L, []);
+}
+
+/**
+ * A `.tar` bundle (SPEC B13.3.6): unpacked by our own bounded reader into a private temp directory, checked like a folder, and removed
+ * again. A tar that is refused reads as a bundle with a `files` failure that says why.
+ * @param {string} file @param {Parameters<typeof verifyBundle>[1] & {}} opts @param {Limits} L @returns {Promise<BundleResult>}
+ */
+async function verifyTar(file, opts, L) {
+  const u = await unpackTar(file, { maxFiles: L.BUNDLE_MAX_FILES, maxBytes: L.BUNDLE_MAX_BYTES });
+  const empty = 'problems' in u ? await fs.mkdtemp(path.join(os.tmpdir(), 'mailproof-vb-')) : null;
+  try {
+    const dir = 'problems' in u ? /** @type {string} */ (empty) : u.dir;
+    return await verifyDir(dir, await fs.lstat(dir), opts, L, 'problems' in u ? u.problems : []);
+  } finally {
+    await u.cleanup();
+    if (empty) await fs.rm(empty, { recursive: true, force: true });
+  }
+}
+
+/**
+ * @param {string} root @param {import('node:fs').Stats} st @param {Parameters<typeof verifyBundle>[1] & {}} opts @param {Limits} L
+ * @param {string[]} pre  Problems found before the walk (a refused tar).
+ * @returns {Promise<BundleResult>}
+ */
+async function verifyDir(root, st, opts, L, pre) {
 
   /** @type {Set<string>} */
   const failedSet = new Set();
@@ -199,6 +228,7 @@ async function verifyBundle(dir, opts = {}) {
     counts: { records: 0, verified: 0, unverified: 0, anchored: 0, pending: 0, unstamped: 0, unsealed: 0, unchecked: 0, bad: 0 },
     problems,
   };
+  for (const why of pre) { result.files.problems.push({ path: '.', why }); fail('files', null, why); }
   const finish = () => {
     result.failed = [...CHECKS.filter((c) => failedSet.has(c)), ...['strict:verified', 'strict:anchored'].filter((c) => failedSet.has(c))];
     result.ok = result.failed.length === 0;

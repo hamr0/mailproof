@@ -50,15 +50,15 @@ async function resolveAllowed(p, o, what) {
 }
 
 /**
- * A folder named by an absolute `path` inside one of the allowed folders (never the allowed folder itself).
+ * A bundle named by an absolute `path` inside one of the allowed folders: a folder, or the `.tar` file `export` writes (a regular file).
  * @param {string} p
  * @param {InputOptions} o
  * @returns {Promise<string>}  Its real path.
  */
-export async function resolveAllowedDir(p, o) {
-  const real = await resolveAllowed(p, o, 'a folder');
+export async function resolveAllowedBundle(p, o) {
+  const real = await resolveAllowed(p, o, 'a bundle folder or .tar file');
   const st = await fs.lstat(real).catch(() => null);
-  if (!st || !st.isDirectory()) throw new ToolError('ERR_PATH_NOT_ALLOWED', 'the path is not a folder inside the folders listed in mcp.inputDirs');
+  if (!st || !(st.isDirectory() || (st.isFile() && real.endsWith('.tar')))) throw new ToolError('ERR_PATH_NOT_ALLOWED', 'the path is not a bundle folder or .tar file inside the folders listed in mcp.inputDirs');
   return real;
 }
 

@@ -781,7 +781,7 @@ export const GENERATED_TOOLS = Object.freeze(/** @type {GeneratedTool[]} */ (/**
       "idempotentHint": true,
       "openWorldHint": false
     },
-    "description": "Check a pair bundle someone made with `export`: pass `dir`, the bundle's folder, which must be inside one of the server's input folders. Offline: it re-checks every record's signature against its archived key, the file hashes, the manifest chain and each seal (locally, with `ots info`), and reports `ok`, the `failed` checks and one line per record. Pass `expect` (the 64-hex `bundle_sha256` the sender gave you another way) to pin the bundle; `strict` also fails unless every record is verified and every seal anchored. A bad bundle is `ok: false`, not an error. It does not prove completeness: the sender chose the emails.",
+    "description": "Check a pair bundle someone made with `export`: pass `dir`, the bundle's folder or the `.tar` file `export` writes, which must be inside one of the server's input folders. Offline: it re-checks every record's signature against its archived key, the file hashes, the manifest chain and each seal (locally, with `ots info`), and reports `ok`, the `failed` checks and one line per record. Pass `expect` (the 64-hex `bundle_sha256` the sender gave you another way) to pin the bundle; `strict` also fails unless every record is verified and every seal anchored. A bad bundle is `ok: false`, not an error. It does not prove completeness: the sender chose the emails.",
     "noAccount": true,
     "required": [
       "dir"
@@ -789,7 +789,7 @@ export const GENERATED_TOOLS = Object.freeze(/** @type {GeneratedTool[]} */ (/**
     "properties": {
       "dir": {
         "type": "string",
-        "description": "absolute path of the bundle folder, inside one of the server's input folders (mcp.inputDirs)"
+        "description": "absolute path of the bundle folder, or of the .tar file `export` writes, inside one of the server's input folders (mcp.inputDirs)"
       },
       "expect": {
         "type": "string",

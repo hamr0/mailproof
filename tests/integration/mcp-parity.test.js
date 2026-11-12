@@ -168,6 +168,18 @@ test('MCP verifyBundle: a bundle inside an input folder is checked; outside, rel
   await finish(s);
 });
 
+test('MCP verifyBundle: the .tar export writes is checked directly; any other file is refused', async () => {
+  const s = await setup();
+  const tar = path.join(s.inDir, 'b.tar');
+  const made = await s.w.mp.export({ with: [BOB], out: tar, tar: true });
+  const r = await s.m.call('verifyBundle', { dir: tar, expect: made.bundle_sha256 });
+  assert.equal(r.isError, false, r.text);
+  assert.equal(r.json.ok, true);
+  fs.writeFileSync(path.join(s.inDir, 'n.txt'), 'x');
+  assert.equal((await s.m.call('verifyBundle', { dir: path.join(s.inDir, 'n.txt') })).error.code, 'ERR_PATH_NOT_ALLOWED');
+  await finish(s);
+});
+
 test('MCP verifyBundle: with no input folders configured, paths are refused', async () => {
   const s = await setup({ mcp: { outputDir: makeTmpDir('mp-par-out-') } });
   assert.equal((await s.m.call('verifyBundle', { dir: '/tmp' })).error.code, 'ERR_PATH_NOT_ALLOWED');

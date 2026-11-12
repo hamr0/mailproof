@@ -87,7 +87,7 @@ export async function runMenu(ctx, exec, opts = {}) {
   /** Verify a bundle: the `verify-bundle` subcommand, which needs no account. */
   /** @param {string[]} [lead] */
   const verifyBundleCmd = async (lead = [step('verify-bundle')]) => {
-    const dir = await ask({ label: 'Bundle directory', example: 'the directory mailproof export wrote' });
+    const dir = await ask({ label: 'Bundle', example: '.tar or folder, as mailproof export wrote it' });
     crumb([...lead, dir]);
     await exec([...pre, 'verify-bundle', dir], base);
   };

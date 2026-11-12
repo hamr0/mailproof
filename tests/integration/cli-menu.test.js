@@ -136,7 +136,7 @@ test('every number 1-19 and every name is accepted at any prompt, not only the o
     [['7', 'verify'], /^Target \(/m],
     [['8', 'check'], /^Who \(/m],
     [['9', 'check .eml', 'check-file', 'eml'], /^Path of the \.eml file/m],
-    [['10', 'verify-bundle'], /^Bundle directory \(/m],
+    [['10', 'verify-bundle'], /^Bundle \(/m],
     [['11', 'export'], /^With \(/m],
     [['12', 'seal', 'stamp'], /^the Bitcoin anchor is pending/m],
     [['13', 'backup'], /^Write the bundle to \(/m],
@@ -175,7 +175,7 @@ test('9 and 10 prompt for their path and run the same code as the first-run scre
   assert.match(r.stdout, /^ {2}Body +matched$/m);
   assert.match(r.stdout, /checked only, not recorded/);
   assert.match(r.stderr, /no such file/);
-  assert.match(r.stdout, /Bundle directory \(the directory mailproof export wrote, empty = back\): /);
+  assert.match(r.stdout, /Bundle \(.tar or folder, as mailproof export wrote it, empty = back\): /);
   const direct = await w.run(['verify-bundle', '/nonexistent-bundle']);
   assert.ok(r.stderr.includes(direct.stderr.trim().split('\n')[0]) || direct.stderr.length > 0);
 });

@@ -183,7 +183,7 @@ export const TOOLS = {
   verifyBundle: {
     cls: 'read', title: 'Check a proof bundle', annotations: READ, noAccount: true, primitive: 'verifyBundle', required: ['dir'],
     params: {
-      dir: { type: 'string', description: 'absolute path of the bundle folder, inside one of the server\'s input folders (mcp.inputDirs)' },
+      dir: { type: 'string', description: 'absolute path of the bundle folder, or of the .tar file `export` writes, inside one of the server\'s input folders (mcp.inputDirs)' },
       expect: { type: 'string', description: flag('verify-bundle', 'expect') },
       strict: { type: 'boolean', description: flag('verify-bundle', 'strict') },
     },

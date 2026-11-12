@@ -7,7 +7,7 @@ import path from 'node:path';
 import { verifyRecord, verifyBundle } from '../index.js';
 import { parseDate, parseAddress, resolveId, messageIdOf } from '../cli/parse.js';
 import { syncOnce } from '../cli/sync-op.js';
-import { readBytes, readAllowedFile, resolveAllowedDir, saveBytes, outputPath } from './input.js';
+import { readBytes, readAllowedFile, resolveAllowedBundle, saveBytes, outputPath } from './input.js';
 import { accountStatus, configFacts } from '../cli/status.js';
 import { UPDATE_COMMAND } from '../cli/version.js';
 import { bundleName } from '../cli/bundle.js';
@@ -198,7 +198,7 @@ export const HANDLERS = {
   },
   verifyBundle: async (c, a) => {
     if (a.expect !== undefined && !/^[0-9a-fA-F]{64}$/.test(a.expect)) throw badArgument('expect must be the 64 hex characters of the bundle\'s sha256');
-    const dir = await resolveAllowedDir(a.dir, c.input);
+    const dir = await resolveAllowedBundle(a.dir, c.input);
     const o = otsOptionFromEnv(c.env);
     const r = await verifyBundle(dir, { ...(o.otsBin !== undefined ? { ots: o.otsBin } : {}), ...(a.expect !== undefined ? { expect: a.expect } : {}), ...(a.strict ? { strict: true } : {}) });
     return json(r, r.ok ? 'ok verified' : `ok not verified: ${r.failed.join(', ')}`);
