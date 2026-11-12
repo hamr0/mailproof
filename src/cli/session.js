@@ -15,6 +15,7 @@ import { styleOf, allowStyle } from './style.js';
  * @property {(ms: number, signal: AbortSignal) => Promise<void>} [sleep]  Default: a timer that ends early on abort.
  * @property {() => Date} [now]
  * @property {(args: string[], ctx: Ctx) => Promise<number>} [runNpm]  Default: spawn `npm` with the output streaming through.
+ * @property {(args: string[]) => Promise<{ code: number, stdout: string, stderr: string } | null>} [claude]  Runs the `claude` CLI (default: `claude` from PATH, 15 s); null when there is no such binary. Tests never touch the real Claude Code config.
  * @property {() => { dev: boolean, dir: string }} [installInfo]  Where mailproof is installed and whether it is a development link (default: looked up from the package folder).
  * @property {() => Promise<string | null>} [npmView]  The latest version on npm, null when unreachable (default: `npm view mailproof version`, 10 s). Tests never reach the registry.
  * @property {(account: import('./config.js').Account) => Mailproof} [makeMailproof]

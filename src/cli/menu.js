@@ -20,6 +20,7 @@ import { makePager } from './pager.js';
 import { headerFacts } from './status.js';
 import { mainHeader, fullMenu, shortLine, firstRun, jobOf, SCREEN_JOBS, MENU_ITEMS, MENU_ALIASES } from './menu-header.js';
 import { checkFileCmd } from './check-file.js';
+import { mcpFacts, mcpStatusLines, writeOtherClients, runClaude, CLAUDE_ADD, CLAUDE_REMOVE } from './mcp-setup.js';
 import { configPath, listProfiles, loadProfile } from './config.js';
 
 /** @typedef {import('./session.js').Ctx} Ctx */
@@ -334,7 +335,28 @@ export async function runMenu(ctx, exec, opts = {}) {
       stamp: async () => { await go(['stamp']); },
       'check-file': () => checkEml(),
       'verify-bundle': () => verifyBundleCmd(),
-      mcp: async () => { await go(['mcp']); },
+      mcp: async () => {
+        const f = await mcpFacts(base, config);
+        for (const l of mcpStatusLines(f, st, ctx.env, configPath(opts.configFlag, ctx.env))) out(l);
+        if (f.claude === 'missing') {
+          out('');
+          out('The `claude` command was not found, so mailproof cannot register itself. Add this to your MCP client by hand:');
+          out('');
+          await writeOtherClients(base, out, st);
+          return;
+        }
+        frame.foot(`${st.key('1')} install in Claude Code  ${st.key('2')} uninstall  ${st.key('3')} other clients`);
+        const c = await ask({ label: 'Choice', example: '{1}, {2} or {3}', validate: (s) => parseChoice(s, 'Choice', '1', '2', '3') });
+        const run = ctx.deps.claude ?? runClaude;
+        if (c === '3') { out(''); await writeOtherClients(base, out, st); return; }
+        const args = c === '1' ? CLAUDE_ADD : CLAUDE_REMOVE;
+        out(`This changes your Claude Code settings (user scope): claude ${args.join(' ')}`);
+        frame.sep();
+        if (!(await askYes(c === '1' ? 'Register mailproof in Claude Code?' : 'Remove mailproof from Claude Code?'))) { out('nothing changed'); return; }
+        const r = await run(args);
+        if (r && r.code === 0) out(`${st.green(st.sym.ok)} ${c === '1' ? 'registered in Claude Code (user scope); restart Claude Code to load it' : 'removed from Claude Code'}`);
+        else err(`mailproof: claude ${args.slice(0, 2).join(' ')} failed${r ? `: ${printable((r.stderr || r.stdout).trim(), { keepNewline: true, max: 600 })}` : ''}`);
+      },
     };
 
     // what the next turn prints above the `>`: the header and the full menu at the start; after an action the short line (on a
@@ -342,7 +364,7 @@ export async function runMenu(ctx, exec, opts = {}) {
     // start again; nothing after an unknown key (its message stays the last thing shown)
     /** @type {'full' | 'header' | 'refresh' | 'compact' | 'none'} */
     let mode = 'full';
-    const LIVE = new Set(['watch', 'sync', 'update', 'mcp']);   // long-running: output streams, it is not held back
+    const LIVE = new Set(['watch', 'sync', 'update']);   // long-running: output streams, it is not held back
     const CHANGES_STATE = new Set(['sync', 'stamp', 'update', 'forget', 'prune', 'config']);
     /** @param {boolean} changed @returns {'header' | 'refresh' | 'compact'} */
     const nextMode = (changed) => (!pager ? 'header' : changed ? 'refresh' : 'compact');

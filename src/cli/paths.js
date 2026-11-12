@@ -8,7 +8,7 @@ import { expandHome, homeOf } from './config.js';
 
 export { expandHome };
 
-/** The kinds of folder under `~/mailproof/`. @typedef {'exports' | 'backups' | 'saved'} UserKind */
+/** The kinds of folder under `~/mailproof/`. @typedef {'exports' | 'backups' | 'saved' | 'mcp'} UserKind */
 
 /**
  * A path with the home directory shown as `~`; anything else as it is. Display only: the text is not a path to open.
