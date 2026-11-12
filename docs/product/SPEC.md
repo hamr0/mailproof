@@ -1741,6 +1741,8 @@ BundleResult = {
   files: { listed: number, found: number, bytes: number, problems: Array<{ path: string, why: string }> },
   records: Array<{
     id: string, ok: boolean,                         // ok: no failure for this record in checks 4-9
+    from: string | null, to: string | null,           // the first From, and the first To (else Cc), as written in the record's addresses (data from a third party)
+    subject: string | null, subject_signed: boolean,  // the Subject a signature covers (true only when a verifying one does), else the one a failing signature covers, else null
     trust: 'verified' | 'unverified', at: string | null,
     signatures: Array<{ index, d, s, ok, aligned, why }>,   // verifyRecord's, as is
     key: 'ok' | 'none' | 'mismatch' | 'missing',
@@ -1782,7 +1784,7 @@ No `75` or `77`: no lock, no config. Library: `verifyBundle` resolves to a `Bund
 #### B13.3.8 Build outcomes (decided while building, 2026-11-12)
 
 - **`unstamped` at export, `unsealed` at the verifier.** A record listed in a manifest with no stamp has no manifest in the bundle (B13.2.4), so the verifier cannot see the listing: it reports that record `unsealed`, while `bundle.json` says `unstamped` (informational, "at export"). The verifier's `unstamped` state occurs only for a bundle that does hold the listing manifest without a stamp (a hand-assembled one, or a chain whose stamp was removed).
-- **Extra `BundleResult` fields.** `problems: [{ check, id, why }]` (every failure with its check, which text mode prints) and, per record, `captured`, `direction` and `problems: string[]`; additive to B13.3.5.
+- **Extra `BundleResult` fields.** `problems: [{ check, id, why }]` (every failure with its check, which text mode prints) and, per record, `captured`, `direction`, `problems: string[]` and (2026-11-12) `from`, `to`, `subject`, `subject_signed` (read from the record, never the raw email, which a bundle does not carry; null/false when the record has none); additive to B13.3.5. Text mode shows them as the browse row: `from` (`to <address>` for an outbound record, the id when there is none), the subject with `· subject not signed` as `list` does, and as the third line the seal phrase of a *received* bundle: an unsealed record reads `not sealed`, never `waiting to be sealed (next ...)` (that wording is for the owner's own trail, `show`/`status`; `sealPhrase`'s `received` argument).
 - **A record file with no `bundle.json` entry** is reported by `files` ("not listed") and is not otherwise examined; a `.ots` for a record that is not in the bundle fails `seals`.
 - **A listing with a different hash** (a manifest lists the record's id with another file hash) is a `bad` seal ("not the file that was sealed"); a record absent from every manifest is `unsealed`.
 - **`ERR_EXPORT_TAR`** (new code): `tar` missing or failing. The CLI exit is 1, as B13.2.9 says; `ERR_EXPORT_EXISTS` maps to 64 in `exitFor`.

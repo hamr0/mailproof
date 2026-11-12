@@ -14,7 +14,8 @@ import path from 'node:path';
 import { parseBundlePath, parseKeyPath, recordPath, recordOtsPath, manifestOtsPath, replyPath, BUNDLE_JSON } from './layout.js';
 import { parseManifest, decideSeal, sha256Hex } from './seal-core.js';
 import { verifyRecord } from './recheck.js';
-import { participantsOf } from './participants.js';
+import { participantsOf, signedHeaderValue, addressCoverage } from './participants.js';
+import { headerText } from './header-text.js';
 import { infoProof } from './ots.js';
 import { RULES_VERSION } from './verdict.js';
 import * as LIM from './limits.js';
@@ -29,7 +30,7 @@ import { unpackTar } from './bundle-tar.js';
  * @property {{ v: number, kind: string, created: string | null, mailproof: string | null, trail: string | null, trail_head: string | null, selection: { with: string[], after: string | null, before: string | null, records: number | null }, bundle_sha256: string } | null} bundle  Null when `bundle.json` is missing or failed its own check.
  * @property {{ given: string, match: boolean } | null} expect
  * @property {{ listed: number, found: number, bytes: number, problems: Array<{ path: string, why: string }> }} files
- * @property {Array<{ id: string, captured: string | null, direction: string | null, ok: boolean, trust: 'verified' | 'unverified', at: string | null, signatures: Array<Record<string, any>>, key: 'ok' | 'none' | 'mismatch' | 'missing', seal: BundleSeal, replies: Array<{ slug: string, seal: BundleSeal }>, notes: string[], problems: string[] }>} records
+ * @property {Array<{ id: string, captured: string | null, direction: string | null, from: string | null, to: string | null, subject: string | null, subject_signed: boolean, ok: boolean, trust: 'verified' | 'unverified', at: string | null, signatures: Array<Record<string, any>>, key: 'ok' | 'none' | 'mismatch' | 'missing', seal: BundleSeal, replies: Array<{ slug: string, seal: BundleSeal }>, notes: string[], problems: string[] }>} records
  * @property {{ runs: Array<{ from: number, to: number }>, problems: Array<{ seq: number, why: string }> }} chain
  * @property {'used' | 'absent' | 'off' | 'out of time'} ots  What happened to the proofs.
  * @property {{ records: number, verified: number, unverified: number, anchored: number, pending: number, unstamped: number, unsealed: number, unchecked: number, bad: number }} counts  Seal counts are over the records.
@@ -347,7 +348,7 @@ async function verifyDir(root, st, opts, L, pre) {
   const order = bundleOk ? [...entries.entries()].map(([id, entry]) => ({ id, entry })) : [];
   for (const { id, entry } of order) {
     /** @type {BundleResult['records'][number]} */
-    const out = { id, captured: entry.captured, direction: entry.direction, ok: true, trust: 'unverified', at: null, signatures: [], key: 'none', seal: sealOf('unsealed'), replies: [], notes: [], problems: [] };
+    const out = { id, captured: entry.captured, direction: entry.direction, from: null, to: null, subject: null, subject_signed: false, ok: true, trust: 'unverified', at: null, signatures: [], key: 'none', seal: sealOf('unsealed'), replies: [], notes: [], problems: [] };
     result.records.push(out);
     recById.set(id, out);
     const want = recordPath(id);
@@ -370,6 +371,15 @@ async function verifyDir(root, st, opts, L, pre) {
     out.trust = v.trust;
     out.at = v.at;
     out.signatures = v.signatures;
+    // who and what, for a row: data from the record (the addresses field or the signed h= lines), never a claim of the raw email (the bundle has none)
+    const parts = participantsOf(rec);
+    const first = (/** @type {string} */ role) => parts.find((x) => x.role === role)?.raw ?? null;
+    out.from = first('from');
+    out.to = first('to') ?? first('cc');
+    const signedSubject = v.passing.length ? signedHeaderValue(rec, 'subject', v.passing) : null;
+    const anySubject = signedSubject ?? signedHeaderValue(rec, 'subject');
+    out.subject = anySubject === null ? null : headerText(anySubject);
+    out.subject_signed = signedSubject !== null;
     const recorded = isObj(rec.verdicts) && isObj(rec.verdicts.portable) ? rec.verdicts.portable.trust : undefined;
     if (recorded !== entry.portable) fail('records', id, `the record says portable ${String(recorded)}, the bundle entry says ${String(entry.portable).slice(0, 40)}`);
     if (recorded === 'verified' && v.trust !== 'verified') fail('records', id, 'the record says portable verified but its signatures do not verify');

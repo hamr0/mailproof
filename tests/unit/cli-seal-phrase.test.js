@@ -22,3 +22,10 @@ test('a record waiting for a seal says when the next seal is due (the date only 
   assert.equal(sealPhrase({ state: 'unsealed' }, NOW, '·', '2026-11-12T09:00:00.000Z'), 'waiting to be sealed', 'a time already past is left out');
   assert.equal(sealPhrase({ state: 'anchored', sealed_at: '2026-11-11T21:03:10.000Z' }, NOW, '·', '2026-11-12T14:03:00.000Z'), 'sealed 11-11 21:03Z · anchored', 'a sealed record is unaffected');
 });
+
+test('a received bundle: an unsealed record is "not sealed", never "waiting"', () => {
+  for (const state of ['unsealed', 'not-stamped', 'unstamped']) {
+    assert.equal(sealPhrase({ state }, NOW, '·', '2026-11-12T14:03:00.000Z', true), 'not sealed');
+  }
+  assert.equal(sealPhrase({ state: 'anchored', sealed_at: '2026-11-11T21:03:10.000Z', block: 975469 }, NOW, '·', null, true), 'sealed 11-11 21:03Z · anchored (Bitcoin block 975469)', 'a sealed record is unaffected');
+});

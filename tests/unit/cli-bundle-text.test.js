@@ -38,3 +38,22 @@ test('the three notes are wrapped to the width, after a blank line, before the v
   const styled = bundleText(r, makeStyle({ env: { FORCE_COLOR: '1' }, columns: 40 }));
   assert.ok(styled.includes('\x1b[2mThis bundle'), 'notes are dim');
 });
+
+test('a record row reads like list: from (or "to <address>"), the subject, "subject not signed", and "not sealed" when unsealed', () => {
+  const t = plain(result([
+    rec({ from: 'bob@bob.example', to: 'owner@owner.example', subject: 'Hello there', subject_signed: true }),
+    rec({ id: 'cd'.repeat(16), direction: 'out', from: 'owner@owner.example', to: 'bob@bob.example', subject: 'Re: plan', subject_signed: false, seal: { state: 'unsealed' } }),
+  ]));
+  assert.match(t, /^ 1 .*bob@bob\.example$/m);
+  assert.match(t, /^ 2 .*to bob@bob\.example$/m);
+  assert.match(t, /^ {4}Hello there$/m);
+  assert.match(t, /^ {4}Re: plan {2}. subject not signed$/m);
+  assert.match(t, /^ {4}not sealed$/m);
+  assert.doesNotMatch(t, /waiting to be sealed/);
+  assert.ok(!t.includes('ab12cd34ef56'), 'the id is only the fallback');
+});
+
+test('a hostile subject and address are escaped', () => {
+  const t = bundleText(result([rec({ from: 'a\x1b[31m@x', subject: 'hi\x1b[2Jthere', subject_signed: true })]), makeStyle({ columns: 60 }));
+  assert.ok(!t.includes('\x1b[31m') && !t.includes('\x1b[2J'));
+});

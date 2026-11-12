@@ -86,18 +86,20 @@ export async function exportCmd(a, ctx) {
 }
 
 /**
- * A bundle record as the facts a browse row takes (rows.js): the bundle carries no subject or sender in its check result, so the row's
- * party column is the record id, its second line the seal phrase and its third the first problem (or the signature count).
+ * A bundle record as the facts a browse row takes (rows.js): the party and subject come from the record's own data (the check result's `from`, `to`,
+ * `subject`; the record id stands in when a record has none), the third line is the seal phrase (the received form) and, after it, the first problem.
  * @param {import('../proof/bundle-verify.js').BundleResult['records'][number]} x @param {import('./style.js').Style} st @param {Date} now
  * @returns {import('./rows.js').Facts}
  */
 const rowFacts = (x, st, now) => {
-  const party = [{ address: x.id.slice(0, 12), coverage: 'none' }];
-  const reason = x.problems[0] ?? `${count(x.signatures.length, 'signature')}${x.key === 'ok' || x.key === 'none' ? '' : `, key ${x.key}`}`;
+  const idParty = [{ address: x.id.slice(0, 12), coverage: 'none' }];
+  const addr = (/** @type {string | null} */ a) => (typeof a === 'string' && a !== '' ? [{ address: a, coverage: 'none' }] : idParty);
+  const out = x.direction === 'out';
   return /** @type {any} */ ({
     captured: typeof x.captured === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d/.test(x.captured) ? x.captured : '1970-01-01T00:00:00.000Z',
-    direction: x.direction === 'out' ? 'out' : 'in', from: x.direction === 'out' ? [] : party, to: x.direction === 'out' ? party : [], cc: [],
-    trust: { live: x.trust }, subject: { value: sealPhrase(x.seal, now, st.sym.dot), coverage: 'signed' }, reason, attachments: [],
+    direction: out ? 'out' : 'in', from: out ? [] : addr(x.from), to: out ? addr(x.to) : [], cc: [],
+    trust: { live: x.trust }, subject: { value: x.subject, coverage: x.subject_signed ? 'signed' : 'none' },
+    reason: sealPhrase(x.seal, now, st.sym.dot, null, true), attachments: [],
   });
 };
 
@@ -117,7 +119,7 @@ export function bundleText(r, st = makeStyle()) {
   else if (r.ots === 'off') out.push('seals NOT checked: ots is off (MAILPROOF_OTS=off)');
   else if (r.ots === 'out of time') out.push('seals NOT fully checked: the time budget for ots ran out (the rest are unchecked)');
   const now = new Date();
-  if (r.records.length) out.push(...pageLines({ st, now: () => now }, r.records.map((x) => ({ facts: rowFacts(x, st, now) })), 1));
+  if (r.records.length) out.push(...pageLines({ st, now: () => now }, r.records.map((x) => ({ facts: rowFacts(x, st, now), extra: x.problems[0] })), 1));
   const by = new Map();
   for (const x of r.problems) { const l = by.get(x.check) ?? []; l.push(x); by.set(x.check, l); }
   for (const [check, list] of by) {

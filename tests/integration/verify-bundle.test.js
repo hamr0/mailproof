@@ -484,3 +484,20 @@ test('verifyBundle arguments: a TypeError for a bad dir, expect or opts; never a
 });
 
 void recordOtsPath;
+
+test('each record carries from, to, subject and whether the subject is signed (data from the record, for the row)', async () => {
+  const { out, ids, w } = await mixed();
+  const r = await verifyBundle(out, { ots: null });
+  const byId = new Map(r.records.map((x) => [x.id, x]));
+  const a = byId.get(ids.a);
+  assert.equal(a.from, BOB);
+  assert.equal(typeof a.subject, 'string');
+  assert.equal(a.subject_signed, true);
+  const un = byId.get(ids.unsigned);
+  assert.equal(un.from, BOB, 'unsigned record: from the record addresses');
+  assert.equal(un.subject_signed, false, 'an unsigned subject is flagged');
+  const c = byId.get(ids.c);
+  assert.equal(c.direction, 'out');
+  assert.equal(typeof c.to, 'string', 'an outbound record names who it went to');
+  void w;
+});
