@@ -19,6 +19,7 @@ import { crumbLine } from './crumb.js';
  * @param {import('./style.js').Style} st
  */
 export function makeFrame(out, st) {
+  const sep = () => { out(''); out(st.rule()); };
   return {
     /**
      * The top of a screen: a blank line, the crumb, and (when given) the job line and a blank line after it. Print it BEFORE the screen's questions.
@@ -30,13 +31,14 @@ export function makeFrame(out, st) {
       out(crumbLine(st, segs));
       if (job) { out(job); out(''); }
     },
+    /** The separator between a result and what follows it (a choice, a question, a confirmation): a blank line and the dim rule. The one definition: no screen builds its own spacing. */
+    sep,
     /**
-     * The bottom of a screen: a blank line, the dim rule, then the options that follow the result.
+     * The bottom of a screen: the separator, then the options that follow the result.
      * @param {string} line
      */
     foot(line) {
-      out('');
-      out(st.rule());
+      sep();
       out(line);
     },
   };

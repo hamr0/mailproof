@@ -1,6 +1,5 @@
 // sync (the command), update, config, export, mcp: the commands that are mostly text.
 
-import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { UsageError, EX_OK, EX_ERR, EX_USAGE } from './errors.js';
 import { parseFolders, parseSent } from './parse.js';
@@ -13,7 +12,7 @@ import { printable as p } from './printable.js';
 import { stampText } from './sync-op.js';
 import { styleOf } from './style.js';
 import { progressLine } from './progress.js';
-import { version, NPM_ARGS, UPDATE_COMMAND } from './version.js';
+import { version } from './version.js';
 
 /** @typedef {import('./session.js').Ctx} Ctx */
 /** @typedef {import('./session.js').Args} Args */
@@ -52,32 +51,6 @@ export async function stampCmd(a, ctx) {
     if (r.error) { warn(ctx, `mailproof: ${p(r.error)}`); return EX_ERR; }
     return EX_OK;
   } finally { await s.close(); }
-}
-
-/**
- * Run npm with the output streaming through (no shell).
- * @param {string[]} args
- * @returns {Promise<number>}
- */
-function spawnNpm(args) {
-  return new Promise((resolve) => {
-    const child = spawn('npm', args, { stdio: 'inherit' });
-    child.on('error', () => resolve(EX_ERR));
-    child.on('close', (code) => resolve(code === 0 ? EX_OK : EX_ERR));
-  });
-}
-
-/** @param {Args} a @param {Ctx} ctx @returns {Promise<number>} */
-export async function updateCmd(a, ctx) {
-  const cmd = UPDATE_COMMAND;
-  if (!a.values.run) {
-    if (a.values.json) printJson(ctx, { installed: version(), command: cmd }); else print(ctx, `mailproof ${version()} installed. To upgrade: ${cmd}`);
-    return EX_OK;
-  }
-  if (!a.values.json) print(ctx, `running: ${cmd}`);
-  const code = await (ctx.deps.runNpm ? ctx.deps.runNpm(NPM_ARGS, ctx) : spawnNpm(NPM_ARGS));
-  if (a.values.json) printJson(ctx, { installed: version(), command: cmd, exit: code });
-  return code === 0 ? EX_OK : EX_ERR;
 }
 
 /** @param {Args} a @param {Ctx} ctx @returns {Promise<number>} */

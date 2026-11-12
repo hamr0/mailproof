@@ -140,9 +140,12 @@ export const COMMANDS = {
   },
   update: {
     summary: 'show the upgrade command', account: false, positional: '', min: 0, max: 0,
-    when: 'Use to upgrade mailproof. By default it only prints the command (`npm install -g mailproof@latest`) and the installed version, because a global install can be owned by root or made with another package manager; --run executes it for you.',
-    fails: 'With --run the exit code is 0 when npm succeeded and 1 otherwise. Without --run nothing is run and nothing touches the network.',
-    flags: { run: { type: 'boolean', help: 'run `npm install -g mailproof@latest` (output streams through)' } },
+    when: 'Use to upgrade mailproof. By default it only prints the command (`npm install -g mailproof@latest`) and the installed version, because a global install can be owned by root or made with another package manager; --check also asks the npm registry whether a newer version exists; --run looks it up and upgrades only when it is newer, then says to restart mailproof. A development link (npm link, a git checkout) is never upgraded with npm: it says so and to update with git.',
+    fails: 'With --run the exit code is 0 when npm succeeded and 1 otherwise. Without --run nothing is run; only --check and --run touch the network (one `npm view`, 10 s); offline with --run is exit 1.',
+    flags: {
+      check: { type: 'boolean', help: 'ask the npm registry for the latest version (the only network use besides --run)' },
+      run: { type: 'boolean', help: 'upgrade now: look up the latest version, run `npm install -g mailproof@latest` only when it is newer (npm\'s output is shown only if it fails)' },
+    },
   },
   config: {
     summary: 'show path, validate, template', account: false, positional: 'path|validate|template|add-account', min: 1, max: 1, flags: {},

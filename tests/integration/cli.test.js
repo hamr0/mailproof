@@ -227,23 +227,6 @@ test('prune: refuses without --yes, --dry-run changes nothing, --yes prunes and 
   assert.equal(json(await sp(['list', '--json'])).length, 3);
 });
 
-test('update: prints the command and never runs npm without --run; --run runs exactly npm install -g mailproof@latest', async () => {
-  const bin = makeTmpDir('mp-cli-fakenpm-');
-  const mark = path.join(bin, 'ran.txt');
-  fs.writeFileSync(path.join(bin, 'npm'), `#!/bin/sh\necho "$@" >> "${mark}"\nexit \${FAKE_NPM_EXIT:-0}\n`, { mode: 0o755 });
-  const env = { PATH: `${bin}:${process.env.PATH}` };
-  const p = await sp(['update'], { env });
-  assert.equal(p.code, 0);
-  assert.match(p.stdout, /^mailproof \d+\.\d+\.\d+ installed\. To upgrade: npm install -g mailproof@latest\n$/);
-  assert.ok(!fs.existsSync(mark), 'npm was not spawned');
-  assert.deepEqual(json(await sp(['update', '--json'], { env })).command, 'npm install -g mailproof@latest');
-  assert.ok(!fs.existsSync(mark));
-  const r = await sp(['update', '--run'], { env });
-  assert.equal(r.code, 0);
-  assert.equal(fs.readFileSync(mark, 'utf8'), 'install -g mailproof@latest\n');
-  assert.equal((await sp(['update', '--run'], { env: { ...env, FAKE_NPM_EXIT: '3' } })).code, 1, 'npm failing is exit 1');
-});
-
 test('export needs --with (64); mcp needs a stdin stream (64 without), and ends 0 when it closes', async () => {
   const e = await sp(['export']);
   assert.equal(e.code, 64);

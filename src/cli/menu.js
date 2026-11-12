@@ -152,6 +152,7 @@ export async function runMenu(ctx, exec, opts = {}) {
     };
     /** Type the account name to confirm a destructive step. @returns {Promise<boolean>} */
     const typedName = async () => {
+      frame.sep();
       const ans = await p.ask(`Type the account name (${account}) to proceed, anything else cancels: `);
       if (ans !== null && ans.trim() === account) return true;
       out('nothing changed');
@@ -175,6 +176,7 @@ export async function runMenu(ctx, exec, opts = {}) {
       const argv = ['export', '--with', who, ...(after ? ['--after', after] : []), ...(before ? ['--before', before] : []), '--out', tar && outPath === dflt ? `${dflt}.tar` : outPath, ...(tar ? ['--tar'] : [])];
       // the preview first (what it would hold and what it reveals), then the question, then the write: the same `export`, with and without --dry-run
       if ((await go([...argv, '--dry-run'])) !== 0) return;
+      frame.sep();
       if (!(await askYes('Write it?'))) { out('nothing written'); return; }
       await go(argv);
     };
@@ -219,8 +221,8 @@ export async function runMenu(ctx, exec, opts = {}) {
         /** @type {string[]} */
         const text = [];
         await exec([...pre, 'people', '--account', account], { ...base, stdout: { write: (x) => { text.push(String(x)); return true; }, isTTY: ctx.stdout.isTTY, ...(ctx.stdout.columns ? { columns: ctx.stdout.columns } : {}) } });
-        text.join('').split('\n').filter(Boolean).forEach((l, i) => out(i === 0 ? `    ${l}` : `${' '.repeat(Math.max(0, 3 - String(i).length))}${st.key(String(i))} ${l}`));
-        out(st.dim('pick a person (number or address), then ') + `${st.key('s')} show  ${st.key('v')} verify  ${st.key('e')} export`);
+        text.join('').split('\n').filter(Boolean).forEach((l, i) => out(i === 0 ? `  ${st.dim('#')} ${l}` : `${' '.repeat(Math.max(0, 3 - String(i).length))}${st.key(String(i))} ${l}`));
+        frame.foot(st.dim('pick a person (number or address), then ') + `${st.key('s')} show  ${st.key('v')} verify  ${st.key('e')} export`);
         const ACTIONS = /** @type {Record<string, string>} */ ({ s: 'show', show: 'show', v: 'verify', verify: 'verify', e: 'export', export: 'export' });
         const answer = await ask({ label: 'Person', example: 'a number or an address, then {s}, {v} or {e} (default show), e.g. {3 v}', validate: (line) => {
           const tokens = line.trim().split(/\s+/);
@@ -254,6 +256,7 @@ export async function runMenu(ctx, exec, opts = {}) {
             const facts = (await Promise.all(rows.map((r) => session.mp.describe(r)))).flatMap((d) => d.records);
             if (!facts.length) { out(`no emails with ${printable(who)} in this trail`); return; }
             for (const l of pageLines({ st, now }, facts.map((f) => ({ facts: f })), 1)) out(l);
+            frame.sep();
             const pick = await ask({ label: 'Email', example: `a number 1 to ${facts.length}, or a record id`, validate: (s) => { if (/^\d+$/.test(s)) { if (Number(s) < 1 || Number(s) > facts.length) throw new UsageError(`choose 1 to ${facts.length}`); return s; } return idArg(s); } });
             id = /^\d+$/.test(pick) ? facts[Number(pick) - 1].id : pick;
           } finally { await session.close(); }
@@ -261,6 +264,7 @@ export async function runMenu(ctx, exec, opts = {}) {
         out('');
         out(st.dim('Profiles (what must hold for the email to pass):'));
         for (const x of await listProfiles(ctx.env)) out(`  ${st.key(x.name)}  ${st.dim(printable(x.summary, { max: 120 }))}${x.builtin ? st.dim('  (built in)') : ''}`);
+        frame.sep();
         const profile = await ask({ label: 'Profile', example: 'a name above, or the path of a JSON file', def: 'default' });
         /** @type {any} */
         let spec;
@@ -287,12 +291,13 @@ export async function runMenu(ctx, exec, opts = {}) {
       prune: async () => {
         // the date, then the preview; with nothing to remove it ends there. Only then the backup question and the typed name.
         const before = await ask({ label: 'Before', example: 'date, e.g. {2026-08-19}', validate: (s) => { parseDate(s, '--before'); return s; } });
-        crumb([step('prune'), `before ${before}`]);
+        crumb([step('prune'), `before ${parseDate(before, '--before').toISOString().slice(0, 10)}`]);
         const session = await openAccount({ cmd: 'prune', values: { config: opts.configFlag, account }, positionals: [] }, base);
         let none;
         try { none = (await session.mp.list({ before: parseDate(before, '--before'), limit: 1 })).length === 0; } finally { await session.close(); }
         await go(['prune', '--before', before, '--dry-run']);
         if (none) return;
+        frame.sep();
         const del = await askYes('Also delete the pre-prune backup afterwards (the removal is only final then)?');
         if (await typedName()) await go(['prune', '--before', before, ...(del ? ['--delete-backup'] : []), '--yes'], { previewed: true });
       },
@@ -310,8 +315,13 @@ export async function runMenu(ctx, exec, opts = {}) {
       },
       status: async () => { await go(['status']); },
       update: async () => {
-        await go(['update']);
-        if (await askYes('Run it now?')) await go(['update', '--run']);
+        // look up first: a development link or an up-to-date install asks nothing; a newer version asks once
+        /** @type {NonNullable<Ctx['updateOut']>} */
+        const found = {};
+        await go(['update', '--check'], { updateOut: found });
+        if (!found.newer) return;
+        frame.sep();
+        if (await askYes('Upgrade now?')) await go(['update', '--run']);
       },
       config: async () => {
         const action = await ask({ label: 'Action', example: 'path, validate, template, add-account', def: 'validate', validate: (s) => parseChoice(s, 'Action', 'path', 'validate', 'template', 'add-account') });

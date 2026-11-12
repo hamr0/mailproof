@@ -124,7 +124,7 @@ test('Show, Verify, Replies, Check, Status run the subcommand code (same output,
 
 test('every number 1-19 and every name is accepted at any prompt, not only the ones on the short line', async () => {
   const w = world();
-  const deps = { sync: async () => ({ complete: true, folders: [] }), stamp: async () => ({}), runNpm: async () => 0 };
+  const deps = { sync: async () => ({ complete: true, folders: [] }), stamp: async () => ({}), runNpm: async () => 0, installInfo: () => ({ dev: false, dir: '/usr/lib/node_modules/mailproof' }), npmView: async () => null };
   // the names that select an item, and its first output (the input ends right after the pick, which quits the menu)
   const asked = [
     [['1', 'sync'], /^complete$/m],
@@ -144,7 +144,7 @@ test('every number 1-19 and every name is accepted at any prompt, not only the o
     [['15', 'prune'], /^Before \(/m],
     [['16', 'status'], /^test [·-] me@owner\.example\n {2}trail /m],
     [['17', 'config'], /^Action \(/m],
-    [['18', 'update'], /npm install -g mailproof/],
+    [['18', 'update'], /the npm registry could not be reached/],
   ];
   for (const [picks, re] of asked) for (const pick of picks) {
     const r = await menu(w, keys(pick), { deps });
@@ -228,25 +228,6 @@ test('Forget by person asks with/before/after; Prune asks the cutoff, shows the 
   assert.match(bad.stdout, /pruned: removed 3 proofs, kept 3/);
   assert.equal((bad.stdout.match(/Prune would permanently remove/g) ?? []).length, 1, 'the preview is shown ONCE');
   assert.equal(JSON.parse((await w.run(['list', '--json'])).stdout).length, 3);
-});
-
-test('Update shows the command and runs npm only after a yes; the subcommand never does without --run', async () => {
-  const w = world();
-  const calls = [];
-  const deps = { runNpm: async (args) => { calls.push(args); return 0; } };
-  const no = await menu(w, keys('update', 'n', '', 'q'), { deps });
-  assert.match(no.stdout, /To upgrade: npm install -g mailproof@latest/);
-  assert.ok(no.stdout.includes('Run it now? [y/N] '));
-  assert.deepEqual(calls, []);
-  const dflt = await menu(w, keys('update', '', '', 'q'), { deps });
-  assert.equal(dflt.code, 0);
-  assert.deepEqual(calls, [], 'the default is no');
-  await menu(w, keys('update', 'y', '', 'q'), { deps });
-  assert.deepEqual(calls, [['install', '-g', 'mailproof@latest']]);
-  await w.run(['update'], { deps });
-  assert.equal(calls.length, 1, 'the subcommand without --run runs nothing');
-  await w.run(['update', '--run'], { deps });
-  assert.equal(calls.length, 2);
 });
 
 test('Backup prompts for the path with the ~/mailproof/backups default, and the content archive', async () => {

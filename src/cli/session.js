@@ -15,6 +15,8 @@ import { styleOf, allowStyle } from './style.js';
  * @property {(ms: number, signal: AbortSignal) => Promise<void>} [sleep]  Default: a timer that ends early on abort.
  * @property {() => Date} [now]
  * @property {(args: string[], ctx: Ctx) => Promise<number>} [runNpm]  Default: spawn `npm` with the output streaming through.
+ * @property {() => { dev: boolean, dir: string }} [installInfo]  Where mailproof is installed and whether it is a development link (default: looked up from the package folder).
+ * @property {() => Promise<string | null>} [npmView]  The latest version on npm, null when unreachable (default: `npm view mailproof version`, 10 s). Tests never reach the registry.
  * @property {(account: import('./config.js').Account) => Mailproof} [makeMailproof]
  * @property {(raw: Buffer) => Promise<{ live: Record<string, any>, portable: Record<string, any>, signatures: number, unsigned: boolean, key_errors: string[], body_status: string }>} [check]  The menu's "check a .eml file" (default: the library's `check`, which asks DNS). Tests inject a fake.
  * @property {(o: { host: string, port: number, user: string, auth: { pass: string } | { accessToken: string }, folders: string[], sent: boolean | string }) => Promise<{ ok: true, folders: Array<{ folder: string, count: number }> } | { ok: false, code: string, message: string }>} [testLogin]  The wizard's "test login now" (default: one real IMAP login and a folder status). Tests inject a fake: IMAP is never contacted.
@@ -32,6 +34,7 @@ import { styleOf, allowStyle } from './style.js';
  * @property {AbortSignal} signal  Aborted by SIGINT/SIGTERM (watch stops, a running command is cut short).
  * @property {Deps} deps
  * @property {import('./prompt.js').Prompter} [prompter]  Set by the menu: one reader of stdin shared by every prompt.
+ * @property {{ dev?: boolean, upToDate?: boolean, newer?: boolean }} [updateOut]  Set by the menu for `update --check`: the command fills it so the menu knows whether to offer the upgrade.
  * @property {boolean} [previewed]  Set by the menu for a destructive command it already showed the preview of: the command does not print it a second time.
  */
 

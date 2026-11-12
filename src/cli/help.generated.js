@@ -318,14 +318,19 @@ export const HELP = Object.freeze({
     "update": {
       "usage": "mailproof update [flags]",
       "summary": "show the upgrade command",
-      "when": "Use to upgrade mailproof. By default it only prints the command (`npm install -g mailproof@latest`) and the installed version, because a global install can be owned by root or made with another package manager; --run executes it for you.",
-      "fails": "With --run the exit code is 0 when npm succeeded and 1 otherwise. Without --run nothing is run and nothing touches the network.",
+      "when": "Use to upgrade mailproof. By default it only prints the command (`npm install -g mailproof@latest`) and the installed version, because a global install can be owned by root or made with another package manager; --check also asks the npm registry whether a newer version exists; --run looks it up and upgrades only when it is newer, then says to restart mailproof. A development link (npm link, a git checkout) is never upgraded with npm: it says so and to update with git.",
+      "fails": "With --run the exit code is 0 when npm succeeded and 1 otherwise. Without --run nothing is run; only --check and --run touch the network (one `npm view`, 10 s); offline with --run is exit 1.",
       "account": false,
       "flags": [
         {
+          "name": "check",
+          "type": "boolean",
+          "help": "ask the npm registry for the latest version (the only network use besides --run)"
+        },
+        {
           "name": "run",
           "type": "boolean",
-          "help": "run `npm install -g mailproof@latest` (output streams through)"
+          "help": "upgrade now: look up the latest version, run `npm install -g mailproof@latest` only when it is newer (npm's output is shown only if it fails)"
         }
       ]
     },

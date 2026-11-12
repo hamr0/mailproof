@@ -1,6 +1,7 @@
 // Address-first CLI (SPEC B11.5a): show/verify by address, Message-ID or id, the fixed-label show view, people, list columns,
 // the id hints, and the menu's People item. Real record() over the thread fixture; IMAP is never contacted.
 import test from 'node:test';
+import { stripStyle } from '../../src/cli/style.js';
 import assert from 'node:assert/strict';
 import { buildThread } from '../helpers/thread-trail.js';
 import { makeWorld, account } from '../helpers/cli.js';
@@ -228,6 +229,19 @@ test('menu: People lists them, numbered; one prompt takes the person and s/v/e; 
   assert.ok(s.stdout.includes((await w.run(['show', BOB])).stdout));
   const ex = await w.run([], { interactive: true, input: keys('3', `${BOB} e`, '', '', '/nonexistent-dir/xx', '', 'q') });
   assert.match(ex.stdout, /Write the bundle to/);
+});
+
+test('C10: people in the menu: a # header cell lines up with the numbered rows; a blank line and the rule come before the pick line', async () => {
+  const m = await w.run([], { interactive: true, input: '3\n\nq\n' });
+  const L = stripStyle(m.stdout).split('\n');
+  const head = L.findIndex((l) => /^ +# +address +emails +verified +last$/.test(l));
+  assert.ok(head >= 0, 'the header has a # cell');
+  const row = L[head + 1];
+  assert.equal(L[head].indexOf('address'), row.search(/[a-z]/), 'the address column lines up');
+  const pick = L.findIndex((l) => /^pick a person/.test(l));
+  assert.match(L[pick - 1], /^[─-]+$/, 'the dim rule right above the pick line');
+  assert.equal(L[pick - 2], '', 'a blank line above the rule');
+  assert.ok(row);
 });
 
 // ---- owner's real-trail follow-ups: RFC 2047 subjects, "signed" only when a verifying signature covers it, the recorded DNS error ----

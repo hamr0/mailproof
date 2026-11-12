@@ -115,6 +115,8 @@ test('B7 export: the preview first (browse rows, what it reveals), then Write it
   assert.match(no.stdout, /addresses and subjects; your other mail appears only as hashes/);
   assert.ok(no.stdout.indexOf('This would export') < no.stdout.indexOf('Write it? '), 'the preview comes before the question');
   assert.match(no.stdout, /Write it\? \[y\/N\] /);
+  assert.match(no.stdout, /^[─-]+\nWrite it\?/m, 'C8/C10: the blank line and the rule above the question');
+  assert.match(no.stdout, /^\n[─-]+\nWrite it\?/m);
   assert.match(no.stdout, /^nothing written$/m);
   assert.deepEqual(fs.existsSync(dir) ? fs.readdirSync(dir) : [], [], 'nothing was written');
   const yes = await menu(w, keys('11', 'alice@alpha.example', '', '', '', 'n', 'y', '', 'q'));
@@ -196,5 +198,9 @@ test('B11 prune: the date, then the preview (count, span, rows); nothing to remo
   const at = (s) => r.stdout.indexOf(s);
   assert.ok(at('Prune would') < at('Also delete the pre-prune backup') && at('Also delete the pre-prune backup') < at('Type the account name') && at('Type the account name') < at('pruned: removed'), 'preview, backup option, confirmation, result');
   assert.equal((r.stdout.match(/Prune would permanently remove/g) ?? []).length, 1, 'the preview is shown once');
+  assert.match(r.stdout, /mailproof [›>] 15 prune [›>] before 2026-11-01 *─*-*$/m, 'C8: the crumb has the date, not the typed T...Z');
+  assert.match(r.stdout, /^[─-]+\nType the account name/m, 'C10: the separator rule right above the confirmation');
+  assert.match(r.stdout, /^\n[─-]+\nAlso delete/m, 'C10: a blank line and the rule above the backup question');
+  assert.ok(!r.stdout.includes(w.home), 'C8: no absolute home path');
   assert.match(r.stdout, /^pruned: removed 3 proofs, kept 3; new head \w+; content of 3 emails removed; the old trail is kept as /m);
 });
