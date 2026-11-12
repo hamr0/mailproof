@@ -14,6 +14,20 @@ const MAX_DEPTH = 6;   // top folder + records/<2hex>/<file> and a margin: deepe
 const MAX_NAME = 1024;
 const MAX_EXT = 64 * 1024;   // a long-name or pax record
 
+/**
+ * Is this regular file a tar? By content, not name: the `ustar` magic at offset 257 of the first 512-byte header (GNU and POSIX tars both carry it).
+ * @param {string} file @returns {Promise<boolean>}
+ */
+export async function isTarFile(file) {
+  const fh = await fs.open(file, 'r').catch(() => null);
+  if (!fh) return false;
+  try {
+    const b = Buffer.alloc(BLOCK);
+    const { bytesRead } = await fh.read(b, 0, BLOCK, 0);
+    return bytesRead === BLOCK && b.toString('latin1', 257, 262) === 'ustar';
+  } finally { await fh.close(); }
+}
+
 /** @typedef {{ dir: string, cleanup: () => Promise<void> } | { problems: string[], cleanup: () => Promise<void> }} Unpacked */
 
 /** @param {Buffer} b @param {number} off @param {number} len @returns {number | null} */

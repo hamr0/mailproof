@@ -119,3 +119,40 @@ test('CLI: verify-bundle <file.tar> works and exits 0', async () => {
   assert.match(v.stdout, /VERIFIED/);
   assert.ok(dir);
 });
+
+test('an export --tar with an extensionless out is named <out>.tar, and verify-bundle accepts it (library and CLI)', async () => {
+  const w = bundleWorld({ otsBin: null });
+  await w.rec({ who: BOB, tag: 'a' });
+  const dir = makeTmpDir('mp-vbt-n-');
+  const r = await w.mp.export({ with: [BOB], out: path.join(dir, 'e2e-bundle'), tar: true });
+  assert.equal(r.out, path.join(dir, 'e2e-bundle.tar'));
+  assert.deepEqual(fs.readdirSync(dir), ['e2e-bundle.tar'], 'no extensionless file');
+  assert.ok((await verifyBundle(r.out, { ots: null, expect: r.bundle_sha256 })).ok);
+  const r2 = await w.mp.export({ with: [BOB], out: path.join(dir, 'twice.tar'), tar: true });
+  assert.equal(r2.out, path.join(dir, 'twice.tar'), 'the extension is never doubled');
+  // the CLI prints the real name in the hint
+  const cw = makeWorld({ accounts: { work: account(w.trailDir, { ots: false }) } });
+  const c = await cw.run(['export', '--with', BOB, '--out', path.join(dir, 'cli-b'), '--tar']);
+  assert.equal(c.code, 0, c.stderr);
+  assert.match(c.stdout, /verify-bundle --expect [0-9a-f]{64} cli-b\.tar$/m);
+  assert.ok(fs.statSync(path.join(dir, 'cli-b.tar')).isFile());
+});
+
+test('verify-bundle decides tar by content: an extensionless tar file is accepted, a non-tar regular file is refused', async () => {
+  const { dir, r } = await exported();
+  const bare = path.join(dir, 'renamed');
+  fs.copyFileSync(r.out, bare);
+  const v = await verifyBundle(bare, { ots: null, expect: r.bundle_sha256 });
+  assert.ok(v.ok, JSON.stringify(v.problems));
+  const cw = makeWorld({ accounts: {} });
+  const c = await cw.run(['verify-bundle', bare, '--expect', r.bundle_sha256]);
+  assert.equal(c.code, 0, c.stderr);
+  const txt = path.join(dir, 'notes');
+  fs.writeFileSync(txt, 'just some text\n'.repeat(100));
+  await assert.rejects(() => verifyBundle(txt, { ots: null }), /not a directory or a \.tar file/);
+  const bad = await cw.run(['verify-bundle', txt]);
+  assert.equal(bad.code, 64);
+  assert.match(bad.stderr, /not a directory or a \.tar file/);
+  fs.writeFileSync(path.join(dir, 'tiny'), 'x');
+  await assert.rejects(() => verifyBundle(path.join(dir, 'tiny'), { ots: null }), /not a directory or a \.tar file/);
+});

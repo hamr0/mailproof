@@ -8,6 +8,7 @@ import { constants } from 'node:fs';
 import path from 'node:path';
 import { MAX_TOTAL_BYTES } from '../proof/limits.js';
 import { ToolError, badArgument } from './errors.js';
+import { isTarFile } from '../proof/bundle-tar.js';
 
 /**
  * @typedef {Object} InputOptions
@@ -58,7 +59,7 @@ async function resolveAllowed(p, o, what) {
 export async function resolveAllowedBundle(p, o) {
   const real = await resolveAllowed(p, o, 'a bundle folder or .tar file');
   const st = await fs.lstat(real).catch(() => null);
-  if (!st || !(st.isDirectory() || (st.isFile() && real.endsWith('.tar')))) throw new ToolError('ERR_PATH_NOT_ALLOWED', 'the path is not a bundle folder or .tar file inside the folders listed in mcp.inputDirs');
+  if (!st || !(st.isDirectory() || (st.isFile() && (real.endsWith('.tar') || await isTarFile(real))))) throw new ToolError('ERR_PATH_NOT_ALLOWED', 'the path is not a bundle folder or .tar file inside the folders listed in mcp.inputDirs');
   return real;
 }
 

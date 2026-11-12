@@ -19,7 +19,7 @@ import { headerText } from './header-text.js';
 import { infoProof } from './ots.js';
 import { RULES_VERSION } from './verdict.js';
 import * as LIM from './limits.js';
-import { unpackTar } from './bundle-tar.js';
+import { unpackTar, isTarFile } from './bundle-tar.js';
 
 /** @typedef {{ state: 'anchored' | 'pending' | 'unstamped' | 'unsealed' | 'unchecked' | 'bad', via: 'record' | 'manifest' | null, listed_in: number | null, stamped_by: number | null, sealed_at: string | null, block?: number, merkle_root?: string, why?: string }} BundleSeal */
 
@@ -179,7 +179,7 @@ async function verifyBundle(dir, opts = {}) {
   const root = path.resolve(dir);
   const st = await fs.lstat(root).catch(() => null);
   if (!st) throw new TypeError(`verifyBundle: ${dir} does not exist`);
-  if (st.isFile() && root.endsWith('.tar')) return verifyTar(root, opts, L);
+  if (st.isFile() && (root.endsWith('.tar') || await isTarFile(root))) return verifyTar(root, opts, L);
   if (!st.isDirectory() && !st.isSymbolicLink()) throw new TypeError(`verifyBundle: ${dir} is not a directory or a .tar file`);
   return verifyDir(root, st, opts, L, []);
 }

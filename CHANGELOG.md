@@ -23,6 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **`export --tar` with an `--out` that does not end in `.tar`** wrote a tar file with no extension that `verify-bundle` then refused (exit 64). The export now writes `<out>.tar` (one name rule in the library, so the MCP `export` too; the result `out`, the printed path and the `they run:` hint name the real file; `.tar` is never doubled), and `verify-bundle` (library, CLI, MCP) recognises a tar file by its `ustar` header, not only its `.tar` name; a regular file that is not a tar is still refused.
+
 ### Changed
 - **`verifyBundle` records name who and what.** Each `records[]` entry also carries `from`, `to`, `subject` and `subject_signed` (read from the bundle's own record, third-party data; additive, also the MCP `verifyBundle` result). `verify-bundle` text rows now read like `list` (the sender or `to <address>`, the subject, `· subject not signed`) instead of the record id, and an unsealed record in a received bundle reads `not sealed` (`waiting to be sealed` stays for your own trail).
 - **Final tidy of the menu text.** `verify-bundle` prints `1 record` (not `1 records`), each record as the two-line browse row with the short capture time and the seal phrase once, and the three notes dim, wrapped and set off by blank lines before the verdict. The mcp screen says `registered for all your projects (user scope)` and offers `reinstall` / `uninstall` only when registered (`install` only when not). A record not yet sealed shows `waiting to be sealed (next 14:03Z)` instead of `unsealed`; the `spf` line of a mailbox copy says `N/A (not checkable from a mailbox copy)`; the pager breaks before a `#N of M` block instead of right after its header. `--json` is unchanged.

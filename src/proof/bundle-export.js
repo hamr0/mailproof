@@ -63,6 +63,9 @@ const COMPLETENESS = 'none: the owner chose the selection; nothing here shows th
 const err = (code, msg) => Object.assign(new Error(msg), { code });
 const rewritten = () => err('ERR_EXPORT_REWRITTEN', 'the trail was rewritten while the export was reading it (a prune, or a restore): nothing was written; run it again');
 
+/** The one name rule for a tar bundle (SPEC B13.2.3): the file ends in `.tar`; a given `out` without it gets it, never doubled. @param {string} out @returns {string} */
+const tarName = (out) => (out.endsWith('.tar') ? out : `${out}.tar`);
+
 /**
  * @param {unknown} opts
  * @param {number} maxAddresses
@@ -83,7 +86,8 @@ function parseOptions(opts, maxAddresses) {
   if (typeof o.out !== 'string' || !o.out) throw new TypeError('export: out must be a path');
   if (o.tar !== undefined && typeof o.tar !== 'boolean') throw new TypeError('export: tar must be a boolean');
   if (o.dryRun !== undefined && typeof o.dryRun !== 'boolean') throw new TypeError('export: dryRun must be a boolean');
-  return { with: addrs, after, before, out: o.out, tar: o.tar === true, dryRun: o.dryRun === true };
+  const tar = o.tar === true;
+  return { with: addrs, after, before, out: tar ? tarName(o.out) : o.out, tar, dryRun: o.dryRun === true };
 }
 
 /** @param {string} p @returns {Promise<string>} The real path of an existing path, else the path itself. */
