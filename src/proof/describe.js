@@ -8,7 +8,7 @@ import { participantsOf, signedHeaderValue, addressCoverage } from './participan
 import { claimedHeader, headerText } from './header-text.js';
 import { bodyText } from './body-text.js';
 import { verifyRecord } from './recheck.js';
-import { explain } from './explain.js';
+import { explain, shortReason } from './explain.js';
 import { classifyTarget, targetRecords } from './target.js';
 import { readAnchored } from './ots-upgrade.js';
 import { manifestOtsPath } from './layout.js';
@@ -47,6 +47,7 @@ import { manifestOtsPath } from './layout.js';
  * @property {{ live: string | null, portable: string | null, rules: string | null }} trust
  * @property {{ ok: boolean, trust: string }} recheck  The offline re-check.
  * @property {string | null} why  The reason in plain words when not verified (`explain`), null when it verifies.
+ * @property {string} reason  The same in a few plain words (at most 40 characters, `shortReason`): `verifies`, `no DKIM signature`, `no DKIM key in DNS`, `signature fails`, `body changed after signing`, `DMARC fails`, `key expired (x=)`, `over limit: size`, ...; what a list row shows.
  * @property {string | null} body_proof  The record's `body_status`, verbatim.
  * @property {{ proof: 'proven' | 'partial' | 'not', stored: boolean, source: string | null, limit: string | null, text: string | null, more_lines: number }} body  `text`: the whole text with `full: true`, else its first 10 lines (`more_lines` says how many were cut); null when there is no stored raw email or no text part.
  * @property {Array<{ filename: string | null, size: number | null, sha256: string | null, stored: boolean, match: boolean | null }>} attachments
@@ -159,6 +160,7 @@ export async function factsOf(mp, rec, opts = {}) {
     trust: { live: rec.verdicts?.live?.trust ?? null, portable: rec.verdicts?.portable?.trust ?? null, rules: live.engine?.rules ?? rec.verdicts?.portable?.engine?.rules ?? null },
     recheck: { ok: ver.ok, trust: ver.trust },
     why: explain(rec, ver),
+    reason: shortReason(rec, ver),
     body_proof: status,
     body: { proof: status === 'matched' ? 'proven' : status === 'partial' ? 'partial' : 'not', stored: raw !== null, source: bt?.source ?? null, limit: bt?.limit ?? null, text, more_lines: moreLines },
     attachments: (parts?.attachments ?? []).map((a) => ({

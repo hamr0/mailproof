@@ -41,3 +41,61 @@ export function explain(rec, v = verifyRecord(rec)) {
   if (!why.length) why.push(`live verdict ${live?.trust ?? 'N/A'}, portable ${rec.verdicts?.portable?.trust ?? 'N/A'}`);
   return why.join('; ');
 }
+
+/** Longest short reason, in characters. */
+const SHORT_MAX = 40;
+
+/** The first clause of a long why, cut at a word so it is at most SHORT_MAX characters. @param {string} why @returns {string} */
+function firstClause(why) {
+  const clause = (why.split(/;| \(/)[0] ?? '').trim();
+  if (clause.length <= SHORT_MAX) return clause;
+  const cut = clause.slice(0, SHORT_MAX + 1);
+  const at = cut.lastIndexOf(' ');
+  return (at > 0 ? cut.slice(0, at) : clause.slice(0, SHORT_MAX)).replace(/[\s,:.]+$/, '');
+}
+
+/** The short plain words for one failed offline re-check (`verifyRecord` signature `why`). @param {string} why @returns {string} */
+function recheckShort(why) {
+  if (why === 'bad signature') return 'signature fails';
+  if (why === 'expired') return 'key expired (x=)';
+  if (why === 'timestamp in future') return 'signature dated in the future';
+  if (why === 'no archived key') return 'no DKIM key archived';
+  if (why === 'h= too long') return 'signed headers too long';
+  if (why.startsWith('unsupported a=')) return 'unsupported algorithm';
+  if (why === 'no usable capture time') return 'no usable capture time';
+  if (why === 'malformed signature entry') return 'malformed signature';
+  if (why.startsWith('error:')) return 'signature check error';
+  return firstClause(why);
+}
+
+/**
+ * The reason in a few plain words, at most 40 characters, for a list row: `verifies`, `no DKIM signature`, `no DKIM key in DNS`,
+ * `signature fails`, `body changed after signing`, `key expired (x=)`, `DMARC fails`, `over limit: size`, ... ONE definition, next to
+ * `explain` and derived from the same recorded verdicts and re-check; `explain` stays the full sentence. An unknown cause falls back to
+ * the first clause of the long sentence, cut at a word.
+ * @param {MpRecord} rec
+ * @param {{ ok: boolean, signatures: Array<Record<string, any>> }} [v]  The offline re-check to use (default: `verifyRecord(rec)`).
+ * @returns {string}
+ */
+export function shortReason(rec, v = verifyRecord(rec)) {
+  const long = explain(rec, v);
+  if (long === null) return 'verifies';
+  const live = /** @type {Record<string, any> | undefined} */ (rec.verdicts?.live);
+  const over = [live?.reason, rec.verdicts?.portable?.reason].find((r) => typeof r === 'string' && r.startsWith('over limit: '));
+  if (over) return over.length <= SHORT_MAX ? over : firstClause(over);
+  const sigs = Array.isArray(rec.signatures) ? rec.signatures : [];
+  if (!sigs.length) return 'no DKIM signature';
+  const dkim = Array.isArray(live?.dkim) ? live.dkim.filter((/** @type {Record<string, any>} */ d) => d.d || d.s) : [];
+  const keyErr = sigs.find((s) => s.key_error);
+  if (keyErr) return /ENODATA|ENOTFOUND|NXDOMAIN|no record|no key/i.test(String(keyErr.key_error)) ? 'no DKIM key in DNS' : 'DKIM key not fetched';
+  const failed = dkim.filter((/** @type {Record<string, any>} */ d) => d.result !== 'pass');
+  if (failed.some((/** @type {Record<string, any>} */ d) => d.result === 'neutral' || d.result === 'none') && !v.ok) return 'no DKIM key in DNS';
+  if (v.ok && failed.length && sigs.some((s) => s.body?.status === 'mismatch')) return 'body changed after signing';
+  const bad = v.signatures.find((s) => !s.ok);
+  if (bad) return recheckShort(String(bad.why ?? bad.reason ?? ''));
+  if (failed.length) return 'signature fails';
+  if (dkim.some((/** @type {Record<string, any>} */ d) => d.result === 'pass' && !d.aligned)) return 'DKIM not aligned with From';
+  if (live?.dmarc?.published && live.dmarc.result !== 'pass') return 'DMARC fails';
+  if (live?.arc && live.arc.result !== 'pass') return 'ARC fails';
+  return firstClause(long);
+}

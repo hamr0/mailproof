@@ -9,7 +9,7 @@ import { inProcess } from '../helpers/mcp.js';
 import { signedMail, stubResolver } from '../helpers/proof.js';
 import { makeTmpDir } from '../helpers/tmp.js';
 import { classifyTarget, resolveRecordId } from '../../src/proof/target.js';
-import { explain } from '../../src/proof/explain.js';
+import { explain, shortReason } from '../../src/proof/explain.js';
 
 const T = await buildThread();
 const longBody = `${Array.from({ length: 15 }, (_, i) => `line ${i + 1}`).join('\r\n')}\r\n`;
@@ -86,6 +86,10 @@ test('a failing signature: coverage failing, and `why` says what the offline re-
   assert.deepEqual([f.recheck.ok, f.dkim[0].recheck], [false, { ok: false, why: 'bad signature' }]);
   assert.match(f.why, /offline re-check of beta\.example: bad signature/);
   assert.equal(f.why, explain(await T.mp.get(id('failing'))), 'explain is the one definition');
+  assert.equal(f.reason, 'signature fails');
+  assert.equal(f.reason, shortReason(await T.mp.get(id('failing'))), 'shortReason is the one definition of the short reason');
+  assert.equal((await T.mp.describe(id('signed'))).records[0].reason, 'verifies');
+  assert.equal((await T.mp.describe(id('plain'))).records[0].reason, 'no DKIM signature');
 });
 
 test('why states a recorded DNS error as the fact', async () => {
