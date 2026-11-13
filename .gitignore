@@ -9,6 +9,10 @@ poc/.data/
 /types/
 /src/**/*.d.ts
 .claude/settings.local.json
+
+# local secrets (the project reads no .env today; keep one from ever being staged)
+.env
+.env.*
 .claude/stash/
 
 # litectx local context index (sqlite + WAL) — never commit

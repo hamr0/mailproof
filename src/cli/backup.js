@@ -10,21 +10,15 @@ import { tilde, userDir, ensureDefaultDir } from './paths.js';
 import { printable as p } from './printable.js';
 import { styleOf, fileUrl } from './style.js';
 import { count, humanSize } from './words.js';
-import { PUSH_WARNING, redactUrl, classifyPush } from '../proof/backup.js';
+import { PUSH_WARNING, redactUrl, classifyPush, bundleFileName } from '../proof/backup.js';
 
 export { PUSH_WARNING, redactUrl, classifyPush };
-
-/**
- * @param {Date} d
- * @returns {string}  `20261110T101500Z`
- */
-const compact = (d) => d.toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
 
 /**
  * The name of a default backup: `<account>-<UTC timestamp>.bundle`.
  * @param {string} account @param {Date} now @returns {string}
  */
-export const backupName = (account, now) => `${account}-${compact(now)}.bundle`;
+export const backupName = bundleFileName;
 
 /**
  * The default bundle path (SPEC B11.2a): `~/mailproof/backups/<account>-<UTC timestamp>.bundle`, absolute under $HOME.

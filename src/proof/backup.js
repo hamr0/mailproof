@@ -50,7 +50,15 @@ export function classifyPush(stderr) {
  * @param {Date} d
  * @returns {string}  `20261110T101500Z`
  */
-const compact = (d) => d.toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
+export const compactUtc = (d) => d.toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
+
+/**
+ * The file name of a default backup bundle: `<name>-<UTC timestamp>.bundle` (the one definition; the CLI builds its default path with it too).
+ * @param {string} name  The trail name (library) or the account name (CLI).
+ * @param {Date} now
+ * @returns {string}
+ */
+export const bundleFileName = (name, now) => `${name}-${compactUtc(now)}.bundle`;
 
 /**
  * The default bundle path when `out` is not given: `<trailDir>/.<trail>.backups/<trail>-<UTC timestamp>.bundle`.
@@ -59,7 +67,7 @@ const compact = (d) => d.toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, '
  * @param {Date} now
  * @returns {string}
  */
-export const defaultBundleFile = (root, trail, now) => path.join(path.dirname(root), `.${trail}.backups`, `${trail}-${compact(now)}.bundle`);
+export const defaultBundleFile = (root, trail, now) => path.join(path.dirname(root), `.${trail}.backups`, bundleFileName(trail, now));
 
 /** @param {string} p @returns {Promise<boolean>} */
 const exists = (p) => fs.access(p).then(() => true, () => false);

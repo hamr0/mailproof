@@ -218,16 +218,6 @@ function participantsOf(rec) {
 }
 
 /**
- * Does any signature that is in `passing` cover an In-Reply-To / References line? (Cheap pre-check: lets the
- * index skip the DKIM re-check for the many records with no signed threading header.)
- * @param {MpRecord} rec
- * @returns {boolean}
- */
-function hasSignedThreading(rec) {
-  try { return sigsOf(rec).some((s) => linesOf(s).some((l) => l.name === 'in-reply-to' || l.name === 'references')); } catch { return false; }
-}
-
-/**
  * The message ids a record points at (its parents) and how strongly each link is signed. `signed`: the id is in an
  * In-Reply-To / References line that a signature covers, and that signature is in `passing` (it verifies offline,
  * aligned with the From domain: `verifyRecord(...).passing`). `unsigned`: the id is present but no such line covers
@@ -320,4 +310,4 @@ function signedHeaderValue(rec, name, only) {
   return out;
 }
 
-export { addressCoverage, directParents, signedHeaderValue, ROLES, parseAddresses, signedFromAddresses, addressesOf, participantsOf, hasSignedThreading, linksOf, strongest };
+export { addressCoverage, directParents, signedHeaderValue, ROLES, parseAddresses, signedFromAddresses, addressesOf, participantsOf, linksOf, strongest };

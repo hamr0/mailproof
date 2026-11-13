@@ -7,6 +7,7 @@ import { parseDate, parseAddress } from './parse.js';
 import { withAccount, print, warn, printJson } from './session.js';
 import { otsOptionFromEnv } from './secrets.js';
 import path from 'node:path';
+import { compactUtc } from '../proof/backup.js';
 import { printable as p } from './printable.js';
 import { styleOf, makeStyle, fileUrl } from './style.js';
 import { tilde, userDir, ensureDefaultDir } from './paths.js';
@@ -21,7 +22,7 @@ const PREVIEW_ROWS = 5;
 /** @typedef {import('./session.js').Args} Args */
 
 /** @param {Date} d @returns {string} `20261112-093000` (UTC). */
-const compact = (d) => d.toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, '').replace('T', '-');
+const compact = (d) => compactUtc(d).replace(/Z$/, '').replace('T', '-');
 
 /**
  * The name of a default export (a directory, or a .tar file with `tar`).
