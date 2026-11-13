@@ -14,7 +14,6 @@
 ```
 
 > Prove an email really came from the address it says, and keep that proof checkable offline, years later.
-> Signed headers only in the git proof, never the body (raw email kept locally, outside git, expiring). A git repo you own. OpenTimestamps sealing on by default, one hash per run.
 
 <p align="center">
   <a href="https://github.com/hamr0/mailproof/actions/workflows/ci.yml"><img src="https://github.com/hamr0/mailproof/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
@@ -22,111 +21,150 @@
   <img src="https://img.shields.io/badge/license-Apache%202.0-2a4f8c" alt="license: Apache 2.0">
 </p>
 
-**Guides:** [Setup guide: from zero to a sealed, exportable proof trail with the `mailproof` command](docs/product/setup-guide.md) | [Run your own mail server so your outbound mail is signed](docs/product/self-hosting.md)
+## What you get
 
-## What it is
+- **A verdict now.** Did this email really come from that address? One answer: `verified`, `forwarded`, `authorized` or `unverified`.
+- **Proof later, offline.** The signed headers, the signature and the sender's public key go into a git repo you own. Anyone can re-check the email from that record alone, even after the sender drops the key from DNS.
+- **A time seal.** Records are sealed with OpenTimestamps, so you can show an email existed no later than a given time.
+- **Replies you can trust.** `replyText` returns only what the sender newly wrote, and says whether those words are proven.
+- **A bundle for the other side.** Export what you exchanged with one person; they check it with no account and no trail.
 
-**One proof, two goals.** The email-proof engine behind signedreply.com, packaged for anyone who needs a verifiable email.
+Not a mail client, not a sender, not spam filtering, not proof of delivery. It never decides what a reply means: it gives you the verified text, and acting on it is your call.
 
-**1. Verify it now.** Did this email really come from the sending address? mailproof always checks DKIM, and adds DMARC, SPF and ARC when the sender publishes them. You get one verdict: `verified`, `forwarded`, `authorized` or `unverified`.
+## What it checks and captures
 
-**2. Verify it later, offline.** It keeps the signed headers, the signature and the sender's public key in a git trail you own, so anyone can re-check the email from that record alone. No network needed, even after the sender rotates the key out of DNS. OpenTimestamps (on by default, batched: one hash per run, see [What leaves your machine](#what-leaves-your-machine)) proves the email was captured no later than a given time.
+| Signal | What mailproof does |
+|---|---|
+| **DKIM** | The proof. The signed headers, the signature and the sender's key (archived at capture) are stored, so the check repeats offline at any time. |
+| **DMARC** | Must pass when the domain publishes a policy, or the email is not `verified`. |
+| **SPF, ARC** | Checked and recorded at capture. They cannot be re-checked offline, so the offline verdict is DKIM only. |
+| **OpenTimestamps** | On by default. New records are sealed in batches (one hash per run, about every 6 hours) by `sync`, `watch` or `stamp`. Needs the optional `ots` binary; without it nothing is sealed and nothing breaks. |
+| **Threading** | In-Reply-To and References are stored. A reply's link to your message is graded `signed`, `unsigned` or `none`; Microsoft does not sign these headers. `replyText` and `replyFacts` read the thread. |
 
-**Replies, too.** `replyText` returns only what the sender newly wrote (the quoted history is removed), and tells you whether those words are proven. A reply that merely quotes "Approve payment of $5,000?" is not read as an approval.
+The body is never in the proof or the trail. The raw email and attachments are kept in a local store beside the trail (outside git, owner-only, removed after 730 days or by `forget`; `content: { store: false }` turns it off). Every email is recorded, even unsigned, unverifiable or over a size limit, and flagged with the reason.
 
-**What it isn't.** Not a mail client, not a sender, not spam filtering, and not proof of delivery. It never decides what a reply *means*: it gives you the verified text, and acting on it is your call. The body is never in the proof or the trail. By default the raw email and its attachments are kept in a local store beside the trail (outside git, owner-only files, removed after `content.days` or by `forget`); `content: { store: false }` turns that off.
+## Use it
 
-## Install
+### Humans: the `mailproof` command
 
+```bash
+npm install -g mailproof        # Node >= 22.19; optional: the `ots` binary for sealing
+mailproof                       # no arguments on a terminal: the menu
 ```
+
+First run walks you through adding an account (provider first, login tested before anything is written; the password is read from a file or command you name, never typed or stored). The menu header shows records, verified, last sync and seal state. Each item is a number (or its name) and runs the same code as the subcommand:
+
+| | | |
+|---|---|---|
+| **Mail** | 1 `sync`, 2 `watch` | fetch new mail and record it; keep doing so on a timer |
+| **Look** | 3 `people`, 4 `list`, 5 `show`, 6 `replies` | who is in the trail, browse emails, one address's emails and proof, what people answered |
+| **Check** | 7 `verify`, 8 `check`, 9 `check .eml`, 10 `verify-bundle` | re-check offline, test against a trust profile, check a saved file, check a bundle you were sent |
+| **Share and keep** | 11 `export`, 12 `seal`, 13 `backup` | bundle for a counterparty, seal now, save a copy of the trail |
+| **Clean up** | 14 `forget`, 15 `prune` | delete stored content (proofs stay), remove old proofs |
+| **Setup** | 16 `status`, 17 `config`, 18 `update`, 19 `mcp` | trail health, settings, upgrade, connect an AI assistant |
+
+The same things as subcommands, for scripts:
+
+```bash
+mailproof sync --account personal
+mailproof show bob@example.org        # every email with that address, and what its signature proves
+mailproof verify bob@example.org      # re-check offline; exit 2 if a received email does not verify
+mailproof stamp && mailproof export --with bob@example.org --after 2026-01-01 --tar
+mailproof verify-bundle <bundle> --expect <sha256>     # the recipient's side, no account
+```
+
+`mailproof help` lists everything. Exit codes, systemd and cron examples, restoring a backup: [usage guide](https://github.com/hamr0/mailproof/blob/main/docs/product/usage-guide.md#the-mailproof-command). First time: the [setup guide](https://github.com/hamr0/mailproof/blob/main/docs/product/setup-guide.md). Want your own outbound mail DKIM-signed too: [self-hosting guide](https://github.com/hamr0/mailproof/blob/main/docs/product/self-hosting.md) (OpenDKIM and Postfix).
+
+### Agents: the MCP server
+
+```bash
+claude mcp add mailproof -- mailproof mcp
+```
+
+`mailproof mcp` serves every configured account to any MCP client as 30 tools. Tool names equal the library method names. Two are server-only: `accounts` and `profiles`. `forget`, `prune`, `export` and `backup` only preview until called with `confirm: true`. Claude Code does not act on read-only/destructive hints, so scope tools by name in your allow rules. Details: [usage guide](https://github.com/hamr0/mailproof/blob/main/docs/product/usage-guide.md#ai-agents-the-mcp-server-mailproof-mcp). Hand your assistant the [integration guide](https://github.com/hamr0/mailproof/blob/main/mailproof.context.md) for the full contract.
+
+### Code: the library
+
+```bash
 npm install mailproof
 ```
-
-Node.js >= 22.19. Pure ESM. Ships TypeScript types generated from JSDoc.
-
-## Quick start
 
 ```js
 import { Mailproof } from 'mailproof';
 
 const mp = new Mailproof({ trailDir: './trails' });
 
-await mp.check(rawEmail);                              // a verdict now; writes nothing
+await mp.check(rawEmail);                                        // a verdict now; writes nothing
 const { id } = await mp.record(rawEmail, { direction: 'in' });   // keep the proof
-await mp.verify(id);                                   // later, offline, from the record alone
-const reply = await mp.replyText(rawEmail);            // the sender's new words, and reply.proven
+await mp.verify(id);                                             // later, offline, from the record alone
+const reply = await mp.replyText(rawEmail);                      // the sender's new words, and reply.proven
 ```
+
+Pure ESM, types generated from JSDoc. Good for a Postfix pipe or your own pipeline.
+
+### The primitives
+
+The whole public surface. [`primitives.json`](https://github.com/hamr0/mailproof/blob/main/primitives.json) (also at `unpkg.com/mailproof/primitives.json`) adds `when`, `signature`, `fails` and an example for each.
+
+| Primitive | Purpose |
+|---|---|
+| `new Mailproof({ trailDir })` | One instance per trail (a git repo of records). |
+| `check(raw)` | Verdict on an email now; writes nothing. |
+| `record(raw, opts)` | Keep the proof of one email. |
+| `verify(id)` | Re-check a record offline. |
+| `verifyWith(address)` | Do all emails with this address verify? |
+| `verifyRecord(record)` | Standalone offline re-check of an exported record. |
+| `verifyBundle(dir)` | Standalone check of a pair bundle, no trail needed. |
+| `list`, `get`, `describe` | Find records, read one, see an email or an address in one call. |
+| `copies(id)` | Every route one signed message reached you by. |
+| `counterparties()` | Who is in the trail. |
+| `linked(id)` | The thread around a record, graded signed/unsigned/none. |
+| `replyText(raw)` | The sender's new words in a reply, and whether they are proven. |
+| `replyFacts({ messageId })` | Flat facts on each direct reply, for a rule to judge. |
+| `checkProfile(record, profile)` | Pass or fail a record against a trust profile, with reasons. |
+| `matchBody`, `matchFile` | Show a later-found email or file is the one recorded. |
+| `proofParts(id)` | Email proof and each attachment's match, separately. |
+| `rawEmail`, `attachment` | Read stored content back. |
+| `sync(opts)` | Record a mailbox over IMAP, read-only. |
+| `stamp()`, `upgradeStamps()` | Seal new records; fold in Bitcoin attestations. |
+| `export(opts)` | Write a pair bundle for a counterparty. |
+| `backup(opts)` | Write a git bundle of the trail. |
+| `status()` | What the trail holds and how it is kept. |
+| `expireContent`, `forget`, `prune` | Retention: drop old content, content on request, or old proofs. |
+| `hashDocument(bytes)` | Hash a document the way mailproof does. |
+| `close()` | Release worker threads. |
+
+## Guard a workflow with a signed reply
+
+A risky step can wait for a human's signed email reply. mailproof supplies the facts; the rule is yours. It works with [bareguard](https://www.npmjs.com/package/bareguard) (`^0.34.0`), the sibling library that holds an agent's action until a rule allows it. Send the question from your own account, then read the replies:
+
+```js
+const replies = await mp.replyFacts({ messageId: '<question-1@example.com>' });
+```
+
+Group them by `messageKey`. Allow only if at least one reply is green and none is red. Green, for example: `firstLine` is your approval word, `from` is `alice@example.com`, `fromDkimAligned` is `pass`, `bodyProven` is `proven`, `link` is `signed`. No reply, or a mix, means deny. A second contradictory reply can deny an approval, never grant one. The full field list and the exact rule are in the [integration guide](https://github.com/hamr0/mailproof/blob/main/mailproof.context.md).
 
 ## What leaves your machine
 
-mailproof reads mail and writes proofs locally. Everything that goes over the network is listed here, with its off switch.
+mailproof reads mail and writes proofs locally. Everything that uses the network:
 
-| Path | What is sent | To whom | Off switch |
+| When | What is sent | To whom | Off switch |
 |---|---|---|---|
-| **IMAP** (`sync`, `watch`, `mailproof-sync`) | Your login, and read-only requests for new mail. Nothing is marked, moved or deleted. | Your mail provider, over TLS (certificates always checked). | Do not run `sync`; capture by pipe (`record`) needs no IMAP. |
-| **DNS** (verification at capture: `check`, `record`) | Lookups for the sender's DKIM key, DMARC and SPF records. | Your DNS resolver. | None while capturing; `verify` and every read re-check offline from the stored key, with no network. |
-| **OpenTimestamps calendars** (the stamp job: `sync`, `watch`, `stamp`) | One 32-byte hash of a manifest per run (a list of file hashes), at most every `stamp.everyHours` (default 6). Never content, subjects or addresses. The calendars see your IP address and the timing. | Public OpenTimestamps calendar servers, through the `ots` command. | `otsBin: null` in the library, `"ots": false` in the account config, `MAILPROOF_OTS=off` for `mailproof-sync`. |
+| **IMAP** (`sync`, `watch`) | Your login, and read-only requests for new mail. Nothing is marked, moved or deleted. | Your mail provider, over TLS. | Do not run `sync`; capture by pipe needs no IMAP. |
+| **DNS** (`check`, `record`) | Lookups of the sender's DKIM key, DMARC and SPF records. | Your DNS resolver. | None at capture; `verify` and every read use no network. |
+| **OpenTimestamps** (`sync`, `watch`, `stamp`) | One 32-byte hash of a manifest per run, at most every 6 hours. Never content, subjects or addresses. The calendars see your IP and the timing. | Public calendar servers, through `ots`. | `otsBin: null` (library), `"ots": false` (config), `MAILPROOF_OTS=off` (`mailproof-sync`). |
 
-`record()`, `check()`, `verify()` and every read never touch the OpenTimestamps calendars: only `sync()` and `stamp()` do. Without the `ots` binary installed nothing breaks: records are kept and listed in manifests, capture is unaffected, and the result says `ots not installed: records are not sealed; install opentimestamps-client or set ots: false`.
-
-Run `mailproof` with no arguments on a terminal for a menu with a live header (records, verified, last sync, seal) and a guided account setup that can test the login before it writes anything; colour and links follow `NO_COLOR` and `MAILPROOF_NO_LINKS`.
-
-## Five ways to use it
-
-1. **Library**: `check`, `record`, `verify`, `verifyWith`, `matchBody`, `matchFile`, `list`, `describe`, `copies`, `replyText`, `replyFacts`, `counterparties`, `linked`, `checkProfile`, `proofParts`, `rawEmail`, `attachment`, `expireContent`, `forget`, `prune`, `upgradeStamps`, `stamp`, `export`, plus the standalone `verifyRecord` and `verifyBundle`. Use it in your own pipeline, for example a Postfix pipe.
-2. **IMAP capture**: `mp.sync({...})` reads a mailbox (Gmail first) read-only and records every message. Run it again to pick up new mail.
-3. **The `mailproof` command**: run it for a menu, or use its subcommands (`sync`, `watch`, `list`, `show`, `verify`, `replies`, `check`, `forget`, `prune`, `backup`, `status`, `stamp`, `export`, `verify-bundle`, ...) in scripts. Your mailboxes live in one config file and the password is always read from a command or a file you name, never typed or stored. `mailproof-sync` stays for one sync run under cron or a systemd timer.
-4. **MCP server**: `mailproof mcp` gives Claude Code or any MCP client 30 tools over your accounts (everything the CLI does that fits, including `status`, `stamp`, `verifyBundle`, `export` and `backup`) (`claude mcp add mailproof -- mailproof mcp`). Known limit: the read-only/destructive hints are advisory and Claude Code does not act on them, so scope by tool name (or one server per account with `--account`); `forget`, `prune`, `export` and `backup` only preview until called with `confirm` (the only server-side guard), and `export`/`backup` write only into the configured output folder. [Usage guide](docs/product/usage-guide.md#ai-agents-the-mcp-server-mailproof-mcp).
-5. **AI agents**: `primitives.json` is a machine-readable menu of every verb (`when`, `import`, `signature`, `fails`, `example`), generated from source. Also on unpkg: `unpkg.com/mailproof/primitives.json`. Hand your assistant `mailproof.context.md` for the full contract.
-
-### The command line
-
-```bash
-mailproof config add-account     # asks a few questions, shows the result, writes the config only after you say yes
-mailproof                        # the menu: every command, grouped, one line of help each
-mailproof sync --account personal
-mailproof list --with bob@example.org --after 2026-01-01
-mailproof people                 # who is in your trail
-mailproof show b@example.com     # every email with that address: signed headers, trust, body, attachments
-mailproof verify b@example.com   # re-check them offline; exit 2 means a received email does not verify
-mailproof show 3f2a9c1d          # a record id (8+ characters) still works, for scripts
-mailproof watch                  # sync every 5 minutes in the foreground (run it under systemd --user)
-mailproof backup --with-content  # a git bundle of the proofs, plus a tar of the stored mail
-```
-
-`mailproof help` lists everything. How-to, systemd and cron examples, restoring a backup: [usage guide](docs/product/usage-guide.md#the-mailproof-command).
-
-### Handing a counterparty the proof (`export`, `verify-bundle`)
-
-```bash
-mailproof stamp --account personal                       # seal and upgrade first, so the proofs are as far along as they can be
-mailproof export --account personal --with bob@example.org --after 2026-01-01
-#   wrote ~/mailproof/exports/mailproof-bundle-personal-20261112-093000 (41 records, ...)
-#   sha256 3f2a...  (tell the recipient this, by another channel)
-mailproof verify-bundle ~/mailproof/exports/mailproof-bundle-personal-20261112-093000 --expect 3f2a...   # on the other side, with no account
-```
-
-`export` writes a directory (`--tar` also packs it into one file) of the signed headers, signatures, archived keys and seals of every email that names any of the addresses you give, on From, To, Cc or Reply-To. It holds no email bodies and no attachments. `verify-bundle` re-checks every signature offline, that the files are the ones listed, the chain of seal manifests, and each seal with `ots info` (it never contacts a calendar or a Bitcoin node). Be clear about what that proves:
-
-- **It proves**, per email, that the sender's domain signed those header lines, and that the record existed no later than its seal. **Anchored** means the proof is for exactly these bytes and carries a Bitcoin block attestation; the block header is *not* checked against Bitcoin (run `ots verify` yourself for that). **Pending** means the seal is not in a block yet; `mailproof stamp` and export again.
-- **It does not prove completeness.** You chose the selection; nothing shows that no other email between you exists. The seal manifests list other records as bare hashes, so a recipient who holds an email you left out can notice if it was sealed in a batch the bundle shows. That is evidence, not a guarantee.
-- **Privacy.** A bundle names every person you wrote to or heard from in it, and the subjects. Its manifests also reveal that other records exist (how many, and when each batch was sealed), never what they were. It is written 0700/0600; sharing it is your act.
-- `verify-bundle` is lenient by default (an unsigned email or a pending seal is reported, not a failure); `--strict` fails unless every email is DKIM-verified and every seal is anchored. `--expect <sha256>` also fails when `bundle.json` is not the one you were told about.
+`record()`, `check()`, `verify()` and every read never contact the calendars.
 
 ## What you can rely on
 
 - **Received at Gmail:** the reply's words are provable, whoever sent it.
-- **Received at Outlook/msn from outside:** Microsoft alters the body, so the words are unproven. The sender and signed headers still verify. mailproof tells you which case you're in (`proven`), and never hides it.
+- **Received at Outlook or msn from outside:** Microsoft alters the body, so the words are unproven. The sender and signed headers still verify. `proven` tells you which case you are in.
 - **Unsigned mail and your own Sent copies** are recorded but `unverified`. The proof is the other side's signed copy.
-- **Every email is recorded**, even when it can't be verified or is over a size limit, and it is flagged with the reason.
+- **An export proves** that a domain signed those headers, and (once anchored) that the record existed by a time. It does not prove completeness: nothing shows that no other email exists.
 
 Replies whose words matter, such as approvals, belong in a Gmail inbox.
 
-## Docs
+## More
 
-- **[Usage guide](docs/product/usage-guide.md)**: every surface, how to read each result, running on a timer, limits and recovery.
-- **[Integration guide](mailproof.context.md)**: the dense contract for wiring mailproof into code or an agent.
-
-## License
-
-Apache 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
+[Usage guide](https://github.com/hamr0/mailproof/blob/main/docs/product/usage-guide.md) | [Setup guide](https://github.com/hamr0/mailproof/blob/main/docs/product/setup-guide.md) | [Self-hosting guide](https://github.com/hamr0/mailproof/blob/main/docs/product/self-hosting.md) | [Integration guide](https://github.com/hamr0/mailproof/blob/main/mailproof.context.md) | [Changelog](https://github.com/hamr0/mailproof/blob/main/CHANGELOG.md) | [License](https://github.com/hamr0/mailproof/blob/main/LICENSE) (Apache 2.0)

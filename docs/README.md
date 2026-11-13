@@ -5,7 +5,7 @@ re-checkable proof of each email (signed headers in git, never the body; the raw
 trail, so anyone can verify it offline later. Multi-party workflows stay in
 `gitdone` / signedreply.com. See the [v2 PRD](product/PRD.md).
 
-> **Status:** v2 is released through 3.2.0 (M0-M2 and M3 steps 1-5 shipped; the MCP server, M3 step 6, is built on `feat/m3-mcp` and not yet released). 1.x (a multi-party coordination kernel lifted from
+> **Status:** v2 is released through 4.0.0 (2026-11-13; M0-M4 shipped: record and re-check, IMAP capture, reply text, the CLI and MCP server, the OpenTimestamps seal and pair export). M5 is next. 1.x (a multi-party coordination kernel lifted from
 > gitdone) is frozen at tag `v1.4.0`; the v1 code and docs are archived in
 > [`../archive/v1/`](../archive/v1/) (no `v1` branch). The v1 PRD is at [`../archive/v1/docs/PRD.md`](../archive/v1/docs/PRD.md). `DESIGN.md` and
 > `SPEC.md` still describe v1 and are superseded module by module as v2 lands.
