@@ -52,9 +52,9 @@ npm install -g mailproof        # Node >= 22.19; optional: the `ots` binary for 
 mailproof                       # no arguments on a terminal: the menu
 ```
 
-First run walks you through adding an account (provider first, login tested before anything is written; the password is read from a file or command you name, never typed or stored). The menu header shows records, verified, last sync and seal state. Each item is a number (or its name) and runs the same code as the subcommand:
+First run walks you through adding an account (provider first, login tested before anything is written; the password is kept in an owner-only file or a command you name, never in the config). The menu header shows records, verified, last sync and seal state. Each item is a number (or its name) and runs the same code as the subcommand:
 
-| | | |
+| Group | Items | What they do |
 |---|---|---|
 | **Mail** | 1 `sync`, 2 `watch` | fetch new mail and record it; keep doing so on a timer |
 | **Look** | 3 `people`, 4 `list`, 5 `show`, 6 `replies` | who is in the trail, browse emails, one address's emails and proof, what people answered |
