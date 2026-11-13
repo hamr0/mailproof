@@ -360,13 +360,14 @@ Also: `path` inputs are refused until `mcp.inputDirs` is set (`base64` always al
 **Rationale**: The hard parts are DNS, PTR, port 25 and IP reputation, none of which a container can set; an image would also make mailproof a mail-server product that must be patched. The command is the one piece that is code, tiny, and shared by every user. Simple path, one source of truth.
 **Consequences**: PRD §7 M5 rewritten; SPEC gains B14 (outline); one open evidence task (the `sender_bcc_maps` copy end to end); a pipe-only account may need B11.2 to allow a config with no IMAP block (to settle at build). Postfix bounces sysexits codes (64, 77), so the guide's wrapper maps every failure to 75 rather than the command changing its codes.
 
-### Decision: OTS on by default in the library too, released as 3.4.0
+### Decision: OTS on by default in the library too, released as 4.0.0
 **Date**: 2026-11-11
 **Status**: Accepted (owner: hamr0); built on `feat/m4-export`, not yet released
 **Context**: M4 made the batch seal the default. A pushback was considered: a library that makes network calls (calendar servers) by default.
-**Decision**: OTS stays on by default in the library as well as the CLI; `otsBin: null` turns it off. The pushback was withdrawn: the network is touched only in `sync()` and `stamp()`, never in `record()`, `check()`, `verify()` or the read primitives. Clarity comes from a "What leaves your machine" section in the docs, a seal line in `status`, and a plain message when `ots` is missing. Released as 3.4.0 (additive).
+**Decision**: OTS stays on by default in the library as well as the CLI; `otsBin: null` turns it off. The pushback was withdrawn: the network is touched only in `sync()` and `stamp()`, never in `record()`, `check()`, `verify()` or the read primitives. Clarity comes from a "What leaves your machine" section in the docs, a seal line in `status`, and a plain message when `ots` is missing. Released as 4.0.0 (additive).
 **Rationale**: A time seal that is off by default is a seal few users have when they need it; the network paths are few and named.
 **Consequences**: docs state what leaves the machine; a missing binary never blocks capture (accept-with-flag).
+**2026-11-13**: owner chose to release this as 4.0.0 (major), not 3.4.0, because the default change adds network contact for library adopters who never set otsBin.
 
 ### Decision: Address-first CLI, `people`, and the fixed-label `show`
 **Date**: 2026-11-11
