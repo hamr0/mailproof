@@ -131,7 +131,7 @@ The whole public surface. [`primitives.json`](https://github.com/hamr0/mailproof
 | `backup(opts)` | Write a git bundle of the trail. |
 | `status()` | What the trail holds and how it is kept. |
 | `expireContent`, `forget`, `prune` | Retention: drop old content, content on request, or old proofs. |
-| `hashDocument(file)` | Hash a file the way mailproof does. |
+| `hashDocument(bytes)` | Hash a document the way mailproof does. |
 | `close()` | Release worker threads. |
 
 ## Guard a workflow with a signed reply
