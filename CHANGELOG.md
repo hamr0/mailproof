@@ -21,6 +21,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > the first free clean minor, `1.3.0`.) See
 > [`archive/v1/docs/DESIGN.md`](archive/v1/docs/DESIGN.md) for the phasing.
 
+## [Unreleased]
+
+### Docs
+
+- README rewritten: sections by audience (the `mailproof` command and its menu, the MCP server, the library), one table of every primitive, what is checked and captured (DKIM, DMARC, SPF/ARC, the seal, threading), guarding a workflow step with a signed reply through bareguard, and links to the usage, setup and self-hosting guides. Links are absolute so they also work on npmjs.com.
+- `mailproof.context.md`: `export` is an MCP tool (the context said it was not); internal dates removed from the bareguard rule and the MCP parity note.
+- Usage guide: the `ots` binary is needed for the seal, which is on by default since 4.0.0 (the guide said only if turned on).
+
 ## [4.0.0] - 2026-11-13
 
 ### Changed
