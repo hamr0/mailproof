@@ -317,5 +317,5 @@ A trail has a single writer at a time, enforced by a lock file (`<trailDir>/.<tr
 
 - Node >= 22.19 (the CPU deadline needs `Worker#cpuUsage`); pure ESM (`import`, no `require`).
 - The `git` binary on `PATH` (the trail is a git repo; mailproof calls `git` directly).
-- Four runtime dependencies: `mailauth` (DKIM/DMARC/SPF/ARC verification), `mailparser` (MIME parsing), `imapflow` (used only by `sync`) and `better-sqlite3` (used only by `list` and `copies`, for their index). The optional `ots` binary is needed only if you turn OpenTimestamps on.
+- Four runtime dependencies: `mailauth` (DKIM/DMARC/SPF/ARC verification), `mailparser` (MIME parsing), `imapflow` (used only by `sync`) and `better-sqlite3` (used only by `list` and `copies`, for their index). The optional `ots` binary is what seals records with OpenTimestamps (on by default); without it capture still works and the seal waits.
 - Trail names match `/^[a-z0-9][a-z0-9_-]{0,63}$/`; record ids are 32 hex characters.
