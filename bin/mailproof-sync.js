@@ -6,8 +6,9 @@
 import { parseArgs } from 'node:util';
 import { Mailproof } from '../src/index.js';
 import { UsageError, EX_USAGE, exitFor, exitForError } from '../src/cli/errors.js';
+import { expandHome } from '../src/cli/config.js';
 import { printable } from '../src/cli/printable.js';
-import { runSecretCommand, readSecretFile, passwordAuth, tokenAuth } from '../src/cli/secrets.js';
+import { runSecretCommand, readSecretFile, passwordAuth, tokenAuth, otsOptionFromEnv } from '../src/cli/secrets.js';
 
 const USAGE = `Usage: mailproof-sync --trail-dir <dir> --user <user> [options]
 
@@ -21,6 +22,8 @@ Options (env fallback in brackets):
   --user <user>                  IMAP user [MAILPROOF_USER]
   --folders <a,b>                comma-separated folders, default INBOX [MAILPROOF_FOLDERS]
   --sent <on|off>                also sync the \\Sent folder, default on [MAILPROOF_SENT]
+  (env only) MAILPROOF_OTS=off   turn the OpenTimestamps seal off (default: on; the run ends with the stamp job
+                                 when due, and sends one 32-byte hash to the public calendars); a path names the ots binary
 
 Secret (exactly one source; a plain password in an env var or flag is not accepted):
   --pass-command "<cmd>"         run <cmd> (split into arguments, no shell); first stdout line is the password
@@ -88,7 +91,8 @@ async function main() {
   if (passCmd && passFile) throw new UsageError('give --pass-command or --pass-file, not both');
 
   const mp = (() => {
-    try { return new Mailproof({ trailDir, trail: v.trail ?? env.MAILPROOF_TRAIL }); }
+    const otsOpt = otsOptionFromEnv(env);
+    try { return new Mailproof({ trailDir, trail: v.trail ?? env.MAILPROOF_TRAIL, ...otsOpt }); }
     catch (e) { throw new UsageError(/** @type {Error} */ (e).message); }
   })();
   try {
@@ -98,7 +102,7 @@ async function main() {
     else {
       let raw;
       if (passCmd) raw = await runSecretCommand(passCmd, 'pass command');
-      else if (passFile) raw = await readSecretFile(passFile, '--pass-file');
+      else if (passFile) raw = await readSecretFile(expandHome(passFile, env), '--pass-file');
       else if (!process.stdin.isTTY) raw = await readStdin();
       else throw new UsageError('no password source: use --pass-command, --pass-file or pipe it on stdin');
       auth = passwordAuth(raw);

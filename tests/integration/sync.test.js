@@ -515,3 +515,17 @@ test('windows: a large empty range persists the cursor only a few times, and sti
   assert.equal(s.cursor().accounts['imap.account.test/acct.owner@account.test'].INBOX.last_uid, 450000, 'the cursor still advances past empty windows');
   assert.ok(rootReads < 25, `trail root read ${rootReads} times (once per cursor write, plus fixed setup)`);
 });
+
+test('onProgress: called after each message with folder, done, uid and uidMax; a throwing hook, or none, changes nothing; a non-function is a TypeError', async () => {
+  const s = await setup({ n: 3 });
+  const fake = makeFake({ folders: { INBOX: { msgs: s.msgs } } });
+  const seen = [];
+  const r = await run(s, fake, { onProgress: (p) => seen.push(p) });
+  assert.deepEqual(seen.map((p) => [p.folder, p.direction, p.done, p.uid, p.uidMax]), [['INBOX', 'in', 1, 1, 3], ['INBOX', 'in', 2, 2, 3], ['INBOX', 'in', 3, 3, 3]]);
+  assert.equal(r.folders[0].recorded, 3);
+  const s2 = await setup({ n: 2 });
+  const r2 = await run(s2, makeFake({ folders: { INBOX: { msgs: s2.msgs } } }), { onProgress: () => { throw new Error('boom'); } });
+  assert.equal(r2.complete, true, 'a hook that throws never fails the run');
+  assert.equal(r2.folders[0].recorded, 2);
+  await assert.rejects(run(s2, makeFake({ folders: { INBOX: { msgs: [] } } }), { onProgress: 'x' }), TypeError);
+});

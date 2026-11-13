@@ -145,6 +145,24 @@ function signedKeys(sigs) {
 }
 
 /**
+ * Which addresses a signature covers, by how far that signature can be trusted: `signed` when a signature in `passing`
+ * (verifies and aligns, `verifyRecord(...).passing`) covers a line that names it, `failing` when only signatures that do not
+ * verify cover it. An address in neither map entry is not covered at all. The record's own `addresses[].signed` is the weaker
+ * "some signature covers it" (SPEC B1); a display that says "signed" must use this.
+ * @param {MpRecord} rec
+ * @param {Iterable<number>} passing  Signature indexes that verify and align.
+ * @returns {Map<string, 'signed' | 'failing'>}  Keyed `role\0address` (lower case).
+ */
+function addressCoverage(rec, passing) {
+  const ok = new Set(passing);
+  const sigs = sigsOf(rec);
+  const out = /** @type {Map<string, 'signed' | 'failing'>} */ (new Map());
+  for (const k of signedKeys(sigs)) out.set(k, 'failing');
+  for (const k of signedKeys(sigs.filter((_, i) => ok.has(i)))) out.set(k, 'signed');
+  return out;
+}
+
+/**
  * The record's `addresses` field (SPEC B1), collected at capture from the parsed header block: every address on a
  * From, To, Cc or Reply-To line, signed or not, each marked `signed` when some signature of the record covers a
  * line that names it. Header order; one row per role and address; at most INDEX_MAX_PARTICIPANTS rows. Never throws.
@@ -197,16 +215,6 @@ function participantsOf(rec) {
     if (typeof from === 'string' && from.length <= INDEX_MAX_ADDRESS && ADDR_RE.test(from)) put(seen, 'from', from, false);
   } catch { /* a malformed record has no participants */ }
   return [...seen.values()];
-}
-
-/**
- * Does any signature that is in `passing` cover an In-Reply-To / References line? (Cheap pre-check: lets the
- * index skip the DKIM re-check for the many records with no signed threading header.)
- * @param {MpRecord} rec
- * @returns {boolean}
- */
-function hasSignedThreading(rec) {
-  try { return sigsOf(rec).some((s) => linesOf(s).some((l) => l.name === 'in-reply-to' || l.name === 'references')); } catch { return false; }
 }
 
 /**
@@ -302,4 +310,4 @@ function signedHeaderValue(rec, name, only) {
   return out;
 }
 
-export { directParents, signedHeaderValue, ROLES, parseAddresses, signedFromAddresses, addressesOf, participantsOf, hasSignedThreading, linksOf, strongest };
+export { addressCoverage, directParents, signedHeaderValue, ROLES, parseAddresses, signedFromAddresses, addressesOf, participantsOf, linksOf, strongest };

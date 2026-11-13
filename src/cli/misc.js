@@ -1,22 +1,23 @@
 // sync (the command), update, config, export, mcp: the commands that are mostly text.
 
-import { spawn } from 'node:child_process';
-import fs from 'node:fs';
 import path from 'node:path';
 import { UsageError, EX_OK, EX_ERR, EX_USAGE } from './errors.js';
 import { parseFolders, parseSent } from './parse.js';
 import { openAccount, loadCtxConfig, print, warn, printJson } from './session.js';
 import { serveMcp } from '../mcp/server.js';
-import { syncOnce, syncText } from './sync-op.js';
+import { syncOnce, syncText, nextSealDue, indexAfterSync } from './sync-op.js';
 import { configPath, TEMPLATE, loadConfig, ConfigError } from './config.js';
 import { addAccountWizard } from './wizard.js';
 import { printable as p } from './printable.js';
+import { stampText } from './sync-op.js';
+import { styleOf } from './style.js';
+import { progressLine, indexProgressLine } from './progress.js';
+import { version } from './version.js';
 
 /** @typedef {import('./session.js').Ctx} Ctx */
 /** @typedef {import('./session.js').Args} Args */
 
-/** @returns {string} The installed version. */
-export const version = () => JSON.parse(fs.readFileSync(new URL('../../package.json', import.meta.url), 'utf8')).version;
+export { version };
 
 /** @param {Args} a @param {Ctx} ctx @returns {Promise<number>} */
 export async function syncCmd(a, ctx) {
@@ -27,39 +28,30 @@ export async function syncCmd(a, ctx) {
   const s = await openAccount(a, ctx);
   try {
     if (ctx.stderr.isTTY) warn(ctx, `syncing ${p(s.account.name)} ...`);
-    const r = await syncOnce(s, ctx, over);
-    if (a.values.json) printJson(ctx, { ...r.result, ots: r.ots }); else print(ctx, syncText(r));
+    const progress = progressLine(ctx);
+    let r;
+    try { r = await syncOnce(s, ctx, { ...over, ...(progress ? { onProgress: progress.update } : {}) }); } finally { progress?.clear(); }
+    if (a.values.json) printJson(ctx, { ...r.result, ots: r.ots });
+    else print(ctx, syncText(r, styleOf(ctx), { nextDue: r.ots ? await nextSealDue(s) : null, now: (ctx.deps.now ?? (() => new Date()))() }));
     if (r.folderError) warn(ctx, `mailproof: ${p(r.folderError.folder)}: ${p(r.folderError.code)}: ${p(r.folderError.message)}`);
+    await indexAfterSync(s, ctx, indexProgressLine(ctx));   // after the output: a first build shows its progress line below the folder lines
     return r.exit;
   } finally { await s.close(); }
 }
 
-const NPM_ARGS = ['install', '-g', 'mailproof@latest'];
-
 /**
- * Run npm with the output streaming through (no shell).
- * @param {string[]} args
- * @returns {Promise<number>}
+ * `stamp` (SPEC B13.1.12): run the stamp job now. Exit 0 when the job completed without an `ots` error (also when the seal is off),
+ * 1 when `ots` failed (the manifest is still committed), 75 for a held lock (the dispatcher maps ERR_TRAIL_LOCKED / ERR_STAMP_LOCKED).
+ * @param {Args} a @param {Ctx} ctx @returns {Promise<number>}
  */
-function spawnNpm(args) {
-  return new Promise((resolve) => {
-    const child = spawn('npm', args, { stdio: 'inherit' });
-    child.on('error', () => resolve(EX_ERR));
-    child.on('close', (code) => resolve(code === 0 ? EX_OK : EX_ERR));
-  });
-}
-
-/** @param {Args} a @param {Ctx} ctx @returns {Promise<number>} */
-export async function updateCmd(a, ctx) {
-  const cmd = `npm ${NPM_ARGS.join(' ')}`;
-  if (!a.values.run) {
-    if (a.values.json) printJson(ctx, { installed: version(), command: cmd }); else print(ctx, `mailproof ${version()} installed. To upgrade: ${cmd}`);
+export async function stampCmd(a, ctx) {
+  const s = await openAccount(a, ctx);
+  try {
+    const r = await s.mp.stamp();
+    if (a.values.json) printJson(ctx, r); else print(ctx, stampText(r, styleOf(ctx)));
+    if (r.error) { warn(ctx, `mailproof: ${p(r.error)}`); return EX_ERR; }
     return EX_OK;
-  }
-  if (!a.values.json) print(ctx, `running: ${cmd}`);
-  const code = await (ctx.deps.runNpm ? ctx.deps.runNpm(NPM_ARGS, ctx) : spawnNpm(NPM_ARGS));
-  if (a.values.json) printJson(ctx, { installed: version(), command: cmd, exit: code });
-  return code === 0 ? EX_OK : EX_ERR;
+  } finally { await s.close(); }
 }
 
 /** @param {Args} a @param {Ctx} ctx @returns {Promise<number>} */
@@ -87,13 +79,6 @@ export async function configCmd(a, ctx) {
     default:
       throw new UsageError(`config: unknown action "${action}"; use path, validate, template or add-account`);
   }
-}
-
-/** @param {Args} a @param {Ctx} ctx @returns {Promise<number>} */
-export async function exportCmd(a, ctx) {
-  void a;
-  warn(ctx, 'mailproof: export needs M6 (the proof bundle); not available in this version');
-  return EX_USAGE;
 }
 
 /** @param {Args} a @param {Ctx} ctx @returns {Promise<number>} */

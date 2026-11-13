@@ -1,7 +1,7 @@
 # mailproof v2 — PRD
 
-> **Status:** v2 is released through 3.2.0 (M0-M2 and M3 steps 1-3 shipped in 3.0.0). M3 steps 4 (`replyFacts`) and 5 (the `mailproof` CLI) shipped in 3.1.0, and 3.2.0 (2026-11-11) is the latest; M3 step 6 (the MCP server, `mailproof mcp`, SPEC B12) is built on `feat/m3-mcp` and not yet released. 1.x is frozen at tag `v1.4.0` (v1 code archived in `archive/v1/`; no `v1` branch).
-> **Owner:** hamr0 · **Last updated:** 2026-11-09
+> **Status:** v2 is released through 3.3.0 (2026-11-11, the latest). M0-M2 and M3 are complete: M3 steps 1-3 shipped in 3.0.0, `replyFacts` and the `mailproof` CLI in 3.1.0, and the MCP server (`mailproof mcp`, SPEC B12) in 3.3.0. **M4 (seal and pair export) is built and tested on `feat/m4-export` (steps 1-3, the address-first CLI with `people`, the setup guide; Node 22.19 run, /self-review and /branch-review passed; release is 4.0.0 (major: OTS on by default in the library))**; M5 (a `record` command plus a self-hosting guide) is specified for after M4 (guide reviewed by the gitdone operators, local signing proven, `record` command and the bcc copy test pending); M6 is parked. 1.x is frozen at tag `v1.4.0` (v1 code archived in `archive/v1/`; no `v1` branch).
+> **Owner:** hamr0 · **Last updated:** 2026-11-11
 >
 > **For future Claude:** this PRD wins on intent and scope. The *why* behind each choice is in
 > [`decisions-log.md`](decisions-log.md). The v1 PRD is archived at
@@ -123,7 +123,7 @@ Honest limits for "I sent you this":
   (a Gmail-address Sent copy: moot, [F3](findings.md)).
 - The strong proof is the counterparty's **signed reply** that references my Message-ID.
 - If they never reply, only my own timestamped record exists.
-- Only self-hosting (M5) gives signed copies of what I send.
+- Only self-hosting (M5, [guide](self-hosting.md)) gives signed copies of what I send.
 
 ## 6. Go / no-go (M0)
 
@@ -197,7 +197,7 @@ exported via Thunderbird has altered bodies, so M1 is Gmail-first (F4).
 
 - Stripping is **deterministic and versioned** (e.g. `mailproof-quote/1`): anyone with the raw email re-runs it and gets the same text byte for byte.
 - Only quoted history is stripped. **Signatures are not stripped**: it is text the sender wrote, and detecting it is another fragile heuristic. The consumer can ignore it.
-- **Out of mailproof, the consumer's job** (§10): the strict-keyword interpreter, the calendar-reply interpreter and the LLM hook that earlier drafts listed here. Interpreting the text (approve/decline, any language, an LLM) is guardrail policy and belongs to bareguard. A calendar reply is not dropped as a concept; if needed it belongs with M4.
+- **Out of mailproof, the consumer's job** (§10): the strict-keyword interpreter, the calendar-reply interpreter and the LLM hook that earlier drafts listed here. Interpreting the text (approve/decline, any language, an LLM) is guardrail policy and belongs to bareguard. Calendar replies are dropped along with the old M4 appointments module (decisions-log, 2026-11-11).
 
 **Honest limits, built into the output**
 
@@ -326,9 +326,9 @@ The final field list and the closed sets are in [SPEC B10.3](SPEC.md). In short:
 #### Interfaces
 
 - **Library** (exists).
-- **One `mailproof` CLI** (SPEC B11). Run with no arguments it shows a readline menu (stdlib, no TUI framework) that prompts for each action's parameters; every menu action is also a subcommand with flags for scripts and cron: `sync`, `watch` (a foreground command, no daemon; run it under systemd --user or cron), `list`, `show`, `verify`, `replies`, `check`, `forget`, `prune`, `backup`, `status`, `update`, `config`, `export`, `mcp`. With more than one account every command needs `--account`; `forget` and `prune` need `--yes` (menu: type the account name). `export` depends on M6's proof bundle (§7 M6). The existing `mailproof-sync` bin keeps working.
+- **One `mailproof` CLI** (SPEC B11). Run with no arguments it shows a readline menu (stdlib, no TUI framework) that prompts for each action's parameters; every menu action is also a subcommand with flags for scripts and cron: `sync`, `watch` (a foreground command, no daemon; run it under systemd --user or cron), `list`, `show`, `verify`, `replies`, `check`, `forget`, `prune`, `backup`, `status`, `update`, `config`, `export`, `mcp`. With more than one account every command needs `--account`; `forget` and `prune` need `--yes` (menu: type the account name). `export` writes the pair bundle (§7 M4 part b) and `verify-bundle` checks one (account-free). The existing `mailproof-sync` bin keeps working.
 - **Config:** one JSON file, `~/.config/mailproof/config.json` (XDG; JSON so there is no new dependency), with `accounts` keyed by account name. Per-account fields such as `user`, `host`, `trailDir`, `trail`, `passCommand` | `passFile` | `accessTokenCommand` (never a plain password), `content` (`store`, `attachments`, `days` 730), `ots`, `backupRemote`. Refused unless owned by the user and mode 0600. Runtime state (last runs, logs, backups) lives in `~/.local/state/mailproof/`, never in the config.
-- **MCP server inside the same package** (`mailproof mcp`): stdio JSON-RPC written with the stdlib, no MCP SDK dependency. Proven first by a POC against a real MCP client (Claude Code). Switch to the SDK only if the protocol work proves larger; that needs the dependency checklist and an owner decision. Full toolset, all always listed, with tool annotations the client scopes by; tool names = library method names; one server for all accounts (an `account` argument); preview-then-`confirm` for the destructive tools: [SPEC B12](SPEC.md), decisions-log "M3 MCP: stdlib, method names, full toolset with annotations" (2026-11-11; supersedes "starts read-only"). No export or send through MCP.
+- **MCP server inside the same package** (`mailproof mcp`): stdio JSON-RPC written with the stdlib, no MCP SDK dependency. Proven first by a POC against a real MCP client (Claude Code). Switch to the SDK only if the protocol work proves larger; that needs the dependency checklist and an owner decision. Full toolset, all always listed, with tool annotations the client scopes by; tool names = library method names; one server for all accounts (an `account` argument); preview-then-`confirm` for the destructive tools: [SPEC B12](SPEC.md), decisions-log "M3 MCP: stdlib, method names, full toolset with annotations" (2026-11-11; supersedes "starts read-only"). Mailproof never sends mail. **Export through MCP is allowed since 2026-11-12** (owner: "MCP should be on parity with the CLI"; this reverses the earlier "No export or send through MCP" for export): `export` and `backup` preview first and write only under `mcp.outputDir` once called with `confirm: true` (SPEC B12.5 item 2a).
 - **One source of truth:** CLI help, MCP tool descriptions and `primitives.json` all come from the same JSDoc.
 - **No new runtime dependency for M3.**
 
@@ -347,28 +347,66 @@ POC first where the mechanism is unproven: `replyFacts` on real replies, the std
 
 #### Open (not decided)
 
-- **MCP:** built (SPEC B12, F30), not released; the hint choices (B12.10) still await owner confirmation, and F30 shows Claude Code does not act on the hints, so scoping is by tool name. Elicitation as a real human gate is a later POC.
+- **MCP:** shipped in 3.3.0 (SPEC B12, F30); the hint choices (B12.10) still await owner confirmation, and F30 shows Claude Code does not act on the hints, so scoping is by tool name. Elicitation as a real human gate is a later POC.
 - **`watch` mechanism:** interval vs IMAP IDLE. A mechanism choice, decided at build.
-- **Pair/thread export:** whether a minimal one ships in M3 or waits for M6.
+- **Pair/thread export:** answered 2026-11-11: it ships in M4 (below), not M3 or M6.
+- **Observed senders and a real walkthrough:** [F34](findings.md), [F35](findings.md), [F36](findings.md). Microsoft consumer IMAP needs OAuth2 and is untested ([F37](findings.md)).
 - **Provider sampling (evidence task, not done):** sample one reply each from Yahoo, iCloud, Proton and Fastmail to see whether they sign In-Reply-To/References. Signing is per-provider configuration; only Gmail and Microsoft are measured.
 
-### M4 — Appointments (highlights)
+### M4 — Seal and pair export (specified)
 
-Calendar replies, propose/accept back-and-forth, reminders. Built on M3. (M3's CLI `export` waits on M6's proof bundle.)
+**Status:** steps 1-3 (stamp job, `export`, `verify-bundle`) built and tested on `feat/m4-export` (2026-11-11), plus the address-first CLI and `people` ([decisions-log](decisions-log.md) "Address-first CLI", [F34](findings.md)) and the [setup guide](setup-guide.md); the release is 4.0.0 (major) (OTS on by default in the library too: decisions-log "OTS on by default in the library too"); the Node 22.19 run, /self-review and /branch-review passed. Defaults confirmed: decisions-log "M4 export and verify-bundle defaults confirmed". Cost of the stamp job: [F31](findings.md). Reasons and options: [decisions-log](decisions-log.md) entry "M4: drop appointments; seal and pair export". Wire formats go to [SPEC B13](SPEC.md) when each step is built. No POC is needed: both parts are built from existing parts.
 
-### M5 — Hosting your own (highlights)
+**Appointments is dropped.** The old M4 (calendar and iTIP replies) is not built. A meeting confirmed between A and B, with later events (a bill of quantities, a possible commission), is already served by the A<->B trail: `list({ with })`, `counterparties`, `linked`, attachment hashes, OTS and the key archive. An agreement ceremony (send a statement, require a confirm, close it) is the Declaration in signedreply/gitdone, so building it here would copy gitdone. Known limit, documented and not fixed: B's signed reply proves B answered my Message-ID, not what my mail or attachments contained (my Sent copy is unsigned; Microsoft signs From/Date/Subject but not To/In-Reply-To/References and alters bodies, [F11](findings.md)). A later idea, not scheduled: a content-hash token in the Subject, the one header Gmail and Microsoft both sign, to bind a reply to exact content.
 
-Postfix + opendkim, capture via pipe, signing your own outgoing mail. Shipped as a Docker image or
-privcloud module, **not inside the npm package** (mailproof must not become a mail server). Signing
-default is opendkim (key stays in the MTA); in-library signing via mailauth's `dkimSign` is an option.
+#### Part a: the seal (OTS on by default, per batch)
 
-### M6 — Proof export, then ZK (highlights)
+- OTS is **on by default** and stamped **per batch, not per record**. This supersedes the "per record" default of §12 Q8; per record stays an option.
+- Capture (`record`, `sync`, `watch`) no longer stamps inside the trail lock.
+- A **stamp job** writes a sha256 manifest of the records added since the last stamp, plus the hash of the previous manifest (a chain), commits it, and OTS-stamps the manifest once. The same pass upgrades older pending stamps (today's `upgradeStamps`).
+- **Cadence:** due every 6 hours (configurable, for example 12). `sync` and `watch` run it when the last stamp is at least that old (the same pattern as the content sweep's `sweepDays`: no timer). An explicit `mailproof stamp` command and library method always run it.
+- A missing `ots` binary never blocks capture: record and flag (accept-with-flag).
+- A record finds its `.ots` through the manifest that lists it. The manifest shows other records only as hashes.
+- OTS time is "no later than", up to the cadence after capture. The git commit keeps the exact capture time.
 
-Export a self-contained proof bundle (M3's CLI `export` command depends on it). Disclosure levels: **full email** / **headers-only** (no ZK) /
-**ZK one-bit-out** using ZK Email's circuits in a separate package (`mailproof-zk`), never our own
-circuits. Owner's related projects follow the same rule: proof in, one bit out; the crypto is never
-ours. Unconfirmed: whether google/longfellow-zk (used by the 8een project) can handle RSA DKIM; ZK
-Email targets RSA DKIM.
+#### Part b: pair export
+
+- `export({ with: [addresses], after?, before? })` and the CLI `export` (built; it replaced the exit-64 stub). Selection is one or more exact addresses, matched the way `list({ with })` matches them (From/To/Cc/Reply-To, one definition), plus a date range on `captured`.
+- The bundle holds only what the trail has: the matching records (signed headers, verdicts, attachment names and sha256), their archived keys, their reply-text records, the stamp manifests that list them with their `.ots`, and a README saying per record what is proven and what is best effort.
+- Raw emails and attachments are **not copied**. Each record says whether its content is still in the owner's content store (with the id and sha256 to fetch it by `rawEmail` / `attachment`) or expired or forgotten.
+- The recipient checks it with `npx mailproof verify-bundle <dir>`: the same verifier code, one source of truth, no copied standalone verifier.
+- Export stays off in MCP (SPEC B12).
+
+#### Build order
+
+1. Stamp job (manifest chain, cadence, `mailproof stamp`, default on).
+2. `export`.
+3. `verify-bundle`.
+
+#### Out of scope for M4
+
+Calendar or iTIP handling; an agreement ceremony; raw email or attachment copies in a bundle; a standalone verifier; ZK (M6); signed own sends (M5).
+
+After M4 the v2 promise of §1 and §2 is met. "I sent you this" without a reply stays partial until signed own sends exist (M5).
+
+### M5 — Hosting your own (specified, after M4)
+
+**Status:** re-scoped 2026-11-11 by the owner. Reasons and options: [decisions-log](decisions-log.md) entry "M5: a record command and a self-hosting guide, not a Docker image". Two deliverables, built after M4:
+
+1. **`mailproof record --direction in|out`**: a small CLI command that reads one raw email from stdin and calls the existing `record()` (outline: [SPEC B14](SPEC.md)). It is in the npm package like every other command.
+2. **A self-hosting guide**, [`self-hosting.md`](self-hosting.md): the step-by-step setup of the user's own Postfix + OpenDKIM server that signs their outbound mail and pipes every mail in and out into `mailproof record`. A guide in `docs/`, **never code in the npm package**.
+
+**No Docker image.** The hard parts (DNS, PTR, port 25, IP reputation) cannot be containerised, and an image would make mailproof a mail-server product to patch. In-library signing (mailauth's `dkimSign`) stays an option, not the default: the key stays in the MTA. Prior art: the gitdone operators' records and knowless `OPS.md` §5 (knowless declined to host anything, 2026-11-11).
+
+**Evidence so far (gitdone operators, real box, 2026-11-11; [F32](findings.md), review [F33](findings.md)):** a locally submitted, locally delivered copy of an outbound message carries OpenDKIM's `DKIM-Signature` and verifies. The OpenDKIM default `h=` lists only `From:To:Subject:Date:From`, so the guide sets `SignHeaders` (Message-ID, In-Reply-To, References, ...) explicitly; that line is recommended, not yet tested. **One open evidence task:** prove on a real box, end to end with `mailproof record` and `mailproof verify`, that the `sender_bcc_maps` copy carries the DKIM-Signature (strongly implied by the mechanism: the same queue file; not tested). The guide's "verified and unverified" table tracks every other step.
+
+**Guide choices:** decisions-log "M5 guide choices". **Open (not covered yet):** sending from a mail client. The guide covers local `sendmail(8)` submission only, which is what a real box proves; a submission service (port 587, SASL, `smtpd_sender_login_maps` with `reject_sender_login_mismatch` so signing and the BCC copy apply only to authenticated senders) is a later addition (owner scope decision, 2026-11-11).
+
+**Out of scope:** an image, a mail-server product, sending (mailproof never sends mail), multi-user hosting.
+
+### M6 — Zero-knowledge disclosure (PARKED)
+
+Parked until a real user asks. The headers-only export moved into M4. What stays is the ZK one-bit-out level: ZK Email's circuits in a separate package (`mailproof-zk`), never our own circuits. Owner's related projects follow the same rule: proof in, one bit out; the crypto is never ours. Unconfirmed: whether google/longfellow-zk (used by the 8een project) can handle RSA DKIM; ZK Email targets RSA DKIM.
 
 **Recording scope.** M1 capture of INBOX plus Sent already records mail in and out (M3: "record everything, always"). Capturing all folders stays a config option on M1's capture code, not a separate module.
 
@@ -394,7 +432,7 @@ unproven (M0, M1, M2), not for modules whose mechanism exists and is tested.
 | Fate | Modules (lines) |
 |---|---|
 | Move mostly as-is (proof core + send) | `parse` (156), `classifier` (41, rule change per §3), `dkim-archive` (122), `verifier` (268, reshaped to record-based re-check), `notary` (109), `ots` (182), `outbound` (194), `dsn` (255), `envelope` (32), `prefilter` (74), `event-mutex` (46) |
-| Reshape for M3/M4 | `completion` (249), `sweep` (216), `templates` (236), `notify` (100), `proof-anchor` (152), `router` (131, cut down) |
+| Reshape for M3 (M4 is now seal + export, not appointments) | `completion` (249), `sweep` (216), `templates` (236), `notify` (100), `proof-anchor` (152), `router` (131, cut down) |
 | Reshape (shared types) | `types` (170): keep and extend the typedefs v2 reuses (trust level, DKIM/auth result shapes, envelope); replace the event/commit-ledger types with the new record and verdict types; drop types that only served dropped modules (crypto sign-off, plus-address command grammar) |
 | Rewrite | `gitrepo` (853; every function takes an `eventId`, the ledger's unit is an "event", so a single received email cannot be recorded on its own; v2's unit is the record), `ingest` (708; mixes proof, coordination and gitdone's command grammar), `event-store` (680), `create` (291), `index` (134; the v1 barrel re-exporting about 60 symbols; replaced by per-layer entry points matching the subpath exports, e.g. `mailproof` for the proof core, `mailproof/coordinate`, `mailproof/send`; exports only what is a primitive in `primitives.json` or deliberately public, enforced by the completeness test) |
 | Drop / leave to gitdone | `crypto` (205; thresholds/N signers); the reopen/complete lifecycle pair; plus-address command grammar (initiator commands, stats replies, attest+); `verify+`/`reverify+` email endpoints unless M3 revives them |
@@ -430,6 +468,6 @@ Node ≥ 22.19 (`Worker#cpuUsage`, see F15).
 5. Does Gmail add its own ARC seal / `Authentication-Results` on inbound that could make its SPF verdict portable? **Answered: yes on 8/8 inbound copies (google.com ARC set plus Authentication-Results with spf=); whether to use it is open, see [F17](findings.md).**
 6. Sending from a normal mailbox in M3 vs the no-third-party-provider rule. **Answered 2026-11-09: mailproof does not send.** The initiator sends with its own tools; the rule stays intact, see M3 "Approvals and the fact bundle".
 7. Privacy wording for storing other people's addresses and subjects (not legal advice). **Answered 2026-11-08:** see the note [What mailproof stores about other people](usage-guide.md#what-mailproof-stores-about-other-people).
-8. OTS stamp per sync run vs per email. **Decided (owner, 2026-11-03): per record, as today; advise OTS off for backfills, see [SPEC B4.5](SPEC.md).**
+8. OTS stamp per sync run vs per email. **Decided (owner, 2026-11-03): per record, as today; advise OTS off for backfills, see [SPEC B4.5](SPEC.md). Superseded 2026-11-11 (M4): on by default, stamped per batch; per record stays an option, see [M4](#m4--seal-and-pair-export-specified) and [SPEC B13](SPEC.md).**
 9. IMAP as an in-core dependency vs a separate package, if the dependency checklist fails. **Decided (owner, 2026-11-03): in core as the third dependency (checklist passed, [F16](findings.md)), see [SPEC B4.6](SPEC.md).**
 10. Portable ARC: an offline re-check of a trusted-sealer ARC chain (archived ARC headers and sealer keys), so `forwarded` could be re-verified later; needs its own spec and POC (findings F7 D1).

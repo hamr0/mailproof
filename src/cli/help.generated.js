@@ -8,7 +8,7 @@ export const HELP = Object.freeze({
       "usage": "mailproof sync [flags]",
       "summary": "fetch new mail (Inbox + Sent), record proofs",
       "when": "Use to record the mail in a mailbox you can log in to (Gmail with an app password, or any IMAP server with an OAuth2 access token you obtained), from a cron job or a one-off backfill, instead of piping each mail in by hand. The mailbox is only read: nothing is marked seen, moved or deleted. Run it again to pick up new mail; loop until `complete` is true to backfill a large folder.",
-      "fails": "Throws a TypeError for bad options, before any connection. Then it throws only when the whole run is pointless: `ERR_IMAP_AUTH` (login refused; the message never contains the credential), `ERR_IMAP_CONNECT` (server unreachable, or its TLS certificate did not verify: TLS is always on and certificate checking is never off), `ERR_SYNC_LOCKED` (another `sync` on this trail is running: it fails at once, so a cron job skips an overlapping run). A problem in one folder lands in that folder's `error` (`ERR_IMAP_NO_FOLDER`, `ERR_IMAP_NO_SENT`, `ERR_IMAP_PROTOCOL`, `ERR_IMAP_TIMEOUT`, `ERR_IMAP_THROTTLED`, `ERR_IMAP_UIDVALIDITY`) and the run goes on to the next folder. The first trail error (`ERR_TRAIL_LOCKED` or any `record()` failure) stops the run: that folder carries the error, later folders come back `attempted: false`, and progress already recorded stays recorded. It never throws because a message is unsigned, fails verification or is over a limit: those are recorded `unverified`. A message over 25 MiB is stream-hashed and recorded `over limit: total_bytes`; over 128 MiB it is listed in `skipped` and not recorded. Caps per folder per run: 1,000 messages and 512 MiB (`maxMessages` and `maxBytes` can only lower them), 30 minutes per call. A caller passes the secret only to `sync`; it is never logged, returned or stored. A restored or replaced trail is detected from the cursor file (`reset: 'trail'`) and rescanned automatically (duplicates are no-ops); no manual step. Leave `otsBin` off for a backfill: every record is stamped inside the trail lock.",
+      "fails": "Throws a TypeError for bad options, before any connection. Then it throws only when the whole run is pointless: `ERR_IMAP_AUTH` (login refused; the message never contains the credential), `ERR_IMAP_CONNECT` (server unreachable, or its TLS certificate did not verify: TLS is always on and certificate checking is never off), `ERR_SYNC_LOCKED` (another `sync` on this trail is running: it fails at once, so a cron job skips an overlapping run). A problem in one folder lands in that folder's `error` (`ERR_IMAP_NO_FOLDER`, `ERR_IMAP_NO_SENT`, `ERR_IMAP_PROTOCOL`, `ERR_IMAP_TIMEOUT`, `ERR_IMAP_THROTTLED`, `ERR_IMAP_UIDVALIDITY`) and the run goes on to the next folder. The first trail error (`ERR_TRAIL_LOCKED` or any `record()` failure) stops the run: that folder carries the error, later folders come back `attempted: false`, and progress already recorded stays recorded. It never throws because a message is unsigned, fails verification or is over a limit: those are recorded `unverified`. A message over 25 MiB is stream-hashed and recorded `over limit: total_bytes`; over 128 MiB it is listed in `skipped` and not recorded. Caps per folder per run: 1,000 messages and 512 MiB (`maxMessages` and `maxBytes` can only lower them), 30 minutes per call. A caller passes the secret only to `sync`; it is never logged, returned or stored. A restored or replaced trail is detected from the cursor file (`reset: 'trail'`) and rescanned automatically (duplicates are no-ops); no manual step. The run ends with the automatic stamp job when due (`result.stamp`, SPEC B13.1.7): one manifest and one `ots stamp` per due run, never one per message, so a backfill needs no special setting; a stamp problem never fails the run.",
       "account": true,
       "flags": [
         {
@@ -43,8 +43,8 @@ export const HELP = Object.freeze({
     "list": {
       "usage": "mailproof list [flags]",
       "summary": "newest first; filter by person or date",
-      "when": "Use to find recorded emails, newest capture first, optionally by direction or by counterparty: `with` is one exact email address (case-insensitive, no grouping: bob@gmail.com is not bob@company.com) seen on the From, To, Cc or Reply-To of the record (`role` narrows it to one of them), `after` (inclusive) and `before` (exclusive) bound the capture time. It returns summaries; use `get(id)` for the full record.",
-      "fails": "Rejects with `err.code === 'ERR_INDEX_UNAVAILABLE'` when the `better-sqlite3` native addon cannot load on this platform (there is no fallback; `record`, `get` and `verify` do not need it), or `ERR_TRAIL_LOCKED` when bringing the trail index up to date had to wait for a writer longer than `lockTimeoutMs`, or `ERR_TRAIL_LAYOUT` for a trail still in the pre-M3 flat layout (not converted: re-create it). A wrong type for `with`, `role` (it needs `with`), `before` or `after` throws a TypeError. Otherwise never throws. An empty or missing trail returns `[]`. Records captured in the same instant come in ascending id order. Only addresses the record itself shows count: a signed record shows the headers its DKIM signatures cover (an unsigned Cc is not visible), an unsigned one only its From (SPEC B8). Answers come from the trail index (SPEC B5), a cache beside the trail that is opened and closed inside each call (nothing stays open, so `close()` has nothing to wait for): whoever can write that file can change this answer, never `get` or `verify`.",
+      "when": "Use to find recorded emails, newest capture first, optionally by direction or by counterparty: `with` is one exact email address (case-insensitive, no grouping: bob@gmail.com is not bob@company.com) seen on the From, To, Cc or Reply-To of the record (`role` narrows it to one of them), `subject` keeps the emails whose `subject` (the text a row shows, signed or claimed) contains that text, ignoring case: a plain substring, never a pattern; `after` (inclusive) and `before` (exclusive) bound the capture time. It returns summaries; use `get(id)` for the full record. Each row also says who and what (SPEC B5): `from` (the first From address, lower case, or null), `to` (every To address, header order), `subject` (decoded text) with `subjectSource`: `'signed'` when a signature that verifies offline and aligns covers the Subject line, `'claimed'` when only the sender's word is there (a signature that does not verify covers it, or, for mail with no covering signature, the Subject read from the stored raw email, which is not proof), null when there is none; and `addresses[]` (`{ role, address, signed, coverage }`, header order). `signed` keeps the record's meaning (some signature covers that header line, decided at capture); `coverage` is the strict reading: `'signed'` a verifying signature covers it, `'failing'` only signatures that do not verify cover it, `'none'` no signature covers it. Show \"signed\" to a person only for `coverage: 'signed'`.",
+      "fails": "Rejects with `err.code === 'ERR_INDEX_UNAVAILABLE'` when the `better-sqlite3` native addon cannot load on this platform (there is no fallback; `record`, `get` and `verify` do not need it), or `ERR_TRAIL_LOCKED` when bringing the trail index up to date had to wait for a writer longer than `lockTimeoutMs`, or `ERR_TRAIL_LAYOUT` for a trail still in the pre-M3 flat layout (not converted: re-create it). A wrong type for `with`, `role` (it needs `with`), `subject` (a non-empty string), `before` or `after` throws a TypeError. Otherwise never throws. An empty or missing trail returns `[]`. Records captured in the same instant come in ascending id order. Only addresses the record itself shows count: a signed record shows the headers its DKIM signatures cover (an unsigned Cc is not visible), an unsigned one only its From (SPEC B8). Answers come from the trail index (SPEC B5), a cache beside the trail that is opened and closed inside each call (nothing stays open, so `close()` has nothing to wait for): whoever can write that file can change this answer, never `get` or `verify`.",
       "account": true,
       "flags": [
         {
@@ -66,6 +66,12 @@ export const HELP = Object.freeze({
           "help": "only received (in) or sent (out) emails"
         },
         {
+          "name": "subject",
+          "type": "string",
+          "arg": "<text>",
+          "help": "only emails whose subject contains this text (case-insensitive, plain text)"
+        },
+        {
           "name": "before",
           "type": "string",
           "arg": "<date>",
@@ -85,25 +91,63 @@ export const HELP = Object.freeze({
         }
       ]
     },
+    "people": {
+      "usage": "mailproof people [flags]",
+      "summary": "who is in this trail (addresses, emails, verified)",
+      "when": "Use to see who is in this trail, to pick an address for show, verify or export: one line per exact address (bob@gmail.com and bob@company.com are two), most recently seen first, with how many emails name it, how many RECEIVED emails naming it verified at capture, and the first and last capture. Your own address appears too (marked \"(you)\" when it is the account user): a record does not say which address is yours. Then: mailproof show <address>, mailproof verify <address>, mailproof export --with <address>.",
+      "fails": "Exit 0 for an empty trail (it says so); 75 when the trail index is locked; 1 when it cannot be built.",
+      "account": true,
+      "flags": [
+        {
+          "name": "limit",
+          "type": "string",
+          "arg": "<n>",
+          "help": "most addresses (default 50, 0 = no cap)"
+        }
+      ]
+    },
     "show": {
-      "usage": "mailproof show <id> [flags]",
-      "summary": "record details",
-      "when": "Use to read one stored record (to export it, or to hand to `verifyRecord`). Use `list()` first if you do not have an id.",
-      "fails": "Returns null for an unknown id or anything that is not 32 hex characters. Rejects only for a trail still in the pre-M3 flat layout (`records/<id>.json`): `err.code === 'ERR_TRAIL_LAYOUT'`, the trail must be re-created.",
+      "usage": "mailproof show <address|messageId|id> [flags]",
+      "summary": "an address, Message-ID or id: the emails and their proof",
+      "when": "Use to see what the trail holds, starting from the person: `show b@example.com` lists every recorded email that names that exact address on From, To, Cc or Reply-To (the same match as `list --with`), newest first, one block each (date, received or sent, the other party, the signed subject, trust, body status, attachments, seal). `show <abc@mail.example>` (angle brackets) lists every recorded copy of one Message-ID. `show 3f2a9c1d` (8 to 32 hex characters, a record id; kept for scripts) prints the full record: signatures, re-check, links, attachments. Nothing else is accepted: an id shorter than 8 characters or a bare word is exit 64 with the three forms.",
+      "fails": "Exit 1 when no email names the address or Message-ID (\"no email with <address> in this trail\"), when the id is unknown, or when --raw finds the content store without the email; 64 for a bad target, a date, --raw with an address, or an id prefix that is ambiguous; 75 when the trail index is locked.",
       "account": true,
       "flags": [
         {
           "name": "raw",
           "type": "boolean",
-          "help": "print the stored raw email to stdout instead (exit 1 when the content store no longer holds it)"
+          "help": "with a record id: print the stored raw email to stdout instead (exit 1 when the content store no longer holds it)"
+        },
+        {
+          "name": "after",
+          "type": "string",
+          "arg": "<date>",
+          "help": "address or Message-ID target: captured on or after this date"
+        },
+        {
+          "name": "before",
+          "type": "string",
+          "arg": "<date>",
+          "help": "address or Message-ID target: captured before this date"
+        },
+        {
+          "name": "limit",
+          "type": "string",
+          "arg": "<n>",
+          "help": "address or Message-ID target: most emails shown (default 50, 0 = all); the rest are counted"
+        },
+        {
+          "name": "full",
+          "type": "boolean",
+          "help": "show every line of each body (an address or Message-ID target cuts it to 10 lines), and with --json include the body text"
         }
       ]
     },
     "verify": {
-      "usage": "mailproof verify <id> [flags]",
-      "summary": "re-check one email offline",
-      "when": "Use to re-check a recorded email later, offline, from the record alone (no DNS, no raw email). It judges `x=`/`t=` as of capture time, so a valid record stays valid after the signature's expiry. Pass `at` only to ask \"was it valid at T?\".",
-      "fails": "Never throws. An unknown id, junk input, a tampered record or a missing or garbled `captured` comes back `ok: false` (fail closed). `ok` means at least one signature verifies; `trust` is the portable level recomputed now.",
+      "usage": "mailproof verify <address|messageId|id> [flags]",
+      "summary": "re-check an address's emails (or one id) offline",
+      "when": "Use to prove what a person sent you: `verify b@example.com` re-checks, offline and from the records alone, every recorded email naming that address (newest first), prints one line per email (date, received or sent, ok or NOT OK, trust, the reason when it fails) and a summary. The exit code follows the RECEIVED emails only: your own Sent copies are normally unsigned by the provider and would fail for that reason, so they are listed and counted apart (\"sent: ...\") and do not decide the exit code unless you pass --all. `verify <abc@mail.example>` does the same for the copies of one Message-ID; `verify 3f2a9c1d` (a record id) re-checks one record and prints its signatures. The re-check is DKIM against the archived key (the portable verdict).",
+      "fails": "Exit 0 when every counted email verifies; 2 when any counted email does not, or when there is no received email to check (the answer is no: nothing proves it; use --all to count sent copies); 1 when no email names the address or Message-ID or the id is unknown; 64 for a bad target, date or ambiguous prefix; 75 when the trail index is locked.",
       "account": true,
       "flags": [
         {
@@ -111,14 +155,37 @@ export const HELP = Object.freeze({
           "type": "string",
           "arg": "<date>",
           "help": "judge key and signature expiry as of this time (default: the capture time)"
+        },
+        {
+          "name": "all",
+          "type": "boolean",
+          "help": "address or Message-ID target: also count your sent copies in the exit code"
+        },
+        {
+          "name": "after",
+          "type": "string",
+          "arg": "<date>",
+          "help": "address or Message-ID target: captured on or after this date"
+        },
+        {
+          "name": "before",
+          "type": "string",
+          "arg": "<date>",
+          "help": "address or Message-ID target: captured before this date"
+        },
+        {
+          "name": "limit",
+          "type": "string",
+          "arg": "<n>",
+          "help": "address or Message-ID target: check only the newest n (default 0 = all; a partial check says so)"
         }
       ]
     },
     "replies": {
-      "usage": "mailproof replies <messageId>",
-      "summary": "what people answered (by Message-ID)",
-      "when": "Use to learn what the people you wrote to answered, without interpreting it: pass the Message-ID of the email you sent (the request) and get one bundle per recorded inbound DIRECT reply (its In-Reply-To names the request, or the request is the last entry of its References; later messages deeper in the thread are not included), earliest capture first. `[]` means no reply yet. Every value is a string from a closed set or free text, so a rule engine can compare them exactly: `from` (lower-case), `fromDkimAligned` (pass: an aligned DKIM signature that verifies offline covers From), `link` (signed/unsigned/none: is the request in a signed In-Reply-To/References), `bodyProven`, `quote`, `trailing`, `firstLine`, `text`, `dkim`/`dmarc`/`spf`/`arc`, `live`/`portable` (trust levels), `commit`, `recordId`, `messageKey` and more (SPEC B10). Copies of one signed message are separate bundles with the same `messageKey`; mailproof never picks or filters, the consumer groups and decides (an approval rule: allow only when at least one distinct reply is green and none is red). Nothing is written to the trail; the text comes from the local content store, so an expired, forgotten or disabled store gives `text` and `firstLine` of \"\" with `textSource` \"none\".",
-      "fails": "Rejects with a TypeError when `messageId` is not a non-empty string, `ERR_TOO_MANY_REPLIES` when more than 200 direct replies exist (a flood; nothing is cut silently), and with `ERR_INDEX_UNAVAILABLE` or `ERR_TRAIL_LOCKED` exactly like `list()` (the lookup uses the trail index). An unrecorded request, an empty trail or no reply gives `[]`. A reply with no Message-ID has `messageId` \"\".",
+      "usage": "mailproof replies <address|messageId>",
+      "summary": "what people answered: an address's replies, or the replies to a Message-ID",
+      "when": "Use to learn what the people you wrote to answered, without interpreting it: pass the Message-ID of the email you sent (the request) and get one bundle per recorded inbound DIRECT reply (its In-Reply-To names the request, or the request is the last entry of its References; later messages deeper in the thread are not included), earliest capture first. Or pass an `address` to get every direct reply that person sent, each to whatever email in the trail it answers (a direct reply whose parent is not recorded is not found by address: ask by that Message-ID). `[]` means no reply yet. Every value is a string from a closed set or free text, so a rule engine can compare them exactly: `from` (lower-case), `fromDkimAligned` (pass: an aligned DKIM signature that verifies offline covers From), `link` (signed/unsigned/none: is the request in a signed In-Reply-To/References), `bodyProven`, `quote`, `trailing`, `firstLine`, `text`, `dkim`/`dmarc`/`spf`/`arc`, `live`/`portable` (trust levels), `commit`, `recordId`, `messageKey` and more (SPEC B10). Copies of one signed message are separate bundles with the same `messageKey`; mailproof never picks or filters, the consumer groups and decides (an approval rule: allow only when at least one distinct reply is green and none is red). Nothing is written to the trail; the text comes from the local content store, so an expired, forgotten or disabled store gives `text` and `firstLine` of \"\" with `textSource` \"none\".",
+      "fails": "Rejects with a TypeError when neither or both of `messageId` and `address` are given, or when `messageId` is not a non-empty string or `address` is not one exact address, `ERR_TOO_MANY_REPLIES` when more than 200 direct replies exist (a flood; nothing is cut silently), and with `ERR_INDEX_UNAVAILABLE` or `ERR_TRAIL_LOCKED` exactly like `list()` (the lookup uses the trail index). An unrecorded request, an empty trail or no reply gives `[]`. A reply with no Message-ID has `messageId` \"\".",
       "account": true,
       "flags": []
     },
@@ -213,7 +280,7 @@ export const HELP = Object.freeze({
     "backup": {
       "usage": "mailproof backup [flags]",
       "summary": "git bundle of the trail",
-      "when": "Use to keep a copy of the proofs somewhere else. It writes a git bundle of the whole trail (records, keys, replies, stamps; never message bodies) to <state>/backups/<account>/, and prints the path: restore with `git clone <file>.bundle <dir>`. --with-content adds a separate, unencrypted <file>.content.tar of the stored raw emails (other people's mail: encrypt it or the disk yourself). --push also pushes the trail to the account's backupRemote, never with force: after a prune the remote keeps the history from before it as an archive and the push is refused.",
+      "when": "Use to keep a copy of the proofs somewhere else. It writes a git bundle of the whole trail (records, keys, replies, stamps; never message bodies) to ~/mailproof/backups/, and prints the path: restore with `git clone <file>.bundle <dir>`. --with-content adds a separate, unencrypted <file>.content.tar of the stored raw emails (other people's mail: encrypt it or the disk yourself). --push also pushes the trail to the account's backupRemote, never with force: after a prune the remote keeps the history from before it as an archive and the push is refused.",
       "fails": "Exit 1 for an empty trail, a bundle that does not verify, or a missing tar; 64 for a missing --yes with --push or an unconfigured backupRemote; 75 for a push that failed on the network or on a login; 1 for a push the remote rejected.",
       "account": true,
       "flags": [
@@ -221,7 +288,7 @@ export const HELP = Object.freeze({
           "name": "out",
           "type": "string",
           "arg": "<path>",
-          "help": "write the bundle here (the directory must exist; an existing file is refused)"
+          "help": "write the bundle here (default ~/mailproof/backups/<account>-<UTC date and time>.bundle; the directory must exist; an existing file is refused)"
         },
         {
           "name": "with-content",
@@ -251,14 +318,19 @@ export const HELP = Object.freeze({
     "update": {
       "usage": "mailproof update [flags]",
       "summary": "show the upgrade command",
-      "when": "Use to upgrade mailproof. By default it only prints the command (`npm install -g mailproof@latest`) and the installed version, because a global install can be owned by root or made with another package manager; --run executes it for you.",
-      "fails": "With --run the exit code is 0 when npm succeeded and 1 otherwise. Without --run nothing is run and nothing touches the network.",
+      "when": "Use to upgrade mailproof. By default it only prints the command (`npm install -g mailproof@latest`) and the installed version, because a global install can be owned by root or made with another package manager; --check also asks the npm registry whether a newer version exists; --run looks it up and upgrades only when it is newer, then says to restart mailproof. A development link (npm link, a git checkout) is never upgraded with npm: it says so and to update with git.",
+      "fails": "With --run the exit code is 0 when npm succeeded and 1 otherwise. Without --run nothing is run; only --check and --run touch the network (one `npm view`, 10 s); offline with --run is exit 1.",
       "account": false,
       "flags": [
         {
+          "name": "check",
+          "type": "boolean",
+          "help": "ask the npm registry for the latest version (the only network use besides --run)"
+        },
+        {
           "name": "run",
           "type": "boolean",
-          "help": "run `npm install -g mailproof@latest` (output streams through)"
+          "help": "upgrade now: look up the latest version, run `npm install -g mailproof@latest` only when it is newer (npm's output is shown only if it fails)"
         }
       ]
     },
@@ -270,18 +342,81 @@ export const HELP = Object.freeze({
       "account": false,
       "flags": []
     },
-    "export": {
-      "usage": "mailproof export",
-      "summary": "needs M6 (not available yet)",
-      "when": "Reserved for the proof bundle (M6). Not available in this version.",
-      "fails": "Always exits 64.",
-      "account": false,
+    "stamp": {
+      "usage": "mailproof stamp",
+      "summary": "seal new mail now (OpenTimestamps)",
+      "when": "Use to seal what was recorded since the last run: from a cron job for a trail filled by the Postfix pipe (`sync()` and `mailproof watch` already run it every `stamp.everyHours`, default 6), or after a bulk `record()` loop. Only one 32-byte hash of a manifest (a list of file hashes, no addresses, subjects or content) goes to the public OpenTimestamps calendars; set `otsBin: null` to turn the seal off.",
+      "fails": "With `otsBin: null` it does nothing and returns `enabled: false`. A missing `ots` binary, a hung calendar or any `ots` failure does not throw: the manifest is still committed and the result carries `error` (a missing binary says `ots not installed: records are not sealed; install opentimestamps-client or set ots: false`). Rejects with `ERR_STAMP_LOCKED` (another job is running), `ERR_TRAIL_LOCKED` (retry later), `ERR_TRAIL_LAYOUT`, `ERR_STAMP_CHAIN` (the committed manifest chain is broken: nothing is written) or a git error. Idempotent: with nothing new and nothing pending it commits nothing.",
+      "account": true,
       "flags": []
+    },
+    "export": {
+      "usage": "mailproof export [flags]",
+      "summary": "proof bundle for a counterparty",
+      "when": "Use to hand a counterparty the proof of what you exchanged with them (or with several of their addresses): a directory of the signed headers, signatures, archived keys and seals of every email that names one of `with` on From, To, Cc or Reply-To (a union), optionally within `after` (inclusive) and `before` (exclusive) capture time. Not the emails: no bodies or attachments. The recipient runs `verifyBundle` (or `mailproof verify-bundle`) with nothing of yours. It proves each record's signatures and seal, NOT completeness: you chose what to include. Run `stamp()` first so the seals are anchored; it never stamps or runs `ots` itself. Tell the recipient `bundle_sha256` by another channel so they can pass `--expect`. With `dryRun: true` it does everything except put the bundle at `out` (the same selection, seal decisions and self-check, in a private temp directory that is removed) and returns the same summary plus `dryRun: true` and `selection` (id, captured, direction, from, subject of each record it would hold): use it to show a person what is about to be disclosed.",
+      "fails": "Rejects with `ERR_EXPORT_EMPTY` (nothing matches; nothing written), `ERR_EXPORT_TOO_BIG` (over 10,000 records or 256 MiB: narrow with `after`/`before`), `ERR_EXPORT_EXISTS` (`out` exists and is not an empty directory you own, or is inside the trail, the content store or another bundle; an export never overwrites), `ERR_EXPORT_REWRITTEN` (the trail was pruned or restored while it read: retry), `ERR_EXPORT_SELF_CHECK` (the bundle did not verify, so it was not delivered: the trail is damaged), `ERR_EXPORT_TAR` (`tar` missing or failed), `ERR_STAMP_CHAIN` (a manifest chain that cannot be walked), `ERR_TRAIL_LOCKED` or `ERR_INDEX_UNAVAILABLE` (from the index catch-up), `ERR_TRAIL_LAYOUT`, or a `TypeError` for a bad option (including an `out` whose parent directory does not exist). Read-only on the trail: it holds no lock while reading, makes no commit, runs no `ots` and uses no network; the bundle is built in a private temp directory next to `out` (mode 0700/0600) and moved into place, so a failure leaves nothing at `out`.",
+      "account": true,
+      "flags": [
+        {
+          "name": "with",
+          "type": "string",
+          "arg": "<a,b>",
+          "help": "required: the exact addresses, comma separated; an email is included when it names any of them"
+        },
+        {
+          "name": "after",
+          "type": "string",
+          "arg": "<date>",
+          "help": "captured on or after this date"
+        },
+        {
+          "name": "before",
+          "type": "string",
+          "arg": "<date>",
+          "help": "captured before this date"
+        },
+        {
+          "name": "out",
+          "type": "string",
+          "arg": "<path>",
+          "help": "the new directory (default ~/mailproof/exports/mailproof-bundle-<account>-<UTC date and time>; with --tar, the .tar file)"
+        },
+        {
+          "name": "tar",
+          "type": "boolean",
+          "help": "also pack the bundle into one .tar file for mailing (the tar binary)"
+        },
+        {
+          "name": "dry-run",
+          "type": "boolean",
+          "help": "print the preview (the emails it would hold, and what it reveals) and write nothing"
+        }
+      ]
+    },
+    "verify-bundle": {
+      "usage": "mailproof verify-bundle <dir> [flags]",
+      "summary": "check a bundle you were sent",
+      "when": "Use on the recipient's side to check a pair bundle made by `mp.export()` with no trail, index, content store, account or network: it re-checks every record's DKIM signature offline from the record and its archived key, that the files are the ones the bundle lists, the manifest chain and each OpenTimestamps seal (`ots info`, local). `anchored` means the proof is for these bytes and carries a Bitcoin block attestation; the block header is NOT checked against Bitcoin (run `ots verify` for that). It never proves completeness: the owner chose what is in the bundle.",
+      "fails": "Resolves for every bundle it can examine (a missing, damaged, tampered or hostile bundle is `ok: false` with the failed checks named, never a rejection); rejects with a `TypeError` for a `dir` that is not a string or not an existing directory, or a bad `expect`/`opts`. Writes nothing; never runs `ots upgrade` or `ots verify`; no network.",
+      "account": false,
+      "flags": [
+        {
+          "name": "expect",
+          "type": "string",
+          "arg": "<sha256>",
+          "help": "the bundle sha256 its owner told you by another channel: fails when bundle.json is not the one they made"
+        },
+        {
+          "name": "strict",
+          "type": "boolean",
+          "help": "also fail unless every email is DKIM-verified and every seal is anchored (also fails when ots is missing)"
+        }
+      ]
     },
     "mcp": {
       "usage": "mailproof mcp [flags]",
       "summary": "serve the trail to an MCP client (stdio)",
-      "when": "Use to let an AI client (Claude Code, Claude Desktop, any MCP client) read and prove mail through mailproof. It is a stdio server the client starts: register it as `claude mcp add mailproof -- mailproof mcp`. One process serves every account in the config (every account-bound tool takes `account`, required when there are two or more); --account restricts it to one, so a client can give each account its own server and policy. It lists every tool, each with MCP annotations (read-only, destructive, idempotent, open-world) so the client can allow reads and ask a human before the destructive ones; forget and prune only preview until called again with confirm. Paths are read only from the folders in the config `mcp.inputDirs` and files are saved only into `mcp.outputDir`; both are off until you set them. Every write or destructive call adds one line to <state>/mcp.log. Everything an email says reaches the model as untrusted data. stdout carries protocol only and stderr stays silent; --log <file> keeps diagnostics.",
+      "when": "Use to let an AI client (Claude Code, Claude Desktop, any MCP client) read and prove mail through mailproof. It is a stdio server the client starts: register it as `claude mcp add mailproof -- mailproof mcp`. One process serves every account in the config (every account-bound tool takes `account`, required when there are two or more); --account restricts it to one, so a client can give each account its own server and policy. It lists every tool, each with MCP annotations (read-only, destructive, idempotent, open-world) so the client can allow reads and ask a human before the destructive ones; forget, prune, export and backup only preview until called again with confirm (export and backup write only into the output folder, and name nothing outside it). Paths are read only from `~/mailproof` and files are saved only into `~/mailproof/exports`, `~/mailproof/backups` and `~/mailproof/saved` (the folders the CLI uses), unless the config `mcp.inputDirs` and `mcp.outputDir` name others; `\"outputDir\": null` and `\"inputDirs\": []` turn them off. Every write or destructive call adds one line to <state>/mcp.log. Everything an email says reaches the model as untrusted data. stdout carries protocol only and stderr stays silent; --log <file> keeps diagnostics.",
       "fails": "Exit 0 when the client closes stdin or on SIGINT/SIGTERM (calls in flight finish first, up to 5 s; a second signal exits at once), 64 for a bad config, an unknown --account, or a terminal on stdin (it is not an interactive command), 77 when the config file is not private.",
       "account": false,
       "flags": [

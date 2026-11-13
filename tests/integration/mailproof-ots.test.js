@@ -18,10 +18,10 @@ function fakeOts(body) {
 }
 const files = (root, id) => execFileSync('git', ['show', '--name-only', '--format=', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim().split('\n');
 
-test('OTS is off by default: no stamp, no .ots file', async () => {
+test('OTS off (otsBin: null): no stamp, no .ots file', async () => {
   const dir = tmp();
   const m = await signedMail({});
-  const mp = new Mailproof({ trailDir: dir, resolver: m.resolver });
+  const mp = new Mailproof({ trailDir: dir, resolver: m.resolver, otsBin: null });
   const r = await mp.record(m.raw, { direction: 'in' });
   assert.equal(r.ots, 'off');
   assert.deepEqual(fs.readdirSync(path.join(dir, 'default', path.dirname(recordPath(r.id)))), [`${r.id}.json`]);
@@ -31,7 +31,7 @@ test('OTS on: the stamp is made over the record file and committed in the same c
   const dir = tmp();
   const m = await signedMail({});
   const bin = fakeOts('[ "$1" = stamp ] && cp "$2" "$2.ots"');
-  const mp = new Mailproof({ trailDir: dir, resolver: m.resolver, otsBin: bin });
+  const mp = new Mailproof({ trailDir: dir, resolver: m.resolver, otsBin: bin, stamp: { mode: 'record' } });
   const r = await mp.record(m.raw, { direction: 'in' });
   assert.equal(r.ots, 'pending');
   const root = path.join(dir, 'default');
@@ -47,7 +47,7 @@ test('OTS failure never blocks the commit: missing binary and failing binary bot
   for (const bin of ['/nonexistent/ots', fakeOts('echo calendar down >&2; exit 3')]) {
     const dir = tmp();
     const m = await signedMail({});
-    const mp = new Mailproof({ trailDir: dir, resolver: m.resolver, otsBin: bin });
+    const mp = new Mailproof({ trailDir: dir, resolver: m.resolver, otsBin: bin, stamp: { mode: 'record' } });
     const r = await mp.record(m.raw, { direction: 'in' });
     assert.equal(r.duplicate, false);
     assert.ok(typeof r.ots === 'object' && r.ots.error, JSON.stringify(r.ots));
@@ -67,7 +67,7 @@ test('a hanging OTS stamp is cut off inside the lock: the next writer is not loc
   const mapFile = path.join(tmp(), 'dns.json');
   fs.writeFileSync(mapFile, JSON.stringify(m2.map));
   // writer A (this process) hangs in `ots stamp`; the stamp is capped at the 5000 ms floor
-  const a = new Mailproof({ trailDir: dir, resolver: m1.resolver, otsBin: bin, lockTimeoutMs: 3000 });
+  const a = new Mailproof({ trailDir: dir, resolver: m1.resolver, otsBin: bin, stamp: { mode: 'record' }, lockTimeoutMs: 3000 });
   const aDone = a.record(m1.raw, { direction: 'in' });
   const end = Date.now() + 10000;
   while (!fs.existsSync(marker) && Date.now() < end) await new Promise((r) => setTimeout(r, 20));

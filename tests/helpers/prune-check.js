@@ -9,7 +9,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { parseRecordPath, parseReplyPath } from '../../src/proof/layout.js';
+import { parseRecordPath, parseReplyPath, parseManifestPath } from '../../src/proof/layout.js';
 
 const sh = (cwd, args, opts = {}) => execFileSync('git', args, { cwd, maxBuffer: 1 << 30, ...opts }).toString().replace(/\n$/, '');
 
@@ -42,6 +42,7 @@ const idOf = (p) => { const r = parseRecordPath(p) ?? parseReplyPath(p); return 
 export function planOf(oldRepo, cutoffMs) {
   const commits = logOps(oldRepo);
   const prunedIds = new Set();
+  const prefixManifests = new Set();
   let prefix = 0;
   let found = false;
   for (const c of commits) {
@@ -51,9 +52,11 @@ export function planOf(oldRepo, cutoffMs) {
       if (r && !r.ots && o.st === 'U' && !(Date.parse(blob(oldRepo, o.sha).captured) < cutoffMs)) boundary = true;
     }
     if (boundary) { found = true; break; }
-    for (const o of c.ops) { const r = parseRecordPath(o.path); if (r && !r.ots && o.st === 'U') prunedIds.add(r.id); }
+    for (const o of c.ops) { const r = parseRecordPath(o.path); if (r && !r.ots && o.st === 'U') prunedIds.add(r.id); const m = parseManifestPath(o.path); if (m) prefixManifests.add(m.seq); }
     prefix++;
   }
+  // M4 (SPEC B13.1.11): the manifests of the pruned prefix go, except the newest one, which is carried with its proof
+  const prunedManifests = new Set([...prefixManifests].sort((a, b) => a - b).slice(0, -1));
   const old = lsMap(oldRepo);
   const needed = new Set();
   let kept = 0;
@@ -66,11 +69,13 @@ export function planOf(oldRepo, cutoffMs) {
     if (Date.parse(rec.captured) < cutoffMs) stragglers.push(r.id);
     for (const s of rec.signatures || []) if (s.key_file) needed.add(s.key_file);
   }
-  return { commits, prefix, found, prunedIds, needed, kept, stragglers, old };
+  return { commits, prefix, found, prunedIds, prunedManifests, needed, kept, stragglers, old };
 }
 
 /** Is this path kept? `inPrefix`: it was committed in the pruned prefix (a key there stays only when a kept record names it). */
 function keepPath(p, plan, inPrefix) {
+  const m = parseManifestPath(p);
+  if (m) return !plan.prunedManifests.has(m.seq);
   const id = idOf(p);
   if (id !== null) return !plan.prunedIds.has(id);
   if (p.startsWith('keys/')) return inPrefix ? plan.needed.has(p) : true;
@@ -139,7 +144,8 @@ export function checkPruned(oldRepo, cutoff, newRepo, { lateKeys = [], expectPre
   for (const [p, s] of fin) if (old.get(p) !== s) fail('final blob differs from old: ' + p);
   for (const [p, s] of old) {
     const id = idOf(p);
-    const want = id !== null ? !plan.prunedIds.has(id) : p.startsWith('keys/') ? plan.needed.has(p) || lateSet.has(p) || !plan.commits.slice(0, plan.prefix).some((c) => c.ops.some((o) => o.path === p)) : true;
+    const mf = parseManifestPath(p);
+    const want = mf ? !plan.prunedManifests.has(mf.seq) : id !== null ? !plan.prunedIds.has(id) : p.startsWith('keys/') ? plan.needed.has(p) || lateSet.has(p) || !plan.commits.slice(0, plan.prefix).some((c) => c.ops.some((o) => o.path === p)) : true;
     if (want && fin.get(p) !== s) fail('kept path missing or different in the new trail: ' + p);
     if (!want && fin.has(p)) fail('pruned path still in the new trail: ' + p);
   }

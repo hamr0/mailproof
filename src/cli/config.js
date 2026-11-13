@@ -7,6 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { UsageError, PermError } from './errors.js';
 import { TRAIL_NAME_RE } from '../proof/trail.js';
+import { STAMP_EVERY_HOURS_MIN, STAMP_EVERY_HOURS_MAX } from '../proof/limits.js';
 
 /**
  * @typedef {Object} Account
@@ -20,14 +21,15 @@ import { TRAIL_NAME_RE } from '../proof/trail.js';
  * @property {string} trail
  * @property {{ passCommand?: string, passFile?: string, accessTokenCommand?: string }} secret  Exactly one key.
  * @property {{ store?: boolean, attachments?: boolean, days?: number, sweepDays?: number }} content
- * @property {string | null} otsBin
+ * @property {string | null} otsBin  `ots` (the default: OpenTimestamps on), an absolute path, or null (`ots: false`: the seal is off).
+ * @property {{ mode?: 'batch' | 'record', everyHours?: number }} stamp  The seal options (SPEC B13.1.1); empty: the library defaults.
  * @property {string | null} backupRemote
  */
 /**
  * The server-wide `mcp` block (SPEC B12.2). Absent from the file: the defaults of `mcpSettings`.
  * @typedef {Object} McpConfig
- * @property {string[]} inputDirs  Absolute folders a tool may read a `path` from; empty refuses every path.
- * @property {string | null} outputDir  The one folder `saveTo` may write into; null refuses `saveTo`.
+ * @property {string[]} [inputDirs]  Absolute folders a tool may read a `path` from; absent: `~/mailproof`; `[]` refuses every path.
+ * @property {string | null} [outputDir]  The one folder export, backup and `saveTo` may write into; absent: `~/mailproof/exports`, `~/mailproof/backups` and `~/mailproof/saved`; `null` refuses every write.
  * @property {number} maxResponseBytes  Cap on a result's text.
  * @property {number} maxBinaryBytes  Cap on a returned raw email or attachment.
  */
@@ -35,7 +37,8 @@ import { TRAIL_NAME_RE } from '../proof/trail.js';
 
 export const ACCOUNT_NAME_RE = /^[a-z0-9][a-z0-9_-]{0,31}$/;
 const PLAINTEXT_KEYS = new Set(['pass', 'password', 'secret']);
-const ACCOUNT_KEYS = new Set(['user', 'host', 'port', 'folders', 'sent', 'trailDir', 'trail', 'passCommand', 'passFile', 'accessTokenCommand', 'content', 'ots', 'backupRemote']);
+const ACCOUNT_KEYS = new Set(['user', 'host', 'port', 'folders', 'sent', 'trailDir', 'trail', 'passCommand', 'passFile', 'accessTokenCommand', 'content', 'ots', 'stamp', 'backupRemote']);
+const STAMP_KEYS = new Set(['mode', 'everyHours']);
 const CONTENT_KEYS = new Set(['store', 'attachments', 'days', 'sweepDays']);
 const MCP_KEYS = new Set(['inputDirs', 'outputDir', 'maxResponseBytes', 'maxBinaryBytes']);
 export const MCP_DEFAULTS = Object.freeze({ maxResponseBytes: 524288, maxBinaryBytes: 1048576 });
@@ -67,6 +70,43 @@ export const TEMPLATE = {
   },
 };
 
+/** One line per key for the annotated example the menu shows (the printable template stays plain JSON). */
+export const TEMPLATE_NOTES = Object.freeze({
+  v: 'the file format; always 1',
+  accounts: 'one entry per mailbox, named by you (a-z, 0-9, _ and -)',
+  user: 'your login, usually your email address',
+  host: 'the IMAP server',
+  port: 'the IMAP port (993 = TLS)',
+  folders: 'folders to record as received mail',
+  sent: 'true: find the Sent folder itself; a folder name; false: do not read sent mail',
+  trailDir: 'where this account\'s proofs are kept (an absolute path, or starting with ~/)',
+  trail: 'the trail name inside trailDir',
+  passCommand: 'a command that prints the password (never the password itself)',
+  passFile: 'a file holding the password; must be owner-only (mode 0600)',
+  accessTokenCommand: 'a command that prints an OAuth access token',
+  content: 'the local copy of each raw email (outside git)',
+  store: 'keep raw emails',
+  attachments: 'keep attachments',
+  days: 'delete stored content after this many days (proofs are kept)',
+  sweepDays: 'how often the expiry sweep runs, in days',
+  ots: 'true: seal records with OpenTimestamps (needs the ots program); false: off',
+  stamp: 'seal options: mode and everyHours (how often the seal job runs)',
+  backupRemote: 'a git remote that `backup --push` sends the trail to (no password in the URL)',
+  mcp: 'settings for `mailproof mcp`: inputDirs, outputDir (default ~/mailproof; null/[] turn them off) and the response caps',
+});
+
+/**
+ * The example config with a one-line comment after each key (display only: comments are not valid JSON, `config template` prints the plain file).
+ * @returns {string[]}
+ */
+export function annotatedTemplate() {
+  const notes = /** @type {Record<string, string>} */ (TEMPLATE_NOTES);
+  return JSON.stringify(TEMPLATE, null, 2).split('\n').map((l) => {
+    const k = /^\s*"([A-Za-z]+)":/.exec(l)?.[1];
+    return k && notes[k] ? `${l}   // ${notes[k]}` : l;
+  });
+}
+
 /** An error that carries every problem found, one per line, each naming the JSON path. */
 export class ConfigError extends UsageError {
   /** @param {string[]} problems */
@@ -81,7 +121,10 @@ export class ConfigError extends UsageError {
  * @param {Record<string, string | undefined>} env
  * @returns {string}
  */
-const homeOf = (env) => env.HOME || os.homedir();
+export const homeOf = (env) => env.HOME || os.homedir();
+
+/** `<home>/mailproof`: the folder everything mailproof makes for the person goes under (paths.js: `userDir`), and the MCP server's default input folder. @param {Record<string, string | undefined>} env @returns {string} */
+export const userRoot = (env) => path.join(homeOf(env), 'mailproof');
 
 /**
  * @param {Record<string, string | undefined>} env
@@ -195,7 +238,12 @@ export function validateConfig(json, env) {
     const secret = {};
     const named = SECRET_KEYS.filter((k) => raw[k] !== undefined);
     if (named.length !== 1) problems.push(`${at}: give exactly one of ${SECRET_KEYS.join(', ')}${named.length ? ` (found ${named.join(', ')})` : ''}`);
-    for (const k of named) if (typed(k, 'string')) secret[/** @type {keyof Account['secret']} */ (k)] = /** @type {string} */ (raw[k]);
+    for (const k of named) {
+      if (!typed(k, 'string')) continue;
+      const v = /** @type {string} */ (raw[k]);
+      // passFile is the only path-valued secret source; the two commands are argv, never a path (no shell, no ~)
+      secret[/** @type {keyof Account['secret']} */ (k)] = k === 'passFile' ? expandHome(v, env) : v;
+    }
     /** @type {Account['content']} */
     const content = {};
     if (raw.content !== undefined) {
@@ -212,12 +260,26 @@ export function validateConfig(json, env) {
       }
     }
     /** @type {string | null} */
-    let otsBin = null;
+    let otsBin = 'ots';   // M4 (SPEC B13.1.1): on by default
     if (raw.ots !== undefined) {
       if (raw.ots === true) otsBin = 'ots';
       else if (raw.ots === false) otsBin = null;
       else if (typeof raw.ots === 'string' && path.isAbsolute(raw.ots)) otsBin = raw.ots;
       else problems.push(`${at}.ots: must be true, false or an absolute path to the ots binary`);
+    }
+    /** @type {Account['stamp']} */
+    const stamp = {};
+    if (raw.stamp !== undefined) {
+      if (!isObj(raw.stamp)) problems.push(`${at}.stamp: must be an object`);
+      else {
+        for (const [k, v] of Object.entries(raw.stamp)) {
+          if (!STAMP_KEYS.has(k)) problems.push(`${at}.stamp.${k}: unknown key`);
+          else if (k === 'mode') {
+            if (v !== 'batch' && v !== 'record') problems.push(`${at}.stamp.mode: must be "batch" or "record"`); else stamp.mode = v;
+          } else if (!Number.isInteger(v) || /** @type {number} */ (v) < STAMP_EVERY_HOURS_MIN || /** @type {number} */ (v) > STAMP_EVERY_HOURS_MAX) problems.push(`${at}.stamp.everyHours: must be an integer from ${STAMP_EVERY_HOURS_MIN} to ${STAMP_EVERY_HOURS_MAX}`);
+          else stamp.everyHours = /** @type {number} */ (v);
+        }
+      }
     }
     /** @type {string | null} */
     let backupRemote = null;
@@ -237,7 +299,7 @@ export function validateConfig(json, env) {
       else trails.set(key, name);
     }
     if (problems.length === before && userOk && hostOk) {
-      accounts[name] = { name, user: /** @type {string} */ (raw.user), host: /** @type {string} */ (raw.host ?? 'imap.gmail.com'), port, folders, sent, trailDir, trail, secret, content, otsBin, backupRemote };
+      accounts[name] = { name, user: /** @type {string} */ (raw.user), host: /** @type {string} */ (raw.host ?? 'imap.gmail.com'), port, folders, sent, trailDir, trail, secret, content, otsBin, stamp, backupRemote };
     }
   }
   if (Object.keys(json.accounts).length === 0) problems.push('accounts: at least one account is required');
@@ -255,21 +317,26 @@ function validateMcp(raw, env, problems) {
   if (!isObj(raw)) { problems.push('mcp: must be an object'); return undefined; }
   const before = problems.length;
   for (const k of Object.keys(raw)) if (!MCP_KEYS.has(k)) problems.push(`mcp.${k}: unknown key`);
-  /** @type {string[]} */
-  const inputDirs = [];
+  /** @type {string[] | undefined} */
+  let inputDirs;
   if (raw.inputDirs !== undefined) {
     if (!Array.isArray(raw.inputDirs)) problems.push('mcp.inputDirs: must be an array of absolute directories');
-    else raw.inputDirs.forEach((d, i) => {
-      const dir = typeof d === 'string' ? expandHome(d, env) : '';
-      if (!dir || !path.isAbsolute(dir)) problems.push(`mcp.inputDirs[${i}]: must be an absolute path (or start with ~/)`);
-      else inputDirs.push(path.resolve(dir));
-    });
+    else {
+      const dirs = /** @type {string[]} */ ([]);
+      inputDirs = dirs;
+      raw.inputDirs.forEach((d, i) => {
+        const dir = typeof d === 'string' ? expandHome(d, env) : '';
+        if (!dir || !path.isAbsolute(dir)) problems.push(`mcp.inputDirs[${i}]: must be an absolute path (or start with ~/)`);
+        else dirs.push(path.resolve(dir));
+      });
+    }
   }
-  /** @type {string | null} */
-  let outputDir = null;
-  if (raw.outputDir !== undefined) {
+  /** @type {string | null | undefined} */
+  let outputDir;
+  if (raw.outputDir === null) outputDir = null;
+  else if (raw.outputDir !== undefined) {
     const dir = typeof raw.outputDir === 'string' ? expandHome(raw.outputDir, env) : '';
-    if (!dir || !path.isAbsolute(dir)) problems.push('mcp.outputDir: must be an absolute path (or start with ~/)');
+    if (!dir || !path.isAbsolute(dir)) problems.push('mcp.outputDir: must be an absolute path (or start with ~/), or null to turn saving off');
     else outputDir = path.resolve(dir);
   }
   /** @type {{ maxResponseBytes: number, maxBinaryBytes: number }} */
@@ -280,16 +347,25 @@ function validateMcp(raw, env, problems) {
     if (!Number.isInteger(v) || /** @type {number} */ (v) < 1024) problems.push(`mcp.${k}: must be an integer of at least 1024`);
     else sizes[k] = /** @type {number} */ (v);
   }
-  return problems.length === before ? { inputDirs, outputDir, ...sizes } : undefined;
+  return problems.length === before ? { ...(inputDirs ? { inputDirs } : {}), ...(outputDir !== undefined ? { outputDir } : {}), ...sizes } : undefined;
 }
 
 /**
- * The `mcp` settings with the defaults filled in.
+ * The `mcp` settings with the defaults filled in (SPEC B12.2). Folders the config does not set follow the CLI's: the server reads under `~/mailproof`, and
+ * writes into `~/mailproof/exports`, `backups` and `saved` (`outputDir` is `undefined`: the handlers pick the folder by kind). `outputDir: null` and
+ * `inputDirs: []` in the file turn writing and path-reading off.
  * @param {Config} config
- * @returns {McpConfig}
+ * @param {Record<string, string | undefined>} env
+ * @returns {{ inputDirs: string[], outputDir: string | null | undefined, maxResponseBytes: number, maxBinaryBytes: number }}
  */
-export function mcpSettings(config) {
-  return config.mcp ?? { inputDirs: [], outputDir: null, ...MCP_DEFAULTS };
+export function mcpSettings(config, env) {
+  const m = config.mcp;
+  return {
+    inputDirs: m?.inputDirs ?? [userRoot(env)],
+    outputDir: m?.outputDir,
+    maxResponseBytes: m?.maxResponseBytes ?? MCP_DEFAULTS.maxResponseBytes,
+    maxBinaryBytes: m?.maxBinaryBytes ?? MCP_DEFAULTS.maxBinaryBytes,
+  };
 }
 
 /**
@@ -359,25 +435,10 @@ export function selectAccount(config, flag) {
 /**
  * The `Mailproof` constructor options of an account.
  * @param {Account} a
- * @returns {{ trailDir: string, trail: string, otsBin?: string, content?: Account['content'] }}
+ * @returns {{ trailDir: string, trail: string, otsBin: string | null, stamp?: Account['stamp'], content?: Account['content'] }}
  */
 export function mailproofOptions(a) {
-  return { trailDir: a.trailDir, trail: a.trail, ...(a.otsBin ? { otsBin: a.otsBin } : {}), ...(Object.keys(a.content).length ? { content: a.content } : {}) };
-}
-
-/**
- * A profile: a path as given, else `<configDir>/profiles/<name>.json`. Profiles hold no secrets, so no mode check.
- * @param {string} spec
- * @param {Record<string, string | undefined>} env
- * @returns {Promise<unknown>}  The parsed JSON.
- */
-export async function loadProfile(spec, env) {
-  const isName = /^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(spec);
-  const file = isName ? path.join(configDir(env), 'profiles', `${spec}.json`) : path.resolve(spec);
-  let text;
-  try { text = await fs.readFile(file, 'utf8'); }
-  catch (e) { throw new UsageError(`--profile: cannot read ${file} (${/** @type {any} */ (e).code ?? 'error'})${isName ? '; a bare name is looked up in the profiles directory, use a path for another place' : ''}`); }
-  try { return JSON.parse(text); } catch (e) { throw new UsageError(`--profile: ${file} is not valid JSON: ${/** @type {Error} */ (e).message}`); }
+  return { trailDir: a.trailDir, trail: a.trail, otsBin: a.otsBin, ...(Object.keys(a.stamp).length ? { stamp: a.stamp } : {}), ...(Object.keys(a.content).length ? { content: a.content } : {}) };
 }
 
 /**

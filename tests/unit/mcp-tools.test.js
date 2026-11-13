@@ -15,10 +15,10 @@ test('the table is complete: every method and exported function is a tool or exc
   for (const [k, why] of Object.entries(EXCLUDED)) assert.ok(why.length > 10, k);
 });
 
-test('22 tools: 16 read, 4 write, 2 destructive; every tool has all four hints, set explicitly', () => {
+test('30 tools: 21 read, 7 write, 2 destructive; every tool has all four hints, set explicitly', () => {
   const t = Object.values(TOOLS);
-  assert.equal(t.length, 22);
-  assert.deepEqual(['read', 'write', 'destructive'].map((c) => t.filter((x) => x.cls === c).length), [16, 4, 2]);
+  assert.equal(t.length, 30);
+  assert.deepEqual(['read', 'write', 'destructive'].map((c) => t.filter((x) => x.cls === c).length), [21, 7, 2]);
   for (const [name, x] of Object.entries(TOOLS)) {
     assert.deepEqual(Object.keys(x.annotations).sort(), ['destructiveHint', 'idempotentHint', 'openWorldHint', 'readOnlyHint'], name);
     assert.equal(x.annotations.readOnlyHint, x.cls === 'read', `${name}: readOnly iff class read`);
@@ -27,13 +27,22 @@ test('22 tools: 16 read, 4 write, 2 destructive; every tool has all four hints, 
 });
 
 test('the hints are exactly the B12.3 table', () => {
-  const open = ['check', 'record', 'sync', 'upgradeStamps'];
-  const notIdem = ['sync', 'upgradeStamps'];
+  const open = ['check', 'record', 'sync', 'upgradeStamps', 'stamp', 'backup'];
+  const notIdem = ['sync', 'upgradeStamps', 'export', 'backup'];
   for (const [name, x] of Object.entries(TOOLS)) {
     assert.equal(x.annotations.openWorldHint, open.includes(name), `${name} openWorld`);
     assert.equal(x.annotations.idempotentHint, !notIdem.includes(name), `${name} idempotent`);
   }
   assert.deepEqual(Object.keys(TOOLS).filter((n) => TOOLS[n].cls === 'destructive'), ['forget', 'prune']);
+});
+
+test('CLI parity: every CLI command that fits MCP has a tool, the rest are excluded with a reason (SPEC B12.3)', () => {
+  // commands with a library method of the same name are tools; the others are named in EXCLUDED
+  for (const t of ['status', 'stamp', 'export', 'backup', 'verifyBundle']) assert.ok(TOOLS[t], t);
+  for (const k of ['watch', 'config add-account', 'help', 'mcp']) assert.ok(EXCLUDED[k], k);
+  assert.equal(TOOLS.export.cls, 'write');
+  assert.ok(TOOLS.export.params.confirm && TOOLS.backup.params.confirm, 'export and backup preview unless confirmed');
+  assert.equal(TOOLS.verifyBundle.noAccount, true);
 });
 
 test('tools.generated.js is fresh (npm run build:mcp-tools)', () => {
@@ -62,4 +71,16 @@ test('every tool schema property has a description, and the descriptions are not
     assert.ok(t.description.length > 40, t.name);
     for (const [k, v] of Object.entries(t.properties)) assert.ok(v.description, `${t.name}.${k}`);
   }
+});
+
+test('descriptions steer the model right: verifyRecord vs verify, and what addresses[].signed means', () => {
+  const d = (n) => GENERATED_TOOLS.find((t) => t.name === n).description;
+  assert.ok(d('verifyRecord').startsWith('For a record in your own trail use `verify` with its id; `verifyRecord` is for a record JSON someone sent you (e.g. a file in an export bundle)'));
+  assert.match(d('verify'), /by id; find ids with `list\(\{ with \}\)`/);
+  assert.match(d('get'), /`addresses\[\]\.signed` means covered by some signature, not that it verified; use the verdicts or `coverage`/);
+  assert.match(d('list'), /coverage/);
+  assert.match(d('counterparties'), /verified/);
+  assert.match(d('sync'), /`ots` is a deprecated alias of `stamp`/);
+  const ctx = fs.readFileSync(new URL('../../mailproof.context.md', import.meta.url), 'utf8');
+  assert.ok(ctx.includes('`addresses[].signed` means covered by some signature, not that it verified; use the verdicts or `coverage`'));
 });

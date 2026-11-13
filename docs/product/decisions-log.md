@@ -335,3 +335,92 @@ the [PRD](PRD.md) / [DESIGN](../../archive/v1/docs/DESIGN.md).
 Also: `path` inputs are refused until `mcp.inputDirs` is set (`base64` always allowed); no file is written by default; the `mcp` config block holds the 512 KiB response and 1 MiB binary caps; `forget` gains a library `dryRun`; `sync` gets a `maxMessages` argument; stderr silent; failures are `isError` results carrying the library code.
 **Consequences**: SPEC B12; PRD §7 M3 Interfaces and Open list updated; no new runtime dependency; the config gains an optional top-level `mcp` block; the library gains `forget({ dryRun })` and the JSDoc an optional `@mcp` tag; with no server-side switch, a client that allows everything lets a model delete after a preview (the annotations and the client policy are the gate).
 2026-11-11 (later): owner accepts the hints as advisory (F30: Claude Code ignores them); known limit, hint values stand as documented metadata (SPEC B12.3).
+
+### Decision: M4: drop appointments; seal and pair export
+**Date**: 2026-11-11
+**Status**: Accepted (owner: hamr0)
+**Context**: The PRD's M4 was "Appointments" (calendar replies, propose/accept, reminders). The owner's real case is a meeting confirmed between A and B, then later events (a bill of quantities, a possible commission). M3's per-record OTS ran inside the trail lock, and the CLI `export` waited on M6. The PRD M3 open item asked whether pair/thread export is M3 or M6.
+**Decision**:
+1. **Appointments is dropped as a calendar/iTIP module.** The existing A<->B trail (`list({ with })`, `counterparties`, `linked`, attachment hashes, OTS, key archive) serves the case. An agreement ceremony (send a statement, require a confirm, close) is signedreply/gitdone's Declaration; building it would copy gitdone. Options: iTIP replies and reminders (rejected: not the real need); an agreement ceremony (rejected: scope creep). Known limit, documented not fixed: B's signed reply proves B answered my Message-ID, not what my mail or attachments contained (my Sent copy is unsigned; Microsoft signs From/Date/Subject but not To/In-Reply-To/References and alters bodies, F11). A later idea, not scheduled: a content-hash token in the Subject (the one header Gmail and Microsoft both sign).
+2. **New M4 = seal and pair export.** (a) **OTS on by default, stamped per batch.** A stamp job writes a sha256 manifest of the records added since the last stamp plus the previous manifest's hash (a chain), commits it, OTS-stamps it once, and upgrades older pending stamps. Due every 6 hours (configurable); `sync` and `watch` run it when the last stamp is at least that old (like the content sweep's `sweepDays`, no timer); `mailproof stamp` and a library method always run it. A missing `ots` binary never blocks capture (record and flag). Capture no longer stamps inside the trail lock. Options: per record (the old default, PRD §12 Q8; kept as an option); a timer (rejected, no daemon). (b) **Pair export:** `export({ with: [addresses], after?, before? })` and the CLI `export`; the bundle holds the matching records, their keys, reply-text records and the stamp manifests with `.ots`, plus a README; no raw emails or attachments, each record says whether its content is still in the content store. The recipient runs `npx mailproof verify-bundle <dir>`, the same verifier code (options: a standalone copied verifier, rejected as a second source of truth). Export stays off in MCP. No POC: both parts are built from existing parts.
+3. **M6 keeps only the ZK part** (`mailproof-zk`), parked until a real user asks; its headers-only export moves into M4.
+4. **M5 (hosting your own) is parked.** If revived: a generic "Postfix + OpenDKIM + pipe" recipe, never in the npm package; prior art is knowless `OPS.md` §5 (SPF/DKIM/PTR steps) and gitdone's Postfix pipe transport with exit 75 handling. knowless was asked on 2026-11-11 and declined: it has no MTA or DKIM signer, and hosting would break its auth-mail-only rule.
+5. The PRD M3 open item "Pair/thread export: M3 or M6" is answered: M4.
+**Rationale**: Prefer the simple path and one source of truth: the trail already holds what the owner's case needs, so what is missing is a strong time seal without lock cost, and a way to hand a counterparty a re-checkable bundle. Batch stamping cuts calendar calls and lock time; the manifest chain keeps order and shows other records only as hashes.
+**Consequences**: PRD §7 M4-M6 and §12 Q8 updated; SPEC B13 outlines the wire formats, to be specified at build; B3 and B4.5 (OTS inside the lock, per record) and B11 `export` (exits 64, "needs M6") are shipped text that M4 changes. After M4 the v2 promise (§1, §2) is met; "I sent you this" without a reply stays partial until signed own sends exist (M5). OTS time becomes "no later than", up to the cadence after capture; the git commit keeps the exact capture time.
+
+### Decision: M5: a record command and a self-hosting guide, not a Docker image
+**Date**: 2026-11-11
+**Status**: Accepted (owner: hamr0); guide written, command specified (SPEC B14), not built
+**Context**: M5 ("hosting your own") was parked on 2026-11-11 with the options "a generic recipe, a privcloud module or a Docker image". Signed copies of what the user sends need the user's own MTA to sign, and a way to pipe mail in and out into `record()`. The gitdone operators (real box, 2026-11-11) supplied the Postfix/OpenDKIM facts and one test: a locally delivered copy of an outbound mail carries a valid DKIM-Signature.
+**Decision**:
+1. **Two deliverables:** a CLI command `mailproof record --direction in|out` (stdin to `record()`, SPEC B14) in the npm package, and a step-by-step guide `docs/product/self-hosting.md` for Postfix + OpenDKIM. After M4.
+2. **No Docker image.** Options: an image (rejected), a privcloud module (rejected: a second place to keep current), a recipe only with no command (rejected: every user would write the same stdin wrapper).
+3. The guide marks every step proven or UNVERIFIED, and uses the multi-domain OpenDKIM form with an explicit `SignHeaders` (the default signs no Message-ID).
+**Rationale**: The hard parts are DNS, PTR, port 25 and IP reputation, none of which a container can set; an image would also make mailproof a mail-server product that must be patched. The command is the one piece that is code, tiny, and shared by every user. Simple path, one source of truth.
+**Consequences**: PRD §7 M5 rewritten; SPEC gains B14 (outline); one open evidence task (the `sender_bcc_maps` copy end to end); a pipe-only account may need B11.2 to allow a config with no IMAP block (to settle at build). Postfix bounces sysexits codes (64, 77), so the guide's wrapper maps every failure to 75 rather than the command changing its codes.
+
+### Decision: OTS on by default in the library too, released as 4.0.0
+**Date**: 2026-11-11
+**Status**: Accepted (owner: hamr0); built on `feat/m4-export`, not yet released
+**Context**: M4 made the batch seal the default. A pushback was considered: a library that makes network calls (calendar servers) by default.
+**Decision**: OTS stays on by default in the library as well as the CLI; `otsBin: null` turns it off. The pushback was withdrawn: the network is touched only in `sync()` and `stamp()`, never in `record()`, `check()`, `verify()` or the read primitives. Clarity comes from a "What leaves your machine" section in the docs, a seal line in `status`, and a plain message when `ots` is missing. Released as 4.0.0 (additive).
+**Rationale**: A time seal that is off by default is a seal few users have when they need it; the network paths are few and named.
+**Consequences**: docs state what leaves the machine; a missing binary never blocks capture (accept-with-flag).
+**2026-11-13**: owner chose to release this as 4.0.0 (major), not 3.4.0, because the default change adds network contact for library adopters who never set otsBin.
+
+### Decision: Address-first CLI, `people`, and the fixed-label `show`
+**Date**: 2026-11-11
+**Status**: Accepted (owner: hamr0); built (SPEC B11.5a), F34
+**Context**: The first real walkthrough (F34). The owner: "who would use id?"
+**Decision**:
+1. `show` and `verify` take an address, a Message-ID or an id; a resolver picks by shape. A new `people` command lists counterparties. `list` is readable (sender, decoded subject). An id given as a flag gets a hint, not "Unknown option".
+2. `show` prints every field in a fixed order, with `N/A` when absent (owner): an account line `user (name)`; each header marked signed, failing or not-signed; body text from the content store labelled proven, partial or not proven; attachments with name, size, sha256, stored and match; and a why-not-verified line from the recorded facts.
+3. **"signed" display rule:** a header is shown "signed" only when a passing signature covers it, "covered by a signature that does not verify" when only failing ones do. The record field `addresses[].signed` keeps its capture-time meaning (covered by any signature); read views add a derived coverage.
+4. **`verify <address>` exit rule:** exit 2 if any RECEIVED record fails or nothing was counted; own Sent copies are listed, not counted (provider Sent copies are unsigned, F3); `--all` counts them; exit 1 for no match.
+5. `~/` is expanded in every path field of the config, `passFile` included; the wizard's example paths show the real home; the setup guide uses `~/` paths only, never personal absolute paths (owner).
+6. The setup guide ([setup-guide.md](setup-guide.md)) and the self-hosting guide are linked from the README (owner). Hotmail/Outlook needs an OAuth2 token command and is untested (F37); a local OAuth proxy route is unsupported.
+**Rationale**: People know addresses, not hex ids; the view must not claim more than the record proves.
+**Consequences**: SPEC B11.5a; the `signed` rule changes what `show` prints, not what is recorded.
+
+### Decision: M4 export and verify-bundle defaults confirmed
+**Date**: 2026-11-11
+**Status**: Accepted (owner: hamr0); built (SPEC B13.2, B13.3)
+**Decision**: `verify-bundle` is lenient with `--strict` available; `with` is a union of addresses; `export` never auto-stamps; the bundle README carries a privacy paragraph (it holds other people's addresses and subjects).
+**Consequences**: no change to the M4 scope in the PRD.
+
+### Decision: M5 guide choices (multi-domain, SignHeaders, local sendmail, wrapper exit code)
+**Date**: 2026-11-11
+**Status**: Accepted (owner: hamr0), after the gitdone operators' review (F32, F33)
+**Decision**: The guide uses multi-domain OpenDKIM; an explicit `SignHeaders` (Message-ID, In-Reply-To, References, ...); local `sendmail(8)` submission only, with port-587 submission listed as open; generic naming (no production box names); and a wrapper that maps every non-zero exit to 75 and sends mailproof output to a log, because pipe(8) bounces sysexits codes and reads a `5.x.x` start of output as a status.
+**Consequences**: the command keeps its exit codes (supersedes nothing in "M5: a record command and a self-hosting guide").
+
+### Decision: MCP parity with the CLI (export through MCP with a confirm gate)
+**Date**: 2026-11-12
+**Status**: Accepted (owner: hamr0: "MCP should be on parity with the CLI"); built on `feat/m4-export` (SPEC B12.3, B12.5 item 2a, B13.2.1a, B11.6)
+**Context**: The MCP server (3.3.0) offered 24 tools. The CLI had five more actions that fit an agent: `status`, `stamp`, `verify-bundle`, `export` and `backup`. The PRD and B12 said "no export or send through MCP without a human gate", `stamp` was deferred (B13.1.9) and `export` was "deliberately not in MCP" (B13.2.1): an agent that could hand a counterparty a directory with the addresses and subjects of a whole exchange, unasked, is a leak.
+**Decision**:
+1. Five tools, named like the library methods: `status` (read), `verifyBundle` (read, account-free), `stamp` (write, open-world, idempotent), `export` (write, not idempotent) and `backup` (write, open-world, not idempotent): 29 tools in all (20 read, 7 write, 2 destructive). Not tools, with a reason each (B12.3): `watch` (a loop), `config add-account` (interactive, handles the secret), `update` (folded into `status`: version and the upgrade command, never run), `help`, `mcp`.
+2. **The rule "no export through MCP" is reversed for export** (and `backup` follows it), with a gate: without `confirm: true` they return a preview built by the library's own dry run (`export({ dryRun })`, new; `backup({ dryRun })`, new) and change nothing; the export preview lists the emails and states what leaves (addresses and subjects of the exchange, signed headers, keys, seals; other records only as hashes; no bodies; completeness not proven). With `confirm: true` they write only under `mcp.outputDir`, under a plain name (no path, no separator, never absolute); the library already refuses to overwrite or follow a symlink. `push` needs `confirm: true`, the account's `backupRemote`, is never forced and contacts that host.
+3. The data parts move into the library so the CLI and MCP render one result: `Mailproof#status()` and `Mailproof#backup(opts)` (the remote is an option; the library holds none). The CLI output is unchanged byte for byte (23 status and backup runs, text and JSON, compared before and after). Account-level facts (state file, config check, version) come from one helper, `accountStatus()` in `src/cli/status.js`, used by the CLI and the MCP `status` handler.
+**Rationale**: One definition per concept, and an agent should be able to do what the CLI does where it fits. A preview-then-confirm step makes the model show the person the disclosure; it is not a human gate (a model can pass `confirm: true`), so the real gate stays the client's allow rule by tool name, as for `forget` and `prune` (F30). Writing only under a configured output folder under a plain name keeps a prompt-injected agent from choosing a path.
+**Consequences**: `destructiveHint` stays false for `export` and `backup` (they add files, remove nothing); `idempotentHint` false for both (a repeat with the same name is refused); `backup` is `openWorldHint: true` because `push` reaches a remote. The PRD §7/§10 "export through MCP" lines are updated. A later MCP elicitation POC could make the confirm a real human gate. One CLI difference: `backup --push` without `--yes` now reports an existing `--out` before the confirmation text.
+
+### Decision: the menu shows every command, grouped
+**Date**: 2026-11-12
+**Status**: Accepted (owner: hamr0); built on `feat/m4-export` (SPEC B11.4)
+**Context**: The menu showed seven items and hid ten more behind `?`; `verify-bundle` and "check a saved .eml" were not in it (the latter only on the first-run screen).
+**Decision**: One grouped list, one command per line with its help, numbered 1 to 19, shown at the start and on `?`; after an action a short line (`1 sync 3 people 5 show 7 verify 11 export 16 status`). Every number and every name works at any prompt. Items 9 and 10 reuse the first-run and subcommand code paths.
+**Consequences**: The numbers changed (breaking only for muscle memory; names unchanged). The menu table is one definition in `menu-header.js`; help text comes from the command table unless the menu words it differently.
+
+### Decision: MCP writes and reads the same ~/mailproof folders as the CLI by default; reverses 3.3.0 off-by-default
+**Date**: 2026-11-12
+**Status**: Accepted (owner: hamr0, closing every MCP/CLI parity gap the CLI walkthrough opened); built on `feat/m4-export` (SPEC B12.2, B12.3, B12.5, B12.6; B5 `status({ refresh })`)
+**Context**: After the CLI walkthrough the CLI wrote everything for the person under `~/mailproof/<kind>/` (exports, backups, saved), showed trust profiles by name with a built-in `default`, printed the real in/out and verified counts in `status`, and knew whether it was a development link. The MCP server (3.3.0) could do none of it by default: `mcp.outputDir` and `mcp.inputDirs` were off until set, `checkProfile` took only an inline object, and `status` returned stale or missing counts and no install facts.
+**Decision**:
+1. **Folders.** When the config does not set them, the server reads under `~/mailproof` (`inputDirs`) and writes into the CLI's own folders by kind: `export` to `~/mailproof/exports`, `backup` to `~/mailproof/backups`, `rawEmail`/`attachment` `saveTo` to `~/mailproof/saved` (`userDir(kind)`, created 0700 on first use, a preview included). An explicit `mcp.outputDir` / `mcp.inputDirs` replaces the defaults; the one way to turn them off is `"outputDir": null` and `"inputDirs": []`. Unchanged: preview plus `confirm: true`, plain output names only, resolved paths must stay inside the folder (symlink-safe), every write audit-logged.
+2. **Profiles** resolve through one module (`src/cli/profiles.js`: built-in `default`, `<configDir>/profiles/<name>.json`, the listing with one-line summaries) for the CLI and MCP. MCP `checkProfile.profile` takes a name or an inline object and defaults to `default`; a new read tool `profiles` lists them (no library method: the config directory is a CLI-layer fact, like `accounts`).
+3. **Status** moves the CLI's index catch-up into the library as `status({ refresh: true })` (500 ms lock wait, falls back to the read-only answer); the CLI and the MCP tool both use it, so they return the same numbers.
+4. **Install facts** come from one detection (`src/cli/install.js`, shared with `update`): MCP `status` returns `install: { kind: 'dev-link' | 'npm', path }`; the npm version lookup stays CLI-only (`update --check`).
+**Rationale**: One definition per concept, and an agent should be able to do what the CLI does where it fits. The 3.3.0 "off by default" rule protected against a prompt-injected agent reading `~/.ssh` or writing anywhere; the new defaults keep that property because the read folder is `~/mailproof` (never the home directory) and the write folders are the three the CLI already owns.
+**Consequences**: A minor bump: after upgrading, the server reads under `~/mailproof` and writes there without any config (CHANGELOG "Upgrading from 3.3.x"; set `outputDir: null` and `inputDirs: []` to keep the old behaviour). The tool count is 30. `~/mailproof` also holds exports and backups (other people's addresses), so anything an agent may read there is readable by it.

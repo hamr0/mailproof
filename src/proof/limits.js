@@ -131,6 +131,15 @@ export const INDEX_MAX_ADDRESS = 254;
 /** Thread-link rows the index takes from one record: In-Reply-To, then the LAST References ids (the nearest ancestors). */
 export const INDEX_MAX_LINKS = 200;
 
+/** Longest subject (code points) the index keeps per record; a longer one is cut (the record still holds the whole header). */
+export const INDEX_MAX_SUBJECT = 500;
+
+/** Rows of one `list()` call whose subject is read from the content store (a claimed subject, SPEC B5): the cost of that read is bounded; later rows keep `subject: null`. */
+export const LIST_CLAIMED_MAX = 500;
+
+/** Bytes read from the front of a stored raw email to find its claimed Subject (no hash check: the value is a claim, never proof). */
+export const CLAIMED_HEAD_BYTES = 65_536;
+
 /** Children `linked()` returns by default (a popular Message-ID can be named by any number of records); `{ limit }` overrides. */
 export const LINKED_CHILDREN_DEFAULT = 1000;
 
@@ -150,3 +159,74 @@ export const PRUNE_JOURNAL_LIVE_MS = 60 * 60 * 1000;
 
 /** The most direct replies `replyFacts` returns for one Message-ID; more rejects with `ERR_TOO_MANY_REPLIES` (never a silent cut). */
 export const REPLY_FACTS_MAX = 200;
+
+/** The most preview rows a dry run of `forget` lists (the count of ids is always complete; `selectionMore` says how many rows are left out). */
+export const FORGET_SELECTION_MAX = 200;
+
+// ---- STAMP JOB (SPEC B13.1.13): the batch OpenTimestamps seal. ----
+
+/** Default cadence of the automatic stamp job, in hours, and the range `stamp.everyHours` accepts. */
+export const STAMP_EVERY_HOURS = 6;
+
+/** The longest `status({ refresh: true })` waits for the trail lock to catch the index up (ms): a writer holding it must not make a status call hang; the read-only answer follows. */
+export const STATUS_REFRESH_LOCK_MS = 500;
+
+/** A catch-up of the trail index over more changed records than this reports progress (`onProgress`) and is "substantial" (F39: about 80 ms plus 1 ms a record, size-independent, so 500 records is about 0.6 s; below that a progress line is noise). A rebuild always reports. */
+export const INDEX_QUIET_RECORDS = 500;
+/** The most changed records a bounded refresh (`status({ refresh: 'bounded' })`, the MCP tool) catches up: about 1.2 s (F39: 100 commits 190 ms, 1 commit 80 ms). Anything more, or a rebuild (1.2 s at 2,000 records, 11 s at 20,000), is left to `sync`, the CLI `status` or `list`, so a tool call never runs for more than a second or two. */
+export const INDEX_BOUNDED_RECORDS = 1000;
+export const STAMP_EVERY_HOURS_MIN = 1;
+export const STAMP_EVERY_HOURS_MAX = 720;
+
+/** Entries (records and replies together) in one manifest: about 2 MB; one `ots stamp` hashes it in milliseconds. */
+export const STAMP_MAX_ENTRIES = 20_000;
+
+/** Manifests one job makes (at most 200,000 entries); the rest of a backlog waits for the next job. */
+export const STAMP_MAX_MANIFESTS = 10;
+
+/** One `ots stamp` / `ots upgrade` call outside the trail lock. `record` mode keeps the in-lock clamp (SPEC B3). */
+export const STAMP_OTS_TIMEOUT_MS = 30_000;
+
+/** The upgrade pass of a job stops here; the next job continues. */
+export const STAMP_JOB_MAX_MS = 600_000;
+
+// ---- PAIR BUNDLE (SPEC B13.2.8): `export` and `verify-bundle` read the same constants. ----
+
+/** `with` entries of one export. */
+export const EXPORT_MAX_ADDRESSES = 20;
+
+/** Selected records in one bundle; more is `ERR_EXPORT_TOO_BIG` (narrow with dates). A bundle is a pair's exchange, not the trail. */
+export const EXPORT_MAX_RECORDS = 10_000;
+
+/** Files in a bundle. */
+export const BUNDLE_MAX_FILES = 100_000;
+
+/** All files of a bundle together (export stops as it passes this; the verifier refuses a bigger directory without reading it). */
+export const BUNDLE_MAX_BYTES = 256 * 1024 * 1024;
+
+/** One record file (a hostile bundle can name any size). */
+export const BUNDLE_MAX_RECORD_BYTES = 4 * 1024 * 1024;
+
+/** One manifest (`STAMP_MAX_ENTRIES` x about 120 bytes is 2.4 MB). */
+export const BUNDLE_MAX_MANIFEST_BYTES = 4 * 1024 * 1024;
+
+/** One `.ots` proof (real ones are a few KB). */
+export const BUNDLE_MAX_OTS_BYTES = 1024 * 1024;
+
+/** One reply-text or key file. */
+export const BUNDLE_MAX_SMALL_BYTES = 256 * 1024;
+
+/** `bundle.json`. */
+export const BUNDLE_MAX_JSON_BYTES = 64 * 1024 * 1024;
+
+/** `README.txt` (about 2 KiB a record at most; long fields are cut). */
+export const BUNDLE_MAX_README_BYTES = 32 * 1024 * 1024;
+
+/** One `ots info` call of `verify-bundle`. */
+export const BUNDLE_OTS_TIMEOUT_MS = 10_000;
+
+/** All `ots info` calls of one `verify-bundle` run; the proofs after it are reported `unchecked`. */
+export const BUNDLE_OTS_MAX_MS = 300_000;
+
+/** `ots info` output read per call. */
+export const BUNDLE_OTS_OUTPUT_BYTES = 65_536;

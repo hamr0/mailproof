@@ -3,6 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { Mailproof } from '../../src/proof/mailproof.js';
@@ -58,7 +59,7 @@ test('sync: an access-token command is re-run every time (a fresh token); text o
   await w.run(['sync'], { deps });
   assert.equal(toks.length, 2);
   assert.notEqual(toks[0], toks[1]);
-  assert.match(a.stdout, /^INBOX +in +seen 3  recorded 3  duplicate 0\ncomplete\n$/);
+  assert.match(a.stdout, /^ok INBOX +in +seen 3  recorded 3  duplicate 0\ncomplete\n$/);
 });
 
 test('sync exit codes follow B4.1: partial 0, a folder error or a thrown error mapped, stdout still holds the result', async () => {
@@ -87,29 +88,70 @@ test('sync with a secret command that fails is 75 and never echoes the command o
   assert.match(r.stderr, /pass command failed/);
 });
 
-test('sync with OTS on: pending stamps are upgraded after the run and reported; status counts the pending ones', async () => {
+test('sync with OTS on: the run ends with the stamp job, its result is `ots` (a superset of 3.3.0), a second run is not due; `stamp` runs it now; status and show report the seal', async () => {
   const dir = makeTmpDir('mp-cli-ots-trail-');
   const marker = path.join(makeTmpDir('mp-cli-ots-m-'), 'm');
   const bin = path.join(scripts, 'ots');
-  fs.writeFileSync(bin, `#!/bin/sh\ncase "$1" in stamp) cp "$2" "$2.ots";; upgrade) if [ -f "${marker}" ]; then cp "$2" "$2.bak"; echo anchored >> "$2"; exit 0; else exit 1; fi;; info) echo "Bitcoin block 1";; esac\n`, { mode: 0o755 });
+  fs.writeFileSync(bin, `#!/bin/sh\ncase "$1" in stamp) cp "$2" "$2.ots";; upgrade) if [ -f "${marker}" ]; then grep -q anchored "$2" || { cp "$2" "$2.bak"; echo anchored >> "$2"; }; exit 0; else exit 1; fi;; info) echo "Bitcoin block 777";; esac\n`, { mode: 0o755 });
   const m = await signedMail({});
-  await new Mailproof({ trailDir: dir, resolver: m.resolver, worker: { size: 0 }, otsBin: bin }).record(m.raw, { direction: 'in' });
+  const rec = await new Mailproof({ trailDir: dir, resolver: m.resolver, worker: { size: 0 }, otsBin: bin }).record(m.raw, { direction: 'in' });
+  assert.equal(rec.ots, 'queued');
   const w = makeWorld({ accounts: { acme: account(dir, { passCommand, ots: bin }) } });
-  const deps = { sync: async () => result() };
-  assert.equal(JSON.parse((await w.run(['status', '--json'])).stdout).acme.pendingStamps, 1);
-  assert.deepEqual(JSON.parse((await w.run(['sync', '--json'], { deps })).stdout).ots, { upgraded: 0, pending: 1 });
+  const deps = { sync: async (mp) => ({ ...result(), stamp: await mp._autoStamp() }) };
+  const st0 = JSON.parse((await w.run(['status', '--json'])).stdout).acme;
+  assert.deepEqual([st0.pendingStamps, st0.seal.enabled, st0.seal.manifests, st0.seal.last], [0, true, 0, null]);
+  assert.match((await w.run(['status'])).stdout, /seal +one batch every 6 h; never run/);
+  assert.match((await w.run(['show', rec.id])).stdout, /^seal +waiting to be sealed$/m, 'no run yet: no next time to name');
+  const first = JSON.parse((await w.run(['sync', '--json'], { deps })).stdout).ots;
+  assert.deepEqual([first.ran, first.manifests.length, first.manifests[0].records, first.stamped, first.upgraded, first.pending, first.unstamped, first.unsealed], [true, 1, 1, 1, 0, 1, 0, 0]);
+  const again = JSON.parse((await w.run(['sync', '--json'], { deps })).stdout).ots;
+  assert.deepEqual([again.ran, again.skipped, again.upgraded, again.pending], [false, 'not due', 0, 1], 'upgraded and pending keep their meaning');
+  assert.match((await w.run(['sync'], { deps })).stdout, /^seal: next due \d\d:\d\dZ \(in [56] h\); 1 waiting for its Bitcoin anchor$/m, 'plain words: no `ots:`, no `skipped`, no counts of upgrades');
+  const sh = (await w.run(['show', rec.id])).stdout;
+  assert.match(sh, /^seal +sealed \d\d-\d\d \d\d:\d\dZ [·-] anchor pending$/m);
+  const st1 = JSON.parse((await w.run(['status', '--json'])).stdout).acme;
+  assert.deepEqual([st1.seal.manifests, st1.seal.unstamped, st1.seal.pending, st1.seal.chain, st1.pendingStamps], [1, 0, 1, 'ok', 1]);
+  assert.match((await w.run(['status'])).stdout, /seal +one batch every 6 h; last run \d\d:\d\dZ \(.*\), next due \d\d:\d\dZ \(in .*\); 1 manifest; 1 waiting for its Bitcoin anchor/);
+  // `stamp` runs the job now, whatever the cadence: it upgrades once the calendars have it
   fs.writeFileSync(marker, '');
-  const r = await w.run(['sync', '--json'], { deps });
-  assert.deepEqual(JSON.parse(r.stdout).ots, { upgraded: 1, pending: 0 });
-  assert.equal(r.code, 0);
-  assert.match((await w.run(['sync'], { deps })).stdout, /ots: 0 upgraded, 0 pending/);
+  const s1 = await w.run(['stamp', '--json']);
+  assert.equal(s1.code, 0, s1.stderr);
+  const sj = JSON.parse(s1.stdout);
+  assert.deepEqual([sj.ran, sj.manifests, sj.upgraded, sj.pending, sj.error], [true, [], 1, 0, undefined]);
+  const s2 = await w.run(['stamp']);
+  assert.equal(s2.code, 0);
+  assert.match(s2.stdout, /nothing new to seal/);
+  assert.match((await w.run(['show', rec.id])).stdout, /^seal +sealed \d\d-\d\d \d\d:\d\dZ [·-] anchored \(Bitcoin block 777\)$/m);
   assert.equal(JSON.parse((await w.run(['status', '--json'])).stdout).acme.pendingStamps, 0);
-  // a missing binary is reported in the result and never fails the sync
+  // a record captured after that seal waits for the next run, and says when it is due
+  const later = await new Mailproof({ trailDir: dir, resolver: m.resolver, worker: { size: 0 }, otsBin: bin }).record(Buffer.from('From: z@z.example\r\nTo: me@x.example\r\nMessage-ID: <later@z.example>\r\n\r\nhi\r\n'), { direction: 'in' });
+  assert.match((await w.run(['show', later.id])).stdout, /^seal +waiting to be sealed \(next (\d\d-\d\d )?\d\d:\d\dZ\)$/m);
+  // a held stamp lock is 75
+  fs.writeFileSync(path.join(dir, '.default.stamp.lock'), JSON.stringify({ pid: process.pid, host: os.hostname(), started: new Date().toISOString() }));
+  const locked = await w.run(['stamp']);
+  fs.rmSync(path.join(dir, '.default.stamp.lock'));
+  assert.equal(locked.code, 75);
+  // a missing binary: one plain message, the sync still succeeds (exit 0), `stamp` exits 1, status shows it
+  const m2 = await signedMail({ body: 'second\r\n' });
+  await new Mailproof({ trailDir: dir, resolver: m2.resolver, worker: { size: 0 }, otsBin: null }).record(m2.raw, { direction: 'in' });
   const w2 = makeWorld({ accounts: { acme: account(dir, { passCommand, ots: '/nonexistent/ots' }) } });
-  fs.rmSync(path.join(dir, '.default.ots-state.json'));
+  fs.rmSync(path.join(dir, '.default.stamp.json'), { force: true });
   const bad = await w2.run(['sync', '--json'], { deps });
   assert.equal(bad.code, 0);
-  assert.equal(JSON.parse(bad.stdout).ots.error, 'ots not found');
+  const MSG = 'ots not installed: records are not sealed; install opentimestamps-client or set ots: false';
+  assert.equal(JSON.parse(bad.stdout).ots.error, MSG);
+  assert.match((await w2.run(['sync'], { deps })).stdout, /^seal: next due /m, 'one spawn per cadence, not per sync');
+  const sb = await w2.run(['stamp']);
+  assert.equal(sb.code, 1);
+  assert.ok(sb.stderr.includes(MSG), sb.stderr);
+  assert.ok(sb.stdout.includes(MSG));
+  assert.match((await w2.run(['status'])).stdout, /ots not installed/);
+  // off: nothing is done and the CLI says so
+  const w3 = makeWorld({ accounts: { acme: account(dir, { passCommand, ots: false }) } });
+  const off = await w3.run(['stamp']);
+  assert.deepEqual([off.code, off.stdout.trim()], [0, 'ots is off for this account']);
+  assert.equal(JSON.parse((await w3.run(['sync', '--json'], { deps })).stdout).ots, null);
+  assert.match((await w3.run(['status'])).stdout, /seal +off/);
 });
 
 /** A watch run: ticks until `stopAfter` sleeps, then aborts like a SIGTERM would. */
@@ -132,10 +174,9 @@ test('watch: one line per tick, appended to watch.log, the interval between tick
   assert.equal(r.code, 0);
   assert.deepEqual(r.sleeps, [30_000, 30_000, 30_000]);
   assert.equal(r.ticks, 3);
-  assert.deepEqual(r.stdout.trim().split('\n'), [
-    '2026-11-10T12:00:00Z ok recorded 3', '2026-11-10T12:00:00Z ok recorded 0', '2026-11-10T12:00:00Z ok recorded 3',
-  ]);
-  assert.equal(readLog(w, 'acme'), r.stdout);
+  const tick = (n, seen) => ['2026-11-10T12:00:00Z ok recorded ' + n, `  ok INBOX                    in    seen ${seen}  recorded ${n}  duplicate 0`];
+  assert.deepEqual(r.stdout.trim().split('\n'), [...tick(3, 3), '', ...tick(0, 0), '', ...tick(3, 3)], 'each tick: its line, then the per-folder counts as sync prints them (SPEC B11.9), a blank line between ticks (C9)');
+  assert.equal(readLog(w, 'acme'), r.stdout.split('\n').filter((l) => l && !l.startsWith('  ')).join('\n') + '\n', 'the log keeps one line per tick');
   const st = readState(w, 'acme');
   assert.equal(st.lastWatch.state, 'stopped');
   assert.equal(st.lastWatch.pid, process.pid);
@@ -156,7 +197,7 @@ test('watch: a held lock is "skipped (locked)" and the next tick comes at the no
   const w = mk();
   const r = await watch(w, [async () => { throw failing('ERR_SYNC_LOCKED'); }, async () => { throw failing('ERR_TRAIL_LOCKED'); }, async () => result()]);
   assert.deepEqual(r.sleeps, [30_000, 30_000, 30_000]);
-  assert.match(r.stdout, /skipped \(locked\)\n.*skipped \(locked\)\n.* ok recorded 3\n$/);
+  assert.match(r.stdout, /skipped \(locked\)\n\n.*skipped \(locked\)\n\n.* ok recorded 3\n {2}ok INBOX.*\n$/);
   assert.equal(r.code, 0);
 });
 
@@ -257,4 +298,18 @@ test('watch: a hostile server error message is escaped on stdout, stderr and in 
   const log = readLog(w, 'acme');
   for (const [what, text] of [['stdout', r.stdout], ['stderr', r.stderr], ['watch.log', log]]) assert.ok(!hasForbidden(text), `${what}: ${JSON.stringify(text)}`);
   assert.ok(log.includes('bad\\x1b[1A\\x1b]0;pwned\\x07\\x9b2J\\u202e'), log);
+});
+
+import { stampText } from '../../src/cli/sync-op.js';
+import { makeStyle } from '../../src/cli/style.js';
+
+test('stampText: nothing to do is one line; any count or manifest keeps the full report', () => {
+  const st = makeStyle();
+  const base = { enabled: true, ran: true, manifests: [], stamped: null, upgraded: 0, pending: 0, unstamped: 0, unsealed: 0 };
+  assert.equal(stampText(base, st), 'nothing new to seal');
+  for (const k of ['upgraded', 'pending', 'unstamped', 'unsealed']) assert.ok(stampText({ ...base, [k]: 1 }, st).split('\n').length >= 2, k);
+  assert.match(stampText({ ...base, skipped: 'no ots binary' }, st), /skipped \(no ots binary\)/, 'a skip reason is never hidden');
+  const sealed = stampText({ ...base, manifests: [{ seq: 1, records: 3, replies: 0 }], stamped: 1, pending: 1 }, st);
+  assert.equal(sealed, st.sym.ok + ' sealed 3 new records\nthe Bitcoin anchor is pending (usually a few hours); it completes on the next sync or seal');
+  assert.match(stampText({ ...base, manifests: [{ seq: 1, records: 1, replies: 0 }], stamped: 1 }, st), /sealed 1 new record$/m, 'plain plural');
 });

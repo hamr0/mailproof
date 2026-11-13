@@ -39,12 +39,12 @@ test('lifecycle: versions, notifications, ping, tools/list, protocol errors, bat
   assert.deepEqual((await s.request('ping')).result, {});
 
   const tl = (await s.request('tools/list')).result.tools;
-  assert.equal(tl.length, 22);
+  assert.equal(tl.length, 30);
   for (const x of tl) {
     assert.equal(x.inputSchema.type, 'object'); assert.equal(x.inputSchema.additionalProperties, false);
     assert.match(x.description, /untrusted data/);
     assert.deepEqual(Object.keys(x.annotations).sort(), ['destructiveHint', 'idempotentHint', 'openWorldHint', 'readOnlyHint', 'title']);
-    if (!['accounts', 'verifyRecord'].includes(x.name)) assert.deepEqual(x.inputSchema.properties.account.enum, ['personal']);
+    if (!['accounts', 'profiles', 'verifyRecord', 'verifyBundle'].includes(x.name)) assert.deepEqual(x.inputSchema.properties.account.enum, ['personal']);
   }
   const by = Object.fromEntries(tl.map((x) => [x.name, x]));
   assert.equal(by.forget.annotations.destructiveHint, true); assert.equal(by.prune.annotations.destructiveHint, true);
@@ -81,6 +81,7 @@ test('every tool once, with the shape of its result; blobs, saveTo, prefixes, no
   assert.equal(JSON.stringify(acc).includes('echo not-used'), false, 'no secret reference');
   const list = (await s.call('list')).json; assert.equal(list.length, 6);
   assert.equal((await s.call('list', { with: 'bob@beta.example', direction: 'in', limit: 2 })).json.length, 2);
+  assert.deepEqual((await s.call('list', { subject: 'APPROVE' })).json.map((r) => r.id), [t.r.req.id], 'subject: a case-insensitive substring');
   assert.equal((await s.call('get', { id })).json.id, id);
   assert.equal((await s.call('get', { id: id.slice(0, 10) })).json.id, id, 'a unique prefix resolves');
   assert.deepEqual((await s.call('get', { id: 'f'.repeat(32) })).json, { found: false });
@@ -94,6 +95,7 @@ test('every tool once, with the shape of its result; blobs, saveTo, prefixes, no
   assert.ok((await s.call('proofParts', { id })).json.email);
   assert.equal((await s.call('checkProfile', { id, profile: { senders: ['bob@beta.example'] } })).json.ok !== undefined, true);
   assert.equal((await s.call('replyFacts', { messageId: '<req@owner.example>' })).json.length, 3);
+  assert.equal((await s.call('replyFacts', { address: 'bob@beta.example' })).json.length, 2, 'an address works too');
   const mb = (await s.call('matchBody', { id })).json; assert.ok('match' in mb);
   assert.equal((await s.call('matchBody', { id, base64: t.mails.signed.raw.toString('base64') })).json.match, true);
   assert.equal((await s.call('matchFile', { id, base64: Buffer.from('nothing').toString('base64') })).json.match, false);
@@ -121,7 +123,7 @@ test('every tool once, with the shape of its result; blobs, saveTo, prefixes, no
   assert.equal(rcd.duplicate, false); assert.equal((await s.call('record', { base64: PLAIN.toString('base64'), direction: 'in' })).json.duplicate, true);
   assert.equal((await s.call('get', { id: rcd.id })).json.source, 'mcp');
   assert.ok((await s.call('replyText', { id: t.r.signed.id })).json.text !== undefined);
-  assert.equal((await s.call('upgradeStamps')).json.enabled, false);
+  assert.equal((await s.call('upgradeStamps')).json.enabled, true, 'ots is on by default; nothing is stamped, so nothing is asked');
   assert.equal(s.stderr, '');
   s.end(); await s.exited;
 });
@@ -138,6 +140,7 @@ test('every error class is an isError result with the library code and retryable
   assert.equal((await e('list', { bogus: 1 })).code, 'ERR_BAD_ARGUMENT');             // unknown property
   assert.equal((await e('list', { limit: 501 })).code, 'ERR_BAD_ARGUMENT');           // above the maximum
   assert.equal((await e('list', { before: 'yesterday' })).code, 'ERR_BAD_ARGUMENT');  // bad date
+  assert.equal((await e('list', { subject: '  ' })).code, 'ERR_BAD_ARGUMENT');        // empty subject text
   assert.equal((await e('get', { id: 'zz' })).code, 'ERR_BAD_ARGUMENT');              // not an id
   assert.equal((await e('replyFacts', { messageId: '' })).code, 'ERR_BAD_ARGUMENT');  // library TypeError
   assert.equal((await e('check', {})).code, 'ERR_BAD_ARGUMENT');                      // neither path nor base64
@@ -179,7 +182,7 @@ test('two accounts: account is required and an enum; unknown names list the choi
   assert.ok(list.inputSchema.required.includes('account'));
   assert.equal(tl.find((x) => x.name === 'accounts').inputSchema.properties.account, undefined);
   assert.equal(tl.find((x) => x.name === 'verifyRecord').inputSchema.properties.account, undefined);
-  assert.equal(tl.length, 22);
+  assert.equal(tl.length, 30);
   const no = await s.call('list');
   assert.equal(no.error.code, 'ERR_BAD_ARGUMENT'); assert.match(no.error.message, /personal, work/);
   const bad = await s.call('list', { account: 'nope' });
@@ -255,7 +258,7 @@ test('forget and prune: without confirm nothing changes on disk, with confirm th
   s.end(); await s.exited;
 });
 
-test('reads leave no audit line; paths are refused until inputDirs is set; saveTo is refused until outputDir is set', async (tc) => {
+test('reads leave no audit line; a path outside ~/mailproof is refused; with inputDirs [] and outputDir null every path and saveTo is refused', async (tc) => {
   const { t, world } = await oneAccountNoMcp();
   const s = spawnMcp(world, { t: tc });
   await s.init();
@@ -271,7 +274,7 @@ test('reads leave no audit line; paths are refused until inputDirs is set; saveT
 
 async function oneAccountNoMcp() {
   const t = await buildThread(); await t.mp.close();
-  return { t, world: makeWorld({ accounts: { personal: account(t.dir) } }) };
+  return { t, world: makeWorld({ config: { v: 1, accounts: { personal: account(t.dir) }, mcp: { inputDirs: [], outputDir: null } } }) };
 }
 
 test('path rules: inside inputDirs only; symlink out, directory, FIFO and oversize refused', async (tc) => {

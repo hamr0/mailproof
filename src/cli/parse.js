@@ -1,10 +1,8 @@
 // Validators for command-line values (SPEC B11.1, B11.5). The subcommands and the menu prompts use the same ones, so a
 // value is accepted or refused the same way wherever it is typed. Each throws UsageError naming the flag.
 
-import fs from 'node:fs/promises';
-import path from 'node:path';
 import { UsageError } from './errors.js';
-import { recordPath } from '../proof/layout.js';
+import { resolveRecordId } from '../proof/target.js';
 
 const DATE_ONLY_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
 const ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/;
@@ -112,16 +110,11 @@ export function parseChoice(s, flag, /** @type {string[]} */ ...allowed) {
  */
 export async function resolveId(s, trailRoot) {
   const t = s.trim().toLowerCase();
-  if (FULL_ID_RE.test(t)) return t;
-  if (!PREFIX_RE.test(t)) throw new UsageError(`"${s}" is not a record id: give 32 hex characters, or a unique prefix of at least 8`);
-  const dir = path.join(trailRoot, path.dirname(recordPath(t.padEnd(32, '0'))));
-  /** @type {string[]} */
-  let names = [];
-  try { names = await fs.readdir(dir); } catch { /* no such shard */ }
-  const hits = names.filter((n) => n.endsWith('.json') && n.startsWith(t)).map((n) => n.slice(0, -5));
-  if (hits.length === 0) throw new UsageError(`no record has an id starting with ${t}`);
-  if (hits.length > 1) throw new UsageError(`${t} is ambiguous: ${hits.slice(0, 10).join(', ')}${hits.length > 10 ? ', ...' : ''}`);
-  return hits[0];
+  if (!FULL_ID_RE.test(t) && !PREFIX_RE.test(t)) throw new UsageError(`"${s}" is not a record id: give 32 hex characters, or a unique prefix of at least 8`);
+  const r = await resolveRecordId(trailRoot, t);
+  if ('id' in r) return r.id;
+  if ('none' in r) throw new UsageError(`no record has an id starting with ${t}`);
+  throw new UsageError(`${t} is ambiguous: ${r.ambiguous.slice(0, 10).join(', ')}${r.ambiguous.length > 10 ? ', ...' : ''}`);
 }
 
 /** @param {string} s @returns {string} The Message-ID with angle brackets. */

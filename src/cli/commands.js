@@ -9,6 +9,7 @@
  * @property {string} [short]
  * @property {string} [arg]  The value's name in help (`<date>`).
  * @property {string} help
+ * @property {boolean} [path]  The value is a file or folder path: a leading `~` is expanded to the home directory (run.js).
  */
 /**
  * @typedef {Object} CommandSpec
@@ -18,6 +19,7 @@
  * @property {string} [fails]  Own text, for a command with no primitive.
  * @property {boolean} account  Runs on one account (needs the config and `--account` per SPEC B11.3).
  * @property {string} positional  `''`, or the usage of the positional arguments (`<id>`, `[id ...]`).
+ * @property {boolean} [pathPositional]  The positional is a path (`~` is expanded).
  * @property {number} min  Fewest positionals.
  * @property {number} max  Most positionals.
  * @property {Record<string, FlagSpec>} flags  Beyond the global flags.
@@ -26,7 +28,7 @@
 /** Global flags: accepted by every command, before or after it. */
 export const GLOBAL_FLAGS = /** @type {Record<string, FlagSpec>} */ ({
   account: { type: 'string', arg: '<name>', help: 'the account to run on (needed when the config holds more than one)' },
-  config: { type: 'string', arg: '<path>', help: 'the config file (default $XDG_CONFIG_HOME/mailproof/config.json)' },
+  config: { type: 'string', arg: '<path>', path: true, help: 'the config file (default $XDG_CONFIG_HOME/mailproof/config.json)' },
   json: { type: 'boolean', help: 'print one JSON document on stdout instead of text' },
   help: { type: 'boolean', short: 'h', help: 'show this help' },
 });
@@ -57,26 +59,49 @@ export const COMMANDS = {
       with: { type: 'string', arg: '<address>', help: 'only emails naming this exact address' },
       role: { type: 'string', arg: '<role>', help: 'narrow --with to from, to, cc or reply-to' },
       direction: { type: 'string', arg: '<in|out>', help: 'only received (in) or sent (out) emails' },
+      subject: { type: 'string', arg: '<text>', help: 'only emails whose subject contains this text (case-insensitive, plain text)' },
       before: { type: 'string', arg: '<date>', help: 'captured before this date (YYYY-MM-DD, UTC, or a full ISO time)' },
       after: { type: 'string', arg: '<date>', help: 'captured on or after this date' },
       limit: { type: 'string', arg: '<n>', help: 'most rows (default 50, 0 = no cap)' },
     },
   },
+  people: {
+    summary: 'who is in this trail (addresses, emails, verified)', account: true, positional: '', min: 0, max: 0,
+    when: 'Use to see who is in this trail, to pick an address for show, verify or export: one line per exact address (bob@gmail.com and bob@company.com are two), most recently seen first, with how many emails name it, how many RECEIVED emails naming it verified at capture, and the first and last capture. Your own address appears too (marked "(you)" when it is the account user): a record does not say which address is yours. Then: mailproof show <address>, mailproof verify <address>, mailproof export --with <address>.',
+    fails: 'Exit 0 for an empty trail (it says so); 75 when the trail index is locked; 1 when it cannot be built.',
+    flags: { limit: { type: 'string', arg: '<n>', help: 'most addresses (default 50, 0 = no cap)' } },
+  },
   show: {
-    primitive: 'Mailproof#get', summary: 'record details', account: true, positional: '<id>', min: 1, max: 1,
-    flags: { raw: { type: 'boolean', help: 'print the stored raw email to stdout instead (exit 1 when the content store no longer holds it)' } },
+    summary: 'an address, Message-ID or id: the emails and their proof', account: true, positional: '<address|messageId|id>', min: 1, max: 1,
+    when: 'Use to see what the trail holds, starting from the person: `show b@example.com` lists every recorded email that names that exact address on From, To, Cc or Reply-To (the same match as `list --with`), newest first, one block each (date, received or sent, the other party, the signed subject, trust, body status, attachments, seal). `show <abc@mail.example>` (angle brackets) lists every recorded copy of one Message-ID. `show 3f2a9c1d` (8 to 32 hex characters, a record id; kept for scripts) prints the full record: signatures, re-check, links, attachments. Nothing else is accepted: an id shorter than 8 characters or a bare word is exit 64 with the three forms.',
+    fails: 'Exit 1 when no email names the address or Message-ID ("no email with <address> in this trail"), when the id is unknown, or when --raw finds the content store without the email; 64 for a bad target, a date, --raw with an address, or an id prefix that is ambiguous; 75 when the trail index is locked.',
+    flags: {
+      raw: { type: 'boolean', help: 'with a record id: print the stored raw email to stdout instead (exit 1 when the content store no longer holds it)' },
+      after: { type: 'string', arg: '<date>', help: 'address or Message-ID target: captured on or after this date' },
+      before: { type: 'string', arg: '<date>', help: 'address or Message-ID target: captured before this date' },
+      limit: { type: 'string', arg: '<n>', help: 'address or Message-ID target: most emails shown (default 50, 0 = all); the rest are counted' },
+      full: { type: 'boolean', help: 'show every line of each body (an address or Message-ID target cuts it to 10 lines), and with --json include the body text' },
+    },
   },
   verify: {
-    primitive: 'Mailproof#verify', summary: 're-check one email offline', account: true, positional: '<id>', min: 1, max: 1,
-    flags: { at: { type: 'string', arg: '<date>', help: 'judge key and signature expiry as of this time (default: the capture time)' } },
+    summary: 're-check an address\'s emails (or one id) offline', account: true, positional: '<address|messageId|id>', min: 1, max: 1,
+    when: 'Use to prove what a person sent you: `verify b@example.com` re-checks, offline and from the records alone, every recorded email naming that address (newest first), prints one line per email (date, received or sent, ok or NOT OK, trust, the reason when it fails) and a summary. The exit code follows the RECEIVED emails only: your own Sent copies are normally unsigned by the provider and would fail for that reason, so they are listed and counted apart ("sent: ...") and do not decide the exit code unless you pass --all. `verify <abc@mail.example>` does the same for the copies of one Message-ID; `verify 3f2a9c1d` (a record id) re-checks one record and prints its signatures. The re-check is DKIM against the archived key (the portable verdict).',
+    fails: 'Exit 0 when every counted email verifies; 2 when any counted email does not, or when there is no received email to check (the answer is no: nothing proves it; use --all to count sent copies); 1 when no email names the address or Message-ID or the id is unknown; 64 for a bad target, date or ambiguous prefix; 75 when the trail index is locked.',
+    flags: {
+      at: { type: 'string', arg: '<date>', help: 'judge key and signature expiry as of this time (default: the capture time)' },
+      all: { type: 'boolean', help: 'address or Message-ID target: also count your sent copies in the exit code' },
+      after: { type: 'string', arg: '<date>', help: 'address or Message-ID target: captured on or after this date' },
+      before: { type: 'string', arg: '<date>', help: 'address or Message-ID target: captured before this date' },
+      limit: { type: 'string', arg: '<n>', help: 'address or Message-ID target: check only the newest n (default 0 = all; a partial check says so)' },
+    },
   },
   replies: {
-    primitive: 'Mailproof#replyFacts', summary: 'what people answered (by Message-ID)', account: true, positional: '<messageId>', min: 1, max: 1, flags: {},
+    primitive: 'Mailproof#replyFacts', summary: 'what people answered: an address\'s replies, or the replies to a Message-ID', account: true, positional: '<address|messageId>', min: 1, max: 1, flags: {},
   },
   check: {
     primitive: 'Mailproof#checkProfile', summary: 'trust profile pass/fail', account: true, positional: '<id>', min: 1, max: 1,
     flags: {
-      profile: { type: 'string', arg: '<file|name>', help: 'required: a profile JSON file, or a name looked up as <configDir>/profiles/<name>.json' },
+      profile: { type: 'string', arg: '<file|name>', path: true, help: 'required: a profile JSON file, or a name looked up as <configDir>/profiles/<name>.json' },
       parent: { type: 'string', arg: '<messageId>', help: 'the request\'s Message-ID, for a profile that requires a link' },
     },
   },
@@ -99,10 +124,10 @@ export const COMMANDS = {
   },
   backup: {
     summary: 'git bundle of the trail', account: true, positional: '', min: 0, max: 0,
-    when: 'Use to keep a copy of the proofs somewhere else. It writes a git bundle of the whole trail (records, keys, replies, stamps; never message bodies) to <state>/backups/<account>/, and prints the path: restore with `git clone <file>.bundle <dir>`. --with-content adds a separate, unencrypted <file>.content.tar of the stored raw emails (other people\'s mail: encrypt it or the disk yourself). --push also pushes the trail to the account\'s backupRemote, never with force: after a prune the remote keeps the history from before it as an archive and the push is refused.',
+    when: 'Use to keep a copy of the proofs somewhere else. It writes a git bundle of the whole trail (records, keys, replies, stamps; never message bodies) to ~/mailproof/backups/, and prints the path: restore with `git clone <file>.bundle <dir>`. --with-content adds a separate, unencrypted <file>.content.tar of the stored raw emails (other people\'s mail: encrypt it or the disk yourself). --push also pushes the trail to the account\'s backupRemote, never with force: after a prune the remote keeps the history from before it as an archive and the push is refused.',
     fails: 'Exit 1 for an empty trail, a bundle that does not verify, or a missing tar; 64 for a missing --yes with --push or an unconfigured backupRemote; 75 for a push that failed on the network or on a login; 1 for a push the remote rejected.',
     flags: {
-      out: { type: 'string', arg: '<path>', help: 'write the bundle here (the directory must exist; an existing file is refused)' },
+      out: { type: 'string', arg: '<path>', path: true, help: 'write the bundle here (default ~/mailproof/backups/<account>-<UTC date and time>.bundle; the directory must exist; an existing file is refused)' },
       'with-content': { type: 'boolean', help: 'also write <file>.content.tar of the content store (the tar binary; not encrypted)' },
       push: { type: 'boolean', help: 'also push the trail to the account\'s backupRemote (no force)' },
       yes: { type: 'boolean', help: 'with --push: confirm the remote is trusted with sender and recipient addresses, subjects and dates' },
@@ -115,24 +140,44 @@ export const COMMANDS = {
   },
   update: {
     summary: 'show the upgrade command', account: false, positional: '', min: 0, max: 0,
-    when: 'Use to upgrade mailproof. By default it only prints the command (`npm install -g mailproof@latest`) and the installed version, because a global install can be owned by root or made with another package manager; --run executes it for you.',
-    fails: 'With --run the exit code is 0 when npm succeeded and 1 otherwise. Without --run nothing is run and nothing touches the network.',
-    flags: { run: { type: 'boolean', help: 'run `npm install -g mailproof@latest` (output streams through)' } },
+    when: 'Use to upgrade mailproof. By default it only prints the command (`npm install -g mailproof@latest`) and the installed version, because a global install can be owned by root or made with another package manager; --check also asks the npm registry whether a newer version exists; --run looks it up and upgrades only when it is newer, then says to restart mailproof. A development link (npm link, a git checkout) is never upgraded with npm: it says so and to update with git.',
+    fails: 'With --run the exit code is 0 when npm succeeded and 1 otherwise. Without --run nothing is run; only --check and --run touch the network (one `npm view`, 10 s); offline with --run is exit 1.',
+    flags: {
+      check: { type: 'boolean', help: 'ask the npm registry for the latest version (the only network use besides --run)' },
+      run: { type: 'boolean', help: 'upgrade now: look up the latest version, run `npm install -g mailproof@latest` only when it is newer (npm\'s output is shown only if it fails)' },
+    },
   },
   config: {
     summary: 'show path, validate, template', account: false, positional: 'path|validate|template|add-account', min: 1, max: 1, flags: {},
     when: 'Use to work with the config file. `path` prints where it is; `validate` checks the permissions and every field without reading any secret (exit 0, 64 or 77); `template` prints an example to start from; `add-account` asks for one account step by step, shows the JSON, and writes it to the file only after you confirm (mode 0600, other accounts kept). The config holds no password: only a command, a file or a token command that yields one.',
     fails: 'validate: 64 for a missing file or a bad field (the message names the JSON path), 77 when the file is not owned by you or is readable by group or others.',
   },
+  stamp: {
+    primitive: 'Mailproof#stamp', summary: 'seal new mail now (OpenTimestamps)', account: true, positional: '', min: 0, max: 0, flags: {},
+  },
   export: {
-    summary: 'needs M6 (not available yet)', account: false, positional: '', min: 0, max: 0, flags: {},
-    when: 'Reserved for the proof bundle (M6). Not available in this version.', fails: 'Always exits 64.',
+    primitive: 'Mailproof#export', summary: 'proof bundle for a counterparty', account: true, positional: '', min: 0, max: 0,
+    flags: {
+      with: { type: 'string', arg: '<a,b>', help: 'required: the exact addresses, comma separated; an email is included when it names any of them' },
+      after: { type: 'string', arg: '<date>', help: 'captured on or after this date' },
+      before: { type: 'string', arg: '<date>', help: 'captured before this date' },
+      out: { type: 'string', arg: '<path>', path: true, help: 'the new directory (default ~/mailproof/exports/mailproof-bundle-<account>-<UTC date and time>; with --tar, the .tar file)' },
+      tar: { type: 'boolean', help: 'also pack the bundle into one .tar file for mailing (the tar binary)' },
+      'dry-run': { type: 'boolean', help: 'print the preview (the emails it would hold, and what it reveals) and write nothing' },
+    },
+  },
+  'verify-bundle': {
+    primitive: 'verifyBundle', summary: 'check a bundle you were sent', account: false, positional: '<dir>', pathPositional: true, min: 1, max: 1,
+    flags: {
+      expect: { type: 'string', arg: '<sha256>', help: 'the bundle sha256 its owner told you by another channel: fails when bundle.json is not the one they made' },
+      strict: { type: 'boolean', help: 'also fail unless every email is DKIM-verified and every seal is anchored (also fails when ots is missing)' },
+    },
   },
   mcp: {
     summary: 'serve the trail to an MCP client (stdio)', account: false, positional: '', min: 0, max: 0,
-    when: 'Use to let an AI client (Claude Code, Claude Desktop, any MCP client) read and prove mail through mailproof. It is a stdio server the client starts: register it as `claude mcp add mailproof -- mailproof mcp`. One process serves every account in the config (every account-bound tool takes `account`, required when there are two or more); --account restricts it to one, so a client can give each account its own server and policy. It lists every tool, each with MCP annotations (read-only, destructive, idempotent, open-world) so the client can allow reads and ask a human before the destructive ones; forget and prune only preview until called again with confirm. Paths are read only from the folders in the config `mcp.inputDirs` and files are saved only into `mcp.outputDir`; both are off until you set them. Every write or destructive call adds one line to <state>/mcp.log. Everything an email says reaches the model as untrusted data. stdout carries protocol only and stderr stays silent; --log <file> keeps diagnostics.',
+    when: 'Use to let an AI client (Claude Code, Claude Desktop, any MCP client) read and prove mail through mailproof. It is a stdio server the client starts: register it as `claude mcp add mailproof -- mailproof mcp`. One process serves every account in the config (every account-bound tool takes `account`, required when there are two or more); --account restricts it to one, so a client can give each account its own server and policy. It lists every tool, each with MCP annotations (read-only, destructive, idempotent, open-world) so the client can allow reads and ask a human before the destructive ones; forget, prune, export and backup only preview until called again with confirm (export and backup write only into the output folder, and name nothing outside it). Paths are read only from `~/mailproof` and files are saved only into `~/mailproof/exports`, `~/mailproof/backups` and `~/mailproof/saved` (the folders the CLI uses), unless the config `mcp.inputDirs` and `mcp.outputDir` name others; `"outputDir": null` and `"inputDirs": []` turn them off. Every write or destructive call adds one line to <state>/mcp.log. Everything an email says reaches the model as untrusted data. stdout carries protocol only and stderr stays silent; --log <file> keeps diagnostics.',
     fails: 'Exit 0 when the client closes stdin or on SIGINT/SIGTERM (calls in flight finish first, up to 5 s; a second signal exits at once), 64 for a bad config, an unknown --account, or a terminal on stdin (it is not an interactive command), 77 when the config file is not private.',
-    flags: { log: { type: 'string', arg: '<file>', help: 'append diagnostics to this file (stderr stays silent)' } },
+    flags: { log: { type: 'string', arg: '<file>', path: true, help: 'append diagnostics to this file (stderr stays silent)' } },
   },
   help: {
     summary: 'this list, or one command', account: false, positional: '[command]', min: 0, max: 1, flags: {},

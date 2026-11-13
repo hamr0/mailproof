@@ -6,11 +6,16 @@ import { exitFor } from './errors.js';
 import { updateState } from './state.js';
 import { stamp } from './session.js';
 import { printable as p } from './printable.js';
+import { makeStyle, rel } from './style.js';
+import { clock } from './menu-header.js';
+import { count } from './words.js';
+import { sealStatus } from '../proof/stamp.js';
+import { STAMP_EVERY_HOURS } from '../proof/limits.js';
 
 /**
  * @typedef {Object} SyncOnce
  * @property {import('../proof/sync.js').SyncResult} result
- * @property {{ upgraded: number, pending: number, error?: string } | null} ots  null: OpenTimestamps is off for this account.
+ * @property {import('../proof/stamp.js').StampResult | null} ots  DEPRECATED ALIAS of `result.stamp` (the same object), kept because 3.3.0 documented `ots` in the CLI `--json` and MCP `sync` output; new consumers read `stamp`. The automatic stamp job's result (SPEC B13.1.12; a superset of the 3.3.0 `{ upgraded, pending, error? }`); null: OpenTimestamps is off for this account.
  * @property {{ folder: string, code: string, message: string } | null} folderError  The first folder that carries an error.
  * @property {number} exit  The exit code of the run (B4.1): 0 for a complete or capped run.
  */
@@ -18,7 +23,7 @@ import { printable as p } from './printable.js';
 /**
  * @param {import('./session.js').Session} s
  * @param {import('./session.js').Ctx} ctx
- * @param {{ folders?: string[], sent?: boolean | string, maxMessages?: number }} [over]  Flags that override the account for this run (`maxMessages`: the MCP server's per-call bound, B12.12).
+ * @param {{ folders?: string[], sent?: boolean | string, maxMessages?: number, onProgress?: (p: import('../proof/sync.js').SyncProgress) => void }} [over]  Flags that override the account for this run (`maxMessages`: the MCP server's per-call bound, B12.12; `onProgress`: the library's progress hook, used for the terminal progress line).
  * @returns {Promise<SyncOnce>}  Throws what `sync()` throws (`ERR_IMAP_AUTH`, `ERR_SYNC_LOCKED`, ...), after noting it in state.json.
  */
 export async function syncOnce(s, ctx, over = {}) {
@@ -26,14 +31,9 @@ export async function syncOnce(s, ctx, over = {}) {
   const now = ctx.deps.now ?? (() => new Date());
   try {
     const auth = await resolveAuth(account.secret);   // re-resolved every run: a fresh token, the command re-run
-    const opts = { host: account.host, port: account.port, user: account.user, auth, folders: over.folders ?? account.folders, sent: over.sent ?? account.sent, ...(over.maxMessages ? { maxMessages: over.maxMessages } : {}) };
+    const opts = { host: account.host, port: account.port, user: account.user, auth, folders: over.folders ?? account.folders, sent: over.sent ?? account.sent, ...(over.maxMessages ? { maxMessages: over.maxMessages } : {}), ...(over.onProgress ? { onProgress: over.onProgress } : {}) };
     const result = await (ctx.deps.sync ? ctx.deps.sync(mp, opts) : mp.sync(opts));
-    /** @type {SyncOnce['ots']} */
-    let ots = null;
-    if (account.otsBin) {
-      const u = await mp.upgradeStamps().catch((e) => ({ enabled: true, upgraded: 0, pending: 0, error: String(e?.message ?? e).slice(0, 200) }));
-      ots = { upgraded: u.upgraded, pending: u.pending, ...(u.error ? { error: u.error } : {}) };
-    }
+    const ots = result.stamp ?? null;   // the library ran the job at the end of the run; the CLI no longer upgrades by itself
     const bad = result.folders.find((f) => f.error);
     await updateState(s.state, account.name, {
       lastSync: { at: stamp(now()), complete: result.complete, recorded: result.folders.reduce((n, f) => n + f.recorded, 0), error: bad?.error?.code ?? null },
@@ -48,16 +48,114 @@ export async function syncOnce(s, ctx, over = {}) {
 }
 
 /**
- * The text of a sync result.
+ * Bring the trail index up to date at the end of a sync (SPEC B11.5), so `status` and `list` rarely pay for it: the cheap catch-up after new
+ * records, a rebuild (with the progress line when `progress` is given) when there is no index or it is of an older schema, nothing when it is
+ * current. It is the library's `status({ refresh: true })` (one definition of "bring the index up to date"). A failure here never fails the
+ * sync: the library already answers from git when the index cannot be built, and anything it throws is only a warning on stderr.
+ * @param {import('./session.js').Session} s
+ * @param {import('./session.js').Ctx} ctx
+ * @param {{ update: (e: import('../proof/index-db.js').IndexProgress) => void, clear: () => void } | null} [progress]
+ * @returns {Promise<void>}
+ */
+export async function indexAfterSync(s, ctx, progress = null) {
+  try { await s.mp.status({ refresh: true, ...(progress ? { onProgress: progress.update } : {}) }); }
+  catch (e) { ctx.stderr.write(`mailproof: could not update the trail index: ${p(String(/** @type {Error} */ (e)?.message ?? e).slice(0, 200))}\n`); }
+  finally { progress?.clear(); }
+}
+
+/**
+ * The per-folder lines of a sync result (what `sync` prints, and what every `watch` tick prints under its line).
  * @param {SyncOnce} r
+ * @param {import('./style.js').Style} [st]
+ * @returns {string[]}
+ */
+export function folderLines(r, st = makeStyle()) {
+  const { sym } = st;
+  return r.result.folders.map((f) => {
+    const [ch, colour] = f.error ? [sym.bad, st.red] : !f.attempted || !f.complete ? [sym.warn, st.yellow] : [sym.ok, st.green];
+    const tail = f.error ? `  ${st.red(`error ${p(f.error.code)}`)}` : !f.attempted ? '  not attempted' : f.complete ? '' : '  partial (run again)';
+    return `${colour(ch)}${' '.repeat(Math.max(0, 2 - ch.length))} ${p(f.folder).padEnd(24)} ${f.direction === 'out' ? 'sent' : 'in  '}  seen ${f.seen}  recorded ${f.recorded}  duplicate ${f.duplicate}${f.over_limit ? `  over-limit ${f.over_limit}` : ''}${tail}`;
+  });
+}
+
+/**
+ * The seal line of a sync, in plain words (SPEC B11.5): what was sealed, when the next seal is due, and how many proofs still wait for their Bitcoin anchor.
+ * @param {import('../proof/stamp.js').StampResult} z
+ * @param {import('./style.js').Style} st
+ * @param {{ nextDue?: string | null, now?: Date }} [o]  `nextDue`: the library's seal status (ISO time); left out when unknown.
  * @returns {string}
  */
-export function syncText(r) {
-  const lines = r.result.folders.map((f) => {
-    const tail = f.error ? `  error ${p(f.error.code)}` : !f.attempted ? '  not attempted' : f.complete ? '' : '  partial (run again)';
-    return `${p(f.folder).padEnd(24)} ${f.direction === 'out' ? 'sent' : 'in  '}  seen ${f.seen}  recorded ${f.recorded}  duplicate ${f.duplicate}${f.over_limit ? `  over-limit ${f.over_limit}` : ''}${tail}`;
-  });
-  lines.push(r.result.complete ? 'complete' : 'not complete: the next run continues from the saved cursor');
-  if (r.ots) lines.push(`ots: ${r.ots.upgraded} upgraded, ${r.ots.pending} pending${r.ots.error ? ` (${p(r.ots.error)})` : ''}`);
+export function sealLine(z, st, o = {}) {
+  if (!z.enabled) return `seal: ${st.dim('off for this account')}`;
+  const now = o.now ?? new Date();
+  const records = z.manifests.reduce((n, m) => n + m.records, 0);
+  /** @type {string[]} */
+  const parts = [];
+  if (z.error) parts.push(st.yellow(`problem: ${p(z.error)}`));
+  else if (z.skipped === 'locked') parts.push('another seal run is in progress');
+  else if (z.ran && z.manifests.length) parts.push(`sealed ${count(records, 'new record')}`);
+  if (o.nextDue) parts.push(`next due ${clock(o.nextDue, now)} (${rel(o.nextDue, now)})`);
+  if (z.upgraded) parts.push(`${count(z.upgraded, 'proof')} anchored in Bitcoin`);
+  const waiting = z.pending + z.unstamped;
+  if (waiting) parts.push(`${waiting} waiting for ${waiting === 1 ? 'its' : 'their'} Bitcoin anchor`);
+  if (!parts.length) parts.push('nothing to seal');
+  return `seal: ${parts.join('; ')}`;
+}
+
+/**
+ * The text of a sync result.
+ * @param {SyncOnce} r
+ * @param {import('./style.js').Style} [st]
+ * @param {{ nextDue?: string | null, now?: Date }} [o]  See `sealLine`.
+ * @returns {string}
+ */
+export function syncText(r, st = makeStyle(), o = {}) {
+  const lines = folderLines(r, st);
+  lines.push(r.result.complete ? st.green('complete') : st.yellow('not complete: the next run continues from the saved cursor'));
+  if (r.ots) lines.push(sealLine(r.ots, st, o));
+  return lines.join('\n');
+}
+
+/**
+ * When the next seal is due, from the library's seal status: cheap and offline (a read of the manifest chain), null when the seal is off or unreadable.
+ * @param {import('./session.js').Session} s
+ * @returns {Promise<string | null>}
+ */
+export async function nextSealDue(s) {
+  if (s.account.otsBin === null) return null;
+  const z = await sealStatus({ root: s.mp.root, trail: s.mp.trail, stamp: { mode: s.account.stamp.mode ?? 'batch', everyHours: s.account.stamp.everyHours ?? STAMP_EVERY_HOURS }, enabled: true }).catch(() => null);
+  return z?.nextDue ?? null;
+}
+
+/**
+ * The next seal time for a `show`, only when one of these records still waits for a seal (otherwise null, and no lookup).
+ * @param {Array<{ seal: { state: string } | null }>} facts
+ * @param {import('./session.js').Session} s
+ * @returns {Promise<string | null>}
+ */
+export async function dueFor(facts, s) {
+  return facts.some((f) => f.seal && (f.seal.state === 'unsealed' || f.seal.state === 'not-stamped')) ? nextSealDue(s) : null;
+}
+
+/**
+ * The text of a stamp result, in plain words (SPEC B11.5).
+ * @param {import('../proof/stamp.js').StampResult} r
+ * @param {import('./style.js').Style} [st]
+ * @returns {string}
+ */
+export function stampText(r, st = makeStyle()) {
+  if (!r.enabled) return `${st.dim('ots is off for this account')}`;
+  if (!r.manifests.length && r.stamped === null && !r.upgraded && !r.pending && !r.unstamped && !r.unsealed && !r.skipped && !r.error) return 'nothing new to seal';
+  /** @type {string[]} */
+  const lines = [];
+  const records = r.manifests.reduce((n, m) => n + m.records, 0);
+  const replies = r.manifests.reduce((n, m) => n + m.replies, 0);
+  if (r.manifests.length) lines.push(`${st.green(st.sym.ok)} sealed ${count(records, 'new record')}${replies ? ` and ${count(replies, 'reply', 'replies')}` : ''}`);
+  else lines.push('nothing new to seal');
+  if (r.upgraded) lines.push(`${count(r.upgraded, 'proof')} anchored in Bitcoin`);
+  if (r.pending + r.unstamped > 0) lines.push('the Bitcoin anchor is pending (usually a few hours); it completes on the next sync or seal');
+  if (r.unsealed) lines.push(`${count(r.unsealed, 'file')} not sealed yet: run seal again`);
+  if (r.skipped) lines.push(`${st.yellow(st.sym.warn)} skipped (${r.skipped})`);
+  if (r.error) lines.push(`${st.red(st.sym.bad)} error: ${p(r.error)}`);
   return lines.join('\n');
 }

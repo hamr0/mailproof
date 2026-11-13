@@ -45,11 +45,11 @@ test('--version, help, help <command>, <command> --help; unknown command and fla
 test('list: text, filters, --json is one array; a bad date, address or role is 64', async () => {
   const all = json(await sp(['list', '--json']));
   assert.equal(all.length, 6);
-  assert.deepEqual(Object.keys(all[0]).sort(), ['captured', 'direction', 'id', 'live', 'message_id', 'portable']);
+  assert.deepEqual(Object.keys(all[0]).sort(), ['addresses', 'captured', 'direction', 'from', 'id', 'live', 'message_id', 'portable', 'subject', 'subjectSource', 'to']);
   const text = await sp(['list']);
   assert.equal(text.code, 0);
   assert.equal(text.stdout.trim().split('\n').length, 6);
-  assert.match(text.stdout, new RegExp(`^${id('plain').slice(0, 12)}  `, 'm'));
+  assert.match(text.stdout, new RegExp(`  ${id('plain').slice(0, 12)}$`, 'm'));
   assert.equal(json(await sp(['list', '--json', '--limit', '2'])).length, 2);
   assert.equal(json(await sp(['list', '--json', '--limit', '0'])).length, 6);
   assert.equal(json(await sp(['list', '--json', '--direction', 'out'])).length, 1);
@@ -65,14 +65,15 @@ test('list: text, filters, --json is one array; a bad date, address or role is 6
 
 test('show: text, --json {record, proof, links}, an id prefix, --raw bytes; unknown and ambiguous ids', async () => {
   const j = json(await sp(['show', id('signed'), '--json']));
-  assert.deepEqual(Object.keys(j).sort(), ['links', 'proof', 'record']);
+  assert.deepEqual(Object.keys(j).sort(), ['facts', 'links', 'proof', 'record', 'seal']);
+  assert.equal(j.seal.state, 'unsealed', 'recorded but not sealed yet');
   assert.equal(j.record.id, id('signed'));
   assert.equal(j.proof.email.ok, true);
   assert.equal(j.links.parents[0].strength, 'signed');
   const text = await sp(['show', id('signed').slice(0, 10)]);
   assert.equal(text.code, 0);
   assert.match(text.stdout, new RegExp(`^id +${id('signed')}$`, 'm'));
-  assert.match(text.stdout, /^parent .*<req@owner.example>  signed/m);
+  assert.match(text.stdout, /^in-reply-to +<req@owner.example>, link signed$/m);
   const raw = await sp(['show', id('signed'), '--raw']);
   assert.equal(raw.code, 0);
   assert.deepEqual(raw.stdoutBytes, T.mails.signed.raw, 'the stored raw email, byte for byte');
@@ -80,7 +81,7 @@ test('show: text, --json {record, proof, links}, an id prefix, --raw bytes; unkn
   assert.equal((await sp(['show', 'ab'.repeat(16)])).code, 1, 'a well-formed id with no record');
   const short = await sp(['show', id('signed').slice(0, 7)]);
   assert.equal(short.code, 64);
-  assert.match(short.stderr, /at least 8/);
+  assert.match(short.stderr, /8 or more hex characters/);
   const none = await sp(['show', '0'.repeat(10)]);
   assert.equal(none.code, 64);
   assert.match(none.stderr, /no record has an id starting with/);
@@ -95,7 +96,7 @@ test('verify: exit 0 when ok, 2 when it does not (a tampered signature), --json 
   assert.deepEqual(Object.keys(o).sort(), ['at', 'basis', 'engine', 'id', 'ok', 'signatures', 'trust']);
   const no = await sp(['verify', id('failing')]);
   assert.equal(no.code, 2);
-  assert.match(no.stdout, /^NOT OK/);
+  assert.match(no.stdout, /^x NOT OK/);
   assert.equal(json(await sp(['verify', id('failing'), '--json'])).ok, false);
   assert.equal((await sp(['verify', id('signed'), '--at', '2026-13-45'])).code, 64);
   assert.equal(json(await sp(['verify', id('signed'), '--at', '2026-11-01T10:30:00Z', '--json'])).ok, true);
@@ -106,7 +107,15 @@ test('replies: the flat bundles; none is a message and exit 0', async () => {
   assert.equal(rows.length, 3);
   assert.equal(rows[0].recordId, id('signed'));
   assert.equal(rows[0].link, 'signed');
-  assert.equal(json(await sp(['replies', 'req@owner.example', '--json'])).length, 3, 'brackets are optional');
+  const byAddr = json(await sp(['replies', 'Bob@Beta.Example', '--json']));
+  assert.deepEqual(byAddr.map((b) => b.recordId), [id('signed'), id('failing')], 'an address lists what that person sent');
+  assert.equal((await sp(['replies', '--json'])).code, 64);
+  assert.equal(json(await sp(['replies', 'nobody@x.example', '--json'])).length, 0);
+  const addrText = await sp(['replies', 'bob@beta.example']);
+  assert.equal(addrText.code, 0);
+  assert.match(addrText.stdout, /^ 1 .* bob@beta\.example$/m, 'browse rows (rows.js)');
+  assert.match(addrText.stdout, /^ {4}link signed [·-] verifies$/m, 'the link and the short reason, in plain words');
+  assert.ok(!/dkim-aligned|verified\/verified/.test(addrText.stdout), 'no field names');
   const text = await sp(['replies', '<req@owner.example>']);
   assert.equal(text.code, 0);
   assert.match(text.stdout, /bob@beta.example/);
@@ -124,7 +133,11 @@ test('check: a profile file or a name; 0 pass, 2 fail with the failed rules; a b
   fs.writeFileSync(f, JSON.stringify({ senders: ['@gamma.example'] }));
   const fail = await sp(['check', id('signed'), '--profile', f]);
   assert.equal(fail.code, 2);
-  assert.match(fail.stdout, /^FAIL\n  sender/m);
+  assert.match(fail.stdout, /^(x|✗) FAIL\n  (x|✗) sender /m, 'a verdict, then one line per rule with a plain reason');
+  assert.match(fail.stdout, /^ {2}(x|✗) sender .* is not @gamma\.example$/m);
+  const ok2 = await sp(['check', id('signed'), '--profile', 'default']);
+  assert.equal(ok2.code, 0, 'the built-in default profile needs no file');
+  assert.match(ok2.stdout, /^(ok|✓) pass\n {2}(ok|✓) DKIM signature verifies and covers the From$/m);
   // a bare name is looked up in <configDir>/profiles/<name>.json
   fs.mkdirSync(path.join(world.cfgDir, 'mailproof', 'profiles'), { recursive: true });
   fs.writeFileSync(path.join(world.cfgDir, 'mailproof', 'profiles', 'beta.json'), JSON.stringify({ senders: ['@beta.example'] }));
@@ -148,13 +161,14 @@ test('status: one account, --json keyed by account, read-only (HEAD and tree unc
   assert.equal(j.test.records.total, 6);
   assert.deepEqual([j.test.records.in, j.test.records.out], [5, 1]);
   assert.ok(j.test.content.files >= 6);
-  assert.equal(j.test.pendingStamps, null, 'ots off');
+  assert.equal(j.test.pendingStamps, 0, 'ots is on by default: nothing stamped yet');
+  assert.deepEqual([j.test.seal.enabled, j.test.seal.mode, j.test.seal.everyHours, j.test.seal.last, j.test.seal.manifests, j.test.seal.chain], [true, 'batch', 6, null, 0, 'ok']);
   assert.equal(j.test.lastSync, null);
   assert.equal(j.test.watch.running, false);
   assert.equal(j.test.index, 'present');
   const text = await sp(['status']);
   assert.equal(text.code, 0);
-  assert.match(text.stdout, /^test\n  trail /);
+  assert.match(text.stdout, /^test [·-] me@owner\.example\n {2}trail /);
   assert.match(text.stdout, /records +6 \(5 in, 1 out\)/);
   assert.equal(git(T.dir + '/default', 'rev-parse', 'HEAD'), head);
   assert.equal(git(T.dir + '/default', 'status', '--porcelain'), '');
@@ -165,12 +179,13 @@ test('forget: refuses without --yes (64, nothing changed), --dry-run prints and 
   assert.equal(before.code, 0);
   const no = await sp(['forget', id('plain')]);
   assert.equal(no.code, 64);
-  assert.match(no.stderr, /1 record\(s\), 1 with a stored raw email/);
+  assert.match(no.stderr, /Forget on account \w+: 1 email, 1 with a stored raw email\./, 'plain counts: no (s)');
+  assert.match(no.stderr, /^ #  when +age +verdict +from$/m, 'the preview rows');
   assert.match(no.stderr, /add --yes to proceed/);
   assert.equal(no.stdout, '');
   const dry = await sp(['forget', id('plain'), '--dry-run']);
   assert.equal(dry.code, 0);
-  assert.match(dry.stdout, /1 record\(s\)/);
+  assert.match(dry.stdout, /1 email, 1 with a stored raw email/);
   assert.equal((await sp(['show', id('plain'), '--raw'])).code, 0, 'still there');
   assert.equal((await sp(['forget'])).code, 64, 'no target: there is no "forget everything"');
   assert.equal((await sp(['forget', '--yes'])).code, 64);
@@ -191,7 +206,9 @@ test('prune: refuses without --yes, --dry-run changes nothing, --yes prunes and 
   assert.equal((await sp(['prune', '--before', 'soon'])).code, 64);
   const no = await sp(['prune', '--before', '2026-11-01T10:04:00Z']);
   assert.equal(no.code, 64);
-  assert.match(no.stderr, /records removed 3, kept 3/);
+  assert.match(no.stderr, /Prune would permanently remove 3 proofs captured before 2026-11-01 \(2026-11-01 to 2026-11-01\) and keep 3\./);
+  assert.match(no.stderr, /^ #  when +age +verdict +from$/m, 'the preview rows');
+  assert.match(no.stderr, /The old trail stays as .*pre-prune/);
   assert.match(no.stderr, /add --yes to proceed/);
   assert.equal(git(root, 'rev-parse', 'HEAD'), head);
   const dry = json(await sp(['prune', '--before', '2026-11-01T10:04:00Z', '--dry-run', '--json']));
@@ -210,27 +227,10 @@ test('prune: refuses without --yes, --dry-run changes nothing, --yes prunes and 
   assert.equal(json(await sp(['list', '--json'])).length, 3);
 });
 
-test('update: prints the command and never runs npm without --run; --run runs exactly npm install -g mailproof@latest', async () => {
-  const bin = makeTmpDir('mp-cli-fakenpm-');
-  const mark = path.join(bin, 'ran.txt');
-  fs.writeFileSync(path.join(bin, 'npm'), `#!/bin/sh\necho "$@" >> "${mark}"\nexit \${FAKE_NPM_EXIT:-0}\n`, { mode: 0o755 });
-  const env = { PATH: `${bin}:${process.env.PATH}` };
-  const p = await sp(['update'], { env });
-  assert.equal(p.code, 0);
-  assert.match(p.stdout, /^mailproof \d+\.\d+\.\d+ installed\. To upgrade: npm install -g mailproof@latest\n$/);
-  assert.ok(!fs.existsSync(mark), 'npm was not spawned');
-  assert.deepEqual(json(await sp(['update', '--json'], { env })).command, 'npm install -g mailproof@latest');
-  assert.ok(!fs.existsSync(mark));
-  const r = await sp(['update', '--run'], { env });
-  assert.equal(r.code, 0);
-  assert.equal(fs.readFileSync(mark, 'utf8'), 'install -g mailproof@latest\n');
-  assert.equal((await sp(['update', '--run'], { env: { ...env, FAKE_NPM_EXIT: '3' } })).code, 1, 'npm failing is exit 1');
-});
-
-test('export is 64 with its message; mcp needs a stdin stream (64 without), and ends 0 when it closes', async () => {
+test('export needs --with (64); mcp needs a stdin stream (64 without), and ends 0 when it closes', async () => {
   const e = await sp(['export']);
   assert.equal(e.code, 64);
-  assert.match(e.stderr, /export needs M6/);
+  assert.match(e.stderr, /export needs --with/);
   const m = await world.run(['mcp']);   // no stdin at all (in process): not a stdio server run
   assert.equal(m.code, 64);
   assert.match(m.stderr, /mailproof mcp is a stdio server: register it in your MCP client/);

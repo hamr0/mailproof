@@ -20,10 +20,11 @@ export class PermError extends Error {}
  */
 export function exitFor(code) {
   switch (code) {
-    case 'ERR_SYNC_LOCKED': case 'ERR_TRAIL_LOCKED': case 'ERR_IMAP_CONNECT': case 'ERR_IMAP_TIMEOUT':
+    case 'ERR_SYNC_LOCKED': case 'ERR_TRAIL_LOCKED': case 'ERR_STAMP_LOCKED': case 'ERR_EXPORT_REWRITTEN': case 'ERR_IMAP_CONNECT': case 'ERR_IMAP_TIMEOUT':
     case 'ERR_IMAP_THROTTLED': case 'ERR_IMAP_UIDVALIDITY': case 'EX_SECRET_COMMAND':
       return EX_TEMPFAIL;
     case 'ERR_IMAP_AUTH': return EX_NOPERM;
+    case 'ERR_EXPORT_EXISTS': return EX_USAGE;   // `out` exists, or is inside the trail: a usage problem (B13.2.9)
     default: return EX_ERR;
   }
 }

@@ -1,93 +1,175 @@
-// `status` (SPEC B11.5): what a trail holds and how it is kept. Read-only: never opens IMAP, never takes the trail lock, never builds or catches up the index. The one command that may
-// run on every account at once (B11.3).
+// `status` (SPEC B11.5): what a trail holds and how it is kept. Never opens IMAP and writes nothing but the trail index: the library's `status({ refresh: true })`
+// brings that up to date first (an incremental catch-up, so it shows the real in/out and verified counts); the MCP tool asks for the same. The one command that may run on every account at once (B11.3).
 
-import fs from 'node:fs/promises';
 import path from 'node:path';
 import { Mailproof } from '../index.js';
 import { EX_OK } from './errors.js';
-import { selectAccount, mailproofOptions } from './config.js';
+import { selectAccount, mailproofOptions, loadConfig } from './config.js';
 import { print, printJson, loadCtxConfig } from './session.js';
 import { printable as p } from './printable.js';
+import { styleOf, fileUrl, rel } from './style.js';
+import { indexProgressLine } from './progress.js';
 import { readState, stateDir } from './state.js';
+import { tilde } from './paths.js';
+import { updateFacts } from './install.js';
+import { version } from './version.js';
+import { clock } from './menu-header.js';
+import { count, humanSize } from './words.js';
 import { pidAlive, headOf, trailIndexFile } from '../proof/trail.js';
-import { countPendingStamps } from '../proof/ots-upgrade.js';
+import { sealStatus } from '../proof/stamp.js';
+import { STAMP_EVERY_HOURS } from '../proof/limits.js';
 import { indexOverview } from '../proof/index-db.js';
 
-/** @param {string} dir @returns {Promise<{ files: number, bytes: number }>} */
-async function sizeOf(dir) {
-  let files = 0;
-  let bytes = 0;
-  for (const e of await fs.readdir(dir, { withFileTypes: true })) {
-    const p = path.join(dir, e.name);
-    if (e.isDirectory()) { const s = await sizeOf(p); files += s.files; bytes += s.bytes; }
-    else if (e.isFile()) { files++; bytes += (await fs.stat(p)).size; }
-  }
-  return { files, bytes };
+/**
+ * The facts of one account, as `status` shows them and the MCP `status` tool returns them: the library's `status()` (what the trail
+ * holds and how it is kept) plus what only the CLI side knows (the state file: last sync, last backup, a running watch).
+ * @param {import('./config.js').Account} account
+ * @param {import('../index.js').Mailproof} mp
+ * @param {string} state  The state directory.
+ * @param {{ refresh?: boolean | 'bounded', onProgress?: (p: import('../proof/index-db.js').IndexProgress) => void }} [opts]  `refresh`: the library catches the trail index up first: fully for the CLI (`true`, with `onProgress` for its progress line), bounded for the MCP tool (`'bounded'`: it never builds a cold index, the answer carries a `hint`).
+ * @returns {Promise<{ user: string, trail: string, records: import('../proof/status.js').TrailStatus['records'], lastSync: import('./state.js').AccountState['lastSync'], content: import('../proof/status.js').TrailStatus['content'], index: import('../proof/status.js').TrailStatus['index'], pendingStamps: number | null, seal: import('../proof/status.js').TrailStatus['seal'], lastBackup: import('./state.js').AccountState['lastBackup'], watch: { running: boolean, pid?: number }, hint?: string }>}
+ */
+export async function accountStatus(account, mp, state, opts = {}) {
+  const [lib, st] = await Promise.all([mp.status(opts.refresh ? { refresh: opts.refresh, ...(opts.onProgress ? { onProgress: opts.onProgress } : {}) } : undefined), readState(state, account.name)]);
+  return {
+    user: account.user, trail: lib.trail, records: lib.records, lastSync: st.lastSync, content: lib.content, index: lib.index,
+    pendingStamps: lib.pendingStamps, seal: lib.seal, lastBackup: st.lastBackup, ...(lib.hint ? { hint: lib.hint } : {}),
+    watch: st.lastWatch && st.lastWatch.state === 'running' && pidAlive(st.lastWatch.pid) ? { running: true, pid: st.lastWatch.pid } : { running: false },
+  };
 }
 
 /**
+ * The ONE per-account object `status --json` (CLI) and the MCP `status` tool return: `accountStatus` plus the config check, the version and the install facts.
+ * The two differ only in the refresh mode.
  * @param {import('./config.js').Account} account
- * @param {import('./session.js').Ctx} ctx
- * @returns {Promise<Record<string, unknown>>}
+ * @param {import('../index.js').Mailproof} mp
+ * @param {{ state: string, env: Record<string, string | undefined>, configFile: string, version: string, deps: { installInfo?: () => { dev: boolean, dir: string } }, refresh: boolean | 'bounded', onProgress?: (p: import('../proof/index-db.js').IndexProgress) => void }} o
  */
-async function statusOf(account, ctx) {
-  const mp = ctx.deps.makeMailproof ? ctx.deps.makeMailproof(account) : new Mailproof(mailproofOptions(account));
-  try {
-    const st = await readState(stateDir(ctx.env), account.name);
-    const head = await headOf(mp.root).catch(() => null);
-    /** @type {Record<string, unknown>} */
-    const out = { user: account.user, trail: path.join(account.trailDir, account.trail) };
-    /** @type {import('../proof/index-db.js').IndexOverview | null} */
-    let ov = null;
-    if (head !== null) {
-      try { ov = await indexOverview({ root: mp.root, trail: mp.trail, lockTimeoutMs: mp.lockTimeoutMs }, path.join(account.trailDir, trailIndexFile(account.trail))); } catch (e) { out.records = { error: /** @type {any} */ (e)?.code ?? 'error' }; }
-    }
-    // in/out/oldest/newest are null while the index is not current: counting then needs a read that rebuilds it (`list`).
-    if (head === null) out.records = null;
-    else if (ov) out.records = { total: ov.total, totalSource: ov.totalSource, in: ov.in, out: ov.out, oldest: ov.oldest, newest: ov.newest };
-    out.lastSync = st.lastSync;
-    if (account.content.store === false) out.content = 'off';
-    else {
-      try { out.content = await sizeOf(mp.contentDir); } catch { out.content = { files: 0, bytes: 0 }; }
-    }
-    out.index = ov ? ov.state : head === null ? 'absent' : 'unknown';
-    out.pendingStamps = account.otsBin && head !== null ? await countPendingStamps(mp.root, mp.trail) : null;
-    out.lastBackup = st.lastBackup;
-    out.watch = st.lastWatch && st.lastWatch.state === 'running' && pidAlive(st.lastWatch.pid) ? { running: true, pid: st.lastWatch.pid } : { running: false };
-    return out;
-  } finally { await mp.close(); }
+export async function statusFacts(account, mp, o) {
+  const s = await accountStatus(account, mp, o.state, { refresh: o.refresh, ...(o.onProgress ? { onProgress: o.onProgress } : {}) });
+  return { ...s, config: o.configFile ? await configFacts(o.configFile, o.env) : null, version: o.version, ...updateFacts(o.deps, o.env) };
 }
 
-/** @param {Record<string, any>} s @returns {string} */
-function statusText(s) {
+/**
+ * Does the config file pass `config validate`? (Permissions and every field; no secret is read.) For the MCP `status` tool.
+ * @param {string} file
+ * @param {Record<string, string | undefined>} env
+ * @returns {Promise<{ path: string, ok: boolean, error?: string }>}
+ */
+export async function configFacts(file, env) {
+  try { await loadConfig(file, env, {}); return { path: file, ok: true }; }
+  catch (e) { return { path: file, ok: false, error: String(/** @type {Error} */ (e)?.message ?? e).slice(0, 500) }; }
+}
+
+/**
+ * The facts `status` prints: the library's (with the trail index caught up first, SPEC B11.5) and the state file's.
+ * @param {import('./config.js').Account} account
+ * @param {import('./session.js').Ctx} ctx
+ * @param {string} configFile
+ * @returns {Promise<Awaited<ReturnType<typeof statusFacts>>>}
+ */
+async function statusOf(account, ctx, configFile) {
+  const mp = ctx.deps.makeMailproof ? ctx.deps.makeMailproof(account) : new Mailproof(mailproofOptions(account));
+  const progress = indexProgressLine(ctx);   // a rebuild can take ten seconds on a big trail: say so on a terminal
+  try { return await statusFacts(account, mp, { state: stateDir(ctx.env), env: ctx.env, configFile, version: version(), deps: ctx.deps, refresh: true, ...(progress ? { onProgress: progress.update } : {}) }); } finally { progress?.clear(); await mp.close(); }
+}
+
+/**
+ * The seal line in plain words (SPEC B13.1.12): the cadence, when it last ran and when the next run is due, how many manifests are not stamped yet
+ * and how many proofs wait for their Bitcoin anchor.
+ * @param {Record<string, any> | null} z
+ * @param {Date} now
+ * @returns {string}
+ */
+function sealText(z, now) {
+  if (!z) return 'unknown';
+  if (!z.enabled) return 'off (ots: false)';
+  if (z.chain !== 'ok') return `chain broken at seq ${z.chain.brokenAt}: ${p(z.chain.why)}`;
+  const when = z.last ? `last run ${clock(z.last, now)} (${rel(z.last, now)}), next due ${clock(z.nextDue, now)} (${rel(z.nextDue, now)})` : 'never run (due at the next sync or `mailproof seal`)';
+  const parts = [`${z.mode === 'batch' ? 'one batch' : 'one per record'} every ${z.everyHours} h`, when];
+  if (z.mode === 'batch') parts.push(`${count(z.manifests, 'manifest')}${z.unstamped ? ` (${z.unstamped} not stamped yet)` : ''}`);
+  if (z.pending) parts.push(`${z.pending} waiting for ${z.pending === 1 ? 'its' : 'their'} Bitcoin anchor`);
+  if (z.error) parts.push(`last run: ${p(z.error)}`);
+  return parts.join('; ');
+}
+
+/**
+ * @param {string} name @param {Record<string, any>} s @param {import('./style.js').Style} st @param {Date} now @param {Record<string, string | undefined>} env
+ * @returns {string}
+ */
+function statusText(name, s, st, now, env) {
   const r = s.records;
-  const hint = s.index === 'unreadable' ? 'the index cannot be opened: check permissions on the trail directory; if it is writable, `mailproof list` rebuilds it'
+  const hint = s.index === 'unreadable' ? 'the index cannot be opened: check permissions on the trail directory'
     : s.index === 'unknown' ? 'the SQLite add-on (better-sqlite3) cannot load, so `mailproof list` fails too: reinstall or rebuild it (npm rebuild better-sqlite3)'
-      : 'index stale; run `mailproof list` for in/out and dates';
+      : 'the index could not be brought up to date';
+  const span = r && !r.error && r.oldest ? ` ${st.sym.dot} ${r.oldest.slice(0, 10)} to ${r.newest?.slice(0, 10) ?? '-'}` : '';
   const rec = r === null ? 'no trail yet' : r.error ? `unavailable (${p(r.error)})`
-    : r.totalSource === 'git' ? `${r.total} files at HEAD (${s.index === 'absent' ? 'no index yet; run `mailproof list` for in/out and dates' : hint})`
-      : `${r.total} (${r.in} in, ${r.out} out), oldest ${r.oldest?.slice(0, 10) ?? '-'}, newest ${r.newest?.slice(0, 10) ?? '-'}`;
-  const c = s.content === 'off' ? 'off' : `${s.content.files} files, ${(s.content.bytes / 1048576).toFixed(1)} MiB`;
+    : r.totalSource === 'git' ? `${count(r.total, 'file')} at HEAD (${hint})`
+      : `${r.total} (${r.in} in, ${r.out} out) ${st.sym.dot} ${st.green(`${r.verified} verified`)}, ${r.unverified ? st.yellow(`${r.unverified} unverified`) : '0 unverified'}${span}`;
+  const c = s.content === 'off' ? 'off' : `${count(s.content.files, 'file')}, ${humanSize(s.content.bytes)}`;
+  const ls = s.lastSync;
+  const sync = !ls ? st.dim('never')
+    : `${ls.error ? st.red(st.sym.bad) : ls.complete ? st.green(st.sym.ok) : st.yellow(st.sym.warn)} ${clock(ls.at, now)} ${st.dim(`(${rel(ls.at, now)})`)}${ls.complete ? '' : ' (not complete)'}${ls.error ? ` error ${p(ls.error)}` : ''}`;
+  const sealWord = (/** @type {string} */ t) => (/^off|never|unknown/.test(t) ? st.dim(t) : /broken/.test(t) ? st.red(t) : t);
+  /** @param {string} label @param {string} v */
+  const row = (label, v) => `  ${st.bold(label.padEnd(12))} ${v}`;
+  const bk = s.lastBackup;
   return [
-    `  trail         ${p(s.trail)}`,
-    `  records       ${rec}`,
-    `  last sync     ${s.lastSync ? `${p(s.lastSync.at)}${s.lastSync.complete ? '' : ' (not complete)'}${s.lastSync.error ? ` error ${p(s.lastSync.error)}` : ''}` : 'never'}`,
-    `  content       ${c}`,
-    `  index         ${s.index}`,
-    `  ots pending   ${s.pendingStamps === null ? '-' : s.pendingStamps}`,
-    `  last backup   ${s.lastBackup ? `${p(s.lastBackup.at)}  ${p(s.lastBackup.path)}` : 'never'}`,
-    `  watch         ${s.watch.running ? `running (pid ${s.watch.pid})` : 'not running'}`,
+    `${st.bold(p(name))} ${st.sym.dot} ${p(s.user)}`,
+    row('trail', st.link(p(tilde(s.trail, env)), fileUrl(s.trail))),
+    row('records', rec),
+    row('last sync', sync),
+    row('content', c),
+    row('index', s.index === 'present' ? st.green(s.index) : st.yellow(s.index)),
+    row('seal', sealWord(sealText(s.seal, now))),
+    row('last backup', bk ? `${st.link(p(tilde(String(bk.path), env)), fileUrl(String(bk.path)))} ${st.dim(`(${clock(bk.at, now)}, ${rel(bk.at, now)})`)}` : st.dim('never')),
+    row('watch', s.watch.running ? st.green(`running (pid ${s.watch.pid})`) : st.dim('not running')),
   ].join('\n');
 }
 
 /** @param {import('./session.js').Args} a @param {import('./session.js').Ctx} ctx @returns {Promise<number>} */
 export async function statusCmd(a, ctx) {
-  const { config } = await loadCtxConfig(a, ctx);
+  const { config, file } = await loadCtxConfig(a, ctx);
   const names = a.values.account === undefined ? Object.keys(config.accounts) : [selectAccount(config, a.values.account).name];
-  /** @type {Record<string, Record<string, unknown>>} */
+  /** @type {Record<string, Awaited<ReturnType<typeof statusFacts>>>} */
   const all = {};
-  for (const n of names) all[n] = await statusOf(config.accounts[n], ctx);
-  if (a.values.json) { printJson(ctx, all); return EX_OK; }
-  for (const n of names) print(ctx, `${p(n)}\n${statusText(all[n])}`);
+  for (const n of names) all[n] = await statusOf(config.accounts[n], ctx, file);
+  if (a.values.json) {
+    printJson(ctx, all);   // each account's object is the one the MCP `status` tool returns (statusFacts)
+    return EX_OK;
+  }
+  const st = styleOf(ctx);
+  const now = (ctx.deps.now ?? (() => new Date()))();
+  for (const n of names) print(ctx, statusText(n, all[n], st, now, ctx.env));
   return EX_OK;
+}
+
+/**
+ * What the menu header shows (SPEC B11.4): fast and offline. It reads the state file, the HEAD of the trail, the index overview (one
+ * aggregate query on a present index; a count of the record files otherwise) and the manifest chain. No IMAP, no DNS, no `ots`, no lock,
+ * no content-store walk, no index build.
+ * @param {import('./config.js').Account} account
+ * @param {import('./session.js').Ctx} ctx
+ * @returns {Promise<{ user: string, trailOk: boolean, lastSync: { at: string, complete: boolean, error: string | null } | null, records: { total: number, verified: number | null, unverified: number | null, out: number | null } | null, seal: { state: 'off' | 'never' | 'pending' | 'sealed' | 'broken', nextDue: string | null }, watch: boolean }>}
+ */
+export async function headerFacts(account, ctx) {
+  const mp = ctx.deps.makeMailproof ? ctx.deps.makeMailproof(account) : new Mailproof(mailproofOptions(account));
+  try {
+    const st = await readState(stateDir(ctx.env), account.name);
+    const head = await headOf(mp.root).catch(() => null);
+    /** @type {import('../proof/index-db.js').IndexOverview | null} */
+    let ov = null;
+    if (head !== null) ov = await indexOverview({ root: mp.root, trail: mp.trail, lockTimeoutMs: mp.lockTimeoutMs }, path.join(account.trailDir, trailIndexFile(account.trail))).catch(() => null);
+    const z = account.otsBin !== null && head !== null
+      ? await sealStatus({ root: mp.root, trail: mp.trail, stamp: { mode: account.stamp.mode ?? 'batch', everyHours: account.stamp.everyHours ?? STAMP_EVERY_HOURS }, enabled: true }).catch(() => null)
+      : null;
+    const sealState = account.otsBin === null ? 'off' : !z ? 'never' : z.chain !== 'ok' ? 'broken' : z.last === null ? 'never' : z.pending + z.unstamped > 0 ? 'pending' : 'sealed';
+    return {
+      user: account.user, trailOk: head !== null,
+      lastSync: st.lastSync ? { at: st.lastSync.at, complete: st.lastSync.complete, error: st.lastSync.error } : null,
+      records: ov ? { total: ov.total, verified: ov.verified, unverified: ov.unverified, out: ov.out } : null,
+      seal: { state: sealState, nextDue: z?.nextDue ?? null },
+      watch: Boolean(st.lastWatch && st.lastWatch.state === 'running' && pidAlive(st.lastWatch.pid)),
+    };
+  } finally { await mp.close(); }
 }

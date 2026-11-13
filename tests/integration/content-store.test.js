@@ -233,7 +233,9 @@ test('expiry: content goes after days from captured, shared attachment survives 
   assert.deepEqual(await mp.expireContent({ now: new Date(T0.getTime() + 19 * DAY) }), { removed: 0, attachments: 0 });
   // proofs untouched
   for (const id of [ra.id, rb.id]) { assert.ok(await mp.get(id)); assert.equal((await mp.verify(id)).ok, true); }
-  assert.equal(files(cdir).length, 0);
+  assert.equal(files(cdir).filter((f) => !f.includes('/gone/')).length, 0, 'no content left (only the notes of why it went)');
+  assert.equal(files(path.join(cdir, 'gone')).length, 2, 'C13: one note per expired email, beside the store, outside git');
+  assert.equal((await mp.describe(ra.id)).records[0].content.gone.reason, 'expired');
   await assert.rejects(mp.expireContent({ now: 'soon' }), TypeError);
 });
 
@@ -525,8 +527,12 @@ test('forget({ dryRun }): the preview names ids, counts what would go, and delet
   const { mp, cdir } = setup(a);
   const [ra, rb] = [await mp.record(a.raw, { direction: 'in' }), await mp.record(b.raw, { direction: 'in' })];
   const before = files(cdir).sort();
-  assert.deepEqual(await mp.forget(ra.id, { dryRun: true }), { removed: 1, attachments: 0, dryRun: true, ids: [ra.id] }, 'b still references the attachment');
-  assert.deepEqual(await mp.forget([ra.id, rb.id, '1'.repeat(32)], { dryRun: true }), { removed: 2, attachments: 1, dryRun: true, ids: [ra.id, rb.id, '1'.repeat(32)] });
+  const row = (/** @type {string} */ id) => ({ id, captured: '2026-11-01T10:00:00.000Z', direction: 'in', from: 'me@signer.example', subject: 'Re: please sign' });
+  assert.deepEqual(await mp.forget(ra.id, { dryRun: true }), { removed: 1, attachments: 0, dryRun: true, ids: [ra.id], selection: [row(ra.id)], selectionMore: 0 }, 'b still references the attachment');
+  const two = await mp.forget([ra.id, rb.id, '1'.repeat(32)], { dryRun: true });
+  assert.deepEqual({ ...two, selection: undefined }, { removed: 2, attachments: 1, dryRun: true, ids: [ra.id, rb.id, '1'.repeat(32)], selection: undefined, selectionMore: 0 });
+  assert.deepEqual(two.selection.map((r) => r.id), [ra.id, rb.id], 'rows only for ids that exist');
+  for (const r of two.selection) assert.deepEqual(r, row(r.id));
   assert.deepEqual(files(cdir).sort(), before, 'nothing deleted');
   assert.deepEqual(await mp.forget([ra.id, rb.id]), { removed: 2, attachments: 1 }, 'the same call for real removes exactly what the preview said');
   await assert.rejects(mp.forget(ra.id, { dryRun: 'yes' }), TypeError);
@@ -537,10 +543,10 @@ test('forget({ dryRun }) by counterparty, and with no content directory', async 
   const m = await signedMail({ signTime: T0, to: 'bob@gmail.com' });
   const { mp } = setup(m);
   const r = await mp.record(m.raw, { direction: 'in' });
-  assert.deepEqual(await mp.forget({ with: 'bob@gmail.com' }, { dryRun: true }), { removed: 1, attachments: 0, dryRun: true, ids: [r.id] });
+  assert.deepEqual(await mp.forget({ with: 'bob@gmail.com' }, { dryRun: true }), { removed: 1, attachments: 0, dryRun: true, ids: [r.id], selection: [{ id: r.id, captured: '2026-11-01T10:00:00.000Z', direction: 'in', from: 'me@signer.example', subject: 'Re: please sign' }], selectionMore: 0 });
   assert.ok(await mp.rawEmail(r.id));
   const dir = makeTmpDir('mp-content-');
   const none = new Mailproof({ trailDir: path.join(dir, 'nested'), worker: { size: 0 } });
-  assert.deepEqual(await none.forget('a'.repeat(32), { dryRun: true }), { removed: 0, attachments: 0, dryRun: true, ids: ['a'.repeat(32)] });
+  assert.deepEqual(await none.forget('a'.repeat(32), { dryRun: true }), { removed: 0, attachments: 0, dryRun: true, ids: ['a'.repeat(32)], selection: [], selectionMore: 0 });
   assert.equal(fs.existsSync(path.join(dir, 'nested')), false);
 });

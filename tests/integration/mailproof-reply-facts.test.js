@@ -220,7 +220,7 @@ test('commit is the commit that recorded the reply (matches git), from the index
   d.close();
   await check();
   const d2 = new Database(file, { readonly: true });
-  assert.equal(d2.prepare("SELECT v FROM meta WHERE k = 'schema'").get().v, '4');
+  assert.equal(d2.prepare("SELECT v FROM meta WHERE k = 'schema'").get().v, '6');
   assert.equal(d2.prepare('SELECT COUNT(*) AS n FROM rec WHERE commit_id IS NULL').get().n, 0);
   d2.close();
 });
@@ -249,4 +249,19 @@ test('cost: replyFacts at 2,000 records (measured, wide margin)', async () => {
   assert.equal(b.length, 3);
   console.log(`# replyFacts at 2,003 index rows: ${ms.toFixed(1)} ms`);
   assert.ok(ms < 5000);
+});
+
+test('replyFacts({ address }): the inbound direct replies that person sent to any message in the trail, earliest first', async () => {
+  const { mp, r } = await buildThread();
+  const bob = await mp.replyFacts({ address: 'Bob@Beta.Example' });
+  assert.deepEqual(ids(bob), [r.signed.id, r.failing.id]);
+  bob.forEach(assertShape);
+  assert.equal(bob[0].messageId, '<r1@beta.example>');
+  assert.equal(bob[0].link, 'signed');
+  assert.deepEqual(ids(await mp.replyFacts({ address: 'alice@alpha.example' })), [r.grand.id], 'a reply to a reply counts: its parent is in the trail');
+  assert.deepEqual(await mp.replyFacts({ address: 'me@owner.example' }), [], 'my own sent mail is not an inbound reply');
+  assert.deepEqual(await mp.replyFacts({ address: 'zed@zed.example' }), [], 'mail that replies to nothing');
+  assert.deepEqual(await mp.replyFacts({ address: 'nobody@nowhere.example' }), []);
+  await assert.rejects(() => mp.replyFacts({ address: 'not an address' }), TypeError);
+  await assert.rejects(() => mp.replyFacts({ address: 'a@b.example', messageId: REQ }), TypeError, 'one of the two');
 });

@@ -28,6 +28,9 @@ function forwardOf(inners, B = 'B') {
     `Content-Type: multipart/mixed; boundary="${B}"`, '', `--${B}`, 'Content-Type: text/plain', '', 'see attached', ...parts, `--${B}--`, ''].join('\r\n'), 'binary');
 }
 
+/** The 3.3.0 row: the additive who-and-what fields (from, to, subject, subjectSource, addresses) are tested in list-rows.test.js. */
+const base = (rows) => rows.map(({ id, captured, direction, live, portable, message_id }) => ({ id, captured, direction, live, portable, message_id }));
+
 /** TEST-ONLY oracle: the full read list()/copies() did before the index (every record read and parsed). Equal captures
  *  come in ascending id order, which is the order the index promises (the old code left it to the file system). */
 async function oracle(root) {
@@ -57,7 +60,7 @@ async function assertSameAsFullRead(mp, root) {
   const o = await oracle(root);
   for (const opts of [undefined, {}, { limit: 2 }, { limit: 1 }, { limit: 0 }, { limit: 2.5 }, { limit: -1 }, { limit: '3' }, { limit: 100 }, { limit: Infinity },
     { direction: 'in' }, { direction: 'out' }, { direction: 'in', limit: 2 }, { direction: 'out', limit: 1 }, { direction: 'sideways' }]) {
-    assert.deepStrictEqual(await mp.list(opts), o.list(opts), `list(${JSON.stringify(opts)})`);
+    assert.deepStrictEqual(base(await mp.list(opts)), o.list(opts), `list(${JSON.stringify(opts)})`);
   }
   const probes = new Set(['0'.repeat(32), 'nope', '', 'F'.repeat(32), undefined, null, 5]);
   for (const r of o.all) { probes.add(r.id); if (r.message_key) probes.add(r.message_key); }
@@ -149,7 +152,7 @@ test('record() never touches the index: N recorded messages reach it by catch-up
   assert.equal(rows[0].id, 'sentinel', 'caught up, not rebuilt');
   assert.equal(storedMeta(dir, 'head'), gitOut(root, 'rev-parse', 'HEAD'));
   assert.equal(rows.length, 14);
-  assert.deepStrictEqual(rows.filter((r) => r.id !== 'sentinel'), (await oracle(root)).list());
+  assert.deepStrictEqual(base(rows.filter((r) => r.id !== 'sentinel')), (await oracle(root)).list());
   const d = new Database(indexFile(dir)); d.prepare("DELETE FROM rec WHERE id = 'sentinel'").run(); d.close();
   await assertSameAsFullRead(mp, root);
   await mp.close();
@@ -172,7 +175,7 @@ test('catch-up: records committed while the index existed (another instance) and
   assert.equal(storedMeta(dir, 'head'), gitOut(root, 'rev-parse', 'HEAD'));
   const o = await oracle(root);
   const real = (await other.list()).filter((r) => r.id !== 'sentinel');
-  assert.deepStrictEqual(real, o.list());
+  assert.deepStrictEqual(base(real), o.list());
   assert.equal(real.length, 10);
   await other.close();
   await mp.close();
@@ -240,7 +243,7 @@ test('a record committed by a second process is visible to an open index', async
   const rows = await mp.list();
   assert.ok(rows.some((r) => r.id === res.id), 'the other process\'s record is listed');
   assert.equal(rows[0].id, 'sentinel', 'by catch-up, not rebuild');
-  assert.deepStrictEqual(rows.filter((r) => r.id !== 'sentinel'), (await oracle(root)).list());
+  assert.deepStrictEqual(base(rows.filter((r) => r.id !== 'sentinel')), (await oracle(root)).list());
   await mp.close();
 });
 
@@ -348,7 +351,7 @@ test('catch-up lists both paths of a renamed record file: the old id leaves the 
   assert.equal(ids.includes(NEWID), true);
   // everything but the planted sentinel equals the full read
   const o = await oracle(root);
-  assert.deepStrictEqual((await mp2.list()).filter((r) => r.id !== 'sentinel'), o.list());
+  assert.deepStrictEqual(base((await mp2.list()).filter((r) => r.id !== 'sentinel')), o.list());
   assert.deepStrictEqual(await mp2.copies(out.u1.id), o.copies(out.u1.id));
   assert.deepStrictEqual(await mp2.copies(NEWID), o.copies(NEWID));
   await mp2.close();

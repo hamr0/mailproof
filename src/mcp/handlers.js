@@ -3,16 +3,32 @@
 // blob or a saved file. `forget` and `prune` preview unless `confirm: true` (B12.5).
 
 import crypto from 'node:crypto';
-import { verifyRecord } from '../index.js';
+import path from 'node:path';
+import { verifyRecord, verifyBundle } from '../index.js';
 import { parseDate, parseAddress, resolveId, messageIdOf } from '../cli/parse.js';
-import { syncOnce } from '../cli/sync-op.js';
-import { readBytes, readAllowedFile, saveBytes } from './input.js';
+import { syncOnce, indexAfterSync } from '../cli/sync-op.js';
+import { readBytes, readAllowedFile, resolveAllowedBundle, saveBytes, outputPath } from './input.js';
+import { statusFacts } from '../cli/status.js';
+import { resolveProfile, listProfiles, profilesDir } from '../cli/profiles.js';
+import { tilde, tildeText, ensureUserDir } from '../cli/paths.js';
+import { bundleName } from '../cli/bundle.js';
+import { backupName } from '../cli/backup.js';
+import { otsOptionFromEnv } from '../cli/secrets.js';
+import { updateState } from '../cli/state.js';
+import { stamp as isoStamp } from '../cli/session.js';
+import { PUSH_WARNING } from '../proof/backup.js';
 import { ToolError, badArgument } from './errors.js';
 
 /** Messages read per folder in one `sync` call unless the caller lowers it (SPEC B12.12: about 8 s for 100 signed 40 KB messages, F30). */
 export const SYNC_MAX_MESSAGES_DEFAULT = 100;
 /** Message count the `maxMessages` argument may not exceed (the library caps a folder at 1,000 anyway). */
 export const SYNC_MAX_MESSAGES_CEILING = 1000;
+
+/** The most records an `export` preview lists (the count is always complete). */
+const EXPORT_PREVIEW_ROWS = 200;
+
+/** What an export hands over, said to the person before they confirm (B13.2). */
+export const EXPORT_DISCLOSURE = 'The bundle holds, for every email it includes: the sender and recipient addresses, the signed subject and headers, the DKIM signature, the archived signing key and the seal. The seal manifests show every other record of the trail only as a hash. Message bodies and attachments are not copied (the bundle only says whether you still hold them). Whoever receives it learns who you exchanged mail with in this selection. It does not prove completeness: you chose which emails to include.';
 
 /** @typedef {import('../index.js').Mailproof} Mailproof */
 /** @typedef {{ type: 'text', text: string } | { type: 'resource', resource: { uri: string, mimeType: string, blob: string } }} Content */
@@ -23,13 +39,14 @@ export const SYNC_MAX_MESSAGES_CEILING = 1000;
  * @typedef {Object} HandlerCtx
  * @property {import('../cli/config.js').Account | null} account  Null for a tool with no account.
  * @property {() => Mailproof} mp  The account's instance, opened on first use.
- * @property {import('../cli/config.js').McpConfig} settings
+ * @property {ReturnType<typeof import('../cli/config.js').mcpSettings>} settings
  * @property {import('./input.js').InputOptions} input
  * @property {() => Promise<Output>} accounts  The `accounts` tool.
  * @property {string} state  The state directory (sync updates the account's state.json there).
  * @property {import('../cli/session.js').Deps} deps
  * @property {Record<string, string | undefined>} env
  * @property {string} configFile
+ * @property {string} version  The installed mailproof version.
  */
 
 /** @param {unknown} v @param {string} [outcome] @returns {Output} */
@@ -43,7 +60,7 @@ const dateArg = (v, name) => parseDate(/** @type {string} */ (v), name);
 
 /**
  * @param {Record<string, any>} a
- * @returns {{ limit?: number, direction?: 'in' | 'out', with?: string, role?: 'from' | 'to' | 'cc' | 'reply-to', before?: Date, after?: Date }}
+ * @returns {{ limit?: number, direction?: 'in' | 'out', with?: string, role?: 'from' | 'to' | 'cc' | 'reply-to', subject?: string, before?: Date, after?: Date }}
  */
 function listFilters(a) {
   /** @type {ReturnType<typeof listFilters>} */
@@ -51,6 +68,7 @@ function listFilters(a) {
   if (a.with !== undefined) f.with = parseAddress(a.with, 'with');
   if (a.role !== undefined) { if (f.with === undefined) throw badArgument('role needs with'); f.role = a.role; }
   if (a.direction !== undefined) f.direction = a.direction;
+  if (a.subject !== undefined) { if (typeof a.subject !== 'string' || !a.subject.trim()) throw badArgument('subject needs some text'); f.subject = a.subject; }
   if (a.before !== undefined) f.before = dateArg(a.before, 'before');
   if (a.after !== undefined) f.after = dateArg(a.after, 'after');
   return f;
@@ -74,8 +92,8 @@ const orNotFound = (v) => json(v ?? { found: false });
 async function bytesOut(c, bytes, what, saveTo) {
   if (!bytes) return json({ found: false });
   const meta = { id: what.key, bytes: bytes.length, sha256: crypto.createHash('sha256').update(bytes).digest('hex') };
-  if (saveTo !== undefined) return json({ ...meta, saved: await saveBytes(saveTo, bytes, c.settings.outputDir) });
-  if (bytes.length > c.settings.maxBinaryBytes) throw new ToolError('ERR_TOO_LARGE', `the content is ${bytes.length} bytes, over the ${c.settings.maxBinaryBytes} byte limit for a returned blob; call again with saveTo (needs mcp.outputDir)`);
+  if (saveTo !== undefined) return json({ ...meta, saved: await saveBytes(saveTo, bytes, await outFolder(c, 'saved')) });
+  if (bytes.length > c.settings.maxBinaryBytes) throw new ToolError('ERR_TOO_LARGE', `the content is ${bytes.length} bytes, over the ${c.settings.maxBinaryBytes} byte limit for a returned blob; call again with saveTo`);
   const uri = `mailproof://${c.account?.name}/${what.kind === 'raw' ? 'raw' : 'attachment'}/${what.key}`;
   return {
     content: [
@@ -84,6 +102,18 @@ async function bytesOut(c, bytes, what, saveTo) {
     ],
     outcome: 'ok',
   };
+}
+
+/**
+ * The folder a write of this kind goes into: the config's `mcp.outputDir` when set (null: writing is off), else the CLI's own `~/mailproof/<kind>`,
+ * created (0700) on first use.
+ * @param {HandlerCtx} c
+ * @param {'exports' | 'backups' | 'saved'} kind
+ * @returns {Promise<string | null>}
+ */
+async function outFolder(c, kind) {
+  const o = c.settings.outputDir;
+  return o === undefined ? ensureUserDir(c.env, kind) : o;
 }
 
 /** @typedef {(c: HandlerCtx, a: Record<string, any>) => Promise<Output>} Handler */
@@ -107,6 +137,12 @@ export const HANDLERS = {
     if (!rec) return json({ found: false });
     return json(await mp.verify(rec, a.at === undefined ? undefined : { at: dateArg(a.at, 'at') }));
   },
+  describe: async (c, a) => json(await c.mp().describe(a.target, { ...(a.full !== undefined ? { full: a.full } : {}), ...(a.after !== undefined ? { after: dateArg(a.after, 'after') } : {}), ...(a.before !== undefined ? { before: dateArg(a.before, 'before') } : {}), limit: a.limit ?? 50 })),
+  verifyWith: async (c, a) => json(await c.mp().verifyWith(a.target, {
+    ...(a.all !== undefined ? { all: a.all } : {}), ...(a.at !== undefined ? { at: dateArg(a.at, 'at') } : {}),
+    ...(a.after !== undefined ? { after: dateArg(a.after, 'after') } : {}), ...(a.before !== undefined ? { before: dateArg(a.before, 'before') } : {}),
+    ...(a.limit !== undefined ? { limit: a.limit } : {}),
+  })),
   verifyRecord: async (c, a) => {
     const hasPath = a.path !== undefined;
     if (hasPath === (a.record !== undefined)) throw badArgument('give record or path, not both and not neither');
@@ -121,9 +157,16 @@ export const HANDLERS = {
   checkProfile: async (c, a) => {
     const mp = c.mp();
     const opts = { ...(a.at !== undefined ? { at: dateArg(a.at, 'at') } : {}), ...(a.parent !== undefined ? { parent: messageIdOf(a.parent) } : {}) };
-    return json(await mp.checkProfile(await idArg(a, 'id', mp), a.profile, Object.keys(opts).length ? opts : undefined));
+    /** @type {any} */
+    let profile;
+    try { profile = await resolveProfile(a.profile, c.env); } catch (e) { throw badArgument(tildeText(/** @type {Error} */ (e).message, c.env)); }
+    return json(await mp.checkProfile(await idArg(a, 'id', mp), profile, Object.keys(opts).length ? opts : undefined));
   },
-  replyFacts: async (c, a) => json(await c.mp().replyFacts({ messageId: messageIdOf(a.messageId) })),
+  profiles: async (c) => json({ dir: tilde(profilesDir(c.env), c.env), profiles: await listProfiles(c.env) }),
+  replyFacts: async (c, a) => {
+    if ((a.messageId === undefined) === (a.address === undefined)) throw badArgument('give messageId or address, one of them');
+    return json(await c.mp().replyFacts(a.address !== undefined ? { address: a.address } : { messageId: messageIdOf(a.messageId) }));
+  },
   matchBody: async (c, a) => {
     const mp = c.mp();
     const raw = await readBytes(a, c.input, true);
@@ -157,10 +200,77 @@ export const HANDLERS = {
     /** @type {import('../cli/session.js').Ctx} */
     const cliCtx = { stdout: { write: () => true }, stderr: { write: () => true }, stdin: null, interactive: false, env: c.env, signal: new AbortController().signal, deps: c.deps };
     const r = await syncOnce({ account, mp: c.mp(), state: c.state, configFile: c.configFile, close: async () => {} }, cliCtx, over);
+    await indexAfterSync({ account, mp: c.mp(), state: c.state, configFile: c.configFile, close: async () => {} }, cliCtx);   // the index is what the status tool leaves to sync
     const recorded = r.result.folders.reduce((n, f) => n + f.recorded, 0);
     return json({ ...r.result, ots: r.ots }, `ok recorded ${recorded}${r.result.complete ? '' : ' (not complete)'}`);
   },
   upgradeStamps: async (c) => json(await c.mp().upgradeStamps()),
+  status: async (c) => {
+    const account = /** @type {import('../cli/config.js').Account} */ (c.account);
+    return json(await statusFacts(account, c.mp(), { state: c.state, env: c.env, configFile: c.configFile, version: c.version, deps: c.deps, refresh: 'bounded' }));
+  },
+  stamp: async (c) => {
+    const r = await c.mp().stamp();
+    return json(r, r.error ? `ok (seal problem: ${r.error})` : `ok manifests ${r.manifests.length}`);
+  },
+  verifyBundle: async (c, a) => {
+    if (a.expect !== undefined && !/^[0-9a-fA-F]{64}$/.test(a.expect)) throw badArgument('expect must be the 64 hex characters of the bundle\'s sha256');
+    const dir = await resolveAllowedBundle(a.dir, c.input);
+    const o = otsOptionFromEnv(c.env);
+    const r = await verifyBundle(dir, { ...(o.otsBin !== undefined ? { ots: o.otsBin } : {}), ...(a.expect !== undefined ? { expect: a.expect } : {}), ...(a.strict ? { strict: true } : {}) });
+    return json(r, r.ok ? 'ok verified' : `ok not verified: ${r.failed.join(', ')}`);
+  },
+  export: async (c, a) => {
+    const mp = c.mp();
+    const account = /** @type {import('../cli/config.js').Account} */ (c.account);
+    const now = (c.deps.now ?? (() => new Date()))();
+    const addrs = /** @type {string[]} */ (a.with).map((x) => parseAddress(x, 'with'));
+    const tar = a.tar === true;
+    let name = a.out ?? bundleName(account.name, now, tar);
+    const folder = await outFolder(c, 'exports');
+    await outputPath(name, folder, 'out');   // the name as given must be plain, whatever suffix follows
+    if (tar && !name.endsWith('.tar')) name += '.tar';
+    const out = await outputPath(name, folder, 'out');
+    const opts = { with: addrs, ...(a.after !== undefined ? { after: dateArg(a.after, 'after') } : {}), ...(a.before !== undefined ? { before: dateArg(a.before, 'before') } : {}), out, tar };
+    if (a.confirm !== true) {
+      const plan = await mp.export({ ...opts, dryRun: true });
+      const { selection = [], ...rest } = plan;
+      return json({
+        executed: false,
+        preview: { ...rest, selection: selection.slice(0, EXPORT_PREVIEW_ROWS), ...(selection.length > EXPORT_PREVIEW_ROWS ? { selectionMore: selection.length - EXPORT_PREVIEW_ROWS } : {}), disclosure: EXPORT_DISCLOSURE },
+        next: 'show the user the disclosure and the emails, then call again with the same arguments and confirm: true to write the bundle',
+      }, `preview ${plan.records} record(s)`);
+    }
+    const res = await mp.export(opts);
+    return json({ executed: true, result: res }, `executed ${res.records} record(s), bundle_sha256 ${res.bundle_sha256}`);
+  },
+  backup: async (c, a) => {
+    const mp = c.mp();
+    const account = /** @type {import('../cli/config.js').Account} */ (c.account);
+    const now = (c.deps.now ?? (() => new Date()))();
+    if (a.push === true && !account.backupRemote) throw badArgument('this account has no backupRemote in the config: push needs one');
+    let name = a.out ?? backupName(account.name, now);
+    const folder = await outFolder(c, 'backups');
+    await outputPath(name, folder, 'out');   // the name as given must be plain, whatever suffix follows
+    if (!name.endsWith('.bundle')) name += '.bundle';
+    const out = await outputPath(name, folder, 'out');
+    const opts = { out, withContent: a.withContent === true, ...(a.push === true ? { push: true, remote: /** @type {string} */ (account.backupRemote) } : {}) };
+    if (a.confirm !== true) {
+      const plan = await mp.backup({ ...opts, dryRun: true });
+      return json({
+        executed: false,
+        preview: {
+          bundle: plan.bundle, commits: plan.commits, content: plan.content, ...(plan.contentNote ? { contentNote: plan.contentNote } : {}),
+          push: plan.pushed ? { remote: plan.pushed.remote, host: plan.pushed.host, forced: false } : null,
+          disclosure: `${plan.pushed ? `${PUSH_WARNING} ` : ''}The bundle holds the whole trail's signed headers (addresses, subjects, dates, Message-IDs), never message bodies.${plan.content ? ' The content archive holds other people\'s raw mail and is not encrypted.' : ''}`,
+        },
+        next: 'show the user this, then call again with the same arguments and confirm: true to write it',
+      }, `preview ${plan.commits} commit(s)${plan.pushed ? ` push to ${plan.pushed.host ?? 'a local remote'}` : ''}`);
+    }
+    const res = await mp.backup(opts);
+    await updateState(c.state, account.name, { lastBackup: { at: isoStamp(now), path: res.bundle } });
+    return json({ executed: true, result: res }, `executed ${res.commits} commit(s)${res.pushed ? ' pushed' : ''}${res.pushError ? ` push failed (${res.pushError.kind})` : ''}${res.contentError ? ' content archive failed' : ''}`);
+  },
   forget: async (c, a) => {
     const mp = c.mp();
     const hasIds = a.ids !== undefined;

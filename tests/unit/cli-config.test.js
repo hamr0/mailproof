@@ -5,10 +5,12 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  validateConfig, parseConfig, loadConfig, selectAccount, mailproofOptions, configPath, configDir, expandHome, loadProfile, writeConfigAtomic, TEMPLATE, ConfigError,
+  validateConfig, parseConfig, loadConfig, selectAccount, mailproofOptions, configPath, configDir, expandHome, writeConfigAtomic, TEMPLATE, ConfigError,
 } from '../../src/cli/config.js';
+import { loadProfile } from '../../src/cli/profiles.js';
 import { UsageError, PermError } from '../../src/cli/errors.js';
 import { makeTmpDir } from '../helpers/tmp.js';
+import { resolveAuth } from '../../src/cli/secrets.js';
 
 const env = { HOME: '/home/ana', XDG_CONFIG_HOME: undefined };
 const acct = (extra = {}) => ({ user: 'a@b.example', trailDir: '/t/one', passCommand: 'pass show x', ...extra });
@@ -19,13 +21,26 @@ test('a minimal account gets the documented defaults; the template validates', (
   const { config } = validateConfig(cfg({ personal: acct() }), env);
   assert.deepEqual(config.accounts.personal, {
     name: 'personal', user: 'a@b.example', host: 'imap.gmail.com', port: 993, folders: ['INBOX'], sent: true, trailDir: '/t/one', trail: 'default',
-    secret: { passCommand: 'pass show x' }, content: {}, otsBin: null, backupRemote: null,
+    secret: { passCommand: 'pass show x' }, content: {}, otsBin: 'ots', stamp: {}, backupRemote: null,
   });
   assert.deepEqual(validateConfig(TEMPLATE, env).problems, []);
   assert.equal(validateConfig(TEMPLATE, env).config.accounts.personal.otsBin, 'ots');
-  assert.deepEqual(mailproofOptions(config.accounts.personal), { trailDir: '/t/one', trail: 'default' });
+  assert.deepEqual(mailproofOptions(config.accounts.personal), { trailDir: '/t/one', trail: 'default', otsBin: 'ots' }, 'ots is on by default');
   const full = validateConfig(TEMPLATE, env).config.accounts.personal;
   assert.deepEqual(mailproofOptions(full), { trailDir: '/home/ana/mailproof/personal', trail: 'default', otsBin: 'ots', content: { store: true, attachments: true, days: 730, sweepDays: 7 } });
+});
+
+test('ots and stamp (SPEC B13.1.1): ots false is the off switch (otsBin null is passed on), stamp is validated', () => {
+  const a = (extra) => validateConfig(cfg({ a: acct(extra) }), env);
+  assert.equal(a({ ots: false }).config.accounts.a.otsBin, null);
+  assert.deepEqual(mailproofOptions(a({ ots: false }).config.accounts.a), { trailDir: '/t/one', trail: 'default', otsBin: null });
+  assert.equal(a({ ots: true }).config.accounts.a.otsBin, 'ots');
+  assert.deepEqual(a({ stamp: { mode: 'record', everyHours: 12 } }).config.accounts.a.stamp, { mode: 'record', everyHours: 12 });
+  assert.deepEqual(mailproofOptions(a({ stamp: { everyHours: 1 } }).config.accounts.a).stamp, { everyHours: 1 });
+  assert.ok(problems(cfg({ a: acct({ stamp: { nope: 1 } }) })).includes('accounts.a.stamp.nope: unknown key'));
+  assert.ok(problems(cfg({ a: acct({ stamp: { mode: 'x' }, }) })).includes('accounts.a.stamp.mode: must be "batch" or "record"'));
+  for (const h of [0, 721, 1.5, '6']) assert.ok(problems(cfg({ a: acct({ stamp: { everyHours: h } }) })).some((p) => p.startsWith('accounts.a.stamp.everyHours:')), String(h));
+  assert.ok(problems(cfg({ a: acct({ stamp: 'batch' }) })).includes('accounts.a.stamp: must be an object'));
 });
 
 test('strict: unknown keys at every level, wrong types, bad names, a missing v, no accounts: each names its JSON path', () => {
@@ -159,4 +174,16 @@ test('backupRemote: credentials in the URL are refused (secrets by reference); s
   for (const ok of ['git@git.example.org:ana/x.git', 'ssh://git@git.example.org/ana/x.git', 'https://git.example.org/ana/x.git', '/srv/backup/x.git']) {
     assert.deepEqual(problems(cfg({ a: acct({ backupRemote: ok }) })), [], ok);
   }
+});
+
+test('~ in passFile is expanded against HOME, so the secret is read from there; commands are never expanded', async () => {
+  const home = makeTmpDir('mp-cli-home-');
+  const pf = path.join(home, 'x.pass');
+  fs.writeFileSync(pf, 'abcd efgh ijkl mnop\n', { mode: 0o600 });
+  const e = { HOME: home };
+  const { config } = validateConfig(cfg({ a: acct({ passCommand: undefined, passFile: '~/x.pass' }) }), e);
+  assert.deepEqual(config.accounts.a.secret, { passFile: pf });
+  assert.deepEqual(await resolveAuth(config.accounts.a.secret), { pass: 'abcdefghijklmnop' });
+  const cmd = validateConfig(cfg({ a: acct({ passCommand: '~/bin/p show' }) }), e).config.accounts.a.secret;
+  assert.deepEqual(cmd, { passCommand: '~/bin/p show' });
 });

@@ -24,20 +24,23 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { git, gitLines } from './git.js';
-import { parseRecordPath, assertTrailLayout } from './layout.js';
+import { parseRecordPath, parseManifestPath, assertTrailLayout } from './layout.js';
+import { readChain, readManifestAt } from './seal.js';
 import { RECORD_ID_RE, readRecord, withTrailLock, trailLockFile, trailIndexFile, headOf } from './trail.js';
-import { LINKED_CHILDREN_DEFAULT, REPLY_FACTS_MAX } from './limits.js';
-import { participantsOf, linksOf, directParents, hasSignedThreading, ROLES } from './participants.js';
+import { LINKED_CHILDREN_DEFAULT, REPLY_FACTS_MAX, INDEX_MAX_SUBJECT, INDEX_QUIET_RECORDS } from './limits.js';
+import { headerText } from './header-text.js';
+import { participantsOf, linksOf, directParents, ROLES, addressCoverage, signedHeaderValue } from './participants.js';
 import { verifyRecord } from './recheck.js';
 
 /** @typedef {import('./types.js').MpRecord} MpRecord */
 /** @typedef {{ run: (...p: any[]) => any, get: (...p: any[]) => any, all: (...p: any[]) => any[] }} Stmt */
 /** @typedef {{ exec: (sql: string) => any, prepare: (sql: string) => Stmt, close: () => void, open: boolean, transaction: <F extends (...a: any[]) => any>(f: F) => F & { immediate: F } }} Db */
-/** @typedef {{ id: string, captured: string, direction: string, live: string, portable: string, message_id: string | null }} ListRow */
+/** @typedef {{ role: 'from' | 'to' | 'cc' | 'reply-to', address: string, signed: boolean, coverage: 'signed' | 'failing' | 'none' }} ListAddress */
+/** @typedef {{ id: string, captured: string, direction: string, live: string, portable: string, message_id: string | null, from: string | null, to: string[], subject: string | null, subjectSource: 'signed' | 'claimed' | null, addresses: ListAddress[] }} ListRow */
 /** @typedef {{ id: string, captured: string, direction: string, copy: string, body_status: string, live: string, portable: string }} CopyRow */
 
 /** Bump when the table layout or what a column holds changes: an index of another version is rebuilt. */
-const SCHEMA = 4;
+const SCHEMA = 6;
 const READ_BATCH = 500;
 const BUSY_TIMEOUT_MS = 10000;
 
@@ -45,14 +48,15 @@ const DDL = `
 CREATE TABLE IF NOT EXISTS meta(k TEXT PRIMARY KEY, v TEXT) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS rec(
   id TEXT PRIMARY KEY, captured TEXT NOT NULL, direction TEXT, live TEXT, portable TEXT,
-  message_id TEXT, message_key TEXT, copy_kind TEXT, body_status TEXT, commit_id TEXT) WITHOUT ROWID;
+  message_id TEXT, message_key TEXT, copy_kind TEXT, body_status TEXT, commit_id TEXT, subject TEXT, subject_src TEXT) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS att(att_key TEXT NOT NULL, rec_id TEXT NOT NULL, PRIMARY KEY(att_key, rec_id)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS participants(
-  rec_id TEXT NOT NULL, address TEXT NOT NULL, raw TEXT NOT NULL, role TEXT NOT NULL, signed INTEGER NOT NULL,
+  rec_id TEXT NOT NULL, address TEXT NOT NULL, raw TEXT NOT NULL, role TEXT NOT NULL, signed INTEGER NOT NULL, coverage TEXT NOT NULL DEFAULT 'none', pos INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY(rec_id, role, address)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS links(
   rec_id TEXT NOT NULL, mid TEXT NOT NULL, via TEXT NOT NULL, strength TEXT NOT NULL, pos INTEGER NOT NULL, direct INTEGER NOT NULL,
   PRIMARY KEY(rec_id, mid)) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS seal(kind TEXT NOT NULL, id TEXT NOT NULL, slug TEXT NOT NULL, seq INTEGER NOT NULL, PRIMARY KEY(kind, id, slug, seq)) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS part_addr ON participants(address, rec_id);
 CREATE INDEX IF NOT EXISTS links_mid ON links(mid, rec_id);
 CREATE INDEX IF NOT EXISTS rec_cap ON rec(captured);
@@ -76,6 +80,9 @@ function unavailable(cause) {
 /** @param {unknown} e @returns {boolean} A damaged index file (rebuilt from the records), as opposed to any other failure. */
 const isCorrupt = (e) => typeof e === 'object' && e !== null && 'code' in e && typeof e.code === 'string' && /^SQLITE_(CORRUPT|NOTADB)/.test(e.code);
 
+/** @param {string} s @returns {string} At most INDEX_MAX_SUBJECT code points. */
+const cut = (s) => (s.length <= INDEX_MAX_SUBJECT ? s : [...s].slice(0, INDEX_MAX_SUBJECT).join(''));
+
 /**
  * Index row for a record, or null when it is not a usable record (not an object, or its `id` is not its file name).
  * Every column is a string or null, so one odd record can never make a bind fail and sink a rebuild.
@@ -90,15 +97,19 @@ function rowOf(id, r, commit) {
   /** @type {string[]} */
   const att = [];
   if (Array.isArray(evidence)) for (const o of evidence) { const k = o && typeof o === 'object' ? str(o.message_key) : null; if (k) att.push(k); }
-  // The DKIM re-check (which signatures verify and align) is paid only by a record that has a signed In-Reply-To or
-  // References line to grade; the other records never run it.
-  const passing = hasSignedThreading(r) ? verifyRecord(r).passing : [];
+  // The DKIM re-check (which signatures verify and align) is paid by every record that carries a signature: it grades the
+  // thread links, the address coverage and the subject (schema 6); an unsigned record never runs it.
+  const passing = Array.isArray(r.signatures) && r.signatures.length ? verifyRecord(r).passing : [];
   const directs = directParents(r);
+  const cover = addressCoverage(r, passing);
+  const sv = passing.length ? signedHeaderValue(r, 'subject', passing) : null;
+  const any = sv ?? signedHeaderValue(r, 'subject');   // covered only by a signature that does not verify: a claim
   return {
     row: [id, str(r.captured) ?? '', str(r.direction), str(r.verdicts?.live?.trust), str(r.verdicts?.portable?.trust),
-      str(r.message?.message_id), str(r.message_key), str(r.copy?.kind), str(r.body_status), commit],
+      str(r.message?.message_id), str(r.message_key), str(r.copy?.kind), str(r.body_status), commit,
+      any === null ? null : cut(headerText(any)), sv !== null ? 'signed' : any !== null ? 'claimed' : null],
     att,
-    parts: participantsOf(r).map((p) => [id, p.address, p.raw, p.role, p.signed ? 1 : 0]),
+    parts: participantsOf(r).map((p, i) => [id, p.address, p.raw, p.role, p.signed ? 1 : 0, cover.get(`${p.role}\0${p.address}`) ?? 'none', i]),
     links: linksOf(r, passing).map((l, i) => [id, l.mid, l.via, l.strength, i, directs.has(l.mid) ? 1 : 0]),
   };
 }
@@ -145,10 +156,34 @@ async function eachListedBatch(root, args, onIds) {
  * @param {string} root
  * @param {string[]} ids
  * @param {(batch: Array<[string, MpRecord | null]>) => void} fn
+ * @param {(done: number) => void} [after]  Called with the number of ids handled so far, after each batch.
  * @returns {Promise<void>}
  */
-async function eachBatch(root, ids, fn) {
-  for (let i = 0; i < ids.length; i += READ_BATCH) fn(await readBatch(root, ids.slice(i, i + READ_BATCH)));
+async function eachBatch(root, ids, fn, after) {
+  for (let i = 0; i < ids.length; i += READ_BATCH) {
+    fn(await readBatch(root, ids.slice(i, i + READ_BATCH)));
+    after?.(Math.min(ids.length, i + READ_BATCH));
+  }
+}
+
+/**
+ * The record ids that differ between two commits of the trail (added, changed or removed): what a catch-up reads. The one listing, shared by
+ * the catch-up and by `indexPlan`.
+ * @param {string} root @param {string} from @param {string} to
+ * @returns {Promise<string[]>}
+ */
+async function changedIds(root, from, to) {
+  /** @type {string[]} */
+  const ids = [];
+  await eachListedBatch(root, ['diff', '--name-only', '--no-renames', '-z', from, to, '--', 'records'], (b) => { for (const id of b) ids.push(id); });
+  return ids;
+}
+
+/** @param {string} root @param {string} head @returns {Promise<number>} The record files at `head`. */
+async function countRecords(root, head) {
+  let n = 0;
+  await gitLines(root, ['ls-tree', '-r', '--name-only', '-z', head, '--', 'records'], (p) => { const r = parseRecordPath(p); if (r && !r.ots) n++; }, { sep: '\0' });
+  return n;
 }
 
 /** @param {string} root @param {string[]} ids @returns {Promise<Array<[string, MpRecord | null]>>} */
@@ -175,7 +210,24 @@ async function atomic(d, fn) {
  * @property {string} root  The trail repo directory.
  * @property {string} trail  The trail name.
  * @property {number} lockTimeoutMs
+ * @property {(p: IndexProgress) => void} [onProgress]  Called while the index is rebuilt (always) or caught up over more than INDEX_QUIET_RECORDS changed records: first with `done: 0`, then after every batch of records, last with `done === total`. Synchronous, its return value is ignored and a throw is swallowed, so it can never fail or slow the work.
  */
+
+/**
+ * What the index work is doing, for a caller that shows a progress line (the same hook style as `SyncProgress`).
+ * @typedef {Object} IndexProgress
+ * @property {'rebuild' | 'catch-up'} phase  `rebuild`: every record is read again (no index, an old schema, a rewritten trail); `catch-up`: only the records that changed since the index was last current.
+ * @property {number} done  Records handled so far.
+ * @property {number} total  Records this run will handle.
+ */
+
+/**
+ * @param {IndexCfg} cfg @param {IndexProgress} e
+ */
+function report(cfg, e) {
+  if (!cfg.onProgress) return;
+  try { cfg.onProgress(e); } catch { /* a progress hook never fails the work */ }
+}
 
 /** The loaded driver class: cached after the first successful load. A class, not a handle. @type {any} */
 let Driver = null;
@@ -202,15 +254,16 @@ function session(d) {
   const st = {
     getMeta: d.prepare('SELECT v FROM meta WHERE k = ?'),
     setMeta: d.prepare('INSERT OR REPLACE INTO meta VALUES (?,?)'),
-    putRec: d.prepare('INSERT OR REPLACE INTO rec VALUES (?,?,?,?,?,?,?,?,?,?)'),
+    putRec: d.prepare('INSERT OR REPLACE INTO rec VALUES (?,?,?,?,?,?,?,?,?,?,?,?)'),
     getCommit: d.prepare('SELECT commit_id FROM rec WHERE id = ?'),
     delRec: d.prepare('DELETE FROM rec WHERE id = ?'),
     delAtt: d.prepare('DELETE FROM att WHERE rec_id = ?'),
     putAtt: d.prepare('INSERT OR IGNORE INTO att VALUES (?,?)'),
     delPart: d.prepare('DELETE FROM participants WHERE rec_id = ?'),
-    putPart: d.prepare('INSERT OR IGNORE INTO participants VALUES (?,?,?,?,?)'),
+    putPart: d.prepare('INSERT OR IGNORE INTO participants VALUES (?,?,?,?,?,?,?)'),
     delLink: d.prepare('DELETE FROM links WHERE rec_id = ?'),
     putLink: d.prepare('INSERT OR IGNORE INTO links VALUES (?,?,?,?,?,?)'),
+    putSeal: d.prepare('INSERT OR IGNORE INTO seal VALUES (?,?,?,?)'),
   };
   return {
     d,
@@ -220,6 +273,11 @@ function session(d) {
     setMeta: (k, v) => { st.setMeta.run(k, v); },
     /** @param {string} id @returns {string | null} */
     commitOf: (id) => st.getCommit.get(id)?.commit_id ?? null,
+    /** @param {import('./seal.js').Manifest} m  Index what a manifest lists (SPEC B13.1.10): a hint of which manifest to read, never proof. */
+    putManifest: (m) => {
+      for (const e of m.records) st.putSeal.run('r', e[0], '', m.seq);
+      for (const e of m.replies) st.putSeal.run('y', e[0], e[1], m.seq);
+    },
     /** @param {string} id */
     del: (id) => { st.delRec.run(id); st.delAtt.run(id); st.delPart.run(id); st.delLink.run(id); },
     /** @param {NonNullable<ReturnType<typeof rowOf>>} x */
@@ -235,12 +293,13 @@ function session(d) {
 
 /**
  * A file made by an older schema has the old shape of `rec` and `links` (CREATE TABLE IF NOT EXISTS keeps them): add the
- * columns schema 4 appended, so the statements prepare; the rows are rebuilt by the schema mismatch. Idempotent and
+ * columns later schemas appended (4: commit_id, direct; 6: subject, coverage, pos), so the statements prepare; the rows are rebuilt by the schema mismatch. Idempotent and
  * safe against a concurrent opener (a duplicate column is ignored).
  * @param {Db} d
  */
 function addColumns(d) {
-  for (const [table, col, def] of [['rec', 'commit_id', 'TEXT'], ['links', 'direct', 'INTEGER NOT NULL DEFAULT 0']]) {
+  for (const [table, col, def] of [['rec', 'commit_id', 'TEXT'], ['rec', 'subject', 'TEXT'], ['rec', 'subject_src', 'TEXT'], ['links', 'direct', 'INTEGER NOT NULL DEFAULT 0'],
+    ['participants', 'coverage', "TEXT NOT NULL DEFAULT 'none'"], ['participants', 'pos', 'INTEGER NOT NULL DEFAULT 0']]) {
     if (d.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === col)) continue;
     try { d.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`); } catch (e) { if (!/duplicate column/i.test(String(/** @type {any} */ (e)?.message))) throw e; }
   }
@@ -275,7 +334,8 @@ async function openFile({ root, trail, lockTimeoutMs }, file) {
  * Bring the index to `head`. Caller holds the trail lock.
  * @param {ReturnType<typeof session>} s @param {IndexCfg} cfg @param {string} head
  */
-async function reconcile(s, { root }, head) {
+async function reconcile(s, cfg, head) {
+  const { root } = cfg;
   const stored = s.meta('head');
   const versionOk = s.meta('schema') === String(SCHEMA);
   if (stored === head && versionOk) return;
@@ -283,34 +343,45 @@ async function reconcile(s, { root }, head) {
   let changed = null;
   /** @type {Map<string, string>} */
   let added = new Map();
+  /** @type {number[]} */
+  let newManifests = [];
   if (stored && versionOk) {
     try {
       await git(root, ['merge-base', '--is-ancestor', stored, head]);
-      /** @type {string[]} */
-      const ids = [];
-      await eachListedBatch(root, ['diff', '--name-only', '--no-renames', '-z', stored, head, '--', 'records'], (b) => { for (const id of b) ids.push(id); });
+      const ids = await changedIds(root, stored, head);
       added = await addedCommits(root, `${stored}..${head}`);
+      newManifests = (await git(root, ['diff', '--name-only', '--diff-filter=A', '--no-renames', '-z', stored, head, '--', 'manifests'])).split('\0').map((p) => parseManifestPath(p)).filter((m) => m !== null && !m.ots).map((m) => /** @type {{ seq: number }} */ (m).seq);
       changed = ids;
     } catch { changed = null; } // not an ancestor (or git failed): rebuild
   }
   if (changed) {
+    const total = changed.length;
+    const loud = total > INDEX_QUIET_RECORDS;   // a small catch-up is quiet: a progress line for 0.2 s of work is noise
+    if (loud) report(cfg, { phase: 'catch-up', done: 0, total });
     await atomic(s.d, async () => {
       await eachBatch(root, changed, (batch) => {
         for (const [id, r] of batch) {
           const x = rowOf(id, r, added.get(id) ?? s.commitOf(id));
           if (x) s.put(x); else s.del(id);
         }
-      });
+      }, loud ? (done) => report(cfg, { phase: 'catch-up', done, total }) : undefined);
+      for (const seq of newManifests) { const m = await readManifestAt(root, head, seq); if (m) s.putManifest(m); }   // a manifest is immutable once committed: only additions matter
       s.setMeta('head', head);
     });
     return;
   }
+  const total = cfg.onProgress ? await countRecords(root, head) : 0;   // only counted for a caller that shows progress
+  report(cfg, { phase: 'rebuild', done: 0, total });
   const commits = await addedCommits(root, head);
+  let done = 0;
   await atomic(s.d, async () => {
-    s.d.exec('DELETE FROM rec; DELETE FROM att; DELETE FROM participants; DELETE FROM links; DELETE FROM meta;');
+    s.d.exec('DELETE FROM rec; DELETE FROM att; DELETE FROM participants; DELETE FROM links; DELETE FROM seal; DELETE FROM meta;');
     await eachListedBatch(root, ['ls-tree', '-r', '--name-only', '-z', head, '--', 'records'], async (ids) => {
       for (const [id, r] of await readBatch(root, ids)) { const x = rowOf(id, r, commits.get(id) ?? null); if (x) s.put(x); }
+      done += ids.length;
+      report(cfg, { phase: 'rebuild', done: Math.min(done, total), total });
     });
+    await readChain(root, head, (m) => s.putManifest(m));
     s.setMeta('schema', String(SCHEMA));
     s.setMeta('head', head);
   });
@@ -371,7 +442,7 @@ function isoOf(v, what) {
 /**
  * `totalSource` says what `total` counts: `index` = the readable records the index holds; `git` = the record files at
  * HEAD, which also counts a committed record that cannot be read (the index build drops those), so it can be larger.
- * @typedef {{ state: 'absent' | 'present' | 'stale' | 'unreadable' | 'unknown', total: number, totalSource: 'index' | 'git', in: number | null, out: number | null, oldest: string | null, newest: string | null }} IndexOverview
+ * @typedef {{ state: 'absent' | 'present' | 'stale' | 'unreadable' | 'unknown', total: number, totalSource: 'index' | 'git', in: number | null, out: number | null, oldest: string | null, newest: string | null, verified: number | null, unverified: number | null }} IndexOverview
  */
 
 /**
@@ -402,16 +473,49 @@ export async function indexOverview(cfg, file) {
       d = opened;
       const meta = (/** @type {string} */ k) => /** @type {{ v?: string } | undefined} */ (opened.prepare('SELECT v FROM meta WHERE k = ?').get(k))?.v;
       if (meta('head') === head && meta('schema') === String(SCHEMA)) {
-        const r = /** @type {{ n: number, i: number | null, o: number | null, lo: string | null, hi: string | null }} */ (opened.prepare(
-          "SELECT COUNT(*) AS n, SUM(direction = 'in') AS i, SUM(direction = 'out') AS o, MIN(captured) AS lo, MAX(captured) AS hi FROM rec").get());
-        return { state: 'present', total: r.n, totalSource: 'index', in: r.i ?? 0, out: r.o ?? 0, oldest: r.lo, newest: r.hi };
+        const r = /** @type {{ n: number, i: number | null, o: number | null, lo: string | null, hi: string | null, v: number | null, u: number | null }} */ (opened.prepare(
+          "SELECT COUNT(*) AS n, SUM(direction = 'in') AS i, SUM(direction = 'out') AS o, MIN(captured) AS lo, MAX(captured) AS hi, SUM(direction = 'in' AND live = 'verified') AS v, SUM(direction = 'in' AND (live IS NULL OR live != 'verified')) AS u FROM rec").get());
+        return { state: 'present', total: r.n, totalSource: 'index', in: r.i ?? 0, out: r.o ?? 0, oldest: r.lo, newest: r.hi, verified: r.v ?? 0, unverified: r.u ?? 0 };
       }
     } catch (e) { state = /** @type {any} */ (e)?.code === 'ERR_INDEX_UNAVAILABLE' ? 'unknown' : 'unreadable'; }
     finally { try { d?.close(); } catch { /* already closed */ } }
   }
   let total = 0;
   if (head !== null) await gitLines(cfg.root, ['ls-tree', '-r', '--name-only', '-z', head, '--', 'records'], (p) => { const r = parseRecordPath(p); if (r && !r.ots) total++; }, { sep: '\0' });
-  return { state, total, totalSource: 'git', in: null, out: null, oldest: null, newest: null };
+  return { state, total, totalSource: 'git', in: null, out: null, oldest: null, newest: null, verified: null, unverified: null };
+}
+
+/**
+ * What bringing the index up to date would take, without doing it and without a lock: `none` (current, or no trail yet, or the addon cannot
+ * load), `catch-up` (`records` changed records to read) or `rebuild` (no file, an unreadable file, an older schema, a HEAD the index is not an ancestor of).
+ * One git read over the changed paths, at most. For a bounded refresh (`status({ refresh: 'bounded' })`).
+ * @param {IndexCfg} cfg
+ * @param {string} file  The index file (`trailIndexFile`).
+ * @returns {Promise<{ work: 'none' | 'catch-up' | 'rebuild', records: number }>}
+ */
+export async function indexPlan(cfg, file) {
+  const head = await headOf(cfg.root);
+  if (head === null) return { work: 'none', records: 0 };
+  try { await fs.access(file); } catch { return { work: 'rebuild', records: 0 }; }
+  /** @type {Db | null} */
+  let d = null;
+  /** @type {string | undefined} */
+  let stored;
+  try {
+    const Database = await loadDriver();
+    const opened = /** @type {Db} */ (new Database(file, { readonly: true, fileMustExist: true }));
+    d = opened;
+    const meta = (/** @type {string} */ k) => /** @type {{ v?: string } | undefined} */ (opened.prepare('SELECT v FROM meta WHERE k = ?').get(k))?.v;
+    if (meta('schema') !== String(SCHEMA)) return { work: 'rebuild', records: 0 };
+    stored = meta('head');
+  } catch (e) { return { work: /** @type {any} */ (e)?.code === 'ERR_INDEX_UNAVAILABLE' ? 'none' : 'rebuild', records: 0 }; }
+  finally { try { d?.close(); } catch { /* already closed */ } }
+  if (stored === head) return { work: 'none', records: 0 };
+  if (!stored) return { work: 'rebuild', records: 0 };
+  try {
+    await git(cfg.root, ['merge-base', '--is-ancestor', stored, head]);
+    return { work: 'catch-up', records: (await changedIds(cfg.root, stored, head)).length };
+  } catch { return { work: 'rebuild', records: 0 }; }
 }
 
 /**
@@ -449,13 +553,30 @@ export async function listIndex(cfg, { limit, direction, with: who, role, before
   if (lo !== null) { where.push('captured >= ?'); args.push(lo); }
   if (hi !== null) { where.push('captured < ?'); args.push(hi); }
   return query(cfg, (d) => {
-    const cols = 'rec.id AS id, captured, direction, live, portable, message_id';
+    const cols = 'rec.id AS id, captured, direction, live, portable, message_id, subject, subject_src';
     // newest capture first; equal captures in ascending id order (the old full read left that to the file system)
     const rows = d.prepare(`SELECT ${cols} FROM ${from} ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY captured DESC, rec.id LIMIT ?`).all(...pre, ...args, n);
-    return (limit && !sql ? rows.slice(0, /** @type {any} */ (limit)) : rows).map((r) => ({
-      id: r.id, captured: r.captured, direction: r.direction,
-      live: r.live ?? undefined, portable: r.portable ?? undefined, message_id: r.message_id ?? null,
-    }));
+    const kept = limit && !sql ? rows.slice(0, /** @type {any} */ (limit)) : rows;
+    // the addresses of every returned row, in header order (`pos`), read in chunks under SQLite's variable limit
+    /** @type {Map<string, ListAddress[]>} */
+    const addrs = new Map();
+    for (let i = 0; i < kept.length; i += 400) {
+      const ids = kept.slice(i, i + 400).map((r) => r.id);
+      for (const a of d.prepare(`SELECT rec_id, role, address, signed, coverage FROM participants WHERE rec_id IN (${ids.map(() => '?').join(',')}) ORDER BY rec_id, pos`).all(...ids)) {
+        const list = addrs.get(a.rec_id) ?? [];
+        list.push({ role: a.role, address: a.address, signed: a.signed === 1, coverage: a.coverage });
+        addrs.set(a.rec_id, list);
+      }
+    }
+    return kept.map((r) => {
+      const addresses = addrs.get(r.id) ?? [];
+      return {
+        id: r.id, captured: r.captured, direction: r.direction,
+        live: r.live ?? undefined, portable: r.portable ?? undefined, message_id: r.message_id ?? null,
+        from: addresses.find((a) => a.role === 'from')?.address ?? null, to: addresses.filter((a) => a.role === 'to').map((a) => a.address),
+        subject: r.subject ?? null, subjectSource: r.subject_src ?? null, addresses,
+      };
+    });
   }, []);
 }
 
@@ -463,15 +584,16 @@ export async function listIndex(cfg, { limit, direction, with: who, role, before
  * `Mailproof#counterparties` from the index: one row per exact address.
  * @param {IndexCfg} cfg
  * @param {{ limit?: number }} [opts]
- * @returns {Promise<Array<{ address: string, records: number, first: string, last: string }>>}
+ * @returns {Promise<Array<{ address: string, records: number, first: string, last: string, verified: number }>>}
  */
 export async function counterpartiesIndex(cfg, { limit } = {}) {
   if (limit !== undefined && (typeof limit !== 'number' || !Number.isFinite(limit) || limit < 1)) throw new TypeError('counterparties: limit must be a positive number');
   const n = limit === undefined ? -1 : Math.floor(limit);
   return query(cfg, (d) => d.prepare(
-    `SELECT p.address AS address, COUNT(DISTINCT p.rec_id) AS records, MIN(r.captured) AS first, MAX(r.captured) AS last
+    `SELECT p.address AS address, COUNT(DISTINCT p.rec_id) AS records, MIN(r.captured) AS first, MAX(r.captured) AS last,
+            COUNT(DISTINCT CASE WHEN r.direction = 'in' AND r.live = 'verified' THEN p.rec_id END) AS verified
        FROM participants p JOIN rec r ON r.id = p.rec_id GROUP BY p.address ORDER BY last DESC, address LIMIT ?`,
-  ).all(n).map((r) => ({ address: r.address, records: r.records, first: r.first, last: r.last })), []);
+  ).all(n).map((r) => ({ address: r.address, records: r.records, first: r.first, last: r.last, verified: r.verified })), []);
 }
 
 /**
@@ -531,4 +653,37 @@ export async function repliesIndex(cfg, messageId) {
     `SELECT r.id AS id, r.captured AS captured, r.commit_id AS commit_id FROM links l JOIN rec r ON r.id = l.rec_id
       WHERE l.mid = ? AND l.direct = 1 AND r.direction = 'in' ORDER BY r.captured, r.id LIMIT ?`,
   ).all(messageId, REPLY_FACTS_MAX + 1).map((r) => ({ id: r.id, captured: r.captured, commit: r.commit_id ?? '' })), []);
+}
+
+/**
+ * The direct replies one address sent, for `Mailproof#replyFacts({ address })` (SPEC B10): the inbound records whose From is
+ * the address and whose In-Reply-To or last References entry names a message that is in the trail, earliest capture first
+ * (ties by id), each with the Message-ID it answers (the lowest when it answers two) and the commit that added it.
+ * At most REPLY_FACTS_MAX + 1 rows come back, so the caller can tell the list was cut.
+ * @param {IndexCfg} cfg
+ * @param {string} address  Lower case.
+ * @returns {Promise<Array<{ id: string, captured: string, commit: string, parent: string }>>}
+ */
+export async function repliesFromIndex(cfg, address) {
+  return query(cfg, (d) => d.prepare(
+    `SELECT r.id AS id, r.captured AS captured, r.commit_id AS commit_id, MIN(l.mid) AS parent
+       FROM participants pt JOIN rec r ON r.id = pt.rec_id
+       JOIN links l ON l.rec_id = r.id AND l.direct = 1
+       JOIN rec p ON p.message_id = l.mid
+      WHERE pt.address = ? AND pt.role = 'from' AND r.direction = 'in'
+      GROUP BY r.id ORDER BY r.captured, r.id LIMIT ?`,
+  ).all(address, REPLY_FACTS_MAX + 1).map((r) => ({ id: r.id, captured: r.captured, commit: r.commit_id ?? '', parent: r.parent })), []);
+}
+
+/**
+ * The manifests that list a record or reply-text file, newest first: only a HINT for `findSeal` (SPEC B13.1.10), which reads
+ * those manifests from the trail and checks them. `slug` null: the record file; else the reply-text file of that stripper version.
+ * @param {IndexCfg} cfg
+ * @param {string} id
+ * @param {string | null} slug
+ * @returns {Promise<number[]>}
+ */
+export async function sealSeqsIndex(cfg, id, slug) {
+  if (typeof id !== 'string' || !RECORD_ID_RE.test(id)) return [];
+  return query(cfg, (d) => d.prepare('SELECT seq FROM seal WHERE kind = ? AND id = ? AND slug = ? ORDER BY seq DESC').all(slug === null ? 'r' : 'y', id, slug ?? '').map((r) => r.seq), []);
 }

@@ -518,3 +518,110 @@ POC script: [`poc/m0-header-recheck.js`](../../poc/m0-header-recheck.js) (throwa
 - **Deviations from B12 as written** (SPEC amended): `@mcp` is a separate block (above); `get`, `linked`, `proofParts` for an unknown id return `{ found: false }` as a normal result, like `rawEmail`; a folder-level `sync` error stays in that folder's `error` of a normal result (the library's own contract), only a thrown error is `isError`; `UsageError` is `ERR_BAD_ARGUMENT`; the `sync` result carries `ots` as the CLI's does; `verify` reads the record first (like the CLI), so an unknown id is `found: false`.
 - **Recommendation.** Ship as built. Tell adopters plainly: allow tools by name in the client, and do not rely on the hints to gate `forget` and `prune`.
 - **Affects:** SPEC B12 (status, B12.3 note, B12.4, B12.12), PRD §7 M3, usage guide, `mailproof.context.md`.
+
+## F31 — M4 step 1: what the stamp job costs (measured 2026-11-11)
+
+- **Question.** B13.1.4 left the cost of the unsealed-set scan and of a job "measured at build, like F25". Does the batch stamp job stay cheap enough to run inside `sync` every cadence, and does the suite ever reach a calendar?
+- **Setup.** A synthetic trail, `Mailproof#stamp()` on the built job (`src/proof/stamp.js`, `seal.js`), a spy `ots` binary.
+- **Measured.**
+
+  | Records in trail | Unsealed-set scan | First job (everything unsealed) | Second job (nothing new) |
+  |---|---|---|---|
+  | 5,000 | 30 ms | 1.6 s | 180 ms |
+  | 20,000 | 50 ms | 4.7 s | 325 ms |
+
+  The scan is one streamed `git ls-tree` plus one read of the manifests, outside every lock. The first job is dominated by hashing the files through one `git cat-file --batch` (about 0.2-0.3 ms a record). A second job with nothing new still reads the tree and the manifest chain, so it grows with the trail (180 ms to 325 ms) but writes no commit.
+- **Calendars.** The whole suite (829 tests) ran with a spy `ots` first on `PATH` that records each call and exits without a network call: the suite made no calendar call.
+- **Consequence.** The cost is a few seconds once per backlog and a few hundred milliseconds per cadence for a trail of tens of thousands of records, with the trail lock held only for file writes and a commit (B13.1.5). No change to the design; the caps `STAMP_MAX_ENTRIES` / `STAMP_MAX_MANIFESTS` stay.
+- **Affects:** SPEC B13.1.4, B13.1.14.
+
+## F32 — M5: outbound signing on a real box (measured 2026-11-11)
+
+- **Question.** Does a message submitted through local `sendmail(8)` on a real Postfix + OpenDKIM box carry a valid DKIM-Signature in the copy mailproof would record, and what does it sign?
+- **Setup.** The gitdone operators' box, owner-approved, no configuration change. One test message submitted with `sendmail(8)` and delivered locally.
+- **Evidence.** The maillog shows OpenDKIM adding the signature in `cleanup`. The delivered copy carries the `DKIM-Signature` and verifies with `opendkim-testmsg` (exit 0). Delivery-time headers (Received, Return-Path) are added after signing, are unsigned and are harmless. `h=` was `From:To:Subject:Date:From` (OpenDKIM's `OversignHeaders From` on top of the default list): **Message-ID, MIME-Version and Content-Type were not signed** with that box's defaults. The live config is multi-domain (`KeyTable` / `SigningTable`). gitdone's own wiki was stale and was fixed on its branch `docs/deployment-live-mail-config`.
+- **Not tested.** The `sender_bcc_maps` copy. It is strongly implied (the same queue file is copied after signing) but not proven; it stays the one open evidence task of M5.
+- **Result.** Local signing is proven; the default `h=` leaves Message-ID unsigned, so the guide sets an explicit `SignHeaders` (Message-ID, In-Reply-To, References, ...). That line is recommended and not yet tested.
+- **Affects:** PRD §7 M5, [self-hosting.md](self-hosting.md), SPEC B14.
+
+## F33 — M5: the gitdone operators' review of the self-hosting guide; knowless declined (2026-11-11)
+
+- **Question.** Is the self-hosting guide right for a real box, and can an existing sibling project host the recipe?
+- **Evidence.** The gitdone operators reviewed the guide against their live box and returned 17 points, now folded into the guide. In summary: `virtual_mailbox_maps` set to `static:nothing` for the pipe domain; EPEL needed on the RHEL family; `ots` installed through pip; rotation steps written for the multi-domain `KeyTable`; the pipe(8) transport maps exit codes (sysexits such as 64 and 77 become bounces, and output starting with a `5.x.x` status is read as an enhanced status code), so the wrapper maps every non-zero exit to 75 and sends mailproof output to a log; inbound spoofing through `sender_bcc_maps` must be considered; that box uses its own TLS certificate, not Let's Encrypt; SELinux is disabled there; IPv4-only is proven; the firewall steps are proven; sizing 1 vCPU / 1 GB works.
+- **knowless.** Asked on 2026-11-11 and declined: it has no MTA and no DKIM signer, is auth-mail-only and is frozen at v1.0.0.
+- **Result.** The guide marks each step proven or UNVERIFIED (generic naming, no production box names).
+- **Affects:** [self-hosting.md](self-hosting.md), decisions-log "M5".
+
+## F34 — M4/M3 CLI: the first real walkthrough on a real Gmail account, bugs found (2026-11-11)
+
+- **Question.** Does the built CLI work end to end on the owner's real Gmail account (app password), as a new user would run it?
+- **Evidence.** First `sync`: 5 records (INBOX 4, Sent 1) in about 31 s wall, about 164 MB max RSS, one batch manifest stamped (pending). Second `sync`: nothing new, seal "not due". The Gmail INBOX and Sent folders hold few messages while their UIDs are high (6132 and 2064): archived mail lives in `[Gmail]/All Mail`, which must be added to `folders` to capture history (not yet run).
+- **Bugs found, each with a red test first** (fixes on this branch; status checked 2026-11-12 against the code and the pinning test):
+  1. `~` was not expanded for `passFile`: sync failed ENOENT (exit 64) while `config validate` passed because it reads no secret. Now `~/` is expanded in every path field. **Fixed**, commit `3feb8b0`; pinned by `tests/unit/cli-config.test.js` ("~ in passFile is expanded against HOME").
+  2. `list` printed raw RFC 2047 subjects. Now decoded. **Fixed**, commit `9123e48`; pinned by `tests/integration/cli-address.test.js` ("RFC 2047 subjects (B and Q, utf-8, an em dash) are decoded in list, show <id>, show <address>").
+  3. `show` called headers "signed" when only a failing signature covered them. Now "signed" only when a passing signature covers the header (`signed, failing` otherwise). **Fixed**, commit `9123e48`; pinned by `tests/integration/cli-address.test.js` ("a header covered only by a signature that does not verify is not shown as signed") and `tests/integration/list-rows.test.js` ("coverage failing").
+  4. `show <id>` used as a flag gave "Unknown option". Now a hint. **Fixed**; pinned by `tests/integration/cli-address.test.js` ("id hints: a flag-looking or too-short id says ids are positional").
+  5. `list` had no sender or subject columns. Added. **Fixed**, commits `b18fb51` and `7432608`; pinned by `tests/integration/list-rows.test.js` ("list rows: from, to, subject (signed) and every address").
+  6. MCP `list` was thin and `counterparties` lacked verified counts. **Fixed**, commit `7432608`: the MCP `list` returns the library rows (from, to, subject, addresses with coverage; `tests/integration/list-rows.test.js`, `tests/integration/mcp.test.js` list calls) and `counterparties` rows carry `verified` (`tests/integration/counterparty.test.js` and `tests/integration/list-rows.test.js`, "counterparties rows carry verified"). The `sync` result's `ots` is **not a bug**: it is a deliberate, documented deprecated alias of `result.stamp` (kept since 3.3.0; see `src/cli/sync-op.js`), so nothing was changed there.
+- **Tests on this branch** (Node 22.22; the Node 22.19 run is pending before the release PR): 799 before M4, 829 after the stamp job, 869 after `export` and `verify-bundle`, 885 then 888 after the address-first CLI.
+- **Affects:** SPEC B11.5a, [setup-guide.md](setup-guide.md), decisions-log "Address-first CLI".
+
+## F35 — Observed senders on the owner's own services (2026-11-11)
+
+Public DNS facts about the owner's own services, seen in the real walkthrough (F34); no message content beyond "a weekly stats report".
+
+- addypin.com, ownsub.com and signedreply.com verify: DKIM pass, aligned, DMARC `p=none` pass, ARC by google.com.
+- late.fyi signs (`d=late.fyi`, `s=latefyi2026`, body matched) but publishes **no DKIM key** (DNS ENODATA at capture), no DMARC and no SPF: DKIM is neutral and the capture stays unverified forever, because the key cannot be archived.
+- The owner's boxes sign `h=Date:From:To:Subject:From` only, so Message-ID is unsigned and a reply cannot be provably linked. This matches F32; the guide's `SignHeaders` fixes it.
+- **Affects:** [self-hosting.md](self-hosting.md), usage guide.
+
+## F36 — M3 MCP: a walkthrough in Claude Code on a real trail (2026-11-11)
+
+- **Evidence.** `list`, `verify`, `get`, `counterparties`, `proofParts`, `verifyRecord`, the `forget` preview and `sync` all worked. `forget` refused without `confirm` and returned an exact preview. `verifyRecord` needed the whole record JSON passed through the conversation, so its description now points trail records to `verify`. Several answers needed two or three calls because `list` lacked sender and subject.
+- **Result.** The tool surface works; `list` and `counterparties` were thin (F34 item 6, **fixed** in `7432608`; the `verifyRecord` description is generated from its `@mcp` block, guarded by `check:mcp-tools`).
+- **Affects:** SPEC B12, F30.
+
+## F37 — Microsoft consumer IMAP: basic auth is gone (2026-11-11; desk research, not run)
+
+- **Evidence.** Basic authentication and app passwords for consumer Outlook/Hotmail IMAP are removed. Microsoft's official page gives no date; third-party sources say 2024-09-16; Microsoft Q&A reports failures from about 2024-10-01. XOAUTH2 (OAuth2) is required; reports of the needed scope disagree. Sources are listed in the setup guide.
+- **Result.** An `accessTokenCommand` is required. **Untested with mailproof.** A local OAuth proxy route is unsupported (the CLI has no CA option).
+- **Affects:** [setup-guide.md](setup-guide.md).
+
+## F38 — M4/M3 CLI and MCP: the 2026-11-12 menu walkthrough (2026-11-12)
+
+- **Question.** Does the interactive menu read well and work end to end on a real account, screen by screen, as a new owner would use it?
+- **Evidence.** The owner walked every menu screen and returned 46 findings. They were built in three parts, followed by two tidy passes and the MCP/CLI parity close-out (profiles by name, `status({ refresh })`, install facts, MCP folders defaulting to the CLI's `~/mailproof/*`). Real bugs found, each fixed with a red test first:
+  1. Ctrl-C at a prompt quit the whole menu; it now backs out to the menu.
+  2. `verify-bundle` did not expand `~` and refused the `.tar` that `export` writes; it expands `~/` and recognises a tar by its `ustar` header.
+  3. `export` and `backup` offered a different timestamped name than the one they wrote; the offered and written name are now one definition.
+  4. `update` replaced the npm development link with a registry install; a development link is now updated with git and never offered npm (later also in `status`, which no longer returns `updateCommand` on a link).
+  5. `export --tar` with an extensionless `--out` wrote a tar that `verify-bundle` refused; the export now writes `<out>.tar`.
+- **Not a bug.** Mail the owner sent to themselves and recorded from INBOX is correctly direction `in`: the received copy is the one that carries DKIM proof, and the Sent-folder copy of the same message is a duplicate (an unsigned `out` copy).
+- **Result.** Text output is in plain words; suite counts and fixes are in the CHANGELOG [Unreleased]. No real addresses or mail content are kept here.
+- **Affects:** SPEC B11.4c, B12, [setup-guide.md](setup-guide.md), F34, F36.
+
+## F39 — Schema 6 index rebuild and `status({ refresh: true })` on a cold trail: what they cost at 2,000 to 20,000 records (measured 2026-11-12)
+
+- **Date:** 2026-11-12
+- **Question:** the index is schema 6 and a rebuild re-checks the DKIM signature of every signed record (F23 measured this at schema 2 with 25% of records paying it). CLI and MCP `status` now catch the index up (`status({ refresh: true })`), so a trail with no or a stale index pays the rebuild inside `status`. What does that cost, and what does a current index cost?
+- **Method:** `poc/status-refresh/` (`gen.mjs`, `bench.mjs`, `run.mjs`). Synthetic trails of 2,000, 10,000 and 20,000 records in the sharded layout, one commit per record (`git fast-import`), cloned from 6 genuine records made through the real `Mailproof#record()` with generated test DKIM keys (RSA 2048 and ed25519, as in `tests/helpers`). Mix: 35% reply with 10 signed headers incl. In-Reply-To/References/Cc (RSA), 5% the same with two signatures (RSA + ed25519), 20% plain signed mail with 5 signed headers, 12% outbound request with a signed Cc, 8% signed mail altered after signing (verdict unverified), 20% unsigned. 80% of the signed records pay the re-check. One process per measurement (fresh node, `worker.size 0`, content store off), 3 repetitions per cell; **median [min-max]**. "call" is the time of the library call inside the process; "process" is the whole `node` run (about 0.4 s of it is import and startup); CPU is user+sys of the process and its git children (`/usr/bin/time`); RSS is the peak of the node process. Box: 8 cores, load average 2.0 at the start of the run (3.5 at the end; `uptime` 21:18, 13:48 up), nothing else of mine running, no `nice`. Catch-up cells add 1 then 100 commits on a current index (fast-import, so the index sees ordinary commits). The synthetic trail is 34 MB of git and a 21 MB index at 20,000.
+- **Result (call time; CPU of process plus git in brackets):**
+
+  | Operation | 2,000 | 10,000 | 20,000 |
+  |---|---|---|---|
+  | full rebuild, index deleted (`list({limit:1})`) | 1.19 s [786-1627 ms] (CPU 2.1 s) | 6.7 s [5.8-7.2] (CPU 9.5 s) | **11.1 s [8.9-12.6]** (CPU 14.4 s) |
+  | `status({ refresh: true })`, no index | 1.57 s [1.25-1.63] | 4.9 s [4.7-5.1] | **9.2 s [9.2-11.8]** (process 9.6 s, CPU 11.8 s) |
+  | `status({ refresh: true })`, current index | 97 ms [80-133] | 132 ms [117-182] | 154 ms [149-159] |
+  | catch-up after 1 new commit | 82 ms [78-151] | 89 ms [81-111] | 77 ms [73-299] |
+  | catch-up after 100 new commits | 173 ms [154-223] | 257 ms [172-299] | 189 ms [177-641] |
+  | `status({ refresh: true })` after those commits | 86 ms | 205 ms [103-216] | 164 ms [133-620] |
+  | `list({ limit: 10 })`, current index | 40 ms [37-62] | 44 ms [39-56] | 38 ms [37-333] |
+  | peak RSS, rebuild (a current index: 84-95 MB) | 128 MB | 151 MB | 200 MB |
+
+  The two cold rows are the same work (the spread of the first row is the box load; its median at 10,000 sits above `status_cold` because it ran first, after the file cache was cold). Rebuild is linear: about 0.5 ms a record wall (0.7 ms CPU incl. git), against about 0.25 ms measured at schema 2 (F23): the re-check now runs for every signed record, and each record also computes address coverage and the subject. Memory stays bounded by the 500-record batches (128 to 200 MB, rising slowly with the commit-log map).
+- **What a user sees today (read from the code, not run interactively):** `status` and the MCP `status` call `status({ refresh: true })` and print nothing until it returns; there is no progress line for it (`progress.js` serves only `sync`), so on a cold 20,000-record trail the command, or the menu entry, sits silent for about 10 s and then prints. The menu awaits it, so it blocks the menu for that time. The 500 ms `STATUS_REFRESH_LOCK_MS` bounds only the wait to *get* the trail lock; once the rebuild holds it, it runs to the end under the trail lock. A writer (`record`, `sync`) arriving meanwhile waits for the lock (`lockTimeoutMs` default 30 s), so a 20,000-record rebuild (10 to 12 s) fits, but a trail of about 60,000 records would exceed it and a concurrent `sync` would fail `ERR_TRAIL_LOCKED` (75, Postfix defer: no mail lost). An MCP client with a short tool timeout may give up on a cold status after about 10 s; the rebuild continues in the server process.
+- **Conclusion:** a current index makes `status` cheap (0.1 to 0.2 s at every size, flat), and an incremental catch-up is cheap (about 80 ms for 1 commit, about 200 ms for 100, size-independent). The only cost is the cold or schema-bumped rebuild, once per trail: about 1.2 s at 2,000, 6.7 s at 10,000 and 9 to 11 s at 20,000. That is acceptable at 20,000 as a one-time cost (a trail reaches 20,000 records after a heavy mailbox's whole history; the first `sync` of that history, or the first `list`, already pays the same rebuild), but it is a silent 10 s freeze in an interactive command, and it holds the trail lock the whole time. Not acceptable to leave as is above roughly 50,000 records.
+- **Recommendation (not built):** (1) smallest, do first: give `status` a progress line on a terminal, or at least one stderr line `Updating the trail index (first time after an upgrade, about N s)...`, before the refresh when the index is `absent`/`stale` (status already knows this without a lock), using the `progressLine` pattern of `sync`; the rebuild itself needs no change. (2) Run the rebuild at the end of `sync`/`upgrade`/first `setup` login test so a user rarely meets it in `status`. (3) Only if trails above 50,000 records occur: make `refresh` skip a rebuild above a budget (return the read-only answer with `index: 'stale'`, the existing no-lock path) and leave the rebuild to `list`/`sync`; MCP `status` should do this by default so a tool call never runs for more than a second or two. Cutting the re-check to the records that need it would shrink the rebuild by well under half (a verify is about 0.25 ms of the 0.5 ms) and is not worth the second code path (F23: one path).
+- **Not measured:** real mail (header sizes and key lengths of real senders; all signatures here are RSA 2048 or ed25519 with short signed-header lists), a cold page cache, 50,000 and above, a trail where seals and manifests are present (manifest chain read adds a little per manifest), a slow disk, and the interactive screen (the "what a user sees" paragraph is from the code).
+- **Affects:** SPEC B5, B11.5, B12; `status({ refresh })` in `src/proof/mailproof.js`, `STATUS_REFRESH_LOCK_MS` in `src/proof/limits.js`, `src/cli/status.js`, F19, F23, F27.
+- **Built (2026-11-12, on `feat/m4-export`):** all three recommendations, owner-approved. (1) `status` prints a start line and an overwriting `trail index N of M records` on a terminal (`indexProgressLine`, `src/cli/progress.js`, shares one overwriting-line helper with `sync`'s); the library reports through `status({ onProgress })` / `IndexCfg.onProgress` (`IndexProgress`, `index-db.js`): a rebuild always, a catch-up over `INDEX_QUIET_RECORDS` (500, `limits.js`: about 0.6 s of work by the table above). (2) `sync`, each `watch` tick and the MCP `sync` call `indexAfterSync` (`sync-op.js`), which is `status({ refresh: true })` run after the folder lines are printed; failures only warn. Recommendation 2's `setup` login-test hook was not built (the setup wizard offers a first sync, which now builds it). (3) `status({ refresh: 'bounded' })`: `indexPlan()` (no lock: stored schema and HEAD, one `git diff --name-only`) decides; budget `INDEX_BOUNDED_RECORDS` = 1,000 changed records, chosen as about 1.2 s from this table (80 ms base plus about 1 ms a record at 100 commits), so a rebuild (1.2 s even at 2,000 records, and growing) and a long catch-up are never run by the MCP tool; the answer then has `index` `'absent'`/`'stale'` and `hint`. The MCP header-refresh item does not apply: the menu header never builds the index (B11.4). Tests: `tests/integration/index-progress.test.js`, `mcp-closeout.test.js`.

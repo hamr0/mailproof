@@ -59,7 +59,7 @@ export function createMcp(o) {
   /** The accounts this server may use (all, or the one `--account` named). @type {Account[]} */
   const accounts = o.accountFlag === undefined ? Object.values(all) : [selectAccount(o.config, o.accountFlag)];
   const names = accounts.map((a) => a.name);
-  const settings = mcpSettings(o.config);
+  const settings = mcpSettings(o.config, o.env);
   const deps = o.deps ?? {};
   const state = stateDir(o.env);
   const now = deps.now ?? (() => new Date());
@@ -133,7 +133,7 @@ export function createMcp(o) {
         const acct = account;
         const out = await HANDLERS[name]({
           account: acct, mp: () => mpOf(/** @type {Account} */ (acct)), settings, input: { inputDirs: settings.inputDirs, afterPathCheck: o.afterPathCheck },
-          accounts: accountsTool, state, deps, env: o.env, configFile: o.configFile ?? '',
+          accounts: accountsTool, state, deps, env: o.env, configFile: o.configFile ?? '', version: o.version,
         }, args);
         const size = out.content.reduce((n, c) => n + (c.type === 'text' ? bytesOf(c.text) : 0), 0);
         if (size > settings.maxResponseBytes) throw new ToolError('ERR_RESPONSE_TOO_LARGE', `the result is ${size} bytes, over the ${settings.maxResponseBytes} byte limit; narrow the call (a smaller limit, a date range, a filter)`);
@@ -154,7 +154,7 @@ export function createMcp(o) {
   };
 
   const serverInfo = { name: 'mailproof', title: `mailproof (${names.join(', ')})`, version: o.version };
-  const instructions = `mailproof records a re-checkable proof of each email. Accounts: ${names.join(', ')}. ${UNTRUSTED} Tools that change anything are marked in their annotations; forget and prune delete data and only act with confirm: true.`;
+  const instructions = `mailproof records a re-checkable proof of each email. Accounts: ${names.join(', ')}. ${UNTRUSTED} Tools that change anything are marked in their annotations; forget and prune delete data, and export and backup write files (under ~/mailproof/exports and ~/mailproof/backups unless the owner set mcp.outputDir): they only act with confirm: true (without it they return a preview and change nothing).`;
   const protocol = createProtocol({ serverInfo, instructions, listTools, callTool, log });
 
   /** Close every opened `Mailproof` (the shared worker ends with the last). @returns {Promise<void>} */

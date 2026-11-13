@@ -131,6 +131,7 @@ function fromDomainAligned(sig, d, strict) {
   try { return Boolean(from && d && getAlignment(from, d, strict)); } catch { return false; }
 }
 
+/** @mcp verifyRecord For a record in your own trail use `verify` with its id; `verifyRecord` is for a record JSON someone sent you (e.g. a file in an export bundle): pass `record` or `path`. Offline, no trail, no DNS. Junk, a tampered record or a bad capture time is `ok: false`, never an error. */
 /**
  * Offline re-check of a stored record (JSON object or string). Pure and sync.
  * `at` defaults to `record.captured`; a missing or garbled `captured` fails

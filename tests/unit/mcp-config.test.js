@@ -7,10 +7,10 @@ const env = { HOME: '/home/ana' };
 const acct = { user: 'a@b.example', trailDir: '/t', passCommand: 'x' };
 const check = (mcp) => validateConfig({ v: 1, accounts: { a: acct }, ...(mcp === undefined ? {} : { mcp }) }, env);
 
-test('no mcp block: the defaults (no paths in, no files out, 512 KiB / 1 MiB)', () => {
+test('no mcp block: the defaults (read under ~/mailproof, write into its folders, 512 KiB / 1 MiB)', () => {
   const { config, problems } = check();
   assert.deepEqual(problems, []);
-  assert.deepEqual(mcpSettings(config), { inputDirs: [], outputDir: null, maxResponseBytes: 524288, maxBinaryBytes: 1048576 });
+  assert.deepEqual(mcpSettings(config, env), { inputDirs: ['/home/ana/mailproof'], outputDir: undefined, maxResponseBytes: 524288, maxBinaryBytes: 1048576 });
   assert.deepEqual(MCP_DEFAULTS, { maxResponseBytes: 524288, maxBinaryBytes: 1048576 });
 });
 
@@ -18,7 +18,8 @@ test('a full mcp block validates; ~ expands; empty block is allowed', () => {
   const { config, problems } = check({ inputDirs: ['~/Downloads', '/srv/in/'], outputDir: '~/out', maxResponseBytes: 2048, maxBinaryBytes: 4096 });
   assert.deepEqual(problems, []);
   assert.deepEqual(config.mcp, { inputDirs: ['/home/ana/Downloads', '/srv/in'], outputDir: '/home/ana/out', maxResponseBytes: 2048, maxBinaryBytes: 4096 });
-  assert.deepEqual(check({}).config.mcp, { inputDirs: [], outputDir: null, ...MCP_DEFAULTS });
+  assert.deepEqual(check({}).config.mcp, { ...MCP_DEFAULTS });
+  assert.deepEqual(check({ outputDir: null, inputDirs: [] }).config.mcp, { inputDirs: [], outputDir: null, ...MCP_DEFAULTS });
 });
 
 test('every problem names its JSON path', () => {

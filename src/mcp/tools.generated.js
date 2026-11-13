@@ -29,7 +29,7 @@ export const GENERATED_TOOLS = Object.freeze(/** @type {GeneratedTool[]} */ (/**
       "idempotentHint": true,
       "openWorldHint": false
     },
-    "description": "List recorded emails, newest capture first (default 50, at most 500 per call; `limit` narrows). Filter by `direction`, or by counterparty `with` (one exact address, case-insensitive, seen on From, To, Cc or Reply-To; `role` narrows it to one of them) and by `after` (inclusive) and `before` (exclusive) capture time. Returns summaries; use `get` for the full record. Fails with `ERR_INDEX_UNAVAILABLE`, `ERR_TRAIL_LOCKED` (retry) or `ERR_TRAIL_LAYOUT`.",
+    "description": "List recorded emails, newest capture first (default 50, at most 500). Filter by `direction`, counterparty `with` (one exact address, case-insensitive, on From, To, Cc or Reply-To; `role` narrows it), `subject` (case-insensitive text) and `after` (inclusive) / `before` (exclusive) capture time. Rows: `from`, `to[]`, `subject` with `subjectSource` (`signed`: a verifying signature covers it; `claimed`: only the sender's word; null) and `addresses[]` with `signed` and `coverage` (`signed` verifies, `failing`, `none`: trust `coverage`). `get` has the full record. Fails with `ERR_INDEX_UNAVAILABLE`, `ERR_TRAIL_LOCKED` (retry) or `ERR_TRAIL_LAYOUT`.",
     "noAccount": false,
     "required": [],
     "properties": {
@@ -61,6 +61,10 @@ export const GENERATED_TOOLS = Object.freeze(/** @type {GeneratedTool[]} */ (/**
         ],
         "description": "narrow --with to from, to, cc or reply-to"
       },
+      "subject": {
+        "type": "string",
+        "description": "only emails whose subject contains this text (case-insensitive, plain text)"
+      },
       "before": {
         "type": "string",
         "description": "captured before this date (YYYY-MM-DD, UTC, or a full ISO time)"
@@ -68,6 +72,47 @@ export const GENERATED_TOOLS = Object.freeze(/** @type {GeneratedTool[]} */ (/**
       "after": {
         "type": "string",
         "description": "captured on or after this date"
+      }
+    }
+  },
+  {
+    "name": "describe",
+    "method": "describe",
+    "cls": "read",
+    "title": "See one email, or everything with an address",
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    },
+    "description": "See one recorded email, or every email with an address, as the facts the CLI `show` prints. `target` is a record id (8 to 32 hex), a `<message-id>` or one exact address; newest first, `limit` (default 50) cuts the list and `more` says there were others. Per email: addresses with `coverage` (`signed` only when a verifying signature covers the line), date and subject with coverage, DKIM/DMARC/SPF/ARC, both trust levels, `why` in plain words when not verified, body proof, attachments, seal. Body text only with `full: true` (else 10 lines and `more_lines`). Absent values are null. Fails with `ERR_TARGET`, `ERR_INDEX_UNAVAILABLE`, `ERR_TRAIL_LOCKED` (retry) or `ERR_TRAIL_LAYOUT`.",
+    "noAccount": false,
+    "required": [
+      "target"
+    ],
+    "properties": {
+      "target": {
+        "type": "string",
+        "description": "one exact email address (bob@example.com), a Message-ID in angle brackets (<abc@mail.example>), or a record id (8 to 32 hex characters)"
+      },
+      "full": {
+        "type": "boolean",
+        "description": "true: the whole body text of each email (else its first 10 lines and the count of the rest)"
+      },
+      "after": {
+        "type": "string",
+        "description": "address or Message-ID target: captured on or after this date"
+      },
+      "before": {
+        "type": "string",
+        "description": "address or Message-ID target: captured before this date"
+      },
+      "limit": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 500,
+        "description": "most emails to return (at most 500)"
       }
     }
   },
@@ -82,7 +127,7 @@ export const GENERATED_TOOLS = Object.freeze(/** @type {GeneratedTool[]} */ (/**
       "idempotentHint": true,
       "openWorldHint": false
     },
-    "description": "Use to read one stored record (to export it, or to hand to `verifyRecord`). Use `list()` first if you do not have an id. Returns null for an unknown id or anything that is not 32 hex characters. Rejects only for a trail still in the pre-M3 flat layout (`records/<id>.json`): `err.code === 'ERR_TRAIL_LAYOUT'`, the trail must be re-created.",
+    "description": "Read one stored record (the exact JSON, nothing added) by id; use `list` first if you have no id. `addresses[].signed` means covered by some signature, not that it verified; use the verdicts or `coverage` (on the rows of `list`). Returns `{ found: false }` for an unknown id. Fails with `ERR_TRAIL_LAYOUT`.",
     "noAccount": false,
     "required": [
       "id"
@@ -128,7 +173,7 @@ export const GENERATED_TOOLS = Object.freeze(/** @type {GeneratedTool[]} */ (/**
       "idempotentHint": true,
       "openWorldHint": false
     },
-    "description": "Use to see who is in this trail: one row per exact lower-cased address (bob@gmail.com and bob@company.com are two rows; DKIM proves an address or a domain, not a person), most recently seen first. `records` counts the records that name the address on From, To, Cc or Reply-To; `first`/`last` are the earliest and latest `captured`. The trail's own owner appears too, on every record: a record does not say which address is yours. Then `list({ with })` for the emails. Rejects with `ERR_INDEX_UNAVAILABLE` or `ERR_TRAIL_LOCKED` exactly like `list()`, and with a TypeError for a `limit` that is not a positive number. An empty or missing trail returns `[]`. Only addresses a record shows count (SPEC B8). Answers come from the trail index, a cache: not proof.",
+    "description": "List every exact address the trail has seen (one row per lower-cased address, most recently seen first): `records` = records naming it on From, To, Cc or Reply-To, `verified` = how many of those are RECEIVED emails whose live trust is `verified`, `first`/`last` = earliest and latest capture. The account owner is in the list too. Then `list({ with })` for the emails. Answers come from a cache, not proof. Fails with `ERR_INDEX_UNAVAILABLE` or `ERR_TRAIL_LOCKED` (retry).",
     "noAccount": false,
     "required": [],
     "properties": {
@@ -179,7 +224,7 @@ export const GENERATED_TOOLS = Object.freeze(/** @type {GeneratedTool[]} */ (/**
       "idempotentHint": true,
       "openWorldHint": false
     },
-    "description": "Use to re-check a recorded email later, offline, from the record alone (no DNS, no raw email). It judges `x=`/`t=` as of capture time, so a valid record stays valid after the signature's expiry. Pass `at` only to ask \"was it valid at T?\". Never throws. An unknown id, junk input, a tampered record or a missing or garbled `captured` comes back `ok: false` (fail closed). `ok` means at least one signature verifies; `trust` is the portable level recomputed now.",
+    "description": "Re-check one recorded email offline, by id; find ids with `list({ with })`. Uses the record alone (no DNS) and judges `x=`/`t=` as of capture time; pass `at` only to ask \"was it valid at T?\". An unknown id, a tampered record or a bad capture time is `ok: false` (fail closed), never an error. `trust` is the portable level recomputed now.",
     "noAccount": false,
     "required": [
       "id"
@@ -188,6 +233,51 @@ export const GENERATED_TOOLS = Object.freeze(/** @type {GeneratedTool[]} */ (/**
       "id": {
         "type": "string",
         "description": "a record id: 32 hex characters, or a unique prefix of at least 8"
+      },
+      "at": {
+        "type": "string",
+        "description": "judge key and signature expiry as of this time (default: the capture time)"
+      }
+    }
+  },
+  {
+    "name": "verifyWith",
+    "method": "verifyWith",
+    "cls": "read",
+    "title": "Re-check every email with an address",
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    },
+    "description": "Re-check, offline, every email with an address (or every copy of a `<message-id>`) and say if they all verify: `ok` is true only when at least one RECEIVED email was counted and every counted one verifies (a provider's Sent copy is normally unsigned, so sent copies are listed but counted only with `all: true`). Result `{ total, counted, verified, not_verified, sent_copies, ok, records[] }` with `why` per failing record. Same as the CLI `verify <address>`. Uses the records alone (no DNS). Fails with `ERR_TARGET`, `ERR_INDEX_UNAVAILABLE`, `ERR_TRAIL_LOCKED` (retry) or `ERR_TRAIL_LAYOUT`.",
+    "noAccount": false,
+    "required": [
+      "target"
+    ],
+    "properties": {
+      "target": {
+        "type": "string",
+        "description": "one exact email address (bob@example.com), a Message-ID in angle brackets (<abc@mail.example>), or a record id (8 to 32 hex characters)"
+      },
+      "all": {
+        "type": "boolean",
+        "description": "true: count your sent copies too (by default only received emails decide ok)"
+      },
+      "after": {
+        "type": "string",
+        "description": "address or Message-ID target: captured on or after this date"
+      },
+      "before": {
+        "type": "string",
+        "description": "address or Message-ID target: captured before this date"
+      },
+      "limit": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 500,
+        "description": "most records to return (at most 500)"
       },
       "at": {
         "type": "string",
@@ -206,7 +296,7 @@ export const GENERATED_TOOLS = Object.freeze(/** @type {GeneratedTool[]} */ (/**
       "idempotentHint": true,
       "openWorldHint": false
     },
-    "description": "Use to verify an exported record with no trail and no instance: a pure, synchronous, offline re-check from the record alone. Reach for `mp.verify(id)` instead when the record lives in your trail. Never throws. A record that is not version 2, junk JSON, a tampered signature, a swapped key or a missing or garbled `captured` returns `ok: false`.",
+    "description": "For a record in your own trail use `verify` with its id; `verifyRecord` is for a record JSON someone sent you (e.g. a file in an export bundle): pass `record` or `path`. Offline, no trail, no DNS. Junk, a tampered record or a bad capture time is `ok: false`, never an error.",
     "noAccount": true,
     "required": [],
     "properties": {
@@ -261,11 +351,10 @@ export const GENERATED_TOOLS = Object.freeze(/** @type {GeneratedTool[]} */ (/**
       "idempotentHint": true,
       "openWorldHint": false
     },
-    "description": "Use to gate which recorded email an agent may act on, by id: allowed senders, required checks, required body level, required link strength. Same rules as the pure `checkProfile()`; this one reads the record from the trail first. Local, free, deterministic: re-run it later for the same answer. Rejects with `ERR_BAD_PROFILE` for an invalid profile. An id that is not in the trail gives `ok: false` with a failed `record` rule, not a throw.",
+    "description": "Check one recorded email, by id, against a trust profile (senders, checks, body level, link strength). `profile` is a name (`default` is the DKIM baseline; others are the owner's files, listed by the `profiles` tool) or an inline object; omitted means `default`. Returns `ok` and each failed rule with what was wanted and found. Local and deterministic.",
     "noAccount": false,
     "required": [
-      "id",
-      "profile"
+      "id"
     ],
     "properties": {
       "id": {
@@ -273,8 +362,11 @@ export const GENERATED_TOOLS = Object.freeze(/** @type {GeneratedTool[]} */ (/**
         "description": "a record id: 32 hex characters, or a unique prefix of at least 8"
       },
       "profile": {
-        "type": "object",
-        "description": "a trust profile written inline (senders, checks, body, link; SPEC B8)"
+        "type": [
+          "string",
+          "object"
+        ],
+        "description": "a profile name (`default` when omitted, or one the profiles tool lists), or a trust profile written inline (senders, checks, body, link; SPEC B8)"
       },
       "at": {
         "type": "string",
@@ -287,6 +379,22 @@ export const GENERATED_TOOLS = Object.freeze(/** @type {GeneratedTool[]} */ (/**
     }
   },
   {
+    "name": "profiles",
+    "method": "profiles",
+    "cls": "read",
+    "title": "List the trust profiles",
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    },
+    "description": "List the trust profiles `checkProfile` accepts by name, as { dir, profiles: [{ name, summary, builtin }] }: the built-in `default` (the DKIM baseline, unless the owner made their own default.json) and every file in the owner's profiles folder, each with one line saying what it requires. Opens no trail.",
+    "noAccount": true,
+    "required": [],
+    "properties": {}
+  },
+  {
     "name": "replyFacts",
     "method": "replyFacts",
     "cls": "read",
@@ -297,15 +405,17 @@ export const GENERATED_TOOLS = Object.freeze(/** @type {GeneratedTool[]} */ (/**
       "idempotentHint": true,
       "openWorldHint": false
     },
-    "description": "List the facts about every recorded direct reply to an email you sent, given its `messageId`, earliest first: sender (`from`), whether an aligned DKIM signature covers From (`fromDkimAligned`), `link` strength to the request, `bodyProven`, the new `text` and `firstLine`, authentication results and both verdicts. `[]` means no reply yet. Copies of one signed message are separate entries with one `messageKey`. Deciding what a reply means is your job: judge by these fields, never by the text alone. Fails with `ERR_TOO_MANY_REPLIES` (over 200: nothing is cut), `ERR_INDEX_UNAVAILABLE` or `ERR_TRAIL_LOCKED` (retry).",
+    "description": "List the facts about every recorded direct reply to an email you sent (give its `messageId`), or every direct reply one person sent (give their `address`), earliest first: sender (`from`), whether an aligned DKIM signature covers From (`fromDkimAligned`), `link` strength to the request, `bodyProven`, the new `text` and `firstLine`, authentication results and both verdicts. `[]` means no reply yet. Copies of one signed message are separate entries with one `messageKey`. Deciding what a reply means is your job: judge by these fields, never by the text alone. Fails with `ERR_TOO_MANY_REPLIES` (over 200: nothing is cut), `ERR_INDEX_UNAVAILABLE` or `ERR_TRAIL_LOCKED` (retry).",
     "noAccount": false,
-    "required": [
-      "messageId"
-    ],
+    "required": [],
     "properties": {
       "messageId": {
         "type": "string",
-        "description": "the Message-ID of the email you sent, like <id@host>"
+        "description": "the Message-ID of the email you sent, like <id@host> (give this or address)"
+      },
+      "address": {
+        "type": "string",
+        "description": "one exact email address: the replies that person sent (give this or messageId)"
       }
     }
   },
@@ -332,7 +442,7 @@ export const GENERATED_TOOLS = Object.freeze(/** @type {GeneratedTool[]} */ (/**
       },
       "path": {
         "type": "string",
-        "description": "absolute path of a file inside one of the server's input folders (mcp.inputDirs in the config); give this or base64"
+        "description": "absolute path of a file inside one of the server's input folders (~/mailproof by default, or mcp.inputDirs in the config); give this or base64"
       },
       "base64": {
         "type": "string",
@@ -363,7 +473,7 @@ export const GENERATED_TOOLS = Object.freeze(/** @type {GeneratedTool[]} */ (/**
       },
       "path": {
         "type": "string",
-        "description": "absolute path of a file inside one of the server's input folders (mcp.inputDirs in the config); give this or base64"
+        "description": "absolute path of a file inside one of the server's input folders (~/mailproof by default, or mcp.inputDirs in the config); give this or base64"
       },
       "base64": {
         "type": "string",
@@ -394,7 +504,7 @@ export const GENERATED_TOOLS = Object.freeze(/** @type {GeneratedTool[]} */ (/**
       },
       "saveTo": {
         "type": "string",
-        "description": "a file name (not a path): write the bytes into the server's output folder (mcp.outputDir) instead of returning them"
+        "description": "a file name (not a path): write the bytes into the server's output folder (~/mailproof/saved by default, or mcp.outputDir in the config) instead of returning them"
       }
     }
   },
@@ -421,7 +531,7 @@ export const GENERATED_TOOLS = Object.freeze(/** @type {GeneratedTool[]} */ (/**
       },
       "saveTo": {
         "type": "string",
-        "description": "a file name (not a path): write the bytes into the server's output folder (mcp.outputDir) instead of returning them"
+        "description": "a file name (not a path): write the bytes into the server's output folder (~/mailproof/saved by default, or mcp.outputDir in the config) instead of returning them"
       }
     }
   },
@@ -442,7 +552,7 @@ export const GENERATED_TOOLS = Object.freeze(/** @type {GeneratedTool[]} */ (/**
     "properties": {
       "path": {
         "type": "string",
-        "description": "absolute path of a file inside one of the server's input folders (mcp.inputDirs in the config); give this or base64"
+        "description": "absolute path of a file inside one of the server's input folders (~/mailproof by default, or mcp.inputDirs in the config); give this or base64"
       },
       "base64": {
         "type": "string",
@@ -469,7 +579,7 @@ export const GENERATED_TOOLS = Object.freeze(/** @type {GeneratedTool[]} */ (/**
     "properties": {
       "path": {
         "type": "string",
-        "description": "absolute path of a file inside one of the server's input folders (mcp.inputDirs in the config); give this or base64"
+        "description": "absolute path of a file inside one of the server's input folders (~/mailproof by default, or mcp.inputDirs in the config); give this or base64"
       },
       "base64": {
         "type": "string",
@@ -523,7 +633,7 @@ export const GENERATED_TOOLS = Object.freeze(/** @type {GeneratedTool[]} */ (/**
       "idempotentHint": false,
       "openWorldHint": true
     },
-    "description": "Read new mail from the account's mailbox (read-only: nothing is marked, moved or deleted) and record it. At most `maxMessages` per folder per call: call again while `complete` is false. `folders` and `sent` override the account's settings for this call. A problem in one folder is in that folder's `error`; the run goes on. Fails with `ERR_IMAP_AUTH` (login refused: the user must fix the account config; do not retry), `ERR_IMAP_CONNECT` or `ERR_SYNC_LOCKED` (retry later).",
+    "description": "Read new mail from the account's mailbox (read-only: nothing is marked, moved or deleted) and record it. At most `maxMessages` per folder per call: call again while `complete` is false. `folders` and `sent` override the account's settings for this call. A problem in one folder is in that folder's `error`; the run goes on. The seal's outcome is `stamp` (`ots` is a deprecated alias of `stamp`). Fails with `ERR_IMAP_AUTH` (login refused: the user must fix the account config; do not retry), `ERR_IMAP_CONNECT` or `ERR_SYNC_LOCKED` (retry later).",
     "noAccount": false,
     "required": [],
     "properties": {
@@ -550,6 +660,38 @@ export const GENERATED_TOOLS = Object.freeze(/** @type {GeneratedTool[]} */ (/**
     }
   },
   {
+    "name": "status",
+    "method": "status",
+    "cls": "read",
+    "title": "Status of the account and its trail",
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    },
+    "description": "What the trail holds and how it is kept, offline: `records` (total, in, out, verified, unverified, oldest and newest capture), `content` (stored files and bytes, or \"off\"), `index` state, `pendingStamps`, and the `seal` (mode, last run, next due, manifests, proofs not yet anchored, chain state). The tool catches the trail index up only when that is quick; with a cold or far-behind index `index` is `absent` or `stale`, in/out/verified and dates are null and `hint` says to run `sync` or `mailproof status`. It adds last sync, last backup, a running watch, the config check, the version and `install`. Never contacts the mailbox.",
+    "noAccount": false,
+    "required": [],
+    "properties": {}
+  },
+  {
+    "name": "stamp",
+    "method": "stamp",
+    "cls": "write",
+    "title": "Seal new mail (OpenTimestamps)",
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    },
+    "description": "Seal what was recorded since the last run: write a manifest of the new record files' hashes, commit it, and stamp it once with OpenTimestamps. Only one 32-byte hash (a manifest of file hashes: no addresses, subjects or content) is sent to the public OpenTimestamps calendars. Needs the `ots` binary: without it the manifest is still committed and `error` says so. Does nothing (`enabled: false`) when the account has the seal off. `sync` runs this automatically when due. Idempotent. Fails with `ERR_STAMP_LOCKED` (another job is running), `ERR_TRAIL_LOCKED` (retry later) or `ERR_STAMP_CHAIN` (stop and tell the user).",
+    "noAccount": false,
+    "required": [],
+    "properties": {}
+  },
+  {
     "name": "upgradeStamps",
     "method": "upgradeStamps",
     "cls": "write",
@@ -564,6 +706,118 @@ export const GENERATED_TOOLS = Object.freeze(/** @type {GeneratedTool[]} */ (/**
     "noAccount": false,
     "required": [],
     "properties": {}
+  },
+  {
+    "name": "export",
+    "method": "export",
+    "cls": "write",
+    "title": "Export a proof bundle for a counterparty",
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false
+    },
+    "description": "Make a pair bundle for a counterparty: the signed headers, signatures, archived keys and seals of every email naming one of the addresses in `with`, checkable offline with `verifyBundle`. It discloses the addresses and subjects of that whole exchange to whoever gets it; no bodies or attachments, and it does not prove completeness. Without `confirm: true` it returns a preview and writes nothing: show it to the user, and confirm only after they agreed. `out` is a folder name created in the output folder. Fails with `ERR_EXPORT_EMPTY`, `ERR_EXPORT_TOO_BIG`, `ERR_EXPORT_EXISTS` (pick another `out`), `ERR_EXPORT_REWRITTEN` (run again) or `ERR_EXPORT_SELF_CHECK`.",
+    "noAccount": false,
+    "required": [
+      "with"
+    ],
+    "properties": {
+      "with": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "minItems": 1,
+        "maxItems": 20,
+        "description": "the exact email addresses to export the exchange with (a union: any email naming one of them on From, To, Cc or Reply-To)"
+      },
+      "after": {
+        "type": "string",
+        "description": "captured on or after this date"
+      },
+      "before": {
+        "type": "string",
+        "description": "captured before this date"
+      },
+      "out": {
+        "type": "string",
+        "description": "a folder name (not a path) to create inside the server's output folder (~/mailproof/exports by default, or mcp.outputDir in the config); default mailproof-bundle-<account>-<time>"
+      },
+      "tar": {
+        "type": "boolean",
+        "description": "true: one .tar file instead of a folder"
+      },
+      "confirm": {
+        "type": "boolean",
+        "description": "true to do it; without it nothing changes and a preview is returned"
+      }
+    }
+  },
+  {
+    "name": "backup",
+    "method": "backup",
+    "cls": "write",
+    "title": "Back up the trail",
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "description": "Write a git bundle of the whole trail (records, keys, replies, seals; never message bodies) to the server's output folder; restore with `git clone <file> <dir>`. `withContent: true` adds a separate unencrypted tar of the stored raw emails (other people's mail). `push: true` also pushes the trail to the account's configured backup remote, never with force, and contacts that host. Without `confirm: true` it returns a preview and writes nothing. `out` is a plain file name in the output folder. Fails with `ERR_BACKUP_EMPTY` (nothing to back up), `ERR_BACKUP_EXISTS` (pick another `out`), `ERR_BACKUP_BUNDLE`, `ERR_BACKUP_VERIFY` or `ERR_TRAIL_LOCKED`.",
+    "noAccount": false,
+    "required": [],
+    "properties": {
+      "out": {
+        "type": "string",
+        "description": "a file name (not a path) for the bundle inside the server's output folder (~/mailproof/backups by default, or mcp.outputDir in the config); default <account>-<time>.bundle"
+      },
+      "withContent": {
+        "type": "boolean",
+        "description": "true: also write the stored raw emails as an unencrypted .content.tar beside it"
+      },
+      "push": {
+        "type": "boolean",
+        "description": "true: also push the trail to the account's backup remote (never forced; contacts that host)"
+      },
+      "confirm": {
+        "type": "boolean",
+        "description": "true to do it; without it nothing changes and a preview is returned"
+      }
+    }
+  },
+  {
+    "name": "verifyBundle",
+    "method": "verifyBundle",
+    "cls": "read",
+    "title": "Check a proof bundle",
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    },
+    "description": "Check a pair bundle someone made with `export`: pass `dir`, the bundle's folder or the `.tar` file `export` writes, which must be inside one of the server's input folders. Offline: it re-checks every record's signature against its archived key, the file hashes, the manifest chain and each seal (locally, with `ots info`), and reports `ok`, the `failed` checks and one line per record. Pass `expect` (the 64-hex `bundle_sha256` the sender gave you another way) to pin the bundle; `strict` also fails unless every record is verified and every seal anchored. A bad bundle is `ok: false`, not an error. It does not prove completeness: the sender chose the emails.",
+    "noAccount": true,
+    "required": [
+      "dir"
+    ],
+    "properties": {
+      "dir": {
+        "type": "string",
+        "description": "absolute path of the bundle folder, or of the .tar file `export` writes, inside one of the server's input folders (~/mailproof by default, or mcp.inputDirs in the config)"
+      },
+      "expect": {
+        "type": "string",
+        "description": "the bundle sha256 its owner told you by another channel: fails when bundle.json is not the one they made"
+      },
+      "strict": {
+        "type": "boolean",
+        "description": "also fail unless every email is DKIM-verified and every seal is anchored (also fails when ots is missing)"
+      }
+    }
   },
   {
     "name": "forget",
