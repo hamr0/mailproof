@@ -20,7 +20,17 @@ You get a git repository you own (the **trail**) holding, for every email in the
 
 ## 2. Install
 
-Requirements: Node >= 22.19 and `git` on your PATH. Optional, for the seal: the `ots` binary. On Linux, glibc 2.34 or newer (EL9, Debian 12, Ubuntu 22.04 or newer): the trail index (`list`, `show`, `copies`, `counterparties`, ...) needs `better-sqlite3`'s prebuilt binary, which needs it. On older systems (EL8, Debian 11, Ubuntu 20.04) npm installs without a warning, but every index command fails with `ERR_INDEX_UNAVAILABLE`; `record`, `verify` and `stamp` still work. Building the add-on from source on EL8 is **UNVERIFIED** (being tested; needs gcc-toolset-12 and python3.9).
+Requirements: Node >= 22.19 and `git` on your PATH. Optional, for the seal: the `ots` binary. On Linux, glibc 2.34 or newer (EL9, Debian 12, Ubuntu 22.04 or newer): the trail index (`list`, `show`, `copies`, `counterparties`, ...) needs `better-sqlite3`'s prebuilt binary, which needs it. On older systems (EL8, Debian 11, Ubuntu 20.04) npm installs without a warning, but every index command fails with `ERR_INDEX_UNAVAILABLE`; `record`, `verify` and `stamp` still work. On EL8 (or any glibc below 2.34) build the add-on once from source:
+
+```bash
+sudo dnf install -y gcc-toolset-12-gcc-c++ make python39
+npm i --prefix /var/lib/mailproof/npm mailproof        # or -g; the prebuild installs and fails to load, that is expected
+cd /var/lib/mailproof/npm/node_modules/better-sqlite3  # with -g: $(npm root -g)/mailproof/node_modules/better-sqlite3
+scl enable gcc-toolset-12 -- env PYTHON=/usr/bin/python3.9 \
+  node /usr/lib/node_modules/npm/node_modules/node-gyp/bin/node-gyp.js rebuild --release --force_build=1
+```
+
+(`node-gyp.js` is npm's bundled node-gyp, NodeSource's npm; the path differs if npm is installed elsewhere.) `--force_build=1` is required: `npm rebuild --build-from-source` exits 0 but compiles nothing, because the prebuild is present. `PYTHON` must be 3.8 or newer (EL8's `python3` is 3.6). EL8's system GCC 8.5 cannot do C++20, hence the toolset. The build takes about 7 minutes on 1 vCPU and 1 GB. The built file uses only system libraries (glibc 2.28 or older), so you may remove the toolset afterwards (`dnf history undo <id>`) and `list` still works. **Rebuild after any reinstall of mailproof or `better-sqlite3`, or a Node major upgrade**: npm brings back the prebuild and drops `build/`. LIVE: AlmaLinux 8.10, glibc 2.28, Node 22.22.2, better-sqlite3 13.2.0, 2026-11-22.
 
 ```bash
 npm install -g mailproof

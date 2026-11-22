@@ -28,7 +28,17 @@ Be honest about the cost. A mail server is a thing you keep running: patches, DN
 - The provider's control panel for the **PTR** (reverse DNS) record. You cannot set PTR in your own DNS zone.
 - A dedicated IP if you can. A shared IP shares its reputation (section 14).
 - Node.js 22.19 or newer, git, and `mailproof` installed (`npm install -g mailproof`, or `npm i --prefix /var/lib/mailproof/npm mailproof` as the `mailproof` user: a global install is not required, but the wrapper's binary path must then point at that prefix's `bin/mailproof`, LIVE).
-- **Linux glibc 2.34 or newer** (EL9, Debian 12, Ubuntu 22.04 or newer). The trail index (`list`, `show`, `copies`, `counterparties`, and the commands built on them) needs `better-sqlite3`'s Linux prebuilt binary, which needs glibc 2.34. On older systems (EL8, Debian 11, Ubuntu 20.04) `npm install` finishes without a warning, but every index command then fails with `ERR_INDEX_UNAVAILABLE`; `record`, `verify` and `stamp` still work. **UNVERIFIED (being tested; needs gcc-toolset-12 and python3.9):** on EL8 the add-on can be built from source; the proven commands will be added here.
+- **Linux glibc 2.34 or newer** (EL9, Debian 12, Ubuntu 22.04 or newer). The trail index (`list`, `show`, `copies`, `counterparties`, and the commands built on them) needs `better-sqlite3`'s Linux prebuilt binary, which needs glibc 2.34. On older systems (EL8, Debian 11, Ubuntu 20.04) `npm install` finishes without a warning, but every index command then fails with `ERR_INDEX_UNAVAILABLE`; `record`, `verify` and `stamp` still work. On EL8 (or any glibc below 2.34) build the add-on once from source:
+
+```bash
+sudo dnf install -y gcc-toolset-12-gcc-c++ make python39
+npm i --prefix /var/lib/mailproof/npm mailproof        # or -g; the prebuild installs and fails to load, that is expected
+cd /var/lib/mailproof/npm/node_modules/better-sqlite3  # with -g: $(npm root -g)/mailproof/node_modules/better-sqlite3
+scl enable gcc-toolset-12 -- env PYTHON=/usr/bin/python3.9 \
+  node /usr/lib/node_modules/npm/node_modules/node-gyp/bin/node-gyp.js rebuild --release --force_build=1
+```
+
+(`node-gyp.js` is npm's bundled node-gyp, NodeSource's npm; the path differs if npm is installed elsewhere.) `--force_build=1` is required: `npm rebuild --build-from-source` exits 0 but compiles nothing, because the prebuild is present. `PYTHON` must be 3.8 or newer (EL8's `python3` is 3.6). EL8's system GCC 8.5 cannot do C++20, hence the toolset. The build takes about 7 minutes on 1 vCPU and 1 GB. The built file uses only system libraries (glibc 2.28 or older), so you may remove the toolset afterwards (`dnf history undo <id>`) and `list` still works. **Rebuild after any reinstall of mailproof or `better-sqlite3`, or a Node major upgrade**: npm brings back the prebuild and drops `build/`. LIVE: AlmaLinux 8.10, glibc 2.28, Node 22.22.2, better-sqlite3 13.2.0, 2026-11-22.
 - Size: the production box the operators ran this on has 1 vCPU and 1 GB RAM (LIVE). That is enough for gitdone's load; mailproof itself is not measured there.
 
 ## 3. Packages
@@ -657,6 +667,7 @@ Tags: **LIVE** = read or run on a real production Postfix box by the gitdone ope
 | SELinux enforcing mode | UNVERIFIED: the live box has SELinux disabled | |
 | A locally delivered copy of an outbound message carries a valid DKIM-Signature | **LIVE** | maillog "DKIM-Signature field added", `opendkim-testmsg` exit 0 |
 | Testing the signature with `root@localhost` (`/var/mail/root`) | LIVE | |
+| EL8 (glibc 2.28): `better-sqlite3` built from source with gcc-toolset-12 and python3.9 (`--force_build=1`), after which `list` works; about 7 min on 1 vCPU / 1 GB | **LIVE** (2026-11-22) | section 2 |
 | `sender_bcc_maps` copy to a second transport; `transport_maps` overrides `virtual_transport` for one address | **LIVE** (2026-11-22) | |
 | **The BCC copy, recorded by `mailproof record`, verifies with `mailproof verify`** (the copy is the DKIM-signed queue file: OpenDKIM signs in cleanup before the copy; portable verified) | **LIVE** (2026-11-22) | testing step 5 |
 | Real SPF on inbound mail from the envelope flags (`--client-ip`, `--client-helo`, `--sender`) | **LIVE** (2026-11-22; 5 inbound: DKIM, SPF and DMARC pass) | |

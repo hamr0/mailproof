@@ -30,13 +30,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **`record`: an empty or missing `--client-ip` means no SPF check.** On local submission Postfix passes an empty client IP with a HELO and sender, and the out-copy was recorded with `spf: temperror`; now SPF is `null` unless a client IP is given.
+- **`record`: an empty or missing `--client-ip` means no SPF check.** On local submission Postfix passes an empty client IP with a HELO and sender, and the out-copy was recorded with `spf: temperror`; now SPF is `null` unless a client IP is given. This applies to the library too: `Mailproof#record()` with an envelope that has a sender or HELO but no `clientIp` now records `spf: null` (it was a temperror).
 - **`status`: the "never run" seal hint** named a `mailproof seal` command that does not exist; it now says `mailproof stamp` (and, on a pipe-only account, to run it from a timer).
 - **`record --direction sideways`** now says `--direction must be in or out (got "sideways")` instead of "required" (exit 64 as before).
 
 ### Docs
 
-- **Linux glibc 2.34 or newer** (EL9, Debian 12, Ubuntu 22.04+) is documented as a requirement of the trail index (`better-sqlite3`'s prebuilt binary). On older systems npm installs without a warning and every index command fails with `ERR_INDEX_UNAVAILABLE`; `record`, `verify` and `stamp` still work. Replacing `better-sqlite3` with `node:sqlite` is parked for a later release.
+- **Linux glibc 2.34 or newer** (EL9, Debian 12, Ubuntu 22.04+) is documented as a requirement of the trail index (`better-sqlite3`'s prebuilt binary). On older systems npm installs without a warning and every index command fails with `ERR_INDEX_UNAVAILABLE`; `record`, `verify` and `stamp` still work. The guides document the proven EL8 workaround (build the add-on from source with gcc-toolset-12 and python3.9). Replacing `better-sqlite3` with `node:sqlite` is parked for a later release.
 - The signing guide marks the steps run on a real box (AlmaLinux 8.10, 2026-11-22) as LIVE ([F42](docs/product/findings.md)).
 - The M5 guide is renamed from the self-hosting guide to `docs/product/signing-guide.md`, retitled "Sign your own mail: OpenDKIM and your mail client", and split into two parts: Part 1 OpenDKIM (the existing content), Part 2 your mail client (submission on 587, SASL login, `reject_sender_login_mismatch`, client settings; every step marked UNVERIFIED, not run on a real box). README, docs map, PRD, SPEC and CLAUDE.md links follow. `mailproof record` is still specified (SPEC B14), not built.
 - PRD status cleanup: M3 and M4 headings read "shipped", M5 is "Sign your own mail and record it", the status line and date are current, and each still-open question in §12 says it is open and not scheduled.
