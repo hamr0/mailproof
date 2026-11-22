@@ -26,11 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **`mailproof record --direction in|out [<file>]`** (SPEC B14, M5): one raw email from a file or stdin into the trail, for a mail server that pipes each message to mailproof (Postfix pipe(8)). The bytes are hashed as they stream in and held only up to the 25 MiB cap, so a huge message never fills memory: over the cap it is recorded `unverified` as `over limit: total_bytes` with its true id (a later capture of the same bytes is `duplicate`). Flags `--source`, `--client-ip`, `--client-helo`, `--sender` (`--name=value` and empty values accepted), `--json`. After the record it runs the content-expiry sweep when due (a failure is one stderr line, never the exit code); it never seals, so a pipe-only box runs `mailproof stamp` from a timer. Not in the menu, not an MCP tool, not a library export.
-- **Pipe-only accounts:** an account with no `host` has no mailbox; mail arrives through `record`. `user` is optional there. `sync`, `watch`, the MCP `sync` tool and the wizard's login test refuse it with one line (CLI exit 64, MCP `ERR_BAD_ARGUMENT`); `status` and `config` show `pipe-only`; every other command works on it.
-
-### Changed
-
-- **Config: an account with no `host` is now a pipe-only account, not a Gmail account.** Upgrading: a `config.json` account that left out `host` (it used to default to `imap.gmail.com`) and names a password source (`passCommand`, `passFile`, `accessTokenCommand`) or `port`, `folders`, `sent` is now refused (`config validate` exit 64, `accounts.<name>.<key>: only for an IMAP account (this account has no host)`). Add `"host": "imap.gmail.com"` to keep it a Gmail account. Configs written by `config add-account` or `config template` always carry a `host` and are unaffected. `mailproof-sync` is unchanged.
+- **Pipe-only accounts:** an account with no `host` and no IMAP settings (`passCommand`, `passFile`, `accessTokenCommand`, `port`, `folders`, `sent`) is pipe-only; one with no host but a password setting still means imap.gmail.com, as in 4.0.0, so no 4.0.0 config is refused. A pipe-only account has no mailbox; mail arrives through `record`. `user` is optional there. `sync`, `watch`, the MCP `sync` tool and the wizard's login test refuse it with one line (CLI exit 64, MCP `ERR_BAD_ARGUMENT`); `status` and `config` show `pipe-only`; every other command works on it.
 
 ### Docs
 

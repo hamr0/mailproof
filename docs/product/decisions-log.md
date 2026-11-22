@@ -444,3 +444,11 @@ Also: `path` inputs are refused until `mcp.inputDirs` is set (`base64` always al
 4. **Content sweep runs inside `record`.** The due sweep (B7.5) runs after the record commits; a failure never changes the exit code. Reason: retention must hold on a box that never runs `sync`.
 5. **The seal is a timer, not `record`.** `record` stays offline; the guide adds a systemd timer (cron alternative) running `mailproof stamp` every 6 hours. Reason: capture never waits for the network (B13.1.1).
 **Consequences**: B14 is buildable test-first with no further decisions; the guide gets section 9a (timer) and two table rows, all UNVERIFIED until a box test; the pipe-only config in guide section 9 is refused by today's CLI until M5 is built. No CHANGELOG entry (nothing user-visible ships).
+
+### Decision: pipe-only account rule is lenient (2026-11-22)
+**Date**: 2026-11-22
+**Status**: Accepted (owner); amends item 3 of "M5 record command specified"
+**Context**: The strict reading of SPEC B14.3 (no `host` means pipe-only, IMAP-only keys refused) would refuse configs 4.0.0 accepted, where an absent `host` meant `imap.gmail.com`.
+**Decision**: An account is pipe-only only when it has no `host` and none of `passCommand`, `passFile`, `accessTokenCommand`, `port`, `folders`, `sent`. A hostless account with any of them is an IMAP account on `imap.gmail.com`, exactly as in 4.0.0.
+**Rationale**: Personal (IMAP) and self-hosted (pipe-only) accounts can live in one config, and no 4.0.0 config is refused, so no upgrade note or minor-bump refusal.
+**Consequences**: one key list and one predicate (`isPipeOnly`) in `config.js`; a pipe-only account must leave the IMAP keys out.

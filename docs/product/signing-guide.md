@@ -347,7 +347,7 @@ PATH=/usr/local/bin:/usr/bin:/bin   # /usr/local/bin for ots
 - **Size cap.** `message_size_limit` is the outer bound. `mailproof record` keeps at most the library's own bound in memory (25 MiB, `MAX_TOTAL_BYTES` in `limits.js`): a larger message is hashed as it streams in and recorded `unverified` (`over limit: total_bytes`), never loaded whole. See SPEC B14.2.
 - **Mail is recorded even when unverified.** A mail that fails DKIM is still a record (accept-with-flag). Exit 0 means "recorded", not "verified".
 
-The mailproof config for the `mailproof` user (`config.json`, SPEC B11.2): one **pipe-only account** (no `host`: nothing to log in to, mail arrives through the pipe). `user` is optional there and marks "(you)" in `people`. `port`, `folders`, `sent` and the password keys are refused on such an account, and `sync` and `watch` say `me has no IMAP server (a pipe-only account): mail arrives through mailproof record`. The pipe-only account is built (SPEC B14.3, tested); using it on a real box is UNVERIFIED.
+The mailproof config for the `mailproof` user (`config.json`, SPEC B11.2): one **pipe-only account** (no `host`: nothing to log in to, mail arrives through the pipe). `user` is optional there and marks "(you)" in `people`. Leave `port`, `folders`, `sent` and the password keys out: adding any of them makes it an IMAP account on `imap.gmail.com` (as in 4.0.0), not a pipe-only one. On a pipe-only account `sync` and `watch` say `me has no IMAP server (a pipe-only account): mail arrives through mailproof record`. The pipe-only account is built (SPEC B14.3, tested); using it on a real box is UNVERIFIED.
 
 ```json
 {
@@ -644,7 +644,7 @@ Tags: **LIVE** = read or run on a real production Postfix box by the gitdone ope
 | Output kept away from Postfix (enhanced status codes) | PDOCS | |
 | `ERR_TRAIL_LOCKED` to exit 75 retried by Postfix | Documented, not proven on a box | SPEC B3 |
 | Stdin cap in the program | LIVE for gitdone (25 MB); mailproof's built and tested (hash and record over the cap, memory bounded), not run on a box | SPEC B14.2 |
-| Pipe-only account (no `host`) accepted by the CLI config | built and tested (config validation, `status`, the `sync` and `watch` refusal); UNVERIFIED on a box | SPEC B14.3 |
+| Pipe-only account (no `host`) accepted by the CLI config | built and tested (config validation with the lenient rule, `status`, the `sync` and `watch` refusal); UNVERIFIED on a box | SPEC B14.3 |
 | `mailproof-stamp.service` and `.timer` (every 6 hours) seal the trail on a pipe-only box; `record` runs the due content sweep | UNVERIFIED (not run on a real box) | SPEC B14.4, section 9a |
 | Distro default certificate, `smtp_tls_security_level = may` | LIVE | |
 | Let's Encrypt for Postfix, and the `renewal-hooks/deploy` script | UNVERIFIED: standard certbot, not proven on a box | |
