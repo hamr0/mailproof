@@ -542,7 +542,7 @@ POC script: [`poc/m0-header-recheck.js`](../../poc/m0-header-recheck.js) (throwa
 - **Evidence.** The maillog shows OpenDKIM adding the signature in `cleanup`. The delivered copy carries the `DKIM-Signature` and verifies with `opendkim-testmsg` (exit 0). Delivery-time headers (Received, Return-Path) are added after signing, are unsigned and are harmless. `h=` was `From:To:Subject:Date:From` (OpenDKIM's `OversignHeaders From` on top of the default list): **Message-ID, MIME-Version and Content-Type were not signed** with that box's defaults. The live config is multi-domain (`KeyTable` / `SigningTable`). gitdone's own wiki was stale and was fixed on its branch `docs/deployment-live-mail-config`.
 - **Not tested.** The `sender_bcc_maps` copy. It is strongly implied (the same queue file is copied after signing) but not proven; it stays the one open evidence task of M5.
 - **Result.** Local signing is proven; the default `h=` leaves Message-ID unsigned, so the guide sets an explicit `SignHeaders` (Message-ID, In-Reply-To, References, ...). That line is recommended and not yet tested.
-- **Affects:** PRD §7 M5, [self-hosting.md](self-hosting.md), SPEC B14.
+- **Affects:** PRD §7 M5, [signing-guide.md](signing-guide.md), SPEC B14.
 
 ## F33 — M5: the gitdone operators' review of the self-hosting guide; knowless declined (2026-11-11)
 
@@ -550,7 +550,7 @@ POC script: [`poc/m0-header-recheck.js`](../../poc/m0-header-recheck.js) (throwa
 - **Evidence.** The gitdone operators reviewed the guide against their live box and returned 17 points, now folded into the guide. In summary: `virtual_mailbox_maps` set to `static:nothing` for the pipe domain; EPEL needed on the RHEL family; `ots` installed through pip; rotation steps written for the multi-domain `KeyTable`; the pipe(8) transport maps exit codes (sysexits such as 64 and 77 become bounces, and output starting with a `5.x.x` status is read as an enhanced status code), so the wrapper maps every non-zero exit to 75 and sends mailproof output to a log; inbound spoofing through `sender_bcc_maps` must be considered; that box uses its own TLS certificate, not Let's Encrypt; SELinux is disabled there; IPv4-only is proven; the firewall steps are proven; sizing 1 vCPU / 1 GB works.
 - **knowless.** Asked on 2026-11-11 and declined: it has no MTA and no DKIM signer, is auth-mail-only and is frozen at v1.0.0.
 - **Result.** The guide marks each step proven or UNVERIFIED (generic naming, no production box names).
-- **Affects:** [self-hosting.md](self-hosting.md), decisions-log "M5".
+- **Affects:** [signing-guide.md](signing-guide.md), decisions-log "M5".
 
 ## F34 — M4/M3 CLI: the first real walkthrough on a real Gmail account, bugs found (2026-11-11)
 
@@ -573,7 +573,7 @@ Public DNS facts about the owner's own services, seen in the real walkthrough (F
 - addypin.com, ownsub.com and signedreply.com verify: DKIM pass, aligned, DMARC `p=none` pass, ARC by google.com.
 - late.fyi signs (`d=late.fyi`, `s=latefyi2026`, body matched) but publishes **no DKIM key** (DNS ENODATA at capture), no DMARC and no SPF: DKIM is neutral and the capture stays unverified forever, because the key cannot be archived.
 - The owner's boxes sign `h=Date:From:To:Subject:From` only, so Message-ID is unsigned and a reply cannot be provably linked. This matches F32; the guide's `SignHeaders` fixes it.
-- **Affects:** [self-hosting.md](self-hosting.md), usage guide.
+- **Affects:** [signing-guide.md](signing-guide.md), usage guide.
 
 ## F36 — M3 MCP: a walkthrough in Claude Code on a real trail (2026-11-11)
 
@@ -625,3 +625,23 @@ Public DNS facts about the owner's own services, seen in the real walkthrough (F
 - **Not measured:** real mail (header sizes and key lengths of real senders; all signatures here are RSA 2048 or ed25519 with short signed-header lists), a cold page cache, 50,000 and above, a trail where seals and manifests are present (manifest chain read adds a little per manifest), a slow disk, and the interactive screen (the "what a user sees" paragraph is from the code).
 - **Affects:** SPEC B5, B11.5, B12; `status({ refresh })` in `src/proof/mailproof.js`, `STATUS_REFRESH_LOCK_MS` in `src/proof/limits.js`, `src/cli/status.js`, F19, F23, F27.
 - **Built (2026-11-12, on `feat/m4-export`):** all three recommendations, owner-approved. (1) `status` prints a start line and an overwriting `trail index N of M records` on a terminal (`indexProgressLine`, `src/cli/progress.js`, shares one overwriting-line helper with `sync`'s); the library reports through `status({ onProgress })` / `IndexCfg.onProgress` (`IndexProgress`, `index-db.js`): a rebuild always, a catch-up over `INDEX_QUIET_RECORDS` (500, `limits.js`: about 0.6 s of work by the table above). (2) `sync`, each `watch` tick and the MCP `sync` call `indexAfterSync` (`sync-op.js`), which is `status({ refresh: true })` run after the folder lines are printed; failures only warn. Recommendation 2's `setup` login-test hook was not built (the setup wizard offers a first sync, which now builds it). (3) `status({ refresh: 'bounded' })`: `indexPlan()` (no lock: stored schema and HEAD, one `git diff --name-only`) decides; budget `INDEX_BOUNDED_RECORDS` = 1,000 changed records, chosen as about 1.2 s from this table (80 ms base plus about 1 ms a record at 100 commits), so a rebuild (1.2 s even at 2,000 records, and growing) and a long catch-up are never run by the MCP tool; the answer then has `index` `'absent'`/`'stale'` and `hint`. The MCP header-refresh item does not apply: the menu header never builds the index (B11.4). Tests: `tests/integration/index-progress.test.js`, `mcp-closeout.test.js`.
+
+## F40 — Competitor to watch: Inbin (inbin.dev), a hosted email trust layer for AI agents (2026-11-22; desk research, not run)
+
+- **Date:** 2026-11-22
+- **Source:** the inbin.dev landing page, read 2026-11-22 (marketing claims, not tested).
+- **What it is:** a hosted service. Mail goes to an `@in.inbin.dev` address (or is forwarded in, e.g. Cloudflare Agents SDK `onEmail`); agents read it through one API and an MCP server (listed in the Claude connector directory). Free tier on a commercial service.
+- **What it claims:** (1) the agent never reads raw email: each email becomes a typed event from a schema the user declares, every field labelled checked/typed or sender-written untrusted text, and an extracted value not found in the body is dropped (their "hallucination guard"); (2) SPF/DKIM/DMARC per message, plus "still the same person" continuity: a counterpart trusted before must keep proving it, else the message is held; (3) the agent can send: replies and known contacts go out, a send to anyone new is held until the owner approves by an emailed link; (4) agent-to-agent identity (Okta / Entra Agent ID / OIDC, a chained policy fingerprint, revocation URL, cross-application reports); (5) a Google Meet agent limited to approved facts; (6) the inbox as a queryable ledger of events (`query_events`, `backfill_email`, `share_event`).
+- **Against mailproof:**
+
+  | | Inbin | mailproof |
+  |---|---|---|
+  | Runs | their servers, they hold the mail | the owner's machine; no third party |
+  | Output | typed events for an agent to act on now | a proof record to re-check now and later |
+  | Sender check | at receipt, by the service | live verdict at capture plus a portable DKIM verdict anyone re-checks offline, years later, key archived |
+  | Injection | structural guard (labelled fields, schema) | none beyond marking email fields untrusted and `replyText` dropping quotes |
+  | Sends | yes, with hold-for-new-recipient | never |
+  | Evidence | their ledger | git trail, OpenTimestamps seal, exportable bundle checked with no account |
+  | Licence | commercial | Apache-2.0 |
+- **Conclusion:** adjacent, not the same product. Inbin answers "is it safe for my agent to read and act on this right now" and is broader on that (extraction, injection guard, send control). mailproof answers "can I prove later, to anyone, who sent this and what it said" and gates automation on cryptographic facts the owner keeps. Watch it: if it adds an exportable, offline-verifiable proof, the overlap grows. Positioning for mailproof: proof you own and can show anyone offline, and no third party sees your mail; do not present mailproof as an agent firewall or prompt-injection filter.
+- **Not named in public docs:** competitors are not named in the README or guides; describe the category ("hosted email-for-agents services") if a comparison is ever needed.

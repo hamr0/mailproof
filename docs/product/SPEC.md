@@ -1806,18 +1806,104 @@ No `75` or `77`: no lock, no config. Library: `verifyBundle` resolves to a `Bund
 
 ## B14. `mailproof record` (M5)
 
-Decided 2026-11-11 (decisions-log "M5: a record command and a self-hosting guide, not a Docker image", PRD §7 M5, guide [self-hosting.md](self-hosting.md)). **Outline only, to be specified at build.** One new CLI command over the existing `Mailproof#record()`; no library change except what is noted.
+**Status: Specified 2026-11-22, not built.** Decided 2026-11-11 (decisions-log "M5: a record command and a self-hosting guide, not a Docker image", PRD §7 M5, guide [signing-guide.md](signing-guide.md), widened 2026-11-22 to two parts, OpenDKIM and your mail client; the command is unchanged and still M5); completed 2026-11-22 (decisions-log "M5 record command specified (2026-11-22)"). One new CLI command over the existing `Mailproof#record()`; no library change, no new export, no new primitive. The build is test-first (B14.9): each test is written red against today's code, then the code.
 
-- **Shape.** `mailproof record --direction in|out [--account <name>] [--source <text>] [--client-ip <ip>] [--client-helo <name>] [--sender <addr>] [--recipient <addr>] [--json]`. Reads **one raw email from stdin**, calls `record(raw, { direction, source, envelope })`, prints the result. `--direction` is required (a missing or other value is exit 64). `--account` follows B11.3. Not in the menu (a pipe command, never interactive); it never reads a TTY: with stdin a TTY it exits 64.
-- **Envelope flags map to the library's real field names.** `--client-ip` -> `envelope.clientIp`, `--client-helo` -> `clientHelo`, `--sender` -> `sender`, `--recipient` -> `recipient`. The library reads only `clientIp`, `clientHelo` and `sender` (`parse.js`, `mailproof.js` `_build`); `recipient` is in the `Envelope` typedef (`types.js`) but is dropped before the build, so `--recipient` is accepted for symmetry with Postfix's `${original_recipient}` and has no effect on the record. To settle at build: keep it (harmless) or drop the flag and the typedef field. Empty values are accepted and mean absent: `--client-ip=` and `--client-helo=` are empty for locally submitted mail (the `out` transport), and an empty `--sender=` is a null sender, passed as `null` (Postfix pipe(8) expands a null `${sender}` to `MAILER-DAEMON` unless the transport sets `null_sender=` empty; the guide sets it, so the command need not know the name). Postfix passes the flags as `--name=${macro}` (self-hosting.md 8.2).
-- **`--source`** defaults to `pipe`; the guide passes `pipe:postfix`. A free string, as `record()` takes it.
-- **Stdin cap.** Read at most `MAX_TOTAL_BYTES` + 1 (`limits.js`, 25 MiB; no new constant, one definition). A message over the cap is not buffered whole. To settle at build: how the over-limit record gets its true raw-bytes id (a streaming hash as `sync` does for over-size mail, B4, rather than the id of a truncated buffer). Result: recorded `unverified`, reason `over limit: total_bytes`, exit 0. Empty stdin: exit 1 with a one-line stderr message (the library refuses an empty message).
-- **Exit codes (B11.8, unchanged):** `0` recorded, including `duplicate: true` (the same bytes again is success, never an error); `64` bad usage (bad or missing `--direction`, unknown flag, no account when several are configured, stdin a TTY); `75` temporary: `ERR_TRAIL_LOCKED`; `77` config not owned by you or group/world-readable; `1` anything else (git failure, empty input). A Postfix pipe bounces sysexits codes (64, 77) and defers others, so the guide's wrapper maps every non-zero code to 75; the command itself keeps the table above.
-- **Output.** Human: one line, `recorded <id> <direction> <live trust>/<portable trust>` or `already recorded <id>`. `--json`: the `record()` result as one document, `{ id, duplicate, commit, ots?, content? }` (the `record` object only with a flag if wanted; a pipe prints little). stderr only for errors. Nothing is printed to stdout that a pipe would mistake for protocol.
-- **Worker.** Each pipe delivery is one process per message, so the command runs the library **in-process** (`worker: { size: 0 }`, no warm worker thread), as CLAUDE.md "Worker deadline backstop" prescribes for one-mail-per-process callers: the admission gate and the DNS budget still apply; only the CPU/memory kill is absent, and the MTA's own process limits bound the rest. This is not configurable in the account config for this command.
-- **Account without IMAP.** A pipe-only account has no `imap` block. To settle at build whether the B11.2 config accepts such an account (and what `sync` says for it), or whether `trailDir`/`trail` alone is enough.
-- **Library, MCP, primitives.** `record` already exists in the class and MCP; the CLI command is a thin wrapper like the others (`primitives.json` and the generated help follow from the table in `src/cli/commands.js`). No new runtime dependency.
-- **Test plan (to write at build).** stdin to record for `in` and `out`; duplicate exit 0; empty stdin; over-cap stdin; every envelope flag reaches `record()` (injected `deps`); `ERR_TRAIL_LOCKED` -> 75 with the trail locked by a second process; `--json` shape; stdin a TTY -> 64; no new `/tmp` leaks (`tests/helpers`).
+### B14.1 Shape and input
+
+`mailproof record --direction in|out [<file>] [--account <name>] [--source <text>] [--client-ip <ip>] [--client-helo <name>] [--sender <addr>] [--json]`
+
+- **Input.** One raw email: from `<file>` when a file is given, else from stdin. With no file and stdin a TTY: exit 64 (the command never prompts and is not in the menu). `<file>` is one positional; `~` and `~/x` expand as every other path argument (the command table marks the positional `pathPositional`, expanded once in `run.js`, B11.2a). A file that is missing or unreadable is exit 1 with the OS reason on one stderr line; a directory is exit 64.
+- `--direction` is required; a missing value or anything but `in` or `out` is exit 64. `--account` follows B11.3. `--source` defaults to `pipe` (a free string, as `record()` takes it; the guide passes `pipe:postfix`). Not in the menu (a pipe command, never interactive).
+- **Envelope flags** map to the library's real field names: `--client-ip` -> `envelope.clientIp`, `--client-helo` -> `clientHelo`, `--sender` -> `sender`. The library reads only those three (`mailproof.js` `_build`, `parse.js`). An empty value is accepted: `--client-ip=` and `--client-helo=` are empty for locally submitted mail (the `out` transport) and mean absent; an empty `--sender=` is the null sender, passed as `null` (Postfix pipe(8) expands a null `${sender}` to `MAILER-DAEMON` unless the transport sets `null_sender=` empty; the guide sets it). The envelope is passed to `record()` only when at least one of the three flags is present (even empty). Postfix passes the flags as `--name=${macro}` (signing-guide.md 8.2), so the parser accepts `--name=value` (the dispatcher's flag parsing, `run.js`, Node's `util.parseArgs`; a test pins an empty `--name=` value).
+- **`--recipient` is dropped** (decided 2026-11-22: no no-op flags). The `Envelope.recipient` field in the typedef (`types.js`) is read by nothing and is dropped before the build; it is left in place for a separate cleanup, not edited here. `--recipient` is an unknown flag: exit 64. The guide's `master.cf` line no longer passes it (signing-guide.md 8.2).
+
+### B14.2 Reading the input: bounded memory, true id
+
+The reader works in chunks (an async iterator over the stdin stream or the file stream) and does two things per chunk: feeds a running sha256 and counts bytes, and appends to a buffer **only while the total is at most `MAX_TOTAL_BYTES`** (`limits.js`, 25 MiB; no new constant, one definition). Memory is bounded by the cap plus one chunk, whatever the input size.
+
+- **Ends within the cap, non-empty:** `mp.record(buf, { direction, source, envelope? })`, exactly as the library takes any caller's bytes (the admission gate, B1/Limits, still runs on it).
+- **Exceeds the cap:** the buffer is dropped, the reader keeps hashing and counting to the end, then the command calls the existing internal `Mailproof#_recordDigest({ raw_sha256: 'sha256:<hex>', size }, { direction, source })` (`mailproof.js`). It builds exactly the over-limit record `record()` would write for the same bytes (`over limit: total_bytes`, same `id`, `hasEnvelope: false`, nothing parsed, no DNS), so a later capture of the same bytes, by pipe or by `sync`, is `duplicate: true`. The envelope is not recorded for an over-cap message (as for `sync`'s over-size path, B4.3). Result: exit 0, `unverified`, reason `over limit: total_bytes`.
+- **How the CLI reaches `_recordDigest`.** Today only `Mailproof#sync` reaches it: it passes it to `runSync` inside a host object (`recordDigest: (d, c) => this._recordDigest(d, c)`, `mailproof.js`; used in `sync.js`). The CLI module `src/cli/record.js` calls `mp._recordDigest(...)` directly, the same internal method and the same arguments `sync` uses. It stays INTERNAL: not an export of `src/index.js`, not a primitive (`primitives.json`), not an MCP tool, no generated help line; the JSDoc "used by sync" note is widened to "used by sync and by `mailproof record`". Tests inject a stub through `ctx.deps` (B14.9).
+- **No ceiling in the command.** `sync` skips a message over `SYNC_MAX_MESSAGE_BYTES` (128 MiB) so one monster cannot block a folder; a pipe delivery is one message, so `record` has no such ceiling. Memory stays bounded as above; time is bounded by the MTA (`message_size_limit`) and the pipe's own timeout.
+- **Empty input** (zero bytes): exit 1, one stderr line (`record: empty message`); nothing is written (the library refuses an empty message, `mailproof.js`).
+- **A truncated record is never made** (B4.3): either the whole bytes are hashed or the mail is not recorded. A stream error mid-read (the pipe closed early, an I/O error) is exit 1 and nothing is recorded.
+
+### B14.3 Config: the pipe-only account
+
+A box that only receives mail through the pipe has no mailbox to log in to. The B11.2 config gains one rule: **`host` is optional; an account with no `host` is a pipe-only account** (today an absent `host` silently defaults to `imap.gmail.com`, `config.js`; that default now applies only when the account is an IMAP account, see below). Pipe-only example:
+
+```json
+{ "v": 1, "accounts": { "me": { "user": "me@example.com", "trailDir": "/var/lib/mailproof/trails", "trail": "default" } } }
+```
+
+- **What an account has.** `trailDir` is required; `trail`, `content`, `ots`, `stamp` and `backupRemote` mean what they mean for an IMAP account. `user` stays allowed and is recommended: it marks "(you)" in `people`; it is optional when `host` is absent (and still required for an IMAP account).
+- **Refused on a pipe-only account** (an account with no `host`): `port`, `folders`, `sent`, `passCommand`, `passFile` and `accessTokenCommand`. Each is exit 64 naming the JSON path and `only for an IMAP account` (`accounts.me.port: only for an IMAP account (this account has no host)`), in the existing style of `validateConfig` (`config.js`: one problem string per key, collected, exit 64). The rule "exactly one secret source" (B11.2) applies to an IMAP account only; a pipe-only account has none.
+- **`Account` typedef.** `host`, `port`, `folders`, `sent` and `secret` become absent on a pipe-only account (the typedef gets `host: string | null`; code that needs an IMAP login narrows on it). A single predicate `isPipeOnly(account)` in `config.js` is the one definition.
+- **Refusals.** `sync`, `watch`, the setup wizard's login test and the MCP `sync` tool refuse a pipe-only account with the one line `<account> has no IMAP server (a pipe-only account): mail arrives through mailproof record`: CLI exit 64 (`UsageError`); MCP: a `ToolError` with code `ERR_BAD_ARGUMENT` (the same shape as `badArgument`, `src/mcp/errors.js`). `sync-op.js` (`syncOnce`, shared by `sync`, `watch` and the MCP tool) is the one place the check lives, before the secret is resolved.
+- **`status`** shows it as `pipe-only` where an IMAP account shows its server and last sync (`config-screen.js`, `status.js`). **Every other command works on it** (`list`, `people`, `show`, `verify`, `replies`, `check`, `forget`, `prune`, `backup`, `export`, `stamp`, `config`, `mcp`, and the menu).
+- `config template` and the `config add-account` wizard are unchanged: they make IMAP accounts. A pipe-only account is written by hand (the guide shows it).
+
+### B14.4 Maintenance on a pipe-only box
+
+On an IMAP account `sync` carries the upkeep: it runs the content sweep and the automatic stamp job at the end of a run (`sync.js`: `host.expireContent`, `host.stamp`). A pipe-only box never runs `sync`, so:
+
+- **Content sweep: `record` runs it.** After the record commits, the command calls `mp._autoSweep()` (`mailproof.js`, the same call `sync` makes through `host.expireContent`): it runs `expireContent()` only when the last completed sweep is `content.sweepDays` days old or more (B7.5; marker `<trailDir>/.<trail>.content-sweep.json`), scans without the trail lock and takes it only for the deletions (B7.8). With no content directory nothing runs. It runs for both paths of B14.2 (an over-cap record too). A sweep failure never changes the exit code: one stderr line (`content sweep failed: <reason>`) and the exit stays that of the record. A due sweep makes that one delivery slower by the scan; the pipe's `maxproc 1` serialises it, and a delivery that finds the sweep not due pays one small file read.
+- **Seal: `record` never contacts the calendars** (unchanged, B13.1.1: capture never stamps and never waits for the network), and unlike `sync` it does **not** run the automatic stamp job. The seal on a pipe-only box is a timer: the guide runs `mailproof stamp --account <name>` as the `mailproof` user every 6 hours from a systemd timer (or cron), signing-guide.md section 9a. `stamp` already handles "nothing due" (B13.1.5). The seal stays eventual: records are sealed up to 6 hours after capture, which is the same cadence `sync` gives (`STAMP_EVERY_HOURS`).
+
+### B14.5 Concurrency
+
+Unchanged: the trail lock. Two `record` processes, or a `record` and the sweep, queue on the one cross-process lock; after `lockTimeoutMs` (default 30 s) `record` fails with `ERR_TRAIL_LOCKED`, exit 75, nothing written (the guide's wrapper defers the mail); the guide's `maxproc 1` makes this rare. The lock order of CLAUDE.md applies (sync -> stamp -> trail, never the reverse): `record` and the sweep take only the trail lock. **A running `stamp` does not block `record`:** `stamp.js` holds the stamp lock (`.<trail>.stamp.lock`) for the whole job but takes the trail lock only for the short file writes and commits of steps 3 and 5 and of each changed upgrade, and runs `ots` never under it (it works on copies in `<trailDir>/.<trail>.stamp/`); a `record` arriving meanwhile waits at most one short commit. `record` itself takes no stamp lock.
+
+### B14.6 Exit codes (B11.8, unchanged)
+
+`0` recorded, including `duplicate: true` (the same bytes again is success, never an error) and an over-cap message recorded `unverified`; `64` bad usage (a missing or other `--direction`, an unknown flag including `--recipient`, no `--account` when several are configured, no file and stdin a TTY, `<file>` a directory); `75` temporary: `ERR_TRAIL_LOCKED`; `77` config not owned by you or group/world-readable; `1` anything else (git failure, empty input, unreadable file, a stream error). A Postfix pipe bounces sysexits codes (64, 77) and defers others, so the guide's wrapper maps every non-zero code to 75; the command itself keeps this table.
+
+### B14.7 Output
+
+Human: one line, `recorded <id> <direction> <live trust>/<portable trust>` or `already recorded <id>`. `--json`: the `record()` result as one document, `{ id, duplicate, commit, ots?, content? }` (the `record` object itself is left out: a pipe prints little; an over-cap result has `id`, `duplicate`, `commit` only). stderr only for errors and the sweep line of B14.4. Nothing is printed to stdout that a pipe would mistake for protocol.
+
+### B14.8 Worker, library, MCP, primitives
+
+- **Worker.** Each pipe delivery is one process per message, so the command builds the library with `worker: { size: 0 }` (in-process, no warm worker thread; added to `mailproofOptions(account)` by the command, `config.js` stays as is), as CLAUDE.md "Worker deadline backstop" prescribes for one-mail-per-process callers: the admission gate and the DNS budget still apply; only the CPU/memory kill is absent, and the MTA's process limits bound the rest. Not configurable in the account config.
+- **Library, MCP, primitives.** `record` already exists in the class and as an MCP tool (`handlers.js`); the CLI command is a thin wrapper like the others (`primitives.json` and the generated help follow from the table in `src/cli/commands.js`, so `build:cli-help`, `check:cli-help` and `check:mcp-tools` are rerun at build). The MCP `record` tool is unchanged (it takes a path or base64, already bounded by the MCP size caps). No new runtime dependency.
+
+### B14.9 Test plan
+
+Tests use `tests/helpers/cli.js` (`run(argv, { input, deps, ... })`, injected streams, `XDG_*` set) and `makeTmpDir` (no `/tmp` leak). IMAP is never contacted. **Each test is red on today's code first** (the command, the flag handling and the pipe-only config do not exist yet), then green.
+
+Input and the library call
+1. stdin to `record --direction in`: exit 0, one record, `direction: in`, human line `recorded <id> in <trust>/<trust>`.
+2. the same with `--direction out`: `direction: out`.
+3. `<file>` argument (with `~` expanded under a test `$HOME`) records the same id as the same bytes on stdin; a missing file is exit 1; a directory is exit 64.
+4. the same bytes again: exit 0, `already recorded <id>`, `duplicate: true` in `--json`, no new commit.
+5. empty stdin and an empty file: exit 1, one stderr line, nothing written.
+6. no `--direction`, `--direction=sideways`: exit 64. No file and stdin a TTY (a stdin stream with `isTTY: true`; the helper in `tests/helpers/cli.js` gets a `stdinTty` option for it): exit 64, nothing read.
+7. `--source` defaults to `pipe` and `--source pipe:postfix` reaches the record (`source` field).
+8. each envelope flag reaches `record()` (inject `deps.makeMailproof` with a recording stub): `--client-ip`, `--client-helo`, `--sender`; `--client-ip= --client-helo=` pass empty (absent); `--sender=` passes `null`; no envelope flag passes no envelope.
+9. `--recipient=x`: exit 64 (unknown flag), nothing recorded.
+10. `--json` shape: exactly `{ id, duplicate, commit, ots?, content? }`, no `record` key; a duplicate has no `ots`.
+
+Over the cap (B14.2)
+11. an input of `MAX_TOTAL_BYTES + 1` bytes (one 25 MiB + 1 buffer built by the test, streamed to stdin in 64 KiB chunks): exit 0, `unverified`, reason `over limit: total_bytes`, and the recorded `id` equals `hashDocument(bytes)` without `sha256:` and truncated to 32 hex.
+12. a later `record` of the same bytes is `duplicate: true` (and a library `record()` of the same over-cap bytes gives the same id).
+13. the bytes are not buffered whole: assert through the injected reader, not through process memory (which is noisy on a loaded box). `src/cli/record.js` exports the chunk reader `readBounded(stream, cap)`; the test feeds it a generator of 64 KiB chunks totalling `2 * MAX_TOTAL_BYTES` and asserts that the reader holds a buffer of at most `MAX_TOTAL_BYTES` (the returned `held` length) while `size` and `sha256` cover all the bytes, and that no `Buffer.concat` of more than the cap is made (the reader reports the largest buffer it ever held). A second, coarse check: `process.memoryUsage().arrayBuffers` growth stays under `MAX_TOTAL_BYTES + 16 MiB` while the same input is read, with a wide margin.
+14. an input of exactly `MAX_TOTAL_BYTES` goes through `record()` (the gate decides), not `_recordDigest` (inject a stub on each and assert which was called).
+15. the envelope flags are not recorded for an over-cap message (the stub receives no envelope); `_recordDigest` is called with `{ raw_sha256: 'sha256:<hex>', size }` and `{ direction, source }`.
+
+Config
+16. a pipe-only account (no `host`, no secret) validates; `user` is optional there; `host` absent plus `port`, `folders`, `sent`, `passCommand`, `passFile` or `accessTokenCommand` is exit 64 naming the path and `only for an IMAP account`; an IMAP account (with `host`) still needs `user` and exactly one secret.
+17. `sync` and `watch` on a pipe-only account: exit 64 with the one-line message; the MCP `sync` tool returns `ERR_BAD_ARGUMENT` with it; the wizard's login test is not offered for it; `status` shows `pipe-only`; `list` and `stamp` work on it.
+
+Sweep and lock
+18. the content sweep runs after `record` when due (the marker is missing or `sweepDays` old; inject the clock and a counting `deps` hook around `_autoSweep`) and does not run when the marker is fresh; a sweep that throws leaves exit 0 and one stderr line; the sweep runs after the commit (the record is there when it throws).
+19. `ERR_TRAIL_LOCKED` -> exit 75 with the trail lock held by a second process (a child that holds `withTrailLock`, as the existing lock tests do) and a short `lockTimeoutMs`; nothing written.
+20. a `stamp` job paused between steps (the `afterSnapshot` hook of `stamp.js`, holding the stamp lock) does not block `record`: the record commits within `lockTimeoutMs` (B14.5).
+
+Always: the suite leaves nothing in `/tmp` (`makeTmpDir`), and `check:primitives`, `check:cli-help` and `check:mcp-tools` stay green.
+
+### B14.10 Not here
+
+A `--recipient` flag or an envelope-recipient field (B14.1). A menu entry. An upper size ceiling (B14.2). A background sealing process: the timer is the guide's (B14.4). Reading several emails from one input (one process, one message). Sending mail (mailproof never sends).
 
 # Part A — v1 (archived at M3)
 

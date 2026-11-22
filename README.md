@@ -73,7 +73,7 @@ mailproof stamp && mailproof export --with bob@example.org --after 2026-01-01 --
 mailproof verify-bundle <bundle> --expect <sha256>     # the recipient's side, no account
 ```
 
-`mailproof help` lists everything. Exit codes, systemd and cron examples, restoring a backup: [usage guide](https://github.com/hamr0/mailproof/blob/main/docs/product/usage-guide.md#the-mailproof-command). First time: the [setup guide](https://github.com/hamr0/mailproof/blob/main/docs/product/setup-guide.md). Want your own outbound mail DKIM-signed too: [self-hosting guide](https://github.com/hamr0/mailproof/blob/main/docs/product/self-hosting.md) (OpenDKIM and Postfix).
+`mailproof help` lists everything. Exit codes, systemd and cron examples, restoring a backup: [usage guide](https://github.com/hamr0/mailproof/blob/main/docs/product/usage-guide.md#the-mailproof-command). First time: the [setup guide](https://github.com/hamr0/mailproof/blob/main/docs/product/setup-guide.md). Want your own outbound mail DKIM-signed too: [signing guide (OpenDKIM and your mail client)](https://github.com/hamr0/mailproof/blob/main/docs/product/signing-guide.md).
 
 ### Agents: the MCP server
 
@@ -167,4 +167,4 @@ Replies whose words matter, such as approvals, belong in a Gmail inbox.
 
 ## More
 
-[Usage guide](https://github.com/hamr0/mailproof/blob/main/docs/product/usage-guide.md) | [Setup guide](https://github.com/hamr0/mailproof/blob/main/docs/product/setup-guide.md) | [Self-hosting guide](https://github.com/hamr0/mailproof/blob/main/docs/product/self-hosting.md) | [Integration guide](https://github.com/hamr0/mailproof/blob/main/mailproof.context.md) | [Changelog](https://github.com/hamr0/mailproof/blob/main/CHANGELOG.md) | [License](https://github.com/hamr0/mailproof/blob/main/LICENSE) (Apache 2.0)
+[Usage guide](https://github.com/hamr0/mailproof/blob/main/docs/product/usage-guide.md) | [Setup guide](https://github.com/hamr0/mailproof/blob/main/docs/product/setup-guide.md) | [Signing guide (OpenDKIM and your mail client)](https://github.com/hamr0/mailproof/blob/main/docs/product/signing-guide.md) | [Integration guide](https://github.com/hamr0/mailproof/blob/main/mailproof.context.md) | [Changelog](https://github.com/hamr0/mailproof/blob/main/CHANGELOG.md) | [License](https://github.com/hamr0/mailproof/blob/main/LICENSE) (Apache 2.0)
