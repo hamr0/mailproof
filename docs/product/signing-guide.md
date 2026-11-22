@@ -120,7 +120,7 @@ sudo chmod 0600 /etc/opendkim/keys/example.com/sel202611.private
 sudo cat /etc/opendkim/keys/example.com/sel202611.txt     # the TXT value for section 5
 ```
 
-The ownership and modes are what the live box uses (LIVE): `/etc/opendkim/keys` owned `opendkim:opendkim` mode 0750, each `*.private` owned `opendkim:opendkim` mode 0600. `opendkim-genkey` also writes a `.txt` file next to the key. Once the TXT record is published, `chown` it to `opendkim` or delete it; it holds no secret. The `opendkim-genkey` flags themselves (`-b 2048 -d -s -D`) are from the opendkim documentation and are not in the gitdone repo (**UNVERIFIED**; 2048 bits is consistent with the live key).
+The ownership and modes are what the live box uses (LIVE): `/etc/opendkim/keys` owned `opendkim:opendkim` mode 0750, each `*.private` owned `opendkim:opendkim` mode 0600. `opendkim-genkey` also writes a `.txt` file next to the key (LIVE, 2026-11-22: 2048 bits, already split into zone-file format; the files are root-owned mode 0600, so the `chown` above is required). Once the TXT record is published, `chown` it to `opendkim` or delete it; it holds no secret. The `opendkim-genkey` flags themselves (`-b 2048 -d -s -D`) are from the opendkim documentation and are not in the gitdone repo (**UNVERIFIED**; 2048 bits is consistent with the live key).
 
 **Back up the private key offline.** If you lose it you must publish a new selector; old proofs stay valid (section 12). Never put the key in git, in mailproof's trail, or in a shared folder.
 
@@ -140,7 +140,7 @@ SigningTable         refile:/etc/opendkim/SigningTable
 KeyTable             refile:/etc/opendkim/KeyTable
 ExternalIgnoreList   refile:/etc/opendkim/TrustedHosts
 InternalHosts        refile:/etc/opendkim/TrustedHosts
-OversignHeaders      From,To,Subject      # From proven; To and Subject recommended, untested
+OversignHeaders      From,To,Subject
 SignHeaders          From,To,Cc,Subject,Date,Message-ID,In-Reply-To,References,Reply-To,MIME-Version,Content-Type
 ```
 
@@ -167,8 +167,9 @@ localhost
 
 - `Mode sv` means sign outbound and verify inbound.
 - **Why a TCP socket (`inet:8891@127.0.0.1`).** Postfix often runs its daemons in a chroot. A unix socket outside the chroot is then unreachable. A TCP socket on localhost has no such problem. This is the reason gitdone uses it.
-- **`SignHeaders`: recommended, not yet tested on a box.** This matters for proofs. A real signature made on a production box (LIVE, `d=` its own domain) was `h=From:To:Subject:Date:From`: **Message-ID, MIME-Version and Content-Type were not signed** (Date was). The test mail had no In-Reply-To or References, so nothing is known about them, and OpenDKIM's default list includes them. A proof of your outbound mail that does not sign Message-ID does not bind it: a reply's link to your mail (the reply cites your Message-ID) can only be proven if your Message-ID is signed (mailproof F11). So set `SignHeaders` explicitly, as above. Check the directive against `man opendkim.conf` and test it (section 13 step 4).
-- **`OversignHeaders`.** Oversigning `From` is PROVEN (LIVE: it is why `From` appears twice in that `h=`). It stops someone adding a second `From` after signing. Adding `To` and `Subject` to the oversign list is recommended, untested.
+- **`SignHeaders` (LIVE, 2026-11-22: tested on a second OpenDKIM instance with this block verbatim; `opendkim -n -x` accepts it; Message-ID, In-Reply-To and References are signed, and a reply's link grade is `signed` in `show`).** This matters for proofs. Without the line, a real signature made on a production box (LIVE, `d=` its own domain) was `h=From:To:Subject:Date:From`: **Message-ID, MIME-Version and Content-Type were not signed** (Date was). The test mail had no In-Reply-To or References, so nothing is known about them, and OpenDKIM's default list includes them. A proof of your outbound mail that does not sign Message-ID does not bind it: a reply's link to your mail (the reply cites your Message-ID) can only be proven if your Message-ID is signed (mailproof F11). So set `SignHeaders` explicitly, as above. Check the directive with `opendkim -n -x /etc/opendkim.conf` and test it (section 13 step 4).
+- **`InternalHosts` signs without a login (LIVE observation).** Anything listed in `InternalHosts` (here the same `TrustedHosts` file) is signed with no SMTP login. Do not list your public IP or the box's hostname unless you mean it: with a catch-all, that is how spoofed-but-signed mail happens. `nss-myhostname` makes a test client on the box itself appear as the box's hostname, so a test from the box can be confounded by a hostname entry.
+- **`OversignHeaders`.** Oversigning `From` is PROVEN (LIVE: it is why `From` appears twice in that `h=`). It stops someone adding a second `From` after signing. `OversignHeaders From,To,Subject` (the block above) also works (LIVE, 2026-11-22), and the inline comment on that line parses.
 - Start it: `sudo systemctl enable --now opendkim`.
 
 ## 8. Postfix
@@ -225,12 +226,12 @@ Let `noreply@` (if you use one) fall through to the pipe, so bounces (DSNs) sent
 
 ```
 mailproof unix - n n - 1 pipe
-  flags=R user=mailproof argv=/usr/local/bin/mailproof-pipe in --client-ip=${client_address} --client-helo=${client_helo} --sender=${sender}
+  flags=R user=mailproof null_sender= argv=/usr/local/bin/mailproof-pipe in --client-ip=${client_address} --client-helo=${client_helo} --sender=${sender}
 ```
 
 - `flags=R` adds a `Return-Path` header at the top. It records the envelope sender in the message. Do not use `F` or `O`: they change the bytes mailproof records (the record id is the sha256 of the raw bytes).
 - Use `--name=${macro}` and not bare `${macro}` words, so an empty value cannot shift the other arguments (LIVE on the box run, 2026-11-22). Two facts from pipe(8) (PDOCS, not run):
-  - For a null envelope sender (a bounce), `${sender}` expands to `MAILER-DAEMON` unless the transport sets `null_sender=` (empty). Set it explicitly: add `null_sender=` to the transport's argument list in master.cf, so a bounce reaches mailproof as an empty sender, which it treats as null.
+  - For a null envelope sender (a bounce), `${sender}` expands to `MAILER-DAEMON` unless the transport sets `null_sender=` (empty). Set it explicitly: `null_sender=` is in the transport's line above (LIVE: without it the pipe passes `--sender=MAILER-DAEMON` for a bounce), so a bounce reaches mailproof as an empty sender, which it treats as null.
   - `${client_address}` and `${client_helo}` are empty for mail submitted locally (the `out` transport below). Expect `--client-ip=` and `--client-helo=` with no value. `mailproof record` accepts them (SPEC B14); with no client IP no SPF check is made and the record's `spf` is null (LIVE; fixed on this branch, F42).
 - The flag names are the ones SPEC B14.1 specifies (`--recipient` is not one: the library reads no envelope recipient). gitdone's own script uses positional arguments; mailproof's does not.
 - **maxproc (the `1` in the maxproc column, before `pipe`).** gitdone pins it to 1 because its writes have no lock. mailproof has its own trail lock (SPEC B3), so more than 1 is *possible*. Do not raise it without a reason:
@@ -273,11 +274,11 @@ mailproof-out@example.com    mailproofout:
 sudo postmap /etc/postfix/sender_bcc /etc/postfix/transport && sudo postfix reload
 ```
 
-`master.cf`, a second pipe entry (same user, same wrapper, direction `out`):
+`master.cf`, a second pipe entry (same user, same wrapper, direction `out`). It passes no envelope flags: SPF is never checked for an `out` copy, whatever the flags say (SPEC B14; a client-submitted copy would otherwise record `spf=fail`, LIVE):
 
 ```
 mailproofout unix - n n - 1 pipe
-  flags=R user=mailproof argv=/usr/local/bin/mailproof-pipe out --client-ip=${client_address} --client-helo=${client_helo} --sender=${sender}
+  flags=R user=mailproof null_sender= argv=/usr/local/bin/mailproof-pipe out
 ```
 
 Notes:
@@ -349,7 +350,7 @@ case "$rc" in
 esac
 ```
 
-The binary path above (`/usr/bin/mailproof`) must match where you installed it (section 2: a `--prefix` install without `-g` is `<prefix>/node_modules/.bin/mailproof`).
+The binary path above (`/usr/bin/mailproof`, the same in the stamp service and cron line below) assumes `npm i -g` with NodeSource; with SELinux enforcing it is `/usr/local/bin/mailproof` (section 14). It must match where you installed it (section 2: a `--prefix` install without `-g` is `<prefix>/node_modules/.bin/mailproof`).
 
 `/etc/default/mailproof` (owner root, group mailproof, mode 0640):
 
@@ -432,7 +433,7 @@ PATH=/usr/local/bin:/usr/bin:/bin
 0 */6 * * * mailproof /usr/bin/mailproof stamp --account me
 ```
 
-**UNVERIFIED (not run on a real box)**; the `ots` binary must be on the `PATH` shown (section 3).
+**LIVE (2026-11-22):** `systemctl start mailproof-stamp.service` ran and sealed, and `systemctl list-timers` shows the next run in about 6 h. The `ots` binary must be on the `PATH` shown (section 3). **Uninstalling:** `Persistent=true` leaves a stamp file under `/var/lib/systemd/timers/` (named for the timer unit); remove it with the unit. After removing a pipe entry from `master.cf`, also delete its socket `/var/spool/postfix/private/<name>`: Postfix leaves it behind.
 
 ## 10. A first try without Postfix
 
@@ -478,7 +479,7 @@ sudo chmod 0755 /etc/letsencrypt/renewal-hooks/deploy/reload-postfix.sh
 sudo certbot renew --dry-run
 ```
 
-The hook lives only on the box, not in any repo. Add it again after a rebuild or a restore of `/etc/letsencrypt`.
+LIVE (certbot 1.22): `certbot renew --dry-run` logs `Dry run: skipping deploy hook command: ...`, so the hook is discovered. `--run-deploy-hooks` does not exist in certbot 1.22; it needs a newer certbot (UNVERIFIED). The hook lives only on the box, not in any repo. Add it again after a rebuild or a restore of `/etc/letsencrypt`.
 
 ## 12. Key rotation
 
@@ -508,7 +509,7 @@ Do these in order. Stop at the first failure.
 2. **Port 25.** From another machine: `nc -vz mail.example.com 25`. From the VPS to the world: `nc -vz gmail-smtp-in.l.google.com 25`. A block here means your provider filters port 25.
 3. **DNS.** `dig +short MX example.com`, `dig +short TXT example.com`, `dig +short TXT sel202611._domainkey.example.com`, `dig -x 203.0.113.10 +short`.
 4. **Signing.** Send a mail from the box to a Gmail address you own: `echo test | mail -s test -r you@example.com you@gmail.com`. To test signing without touching the pipe or the outside world, send to the local root mailbox instead: `echo test | mail -s test -r you@example.com root@localhost`, then read it in `/var/mail/root` and check the `DKIM-Signature` header (this is how the LIVE proof was made); `opendkim-testmsg < /var/mail/root` verifies it. In Gmail, open "Show original". Expect `SPF: PASS`, `DKIM: PASS` with `d=example.com`, `DMARC: PASS`. **Then check the signed header list:** in the raw message, the `DKIM-Signature` line's `h=` must include `message-id` (and `in-reply-to` / `references` on a reply). If it lists only `From:To:Subject:Date:From`, your `SignHeaders` line did not take effect (section 7). mail-tester.com gives a score (knowless OPS says to expect 9 to 10 out of 10).
-5. **The outbound copy (the open evidence task).** After step 4, find the recorded `out` copy and check it:
+5. **The outbound copy (LIVE, 2026-11-22).** After step 4, find the recorded `out` copy and check it:
    ```bash
    mailproof list --account me          # run as the mailproof user, as in section 10
    mailproof show <id> --account me
@@ -592,7 +593,7 @@ sudo restorecon -R /var/lib/mailproof
 
 # Part 2: Your mail client
 
-> **Status: every step in Part 2 is UNVERIFIED (not run on a real box).** It is written from the Postfix and Dovecot documentation and from the mechanism in Part 1. Nobody has run it end to end, and the signed, recorded copy of a client-submitted mail has not been tested. Do not read any line here as a result. Section 20 lists each step as unverified.
+> **Status: Part 2 was run on a real box (AlmaLinux 8.10, 2026-11-22), with submission bound to 127.0.0.1 for isolation, except the real client settings of section 19 (no Thunderbird or phone run) and the firewall.** Sections 16 to 18 are LIVE; section 20 lists what is and is not proven.
 
 ## 15. What this part does, and what it needs
 
@@ -608,7 +609,7 @@ Two warnings. (1) Your Sent folder in the client still holds an unsigned copy; t
 
 ## 16. A submission service on port 587 (and 465)
 
-Port 25 is for server-to-server mail. Clients use **submission**: port 587 with STARTTLS, or 465 with implicit TLS. In `/etc/postfix/master.cf` (UNVERIFIED):
+Port 25 is for server-to-server mail. Clients use **submission**: port 587 with STARTTLS, or 465 with implicit TLS. In `/etc/postfix/master.cf` (LIVE, tested bound to 127.0.0.1):
 
 ```
 submission inet n       -       n       -       -       smtpd
@@ -622,7 +623,6 @@ submission inet n       -       n       -       -       smtpd
   -o smtpd_client_restrictions=permit_sasl_authenticated,reject
   -o smtpd_relay_restrictions=permit_sasl_authenticated,reject
   -o smtpd_recipient_restrictions=reject_sender_login_mismatch,permit_sasl_authenticated,reject
-  -o milter_macro_daemon_name=ORIGINATING
 
 # optional: implicit TLS on 465
 smtps     inet  n       -       n       -       -       smtpd
@@ -635,14 +635,13 @@ smtps     inet  n       -       n       -       -       smtpd
   -o smtpd_client_restrictions=permit_sasl_authenticated,reject
   -o smtpd_relay_restrictions=permit_sasl_authenticated,reject
   -o smtpd_recipient_restrictions=reject_sender_login_mismatch,permit_sasl_authenticated,reject
-  -o milter_macro_daemon_name=ORIGINATING
 ```
 
-`smtpd_tls_auth_only=yes` means a password is never accepted without TLS. `smtpd_tls_security_level=encrypt` on 587 makes STARTTLS mandatory. The certificate settings are the ones from section 11. `milter_macro_daemon_name=ORIGINATING` marks the mail as outbound for OpenDKIM (its `InternalHosts` / signing tables must match; see section 7).
+`smtpd_tls_auth_only=yes` means a password is never accepted without TLS. `smtpd_tls_security_level=encrypt` on 587 makes STARTTLS mandatory. The certificate settings are the ones from section 11. **LIVE:** AUTH is refused before STARTTLS (530 5.7.0), unauthenticated relay is refused (554 5.7.1), a bad password gives 535, and a `MAIL FROM` not owned by the login gives 553 5.7.1 "not owned by user". Authenticated mail on 587 and on 465 was signed, and its `sender_bcc_maps` copy was recorded `out` verified/verified. **No `milter_macro_daemon_name=ORIGINATING` is needed** (LIVE: signed with and without it): Postfix's default `milter_mail_macros` passes `{auth_authen}` and friends, and OpenDKIM signs authenticated senders on its own, even from a client that is not in `InternalHosts` (the same client without a login was not signed: "not internal", "not authenticated"). It needs `smtpd_milters` set (section 8), a `SigningTable` entry matching the From domain, and the default `milter_mail_macros`: do not remove the `{auth_*}` macros.
 
 ## 17. Login: Dovecot SASL
 
-A client must prove who it is before Postfix accepts mail from it. Dovecot SASL is the common choice (UNVERIFIED here). Packages: `dovecot-core` (and your distro's auth packages). In Dovecot, expose an auth socket Postfix can reach (`/etc/dovecot/conf.d/10-master.conf`):
+A client must prove who it is before Postfix accepts mail from it. Dovecot SASL is the common choice (LIVE on AlmaLinux 8.10, 2026-11-22). Packages: `dovecot-core` (and your distro's auth packages). In Dovecot, expose an auth socket Postfix can reach (`/etc/dovecot/conf.d/10-master.conf`):
 
 ```
 service auth {
@@ -654,7 +653,25 @@ service auth {
 }
 ```
 
-and allow plain login only over TLS (`/etc/dovecot/conf.d/10-auth.conf`): `disable_plaintext_auth = yes`, `auth_mechanisms = plain login`. "Plain" here is the login mechanism, carried inside the TLS session; it is the normal setup. Create the users and their passwords with whatever your Dovecot user database is (system users or a passwd-file); use a long, unique password per user. Restart Dovecot and reload Postfix.
+and set (`/etc/dovecot/conf.d/10-auth.conf`) `disable_plaintext_auth = yes` and `auth_mechanisms = plain login`. "Plain" here is the login mechanism, carried inside the TLS session; it is the normal setup. All of the following is LIVE on EL8:
+
+- **SASL only, TLS ends in Postfix.** In `conf.d/10-ssl.conf` set `ssl = no` and comment out `ssl_cert` and `ssl_key` (otherwise `doveconf` fails with "ssl_cert: Can't open file"). In `dovecot.conf` set `protocols =` (empty) and `listen = 127.0.0.1`, so there are no IMAP or POP listeners.
+- **Security: comment out `!include auth-system.conf.ext` in `10-auth.conf`**, or system (PAM) users can log in to submission.
+- **A users file.** In `10-auth.conf` add `!include auth-passwdfile.conf.ext`, and in `conf.d/auth-passwdfile.conf.ext`:
+
+```
+passdb {
+  driver = passwd-file
+  args = scheme=SHA512-CRYPT /etc/dovecot/users
+}
+userdb {
+  driver = static
+  args = uid=nobody gid=nobody home=/nonexistent
+}
+```
+
+  `/etc/dovecot/users` has lines `alice:{SHA512-CRYPT}<hash>`, with the hash from `doveadm pw -s SHA512-CRYPT`. Use a long, unique password per user; make the file readable by Dovecot only.
+- Restart Dovecot and reload Postfix. Check with `doveadm auth test alice`.
 
 ## 18. Only your own addresses: `smtpd_sender_login_maps`
 
@@ -664,7 +681,7 @@ Without a check, any logged-in user could send as any address on your domain. Ma
 alice@example.com   alice@example.com
 ```
 
-Left side: the address; right side: the login name that owns it. `reject_sender_login_mismatch` (in the `submission` entry above) refuses mail whose `MAIL FROM` is not owned by the authenticated login. With this in place, the OpenDKIM signing and the `sender_bcc_maps` copy (section 8.3) apply to mail from an authenticated owner of the address. This also closes the spoofed-sender hole of section 8.3 for the submission port. Check that signing still happens for submitted mail: the milter must be set for `smtpd` (`smtpd_milters`, section 8), and the signing table must list your domain and key (section 7).
+Left side: the address; right side: the login name that owns it. `reject_sender_login_mismatch` (in the `submission` entry above) refuses mail whose `MAIL FROM` is not owned by the authenticated login. With this in place, the OpenDKIM signing and the `sender_bcc_maps` copy (section 8.3) apply to mail from an authenticated owner of the address. The direction is LIVE (left side the address, right side the login). This also closes the spoofed-sender hole of section 8.3 for the submission port. Check that signing still happens for submitted mail: the milter must be set for `smtpd` (`smtpd_milters`, section 8), and the signing table must list your domain and key (section 7).
 
 ## 19. Client settings, DNS and firewall
 
@@ -683,11 +700,11 @@ The client keeps its own account for **receiving**. This guide does not set up I
 
 DNS: the A record for `mail.example.com` and the certificate (section 11) must match the server name the client uses. No new DNS record is needed for submission itself (the SRV records some clients auto-discover are optional). Firewall: open the submission port (`sudo firewall-cmd --add-service=smtp-submission --permanent`, and `smtps` for 465; then `--reload`), as you opened `smtp` in section 8. Some home and mobile networks block 25 but allow 587, which is why clients use it.
 
-Test it: send a mail from the client to an address you can read at a provider that shows full headers (Gmail "Show original"). Look for `dkim=pass header.d=example.com`. Then run the recording checks from section 13 (testing step 5): the recorded `out` copy must verify with `mailproof verify`. **None of this has been run.**
+Test it: send a mail from the client to an address you can read at a provider that shows full headers (Gmail "Show original"). Look for `dkim=pass header.d=example.com`. Authenticated submission from a client that is not in `InternalHosts` was signed (LIVE, section 16). Then run the recording checks from section 13 (testing step 5): the recorded `out` copy must verify with `mailproof verify`. **Not run: the client settings above with a real client (no Thunderbird or phone run), and the firewall services.** Binding 587 and 465 to `127.0.0.1` was the isolated test layout; real clients need the firewalld `smtp-submission` and `smtps` services (not tested).
 
 ## 20. Part 2: verified and unverified
 
-Every row of Part 2 is **UNVERIFIED (not run on a real box)**; the rows are added to the table in section 21.
+Part 2 sections 16 to 18 are **LIVE** (AlmaLinux 8.10, 2026-11-22); the client settings and firewall (section 19) are **UNVERIFIED**. The rows are in the table in section 21.
 
 ## 21. Verified and unverified (both parts)
 
@@ -706,19 +723,20 @@ Tags: **LIVE** = read or run on a real production Postfix box by the gitdone ope
 | DKIM TXT split into 255-char strings | LIVE in practice | |
 | PTR set to `myhostname` | PDOCS-level: documented by knowless, not read on the box | knowless OPS §5.3 |
 | `inet_protocols = ipv4` | LIVE | |
-| `opendkim-genkey` flags | UNVERIFIED (2048 bits is consistent with the live key) | |
+| `opendkim-genkey` flags and output (2048-bit, `.txt` in zone format; files root 0600 so the `chown` is required) | **LIVE** (2026-11-22) | |
 | Key and table ownership and modes (0750/0600/0640, root:opendkim 0755) | LIVE | |
 | OpenDKIM multi-domain config, TCP socket | LIVE | gitdone wiki §5 updated on branch `docs/deployment-live-mail-config` |
 | `OversignHeaders From` | LIVE | |
-| `OversignHeaders` To and Subject | UNVERIFIED: recommended, untested | |
-| `SignHeaders` explicit list (binds Message-ID) | UNVERIFIED: recommended, not yet tested | LIVE observation: without it Message-ID, MIME-Version, Content-Type are unsigned |
+| `OversignHeaders From,To,Subject` (inline comment parses) | **LIVE** (2026-11-22) | |
+| `SignHeaders` explicit list as written (Message-ID, In-Reply-To, References signed; reply link grade `signed`; `opendkim -n -x` ok) | **LIVE** (2026-11-22; without it Message-ID, MIME-Version, Content-Type are unsigned) | |
+| `InternalHosts` entries are signed without a login | **LIVE observation** | section 7 |
 | Postfix milter lines, `milter_default_action`, `message_size_limit` | LIVE | gitdone §6 |
 | `virtual_mailbox_domains` + `virtual_mailbox_maps = static:nothing` | LIVE | |
 | Role-address virtual aliases | LIVE | gitdone §6.1 |
 | Inbound pipe entry, `flags=R`, maxproc 1 (gitdone's own script) | LIVE | |
 | Pipe with `mailproof record` and `--name=${macro}` flags (flags=R, maxproc 1, user=mailproof) | **LIVE** (2026-11-22) | command built (SPEC B14); `--name=` and empty values are pinned by tests; the Postfix pipe itself not run on a box |
 | `${sender}` is `MAILER-DAEMON` for a null sender; `null_sender=`; empty client fields for local mail | PDOCS | pipe(8) |
-| maxproc above 1 gives no gain with the trail lock | UNVERIFIED | reasoning from SPEC B3 |
+| maxproc above 1 gives no gain with the trail lock | UNVERIFIED (reasoning) | SPEC B3 |
 | Wrapper (env sourcing, logger, PIPESTATUS, every failure to 75); `/etc/default/mailproof` with an inline comment works when sourced | **LIVE** (2026-11-22) | |
 | Exit 75 makes Postfix defer (dsn 4.3.0) and later deliver | **LIVE** (2026-11-22) | |
 | Output kept away from Postfix (enhanced status codes) | PDOCS | |
@@ -726,9 +744,11 @@ Tags: **LIVE** = read or run on a real production Postfix box by the gitdone ope
 | Stdin cap in the program | LIVE for gitdone (25 MB); mailproof's built and tested (hash and record over the cap, memory bounded), not run on a box | SPEC B14.2 |
 | Pipe-only account (no `host`) accepted by the CLI config | **LIVE** (2026-11-22; also built and tested: config validation with the lenient rule, `status`, the `sync` and `watch` refusal) | SPEC B14.3 |
 | `mailproof stamp` with `ots` on the PATH seals the trail | **LIVE** (2026-11-22) | |
-| `mailproof-stamp.service` and `.timer` (every 6 hours) on a pipe-only box; `record` runs the due content sweep | UNVERIFIED (the timer units not run on a real box) | SPEC B14.4, section 9a |
+| `mailproof-stamp.service` and `.timer` (every 6 hours) on a pipe-only box | **LIVE** (2026-11-22: `systemctl start` sealed; `list-timers` shows +6h); the content sweep inside `record` is built and tested | SPEC B14.4, section 9a |
 | Distro default certificate, `smtp_tls_security_level = may` | LIVE | |
-| Let's Encrypt for Postfix, and the `renewal-hooks/deploy` script | UNVERIFIED: standard certbot, not proven on a box | |
+| `renewal-hooks/deploy` hook is discovered (`certbot renew --dry-run`, certbot 1.22) | **LIVE** (2026-11-22) | |
+| `certbot renew --run-deploy-hooks` | UNVERIFIED: not in certbot 1.22, needs a newer certbot | |
+| Let's Encrypt issuance for Postfix | UNVERIFIED: standard certbot, not proven on a box | |
 | certbot `renew_hook` reloads nginx | LIVE | gitdone §9 |
 | Firewall `firewall-cmd --add-service=smtp --permanent` | LIVE | |
 | Port 25 reachable from the provider | LIVE for the operators' provider; check yours | |
@@ -748,10 +768,10 @@ Tags: **LIVE** = read or run on a real production Postfix box by the gitdone ope
 | Key rotation with KeyTable and SigningTable | LIVE (the multi-domain form) | not run with mailproof |
 | Old proofs survive after the old TXT is removed | Covered by the key-archive design and tests | not tied to a rotation on a real box |
 | Shared-IP blocklist risk, queue alert, `postdrop` group | LIVE (gitdone operations) | |
-| **Part 2: submission service** (`submission` on 587 with `smtpd_tls_security_level=encrypt`, `smtpd_tls_auth_only`; optional `smtps` on 465), section 16 | **UNVERIFIED (not run on a real box)** | Postfix docs |
-| Part 2: Dovecot SASL (`smtpd_sasl_type=dovecot`, auth socket in the Postfix queue dir, `disable_plaintext_auth = yes`), section 17 | **UNVERIFIED (not run on a real box)** | Postfix and Dovecot docs |
-| Part 2: `smtpd_sender_login_maps` with `reject_sender_login_mismatch`, section 18 | **UNVERIFIED (not run on a real box)** | Postfix docs |
-| Part 2: OpenDKIM signs mail received on the submission port (`milter_macro_daemon_name=ORIGINATING`) | **UNVERIFIED (not run on a real box)** | mechanism of Part 1 |
-| Part 2: the `sender_bcc_maps` copy of client-submitted mail is recorded and verifies | **UNVERIFIED (not run on a real box)** | same open evidence task as section 8.3 |
+| **Part 2: submission service** (`submission` on 587, optional `smtps` on 465; AUTH refused before STARTTLS 530 5.7.0, unauthenticated relay 554 5.7.1, bad password 535, not-owned MAIL FROM 553 5.7.1), section 16 | **LIVE** (2026-11-22, bound to 127.0.0.1) | |
+| Part 2: Dovecot SASL (auth socket block, `disable_plaintext_auth = yes`, `auth_mechanisms = plain login`, passwd-file with SHA512-CRYPT, `doveadm auth test`), section 17 | **LIVE** (2026-11-22, EL8) | |
+| Part 2: `smtpd_sender_login_maps` with `reject_sender_login_mismatch` (left address, right login), section 18 | **LIVE** (2026-11-22) | |
+| Part 2: OpenDKIM signs mail from an authenticated client that is not in `InternalHosts` (default `milter_mail_macros`; no `ORIGINATING` needed; the same client without a login is not signed) | **LIVE** (2026-11-22) | |
+| Part 2: the `sender_bcc_maps` copy of client-submitted mail (587 and 465) is recorded `out` verified/verified; out copy SPF is null | **LIVE** (2026-11-22) | |
 | Part 2: client settings (server, port 587, STARTTLS, normal password, username), section 19 | **UNVERIFIED (not run on a real box)** | |
-| Part 2: DNS and firewall (`smtp-submission` / `smtps` services; no new DNS record) | **UNVERIFIED (not run on a real box)** | firewalld docs |
+| Part 2: DNS and firewall (`smtp-submission` / `smtps` services; no new DNS record) | **UNVERIFIED** (the test bound 587 and 465 to 127.0.0.1) | firewalld docs |
