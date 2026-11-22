@@ -165,6 +165,19 @@ test('B14.9-8: each envelope flag reaches record(); empty values pass empty (sen
   assert.deepEqual(await run([]), { direction: 'in', source: 'pipe' });
 });
 
+test('record: no client IP (empty or absent) means no SPF check: spf is null whatever --client-helo and --sender say', async () => {
+  const spfOf = async (argv) => {
+    const p = pipeWorld();
+    const r = await p.rec(['--direction', 'out', '--json', ...argv], { input: mail(40) });
+    assert.equal(r.code, 0, r.stderr);
+    return (await p.mk().get(JSON.parse(r.stdout).id)).verdicts.live.spf;
+  };
+  assert.equal(await spfOf(['--client-ip=', '--client-helo=mail.example.net', '--sender=a@b.example']), null);
+  assert.equal(await spfOf(['--client-helo=mail.example.net', '--sender=a@b.example']), null);
+  assert.equal(await spfOf(['--sender=a@b.example']), null);
+  assert.notEqual(await spfOf(['--client-ip=192.0.2.1', '--client-helo=mail.example.net', '--sender=a@sender.invalid']), null, 'with an IP, SPF is checked');
+});
+
 test('B14.9-9: --recipient=x is an unknown flag: exit 64, nothing recorded', async () => {
   const p = pipeWorld();
   const r = await p.rec(['--direction', 'in', '--recipient=x'], { input: mail() });

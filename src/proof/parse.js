@@ -61,8 +61,9 @@ function authenticateMessage(raw, envelope = {}, { mtaHostname = null, resolver 
   return authenticate(raw, {
     trustReceived: false,
     ip: envelope.clientIp || undefined,
-    helo: envelope.clientHelo || undefined,
-    sender: envelope.sender || undefined,
+    // without a client IP there is no SPF check (a helo or sender alone would make mailauth report a temperror)
+    helo: (envelope.clientIp && envelope.clientHelo) || undefined,
+    sender: (envelope.clientIp && envelope.sender) || undefined,
     mta: mtaHostname || undefined,
     resolver: resolver || undefined,
     // mailproof surfaces only DKIM/DMARC/ARC trust (summariseAuth never reads
