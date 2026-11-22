@@ -201,14 +201,14 @@ Let `noreply@` (if you use one) fall through to the pipe, so bounces (DSNs) sent
 
 ```
 mailproof unix - n n - 1 pipe
-  flags=R user=mailproof argv=/usr/local/bin/mailproof-pipe in --client-ip=${client_address} --client-helo=${client_helo} --sender=${sender} --recipient=${original_recipient}
+  flags=R user=mailproof argv=/usr/local/bin/mailproof-pipe in --client-ip=${client_address} --client-helo=${client_helo} --sender=${sender}
 ```
 
 - `flags=R` adds a `Return-Path` header at the top. It records the envelope sender in the message. Do not use `F` or `O`: they change the bytes mailproof records (the record id is the sha256 of the raw bytes).
 - Use `--name=${macro}` and not bare `${macro}` words, so an empty value cannot shift the other arguments (UNVERIFIED on this exact line). Two facts from pipe(8) (PDOCS, not run):
   - For a null envelope sender (a bounce), `${sender}` expands to `MAILER-DAEMON` unless the transport sets `null_sender=` (empty). Set it explicitly: add `null_sender=` to the transport's argument list in master.cf, so a bounce reaches mailproof as an empty sender, which it treats as null.
   - `${client_address}` and `${client_helo}` are empty for mail submitted locally (the `out` transport below). Expect `--client-ip=` and `--client-helo=` with no value. `mailproof record` must accept them (SPEC B14).
-- The flag names are the ones SPEC B14 specifies. gitdone's own script uses positional arguments; mailproof's does not.
+- The flag names are the ones SPEC B14.1 specifies (`--recipient` is not one: the library reads no envelope recipient). gitdone's own script uses positional arguments; mailproof's does not.
 - **maxproc (the `1` in the maxproc column, before `pipe`).** gitdone pins it to 1 because its writes have no lock. mailproof has its own trail lock (SPEC B3), so more than 1 is *possible*. Do not raise it without a reason:
   - **With 1:** Postfix delivers one mail at a time. No lock waits. Memory is bounded: one message in flight (the library caps a message at 25 MiB, and each pipe process starts a worker thread by default). Mail queues up during a burst and drains later.
   - **With N > 1:** every process still waits on the same trail lock (one writer per trail), so there is little gain. A wait longer than `lockTimeoutMs` (default 30 s) ends in `ERR_TRAIL_LOCKED`, which defers the mail and retries it, wasting work. Memory grows to about N times the per-process peak.
@@ -344,19 +344,68 @@ PATH=/usr/local/bin:/usr/bin:/bin   # /usr/local/bin for ots
 | 64, 77, 1, anything else (or a missing argument) | usage, permission, or write failure | 75, plus a syslog line |
 
 - **Empty stdin** is an error (the library refuses an empty message): `record` exits non-zero, so Postfix defers. (gitdone exits 2 for it.)
-- **Size cap.** `message_size_limit` is the outer bound. `mailproof record` also stops reading stdin at the library's own bound (25 MiB, `MAX_TOTAL_BYTES` in `limits.js`), so it never loads an unbounded message into memory. See SPEC B14.
+- **Size cap.** `message_size_limit` is the outer bound. `mailproof record` keeps at most the library's own bound in memory (25 MiB, `MAX_TOTAL_BYTES` in `limits.js`): a larger message is hashed as it streams in and recorded `unverified` (`over limit: total_bytes`), never loaded whole. See SPEC B14.2.
 - **Mail is recorded even when unverified.** A mail that fails DKIM is still a record (accept-with-flag). Exit 0 means "recorded", not "verified".
 
-The mailproof config for the `mailproof` user (`config.json`, SPEC B11.2): one account whose trail lives under `/var/lib/mailproof`. Check the exact keys against `mailproof help config`. **UNVERIFIED:** whether the CLI config accepts an account with no IMAP block (the CLI was built around IMAP accounts; to be settled at build, SPEC B14).
+The mailproof config for the `mailproof` user (`config.json`, SPEC B11.2): one **pipe-only account** (no `host`: nothing to log in to, mail arrives through the pipe). `user` is optional there and marks "(you)" in `people`. `port`, `folders`, `sent` and the password keys are refused on such an account, and `sync` and `watch` say `me has no IMAP server (a pipe-only account): mail arrives through mailproof record`. **UNVERIFIED (not built):** the pipe-only account is specified in SPEC B14.3; today's CLI still wants a `host` default and a password key, so this config is refused until M5 is built.
 
 ```json
 {
   "v": 1,
   "accounts": {
-    "me": { "trailDir": "/var/lib/mailproof/trails", "trail": "default" }
+    "me": { "user": "me@example.com", "trailDir": "/var/lib/mailproof/trails", "trail": "default" }
   }
 }
 ```
+
+### 9a. Sealing on a timer, and retention
+
+On an IMAP account `mailproof sync` seals (OpenTimestamps) and sweeps expired content at the end of each run. A pipe-only box never runs `sync`, and `mailproof record` stays offline: it never contacts the calendars. **Retention:** `record` runs the due content sweep itself, after the record is committed (SPEC B14.4); nothing for you to set up. **The seal** is a timer. `/etc/systemd/system/mailproof-stamp.service`:
+
+```
+[Unit]
+Description=Seal the mailproof trail (OpenTimestamps)
+
+[Service]
+Type=oneshot
+User=mailproof
+Environment=HOME=/var/lib/mailproof
+Environment=XDG_CONFIG_HOME=/var/lib/mailproof/.config
+Environment=XDG_STATE_HOME=/var/lib/mailproof/.local/state
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/mailproof stamp --account me
+```
+
+`/etc/systemd/system/mailproof-stamp.timer`:
+
+```
+[Unit]
+Description=Seal the mailproof trail every 6 hours
+
+[Timer]
+OnBootSec=15min
+OnUnitActiveSec=6h
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+
+```bash
+sudo systemctl daemon-reload && sudo systemctl enable --now mailproof-stamp.timer
+```
+
+`mailproof stamp` handles "nothing due" (it exits 0 and does nothing), and it never blocks a delivery for more than one short commit (SPEC B14.5). Without systemd, `/etc/cron.d/mailproof` does the same:
+
+```
+HOME=/var/lib/mailproof
+XDG_CONFIG_HOME=/var/lib/mailproof/.config
+XDG_STATE_HOME=/var/lib/mailproof/.local/state
+PATH=/usr/local/bin:/usr/bin:/bin
+0 */6 * * * mailproof /usr/bin/mailproof stamp --account me
+```
+
+**UNVERIFIED (not run on a real box)**; the `ots` binary must be on the `PATH` shown (section 3).
 
 ## 10. A first try without Postfix
 
@@ -563,7 +612,7 @@ Every row of Part 2 is **UNVERIFIED (not run on a real box)**; the rows are adde
 
 ## 21. Verified and unverified (both parts)
 
-Tags: **LIVE** = read or run on a real production Postfix box by the gitdone operators (gitdone repo records, hamr0/gitdone `docs/wiki/deployment.md` §5/§6; the author of this guide did not re-run it). **PDOCS** = from the Postfix documentation, not run. **UNVERIFIED** = neither. **No step has been run for mailproof itself**, because `mailproof record` does not exist yet. **Part 2 (mail client) is entirely UNVERIFIED.**
+Tags: **LIVE** = read or run on a real production Postfix box by the gitdone operators (gitdone repo records, hamr0/gitdone `docs/wiki/deployment.md` §5/§6; the author of this guide did not re-run it). **PDOCS** = from the Postfix documentation, not run. **UNVERIFIED** = neither. **No step has been run for mailproof itself**, because `mailproof record` is specified (SPEC B14) but not built yet. **Part 2 (mail client) is entirely UNVERIFIED.**
 
 | Step | Status | Source / note |
 |---|---|---|
@@ -594,7 +643,9 @@ Tags: **LIVE** = read or run on a real production Postfix box by the gitdone ope
 | Exit-code behaviour of pipe(8); wrapper maps all non-zero to 75 | PDOCS (design) | |
 | Output kept away from Postfix (enhanced status codes) | PDOCS | |
 | `ERR_TRAIL_LOCKED` to exit 75 retried by Postfix | Documented, not proven on a box | SPEC B3 |
-| Stdin cap in the program | LIVE for gitdone (25 MB); mailproof's specified only | SPEC B14 |
+| Stdin cap in the program | LIVE for gitdone (25 MB); mailproof's specified only (hash and record over the cap) | SPEC B14.2 |
+| Pipe-only account (no `host`) accepted by the CLI config | UNVERIFIED (specified, not built) | SPEC B14.3 |
+| `mailproof-stamp.service` and `.timer` (every 6 hours) seal the trail on a pipe-only box; `record` runs the due content sweep | UNVERIFIED (not run on a real box) | SPEC B14.4, section 9a |
 | Distro default certificate, `smtp_tls_security_level = may` | LIVE | |
 | Let's Encrypt for Postfix, and the `renewal-hooks/deploy` script | UNVERIFIED: standard certbot, not proven on a box | |
 | certbot `renew_hook` reloads nginx | LIVE | gitdone §9 |
