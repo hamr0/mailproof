@@ -150,7 +150,7 @@ test('B12 status: the account line, bold labels, ~/ paths, short relative times,
   assert.match(t, /^test · me@owner\.example$/m, 'the account line');
   assert.match(t, /^ {2}records {6}6 \(5 in, 1 out\) · 3 verified, 2 unverified · 2026-11-01 to 2026-11-01$/m);
   assert.match(t, /^ {2}content {6}6 files, [\d.]+ KiB$/m, 'human sizes');
-  assert.match(t, /^ {2}seal {9}one batch every 6 h; never run \(due at the next sync or `mailproof seal`\); 0 manifests$/m);
+  assert.match(t, /^ {2}seal {9}one batch every 6 h; never run \(due at the next sync or `mailproof stamp`\); 0 manifests$/m);
   const home = makeWorld({ accounts: { h: account('~/mailproof/h') } });
   const h = await home.run(['status']);
   assert.match(h.stdout, /^ {2}trail {8}~\/mailproof\/h\/default$/m, 'a path under HOME prints as ~/');
