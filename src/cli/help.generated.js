@@ -300,7 +300,7 @@ export const HELP = Object.freeze({
           "name": "client-ip",
           "type": "string",
           "arg": "<ip>",
-          "help": "the connecting client's IP (Postfix ${client_address}), for the SPF check; empty = none"
+          "help": "the connecting client's IP (Postfix ${client_address}), for the SPF check on `in` mail (ignored for `out`); empty = none"
         },
         {
           "name": "client-helo",

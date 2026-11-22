@@ -30,7 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **`record`: an empty or missing `--client-ip` means no SPF check.** On local submission Postfix passes an empty client IP with a HELO and sender, and the out-copy was recorded with `spf: temperror`; now SPF is `null` unless a client IP is given. This applies to the library too: `Mailproof#record()` with an envelope that has a sender or HELO but no `clientIp` now records `spf: null` (it was a temperror).
+- **`record`: an outbound copy never gets an SPF check, and an empty or missing `--client-ip` means none for received mail.** SPF is checked only for direction `in` with a client IP; `out` records `spf: null` whatever envelope is passed (a client-submitted copy was recorded `spf=fail`, checked against the owner's own domain from the owner's own machine).
+  - Detail of the empty-IP case: On local submission Postfix passes an empty client IP with a HELO and sender, and the out-copy was recorded with `spf: temperror`; now SPF is `null` unless a client IP is given. This applies to the library too: `Mailproof#record()` with an envelope that has a sender or HELO but no `clientIp` now records `spf: null` (it was a temperror).
 - **`status`: the "never run" seal hint** named a `mailproof seal` command that does not exist; it now says `mailproof stamp` (and, on a pipe-only account, to run it from a timer).
 - **`record --direction sideways`** now says `--direction must be in or out (got "sideways")` instead of "required" (exit 64 as before).
 

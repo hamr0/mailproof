@@ -168,7 +168,7 @@ test('B14.9-8: each envelope flag reaches record(); empty values pass empty (sen
 test('record: no client IP (empty or absent) means no SPF check: spf is null whatever --client-helo and --sender say', async () => {
   const spfOf = async (argv) => {
     const p = pipeWorld();
-    const r = await p.rec(['--direction', 'out', '--json', ...argv], { input: mail(40) });
+    const r = await p.rec(['--direction', 'in', '--json', ...argv], { input: mail(40) });
     assert.equal(r.code, 0, r.stderr);
     return (await p.mk().get(JSON.parse(r.stdout).id)).verdicts.live.spf;
   };
@@ -176,6 +176,17 @@ test('record: no client IP (empty or absent) means no SPF check: spf is null wha
   assert.equal(await spfOf(['--client-helo=mail.example.net', '--sender=a@b.example']), null);
   assert.equal(await spfOf(['--sender=a@b.example']), null);
   assert.notEqual(await spfOf(['--client-ip=192.0.2.1', '--client-helo=mail.example.net', '--sender=a@sender.invalid']), null, 'with an IP, SPF is checked');
+});
+
+test('record: an outbound copy never gets an SPF check, an inbound one with a client IP does', async () => {
+  const spfOf = async (direction) => {
+    const p = pipeWorld();
+    const r = await p.rec(['--direction', direction, '--json', '--client-ip=203.0.113.9', '--client-helo=x', '--sender=a@b.example'], { input: mail(50) });
+    assert.equal(r.code, 0, r.stderr);
+    return (await p.mk().get(JSON.parse(r.stdout).id)).verdicts.live.spf;
+  };
+  assert.equal(await spfOf('out'), null, 'SPF on an outbound copy is meaningless (the client is the sender own machine)');
+  assert.notEqual(await spfOf('in'), null);
 });
 
 test('B14.9-9: --recipient=x is an unknown flag: exit 64, nothing recorded', async () => {

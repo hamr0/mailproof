@@ -129,7 +129,7 @@ export const COMMANDS = {
     flags: {
       direction: { type: 'string', arg: '<in|out>', help: 'required: in for mail you received, out for mail you sent' },
       source: { type: 'string', arg: '<text>', help: 'where the email came from, recorded with it (default pipe; the guide passes pipe:postfix)' },
-      'client-ip': { type: 'string', arg: '<ip>', help: 'the connecting client\'s IP (Postfix ${client_address}), for the SPF check; empty = none' },
+      'client-ip': { type: 'string', arg: '<ip>', help: 'the connecting client\'s IP (Postfix ${client_address}), for the SPF check on `in` mail (ignored for `out`); empty = none' },
       'client-helo': { type: 'string', arg: '<name>', help: 'the client\'s HELO name (Postfix ${client_helo}); empty = none' },
       sender: { type: 'string', arg: '<addr>', help: 'the envelope sender (Postfix ${sender}), for SPF; empty = the null sender' },
     },
