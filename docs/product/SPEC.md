@@ -1862,7 +1862,7 @@ Unchanged: the trail lock. Two `record` processes, or a `record` and the sweep, 
 
 ### B14.7 Output
 
-Human: one line, `recorded <id> <direction> <live trust>/<portable trust>` or `already recorded <id>`. `--json`: the `record()` result as one document, `{ id, duplicate, commit, ots?, content? }` (the `record` object itself is left out: a pipe prints little; an over-cap result has `id`, `duplicate`, `commit` only). stderr only for errors and the sweep line of B14.4. Nothing is printed to stdout that a pipe would mistake for protocol.
+Human: one line, `recorded <id> <direction> <live trust>/<portable trust>` or `already recorded <id>`. `--json`: the `record()` result as one document, `{ id, duplicate, commit, ots?, content? }` (the `record` object itself is left out: a pipe prints little; an over-cap result has `id`, `duplicate`, `commit` and, when sealing is on, `ots` (`queued`: the commit lands in the next batch manifest), and no `content`). stderr only for errors and the sweep line of B14.4. Nothing is printed to stdout that a pipe would mistake for protocol.
 
 ### B14.8 Worker, library, MCP, primitives
 

@@ -612,7 +612,7 @@ Every row of Part 2 is **UNVERIFIED (not run on a real box)**; the rows are adde
 
 ## 21. Verified and unverified (both parts)
 
-Tags: **LIVE** = read or run on a real production Postfix box by the gitdone operators (gitdone repo records, hamr0/gitdone `docs/wiki/deployment.md` §5/§6; the author of this guide did not re-run it). **PDOCS** = from the Postfix documentation, not run. **UNVERIFIED** = neither. **No step has been run for mailproof itself**, because `mailproof record` is specified (SPEC B14) but not built yet. **Part 2 (mail client) is entirely UNVERIFIED.**
+Tags: **LIVE** = read or run on a real production Postfix box by the gitdone operators (gitdone repo records, hamr0/gitdone `docs/wiki/deployment.md` §5/§6; the author of this guide did not re-run it). **PDOCS** = from the Postfix documentation, not run. **UNVERIFIED** = neither. **No step has been run on a box for mailproof itself**: `mailproof record` is built and tested (SPEC B14, F41) but not yet run on a mail server. **Part 2 (mail client) is entirely UNVERIFIED.**
 
 | Step | Status | Source / note |
 |---|---|---|
