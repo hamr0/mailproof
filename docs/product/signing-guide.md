@@ -27,7 +27,7 @@ Be honest about the cost. A mail server is a thing you keep running: patches, DN
 - A **domain** you control, with DNS you can edit.
 - The provider's control panel for the **PTR** (reverse DNS) record. You cannot set PTR in your own DNS zone.
 - A dedicated IP if you can. A shared IP shares its reputation (section 14).
-- Node.js 22.19 or newer, git, and `mailproof` installed (`npm install -g mailproof`, or `npm i --prefix /var/lib/mailproof/npm mailproof` as the `mailproof` user: a global install is not required, but the wrapper's binary path must then point at the installed command. LIVE, Fedora 44: a non-global `npm i --prefix /var/lib/mailproof/npm mailproof` puts it at `/var/lib/mailproof/npm/node_modules/.bin/mailproof`, not `<prefix>/bin/mailproof`; only `npm i -g --prefix <dir>` makes `<dir>/bin/mailproof`. The wrapper, the systemd unit and the cron line below use `/usr/bin/mailproof`: change them to your path).
+- Node.js 22.19 or newer, git, and `mailproof` installed (`npm install -g mailproof`, or `npm i --prefix /var/lib/mailproof/npm mailproof` as the `mailproof` user: a global install is not required (but with SELinux enforcing the code must be in `/usr/local`, section 14), but the wrapper's binary path must then point at the installed command. LIVE, Fedora 44: a non-global `npm i --prefix /var/lib/mailproof/npm mailproof` puts it at `/var/lib/mailproof/npm/node_modules/.bin/mailproof`, not `<prefix>/bin/mailproof`; only `npm i -g --prefix <dir>` makes `<dir>/bin/mailproof`. The wrapper, the systemd unit and the cron line below use `/usr/bin/mailproof`: change them to your path).
 - **Linux glibc 2.34 or newer** (EL9, Debian 12, Ubuntu 22.04 or newer). The trail index (`list`, `show`, `copies`, `counterparties`, and the commands built on them) needs `better-sqlite3`'s Linux prebuilt binary, which needs glibc 2.34. On older systems (EL8, Debian 11, Ubuntu 20.04) `npm install` finishes without a warning, but every index command then fails with `ERR_INDEX_UNAVAILABLE`; `record`, `verify` and `stamp` still work. On EL8 (or any glibc below 2.34) build the add-on once from source:
 
 ```bash
@@ -534,7 +534,58 @@ All of these are from the gitdone and knowless records. None were re-tested for 
 - **pipe(8) defers on 75, 71 and codes outside sysexits (1, 2 ...), and bounces most other sysexits codes (64, 65, 67, 77, 78 ...).** Hence the wrapper maps everything to 75. Keep the command's output away from Postfix (section 9).
 - **OpenDKIM down means unsigned mail, silently** (`milter_default_action = accept`). Check a sent mail's headers after any change.
 - **Firewall (LIVE):** `sudo firewall-cmd --add-service=smtp --permanent` (and `--add-service=http` for certbot standalone), then `sudo firewall-cmd --reload`.
-- **SELinux.** The live box has SELinux **disabled**, so nothing here is proven for enforcing mode. With SELinux enforcing, the pipe writing under `/var/lib/mailproof` may be denied; you may need `semanage fcontext` and `restorecon` for that directory. Test this.
+- **Mail recorded twice from one `.eml`.** LIVE: sending the same `.eml` twice with `sendmail` gives two records, because Postfix adds its own `Received` header each time, so the bytes and the ids differ. A Postfix retry of a deferred message is the same queue file and records once.
+- **SELinux enforcing (LIVE: Fedora 44, SELinux enforcing, Postfix 3.10.14, system nodejs 22.22.2, 2026-11-22).** Debian and Ubuntu use AppArmor, not SELinux, by default; this applies to RHEL-family systems. Three things stop the pipe, in this order:
+  1. **Code under `/var/lib` cannot be run by Postfix:** `postfix_pipe_t` is denied `execute` on `var_lib_t` (exit 126). Install the code root-owned in a system location instead, `sudo npm i -g --prefix /usr/local mailproof` (labelled `lib_t` and `bin_t`), and point the wrapper at `/usr/local/bin/mailproof`. This is also the guide's own rule, code root-owned and read-only. The per-user `--prefix /var/lib/mailproof/npm` install (section 2) works only with SELinux disabled or permissive.
+  2. **Even then Node crashes in the pipe (exit 133, SIGTRAP):** `postfix_pipe_t` is denied `execmem` (V8's JIT) and `create` on the io_uring anonymous inode (libuv). Writing the trail is denied too: `var_lib_t` directory and file writes, and the lock file.
+  3. **The fix is a small local policy module** that gives `/var/lib/mailproof` its own type and allows only that. Save as `mailproof_pipe.te`:
+
+```
+module mailproof_pipe 1.1;
+
+require {
+	type postfix_pipe_t;
+	type io_uring_t;
+	type var_lib_t;
+	attribute file_type;
+	attribute non_security_file_type;
+	attribute non_auth_file_type;
+	class anon_inode { create map read write };
+	class process execmem;
+	class dir { add_name create getattr open read remove_name rmdir search setattr write };
+	class file { append create getattr ioctl link lock map open read rename setattr unlink write };
+	class lnk_file { create getattr read unlink };
+}
+
+# The mailproof data directory (/var/lib/mailproof) gets its own type; only it is writable by the pipe.
+type mailproof_data_t;
+typeattribute mailproof_data_t file_type, non_security_file_type, non_auth_file_type;
+
+# Node itself: V8's JIT needs execmem, libuv's thread pool uses io_uring.
+allow postfix_pipe_t self:process execmem;
+allow postfix_pipe_t io_uring_t:anon_inode { create map read write };
+
+# Reach /var/lib, and read/write only mailproof's own data.
+allow postfix_pipe_t var_lib_t:dir search;
+allow postfix_pipe_t mailproof_data_t:dir { add_name create getattr open read remove_name rmdir search setattr write };
+allow postfix_pipe_t mailproof_data_t:file { append create getattr ioctl link lock map open read rename setattr unlink write };
+allow postfix_pipe_t mailproof_data_t:lnk_file { create getattr read unlink };
+```
+
+Install it:
+
+```bash
+sudo dnf install -y policycoreutils-python-utils checkpolicy   # semanage, checkmodule
+checkmodule -M -m -o mailproof_pipe.mod mailproof_pipe.te
+semodule_package -o mailproof_pipe.pp -m mailproof_pipe.mod
+sudo semodule -i mailproof_pipe.pp
+sudo semanage fcontext -a -t mailproof_data_t '/var/lib/mailproof(/.*)?'
+sudo restorecon -R /var/lib/mailproof
+```
+
+  Result (LIVE): inbound deliveries (signed, unsigned, re-sent) were `status=sent` and recorded with 0 AVC denials, and `list` and `verify` still worked as the `mailproof` user. Check for denials with `sudo ausearch -m AVC -ts recent`. To remove it, in this order (the label uses the module's type): `sudo semanage fcontext -d '/var/lib/mailproof(/.*)?'`, remove or relabel the data, then `sudo semodule -r mailproof_pipe`.
+
+  **Trade-offs.** The module grants `postfix_pipe_t` `execmem`. That domain is shared by every `pipe(8)` transport on the box: a known trade-off for running Node under Postfix. A generic `audit2allow` module would instead allow writes to all of `var_lib_t`, which is why this guide uses its own type. **Not tested** (reasoning, not run): the stamp timer under SELinux; a systemd service runs as `unconfined_service_t`, outside this domain.
 - **Hardened systemd units that call `sendmail`** need `SupplementaryGroups=postdrop`.
 - **Back up the DKIM key offline**, and the trail (`mailproof backup`).
 - **The trail holds other people's addresses and subjects**, in a git repo on an internet-facing box. Keep the data directory mode 0700 and the box patched.
@@ -640,7 +691,7 @@ Every row of Part 2 is **UNVERIFIED (not run on a real box)**; the rows are adde
 
 ## 21. Verified and unverified (both parts)
 
-Tags: **LIVE** = read or run on a real production Postfix box by the gitdone operators (gitdone repo records, hamr0/gitdone `docs/wiki/deployment.md` §5/§6; the author of this guide did not re-run it). **CONTAINER** = checked inside a podman container of debian:12, ubuntu:22.04 or ubuntu:24.04 (packages, paths, install commands; not a running mail box). **PDOCS** = from the Postfix documentation, not run. **UNVERIFIED** = neither. **A real-box test passed steps 1-7 of section 13** (AlmaLinux 8.10, Postfix, OpenDKIM, 2026-11-22; [F42](findings.md)); rows marked LIVE in the table were run there. Everything else stays UNVERIFIED: the `SignHeaders` values, ownsub specifics, a null `--sender`, spoof and recipient restrictions, submission on 587, SELinux (disabled on that box), and all of Part 2. **Part 2 (mail client) is entirely UNVERIFIED.**
+Tags: **LIVE** = read or run on a real production Postfix box by the gitdone operators (gitdone repo records, hamr0/gitdone `docs/wiki/deployment.md` §5/§6; the author of this guide did not re-run it; the rows tagged with a date of 2026-11-22 and Fedora 44 or AlmaLinux 8.10 were run on those boxes for mailproof). **CONTAINER** = checked inside a podman container of debian:12, ubuntu:22.04 or ubuntu:24.04 (packages, paths, install commands; not a running mail box). **PDOCS** = from the Postfix documentation, not run. **UNVERIFIED** = neither. **A real-box test passed steps 1-7 of section 13** (AlmaLinux 8.10, Postfix, OpenDKIM, 2026-11-22; [F42](findings.md)); rows marked LIVE in the table were run there. Everything else stays UNVERIFIED: the `SignHeaders` values, ownsub specifics, a null `--sender`, spoof and recipient restrictions, submission on 587, SELinux (disabled on that box), and all of Part 2. **Part 2 (mail client) is entirely UNVERIFIED.**
 
 | Step | Status | Source / note |
 |---|---|---|
@@ -681,7 +732,8 @@ Tags: **LIVE** = read or run on a real production Postfix box by the gitdone ope
 | certbot `renew_hook` reloads nginx | LIVE | gitdone §9 |
 | Firewall `firewall-cmd --add-service=smtp --permanent` | LIVE | |
 | Port 25 reachable from the provider | LIVE for the operators' provider; check yours | |
-| SELinux enforcing mode | UNVERIFIED: the live box has SELinux disabled | |
+| SELinux enforcing mode: local policy module `mailproof_pipe`, code in `/usr/local` | **LIVE** (Fedora 44, 2026-11-22; the gitdone box has SELinux disabled) | section 14 |
+| Stamp timer under SELinux | not run (reasoning: `unconfined_service_t`) | section 14 |
 | A locally delivered copy of an outbound message carries a valid DKIM-Signature | **LIVE** | maillog "DKIM-Signature field added", `opendkim-testmsg` exit 0 |
 | Testing the signature with `root@localhost` (`/var/mail/root`) | LIVE | |
 | EL8 (glibc 2.28): `better-sqlite3` built from source with gcc-toolset-12 and python3.9 (`--force_build=1`), after which `list` works; about 7 min on 1 vCPU / 1 GB | **LIVE** (2026-11-22) | section 2 |
