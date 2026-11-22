@@ -433,7 +433,7 @@ PATH=/usr/local/bin:/usr/bin:/bin
 0 */6 * * * mailproof /usr/bin/mailproof stamp --account me
 ```
 
-**LIVE (2026-11-22):** `systemctl start mailproof-stamp.service` ran and sealed, and `systemctl list-timers` shows the next run in about 6 h. The `ots` binary must be on the `PATH` shown (section 3). **Uninstalling:** `Persistent=true` leaves a stamp file under `/var/lib/systemd/timers/` (named for the timer unit); remove it with the unit. After removing a pipe entry from `master.cf`, also delete its socket `/var/spool/postfix/private/<name>`: Postfix leaves it behind.
+**LIVE (2026-11-22):** `systemctl start mailproof-stamp.service` ran and sealed, and `systemctl list-timers` shows the next run in about 6 h. The `ots` binary must be on the `PATH` shown (section 3). **Uninstalling:** `Persistent=true` leaves `/var/lib/systemd/timers/stamp-mailproof-stamp.timer` (LIVE); remove it with the unit. After removing a pipe entry from `master.cf`, also delete its socket `/var/spool/postfix/private/<name>`: Postfix leaves it behind.
 
 ## 10. A first try without Postfix
 

@@ -161,7 +161,7 @@ class Mailproof {
     if (e && typeof e === 'object') ctx = { ...ctx, envelope: { clientIp: str(e.clientIp), clientHelo: str(e.clientHelo), sender: str(e.sender) } };
     else if (e !== undefined) { const { envelope: _drop, ...rest } = ctx; ctx = rest; }
     const captured = this.now().toISOString();
-    const hasEnvelope = ctx.direction === 'in' && Boolean(ctx.envelope?.clientIp);   // SPF only for received mail with a client IP: on an outbound copy the connecting client is your own machine, so SPF there is meaningless;   // SPF needs the connecting IP: a HELO or sender without one is no SPF check (SPEC B14; local submission has no client IP)
+    const hasEnvelope = ctx.direction === 'in' && Boolean(ctx.envelope?.clientIp);   // SPF only for received mail with a client IP (SPEC B14): a HELO or sender without an IP is no check, and on an outbound copy the client is your own machine, so SPF there is meaningless
     const trustedSealers = this.trustedSealers;
     const resolver = guardResolver(this.resolver ?? systemResolver);   // one guard per message: a lookup that never answers, or answers with a non-plain value, is a DNS error, and all of one message's lookups share one DNS budget; in the worker and in-process alike, system resolver included
     if (this.worker.size === 0) {
