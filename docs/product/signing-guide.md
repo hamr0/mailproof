@@ -27,7 +27,8 @@ Be honest about the cost. A mail server is a thing you keep running: patches, DN
 - A **domain** you control, with DNS you can edit.
 - The provider's control panel for the **PTR** (reverse DNS) record. You cannot set PTR in your own DNS zone.
 - A dedicated IP if you can. A shared IP shares its reputation (section 14).
-- Node.js 22.19 or newer, git, and `mailproof` installed (`npm install -g mailproof`).
+- Node.js 22.19 or newer, git, and `mailproof` installed (`npm install -g mailproof`, or `npm i --prefix /var/lib/mailproof/npm mailproof` as the `mailproof` user: a global install is not required, but the wrapper's binary path must then point at that prefix's `bin/mailproof`, LIVE).
+- **Linux glibc 2.34 or newer** (EL9, Debian 12, Ubuntu 22.04 or newer). The trail index (`list`, `show`, `copies`, `counterparties`, and the commands built on them) needs `better-sqlite3`'s Linux prebuilt binary, which needs glibc 2.34. On older systems (EL8, Debian 11, Ubuntu 20.04) `npm install` finishes without a warning, but every index command then fails with `ERR_INDEX_UNAVAILABLE`; `record`, `verify` and `stamp` still work. **UNVERIFIED (being tested; needs gcc-toolset-12 and python3.9):** on EL8 the add-on can be built from source; the proven commands will be added here.
 - Size: the production box the operators ran this on has 1 vCPU and 1 GB RAM (LIVE). That is enough for gitdone's load; mailproof itself is not measured there.
 
 ## 3. Packages
@@ -205,12 +206,13 @@ mailproof unix - n n - 1 pipe
 ```
 
 - `flags=R` adds a `Return-Path` header at the top. It records the envelope sender in the message. Do not use `F` or `O`: they change the bytes mailproof records (the record id is the sha256 of the raw bytes).
-- Use `--name=${macro}` and not bare `${macro}` words, so an empty value cannot shift the other arguments (UNVERIFIED on this exact line). Two facts from pipe(8) (PDOCS, not run):
+- Use `--name=${macro}` and not bare `${macro}` words, so an empty value cannot shift the other arguments (LIVE on the box run, 2026-11-22). Two facts from pipe(8) (PDOCS, not run):
   - For a null envelope sender (a bounce), `${sender}` expands to `MAILER-DAEMON` unless the transport sets `null_sender=` (empty). Set it explicitly: add `null_sender=` to the transport's argument list in master.cf, so a bounce reaches mailproof as an empty sender, which it treats as null.
-  - `${client_address}` and `${client_helo}` are empty for mail submitted locally (the `out` transport below). Expect `--client-ip=` and `--client-helo=` with no value. `mailproof record` must accept them (SPEC B14).
+  - `${client_address}` and `${client_helo}` are empty for mail submitted locally (the `out` transport below). Expect `--client-ip=` and `--client-helo=` with no value. `mailproof record` accepts them (SPEC B14); with no client IP no SPF check is made and the record's `spf` is null (LIVE; fixed on this branch, F42).
 - The flag names are the ones SPEC B14.1 specifies (`--recipient` is not one: the library reads no envelope recipient). gitdone's own script uses positional arguments; mailproof's does not.
 - **maxproc (the `1` in the maxproc column, before `pipe`).** gitdone pins it to 1 because its writes have no lock. mailproof has its own trail lock (SPEC B3), so more than 1 is *possible*. Do not raise it without a reason:
-  - **With 1:** Postfix delivers one mail at a time. No lock waits. Memory is bounded: one message in flight (the library caps a message at 25 MiB, and each pipe process starts a worker thread by default). Mail queues up during a burst and drains later.
+  - **A held trail lock** makes `record` wait up to `lockTimeoutMs` (default 30 s; LIVE: exit 75 after about 34 s) inside the pipe, and with maxproc 1 that stalls the pipe slot for those seconds on every locked attempt.
+  - **With 1:** Postfix delivers one mail at a time. No lock waits from other pipe processes. Memory is bounded: one message in flight (the library caps a message at 25 MiB, and each pipe process starts a worker thread by default). Mail queues up during a burst and drains later.
   - **With N > 1:** every process still waits on the same trail lock (one writer per trail), so there is little gain. A wait longer than `lockTimeoutMs` (default 30 s) ends in `ERR_TRAIL_LOCKED`, which defers the mail and retries it, wasting work. Memory grows to about N times the per-process peak.
   - For one person's mail, 1 is right. "No gain above 1" is reasoning from the lock design, **UNVERIFIED** by measurement.
 - **Backfills.** If you also run `mailproof sync`, it holds its own lock but never the trail lock across the network, so a pipe delivery waits behind at most one commit (usage guide, "Locking").
@@ -487,9 +489,9 @@ Do these in order. Stop at the first failure.
    mailproof verify <id> --account me
    mailproof show <id> --account me --raw > copy.eml     # then look for the DKIM-Signature header yourself
    ```
-   Pass: the record's direction is `out`, it holds a `DKIM-Signature` with `d=example.com`, and `verify` says the portable verdict is `verified`. Also confirm `h=` lists `message-id`. **If it is `unverified` with no signature, the BCC copy was taken before signing and the design in 8.3 fails. Report it; do not work around it silently.**
-6. **Inbound.** Send a mail from Gmail to `you@example.com`. `mailproof list` shows an `in` record with the verdicts for Gmail's signature.
-7. **Retry behaviour.** Make the trail directory unwritable on purpose, send a mail, see it deferred in `mailq`, restore the mode, run `postqueue -f`, see it recorded.
+   Pass: the record's direction is `out`, it holds a `DKIM-Signature` with `d=example.com`, and `verify` says the portable verdict is `verified`. Also check `h=`: on the live box it is `From:To:Subject:Date` (plus `Reply-To` when present) `:From`, and **Message-ID is not signed** unless you add the `SignHeaders` line (section 6; the line itself is UNVERIFIED). A thread link to your own sent mail needs a signed Message-ID. **If it is `unverified` with no signature, the BCC copy was taken before signing and the design in 8.3 fails. Report it; do not work around it silently.**
+6. **Inbound.** Send a mail from Gmail to `you@example.com`. `mailproof list` shows an `in` record with the verdicts for Gmail's signature. Each delivery logs one line (`journalctl -t mailproof-record`) of the form `recorded <id> in verified/verified` (live and portable trust words; `unverified` when a check fails), or `already recorded <id>` for a repeat. LIVE: about 4 to 4.5 s per delivery.
+7. **Retry behaviour (LIVE).** Make the trail directory unwritable on purpose, send a mail, see it deferred in `mailq`, restore the mode, run `postqueue -f`, see it recorded.
 8. **Logs.** `journalctl -t mailproof-pipe` and `/var/log/maillog` for anything deferred.
 
 ## 14. Gotchas
@@ -612,7 +614,7 @@ Every row of Part 2 is **UNVERIFIED (not run on a real box)**; the rows are adde
 
 ## 21. Verified and unverified (both parts)
 
-Tags: **LIVE** = read or run on a real production Postfix box by the gitdone operators (gitdone repo records, hamr0/gitdone `docs/wiki/deployment.md` §5/§6; the author of this guide did not re-run it). **PDOCS** = from the Postfix documentation, not run. **UNVERIFIED** = neither. **No step has been run on a box for mailproof itself**: `mailproof record` is built and tested (SPEC B14, F41) but not yet run on a mail server. **Part 2 (mail client) is entirely UNVERIFIED.**
+Tags: **LIVE** = read or run on a real production Postfix box by the gitdone operators (gitdone repo records, hamr0/gitdone `docs/wiki/deployment.md` §5/§6; the author of this guide did not re-run it). **PDOCS** = from the Postfix documentation, not run. **UNVERIFIED** = neither. **A real-box test passed steps 1-7 of section 13** (AlmaLinux 8.10, Postfix, OpenDKIM, 2026-11-22; [F42](findings.md)); rows marked LIVE in the table were run there. Everything else stays UNVERIFIED: the `SignHeaders` values, ownsub specifics, a null `--sender`, spoof and recipient restrictions, submission on 587, SELinux (disabled on that box), and all of Part 2. **Part 2 (mail client) is entirely UNVERIFIED.**
 
 | Step | Status | Source / note |
 |---|---|---|
@@ -631,21 +633,22 @@ Tags: **LIVE** = read or run on a real production Postfix box by the gitdone ope
 | OpenDKIM multi-domain config, TCP socket | LIVE | gitdone wiki §5 updated on branch `docs/deployment-live-mail-config` |
 | `OversignHeaders From` | LIVE | |
 | `OversignHeaders` To and Subject | UNVERIFIED: recommended, untested | |
-| `SignHeaders` explicit list (binds Message-ID) | UNVERIFIED: recommended, not yet tested on the box | observed default: Message-ID, MIME-Version, Content-Type unsigned |
+| `SignHeaders` explicit list (binds Message-ID) | UNVERIFIED: recommended, not yet tested | LIVE observation: without it Message-ID, MIME-Version, Content-Type are unsigned |
 | Postfix milter lines, `milter_default_action`, `message_size_limit` | LIVE | gitdone §6 |
 | `virtual_mailbox_domains` + `virtual_mailbox_maps = static:nothing` | LIVE | |
 | Role-address virtual aliases | LIVE | gitdone §6.1 |
 | Inbound pipe entry, `flags=R`, maxproc 1 (gitdone's own script) | LIVE | |
-| Pipe with `mailproof record` and `--name=${macro}` flags | UNVERIFIED | command built (SPEC B14); `--name=` and empty values are pinned by tests; the Postfix pipe itself not run on a box |
+| Pipe with `mailproof record` and `--name=${macro}` flags (flags=R, maxproc 1, user=mailproof) | **LIVE** (2026-11-22) | command built (SPEC B14); `--name=` and empty values are pinned by tests; the Postfix pipe itself not run on a box |
 | `${sender}` is `MAILER-DAEMON` for a null sender; `null_sender=`; empty client fields for local mail | PDOCS | pipe(8) |
 | maxproc above 1 gives no gain with the trail lock | UNVERIFIED | reasoning from SPEC B3 |
-| Wrapper sources the env file | LIVE (gitdone `receive.sh`) | |
-| Exit-code behaviour of pipe(8); wrapper maps all non-zero to 75 | PDOCS (design) | |
+| Wrapper (env sourcing, logger, PIPESTATUS, every failure to 75); `/etc/default/mailproof` with an inline comment works when sourced | **LIVE** (2026-11-22) | |
+| Exit 75 makes Postfix defer (dsn 4.3.0) and later deliver | **LIVE** (2026-11-22) | |
 | Output kept away from Postfix (enhanced status codes) | PDOCS | |
-| `ERR_TRAIL_LOCKED` to exit 75 retried by Postfix | Documented, not proven on a box | SPEC B3 |
+| `ERR_TRAIL_LOCKED` to exit 75 retried by Postfix | **LIVE** (2026-11-22; after about 34 s) | SPEC B3 |
 | Stdin cap in the program | LIVE for gitdone (25 MB); mailproof's built and tested (hash and record over the cap, memory bounded), not run on a box | SPEC B14.2 |
-| Pipe-only account (no `host`) accepted by the CLI config | built and tested (config validation with the lenient rule, `status`, the `sync` and `watch` refusal); UNVERIFIED on a box | SPEC B14.3 |
-| `mailproof-stamp.service` and `.timer` (every 6 hours) seal the trail on a pipe-only box; `record` runs the due content sweep | UNVERIFIED (not run on a real box) | SPEC B14.4, section 9a |
+| Pipe-only account (no `host`) accepted by the CLI config | **LIVE** (2026-11-22; also built and tested: config validation with the lenient rule, `status`, the `sync` and `watch` refusal) | SPEC B14.3 |
+| `mailproof stamp` with `ots` on the PATH seals the trail | **LIVE** (2026-11-22) | |
+| `mailproof-stamp.service` and `.timer` (every 6 hours) on a pipe-only box; `record` runs the due content sweep | UNVERIFIED (the timer units not run on a real box) | SPEC B14.4, section 9a |
 | Distro default certificate, `smtp_tls_security_level = may` | LIVE | |
 | Let's Encrypt for Postfix, and the `renewal-hooks/deploy` script | UNVERIFIED: standard certbot, not proven on a box | |
 | certbot `renew_hook` reloads nginx | LIVE | gitdone §9 |
@@ -654,8 +657,10 @@ Tags: **LIVE** = read or run on a real production Postfix box by the gitdone ope
 | SELinux enforcing mode | UNVERIFIED: the live box has SELinux disabled | |
 | A locally delivered copy of an outbound message carries a valid DKIM-Signature | **LIVE** | maillog "DKIM-Signature field added", `opendkim-testmsg` exit 0 |
 | Testing the signature with `root@localhost` (`/var/mail/root`) | LIVE | |
-| `sender_bcc_maps` copy to a second transport; `transport_maps` overrides `virtual_transport` for it | Coexistence LIVE; the BCC copy strongly implied by mechanism, not tested | |
-| **The BCC copy, recorded by `mailproof record`, verifies with `mailproof verify`** | **Open: the M5 evidence task** | testing step 5 |
+| `sender_bcc_maps` copy to a second transport; `transport_maps` overrides `virtual_transport` for one address | **LIVE** (2026-11-22) | |
+| **The BCC copy, recorded by `mailproof record`, verifies with `mailproof verify`** (the copy is the DKIM-signed queue file: OpenDKIM signs in cleanup before the copy; portable verified) | **LIVE** (2026-11-22) | testing step 5 |
+| Real SPF on inbound mail from the envelope flags (`--client-ip`, `--client-helo`, `--sender`) | **LIVE** (2026-11-22; 5 inbound: DKIM, SPF and DMARC pass) | |
+| Observed signed headers on the box: `From:To:Subject:Date` (plus `Reply-To`) `:From`; Message-ID not signed (no `SignHeaders` line, only `OversignHeaders From`) | **LIVE observation** | F42 |
 | `smtpd_sender_restrictions` against spoofed own-domain senders | PDOCS, untested | |
 | `check_recipient_access` protecting the record address | PDOCS, untested | |
 | An `out` record without your own aligned `d=` is `unverified` | mailproof behaviour (verdicts); not tested with a spoofed copy | |

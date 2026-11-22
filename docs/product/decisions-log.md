@@ -452,3 +452,11 @@ Also: `path` inputs are refused until `mcp.inputDirs` is set (`base64` always al
 **Decision**: An account is pipe-only only when it has no `host` and none of `passCommand`, `passFile`, `accessTokenCommand`, `port`, `folders`, `sent`. A hostless account with any of them is an IMAP account on `imap.gmail.com`, exactly as in 4.0.0.
 **Rationale**: Personal (IMAP) and self-hosted (pipe-only) accounts can live in one config, and no 4.0.0 config is refused, so no upgrade note or minor-bump refusal.
 **Consequences**: one key list and one predicate (`isPipeOnly`) in `config.js`; a pipe-only account must leave the IMAP keys out.
+
+### Decision: document the glibc floor; node:sqlite is a later release (2026-11-22)
+**Date**: 2026-11-22
+**Status**: Accepted (owner)
+**Context**: The real-box test on EL8 (glibc 2.28) showed `better-sqlite3`'s Linux prebuild does not load there ([F42](findings.md)): npm installs without a warning, then every index command gives `ERR_INDEX_UNAVAILABLE`, while `record`, `verify` and `stamp` work.
+**Decision**: For 4.1.0 document the floor: glibc 2.34 or newer (EL9, Debian 12, Ubuntu 22.04+) in the README, setup guide and signing guide, with an UNVERIFIED build-from-source note for EL8. Parked for its own release: replace `better-sqlite3` with Node's built-in `node:sqlite`.
+**Rationale**: `node:sqlite` works on Node 22.19.0 (SQLite 3.50.4) and would drop the native add-on and a runtime dependency, but it prints an ExperimentalWarning on stderr (the MCP server must keep stderr silent) and means rewriting `index-db.js`, so it is not a patch to fold into this release.
+**Consequences**: no code change now; the dependency list in CLAUDE.md stays at four.

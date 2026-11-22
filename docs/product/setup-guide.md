@@ -20,7 +20,7 @@ You get a git repository you own (the **trail**) holding, for every email in the
 
 ## 2. Install
 
-Requirements: Node >= 22.19 and `git` on your PATH. Optional, for the seal: the `ots` binary.
+Requirements: Node >= 22.19 and `git` on your PATH. Optional, for the seal: the `ots` binary. On Linux, glibc 2.34 or newer (EL9, Debian 12, Ubuntu 22.04 or newer): the trail index (`list`, `show`, `copies`, `counterparties`, ...) needs `better-sqlite3`'s prebuilt binary, which needs it. On older systems (EL8, Debian 11, Ubuntu 20.04) npm installs without a warning, but every index command fails with `ERR_INDEX_UNAVAILABLE`; `record`, `verify` and `stamp` still work. Building the add-on from source on EL8 is **UNVERIFIED** (being tested; needs gcc-toolset-12 and python3.9).
 
 ```bash
 npm install -g mailproof

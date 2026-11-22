@@ -48,9 +48,11 @@ The body is never in the proof or the trail. The raw email and attachments are k
 ### Humans: the `mailproof` command
 
 ```bash
-npm install -g mailproof        # Node >= 22.19; optional: the `ots` binary for sealing
+npm install -g mailproof        # Node >= 22.19, Linux glibc >= 2.34 (EL9, Debian 12, Ubuntu 22.04+); optional: the `ots` binary for sealing
 mailproof                       # no arguments on a terminal: the menu
 ```
+
+On older Linux (EL8, Debian 11, Ubuntu 20.04) npm installs without a warning but the trail index cannot load (`list`, `show`, `copies`, ... fail with `ERR_INDEX_UNAVAILABLE`); `record`, `verify` and `stamp` still work. See the [setup guide](docs/product/setup-guide.md#2-install).
 
 First run walks you through adding an account (provider first, login tested before anything is written; the password is kept in an owner-only file or a command you name, never in the config). The menu header shows records, verified, last sync and seal state. Each item is a number (or its name) and runs the same code as the subcommand:
 
