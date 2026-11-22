@@ -1,6 +1,6 @@
 # mailproof v2 — PRD
 
-> **Status:** v2 is released through 4.0.0 (2026-11-13, PR #23, the latest). M0-M4 are shipped: M3 steps 1-3 in 3.0.0, `replyFacts` and the `mailproof` CLI in 3.1.0, the MCP server (`mailproof mcp`, SPEC B12) in 3.3.0, and **M4 (seal and pair export: batch seal, `export`, `verify-bundle`, the address-first CLI with `people`, MCP parity at 30 tools; major because OTS is on by default in the library) in 4.0.0**. M5 (sign your own mail and record it: a guide in two parts, OpenDKIM and your mail client, plus the `mailproof record` command) is specified, next; the guide is written (Part 1 partly proven by the gitdone operators, Part 2 unverified), the `record` command is not built. M6 is parked. 1.x is frozen at tag `v1.4.0` (v1 code archived in `archive/v1/`; no `v1` branch).
+> **Status:** v2 is released through 4.0.0 (2026-11-13, PR #23, the latest). M0-M4 are shipped: M3 steps 1-3 in 3.0.0, `replyFacts` and the `mailproof` CLI in 3.1.0, the MCP server (`mailproof mcp`, SPEC B12) in 3.3.0, and **M4 (seal and pair export: batch seal, `export`, `verify-bundle`, the address-first CLI with `people`, MCP parity at 30 tools; major because OTS is on by default in the library) in 4.0.0**. M5 (sign your own mail and record it: a guide in two parts, OpenDKIM and your mail client, plus the `mailproof record` command) is in progress: the `record` command and the pipe-only account are built on `feat/m5-record` (2026-11-22, unreleased, [F41](findings.md)); the guide is written (Part 1 partly proven by the gitdone operators, Part 2 unverified) and the box tests are pending. M6 is parked. 1.x is frozen at tag `v1.4.0` (v1 code archived in `archive/v1/`; no `v1` branch).
 > **Owner:** hamr0 · **Last updated:** 2026-11-22
 >
 > **For future Claude:** this PRD wins on intent and scope. The *why* behind each choice is in
@@ -389,11 +389,11 @@ Calendar or iTIP handling; an agreement ceremony; raw email or attachment copies
 
 With M4 shipped (4.0.0) the v2 promise of §1 and §2 is met. "I sent you this" without a reply stays partial until signed own sends exist (M5, specified, next).
 
-### M5 — Sign your own mail and record it (specified, next)
+### M5 — Sign your own mail and record it (record command built, box tests pending)
 
 **Status:** re-scoped 2026-11-11 and again 2026-11-22 by the owner. Reasons and options: [decisions-log](decisions-log.md) entries "M5: a record command and a self-hosting guide, not a Docker image" and "M5: OpenDKIM and mail-client guide plus the record command (2026-11-22)". The product is signing your own mail and recording it, not running a mail-server product. Two deliverables:
 
-1. **`mailproof record --direction in|out`**: a small CLI command that reads one raw email from stdin and calls the existing `record()` ([SPEC B14](SPEC.md)). It is in the npm package like every other command. **Specified, not built**; the command is now fully specified in SPEC B14 (2026-11-22: input, over-cap streaming, the pipe-only account, upkeep, test plan).
+1. **`mailproof record --direction in|out`**: a small CLI command that reads one raw email from stdin and calls the existing `record()` ([SPEC B14](SPEC.md)). It is in the npm package like every other command. **Built 2026-11-22 on `feat/m5-record` (unreleased)**; the command is fully specified in SPEC B14 (2026-11-22: input, over-cap streaming, the pipe-only account, upkeep, test plan).
 2. **One guide with two parts**, [`signing-guide.md`](signing-guide.md): **Part 1, OpenDKIM:** your domain signs your outbound mail (Postfix and OpenDKIM, with the inbound pipe and the outbound recorded copy going into `mailproof record`). **Part 2, your mail client:** sending from Thunderbird, Apple Mail or any client through your server so the mail is signed and recorded (submission on 587, SASL login, `smtpd_sender_login_maps` with `reject_sender_login_mismatch`, the `sender_bcc_maps` copy, client settings). A guide in `docs/`, **never code in the npm package**.
 
 **No Docker image.** The hard parts (DNS, PTR, port 25, IP reputation) cannot be containerised, and an image would make mailproof a mail-server product to patch. In-library signing (mailauth's `dkimSign`) stays an option, not the default: the key stays in the MTA. Prior art: the gitdone operators' records and knowless `OPS.md` §5 (knowless declined to host anything, 2026-11-11).

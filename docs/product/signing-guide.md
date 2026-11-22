@@ -1,6 +1,6 @@
 # Sign your own mail: OpenDKIM and your mail client
 
-> **Status: a guide, not a product.** It is written from the gitdone operators' records (a production Postfix box) and the Postfix documentation, **not from a fresh box run for mailproof**. Every step is marked in the table at the end. Source tags: **LIVE** = read or run on a real box by the gitdone operators; **PDOCS** = from the Postfix documentation, not run; **UNVERIFIED** = neither. This guide has two parts: **Part 1** (sections 1-14) is OpenDKIM, your domain signs your outbound mail; **Part 2** (sections 15-20) is your mail client, sending from Thunderbird, Apple Mail or any client through your server so the mail is signed and recorded. **Every step of Part 2 is UNVERIFIED (not run on a real box).** The command `mailproof record` that this guide pipes mail into is **specified, not built yet** (SPEC B14, PRD §7 M5). Until it ships, the pipe steps cannot be run as written.
+> **Status: a guide, not a product.** It is written from the gitdone operators' records (a production Postfix box) and the Postfix documentation, **not from a fresh box run for mailproof**. Every step is marked in the table at the end. Source tags: **LIVE** = read or run on a real box by the gitdone operators; **PDOCS** = from the Postfix documentation, not run; **UNVERIFIED** = neither. This guide has two parts: **Part 1** (sections 1-14) is OpenDKIM, your domain signs your outbound mail; **Part 2** (sections 15-20) is your mail client, sending from Thunderbird, Apple Mail or any client through your server so the mail is signed and recorded. **Every step of Part 2 is UNVERIFIED (not run on a real box).** The command `mailproof record` that this guide pipes mail into is **built** (2026-11-22, branch `feat/m5-record`, not yet released; SPEC B14) and tested against stubs and real child processes, but **no step of this guide has been run on a box**: the box steps below stay UNVERIFIED.
 >
 > All names here are placeholders: `example.com`, `mail.example.com`, `203.0.113.10`. Use your own. Never paste real keys or addresses into a shared place.
 
@@ -347,7 +347,7 @@ PATH=/usr/local/bin:/usr/bin:/bin   # /usr/local/bin for ots
 - **Size cap.** `message_size_limit` is the outer bound. `mailproof record` keeps at most the library's own bound in memory (25 MiB, `MAX_TOTAL_BYTES` in `limits.js`): a larger message is hashed as it streams in and recorded `unverified` (`over limit: total_bytes`), never loaded whole. See SPEC B14.2.
 - **Mail is recorded even when unverified.** A mail that fails DKIM is still a record (accept-with-flag). Exit 0 means "recorded", not "verified".
 
-The mailproof config for the `mailproof` user (`config.json`, SPEC B11.2): one **pipe-only account** (no `host`: nothing to log in to, mail arrives through the pipe). `user` is optional there and marks "(you)" in `people`. `port`, `folders`, `sent` and the password keys are refused on such an account, and `sync` and `watch` say `me has no IMAP server (a pipe-only account): mail arrives through mailproof record`. **UNVERIFIED (not built):** the pipe-only account is specified in SPEC B14.3; today's CLI still wants a `host` default and a password key, so this config is refused until M5 is built.
+The mailproof config for the `mailproof` user (`config.json`, SPEC B11.2): one **pipe-only account** (no `host`: nothing to log in to, mail arrives through the pipe). `user` is optional there and marks "(you)" in `people`. `port`, `folders`, `sent` and the password keys are refused on such an account, and `sync` and `watch` say `me has no IMAP server (a pipe-only account): mail arrives through mailproof record`. The pipe-only account is built (SPEC B14.3, tested); using it on a real box is UNVERIFIED.
 
 ```json
 {
@@ -636,15 +636,15 @@ Tags: **LIVE** = read or run on a real production Postfix box by the gitdone ope
 | `virtual_mailbox_domains` + `virtual_mailbox_maps = static:nothing` | LIVE | |
 | Role-address virtual aliases | LIVE | gitdone §6.1 |
 | Inbound pipe entry, `flags=R`, maxproc 1 (gitdone's own script) | LIVE | |
-| Pipe with `mailproof record` and `--name=${macro}` flags | UNVERIFIED | command not built |
+| Pipe with `mailproof record` and `--name=${macro}` flags | UNVERIFIED | command built (SPEC B14); `--name=` and empty values are pinned by tests; the Postfix pipe itself not run on a box |
 | `${sender}` is `MAILER-DAEMON` for a null sender; `null_sender=`; empty client fields for local mail | PDOCS | pipe(8) |
 | maxproc above 1 gives no gain with the trail lock | UNVERIFIED | reasoning from SPEC B3 |
 | Wrapper sources the env file | LIVE (gitdone `receive.sh`) | |
 | Exit-code behaviour of pipe(8); wrapper maps all non-zero to 75 | PDOCS (design) | |
 | Output kept away from Postfix (enhanced status codes) | PDOCS | |
 | `ERR_TRAIL_LOCKED` to exit 75 retried by Postfix | Documented, not proven on a box | SPEC B3 |
-| Stdin cap in the program | LIVE for gitdone (25 MB); mailproof's specified only (hash and record over the cap) | SPEC B14.2 |
-| Pipe-only account (no `host`) accepted by the CLI config | UNVERIFIED (specified, not built) | SPEC B14.3 |
+| Stdin cap in the program | LIVE for gitdone (25 MB); mailproof's built and tested (hash and record over the cap, memory bounded), not run on a box | SPEC B14.2 |
+| Pipe-only account (no `host`) accepted by the CLI config | built and tested (config validation, `status`, the `sync` and `watch` refusal); UNVERIFIED on a box | SPEC B14.3 |
 | `mailproof-stamp.service` and `.timer` (every 6 hours) seal the trail on a pipe-only box; `record` runs the due content sweep | UNVERIFIED (not run on a real box) | SPEC B14.4, section 9a |
 | Distro default certificate, `smtp_tls_security_level = may` | LIVE | |
 | Let's Encrypt for Postfix, and the `renewal-hooks/deploy` script | UNVERIFIED: standard certbot, not proven on a box | |

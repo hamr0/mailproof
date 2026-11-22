@@ -1806,7 +1806,7 @@ No `75` or `77`: no lock, no config. Library: `verifyBundle` resolves to a `Bund
 
 ## B14. `mailproof record` (M5)
 
-**Status: Specified 2026-11-22, not built.** Decided 2026-11-11 (decisions-log "M5: a record command and a self-hosting guide, not a Docker image", PRD §7 M5, guide [signing-guide.md](signing-guide.md), widened 2026-11-22 to two parts, OpenDKIM and your mail client; the command is unchanged and still M5); completed 2026-11-22 (decisions-log "M5 record command specified (2026-11-22)"). One new CLI command over the existing `Mailproof#record()`; no library change, no new export, no new primitive. The build is test-first (B14.9): each test is written red against today's code, then the code.
+**Status: Built 2026-11-22 on `feat/m5-record` (not released); specified 2026-11-22. No deviation from this spec; two readings are noted at B14.3 and B14.9.** Decided 2026-11-11 (decisions-log "M5: a record command and a self-hosting guide, not a Docker image", PRD §7 M5, guide [signing-guide.md](signing-guide.md), widened 2026-11-22 to two parts, OpenDKIM and your mail client; the command is unchanged and still M5); completed 2026-11-22 (decisions-log "M5 record command specified (2026-11-22)"). One new CLI command over the existing `Mailproof#record()`; no library change, no new export, no new primitive. The build is test-first (B14.9): each test is written red against today's code, then the code.
 
 ### B14.1 Shape and input
 
@@ -1842,6 +1842,8 @@ A box that only receives mail through the pipe has no mailbox to log in to. The 
 - **Refusals.** `sync`, `watch`, the setup wizard's login test and the MCP `sync` tool refuse a pipe-only account with the one line `<account> has no IMAP server (a pipe-only account): mail arrives through mailproof record`: CLI exit 64 (`UsageError`); MCP: a `ToolError` with code `ERR_BAD_ARGUMENT` (the same shape as `badArgument`, `src/mcp/errors.js`). `sync-op.js` (`syncOnce`, shared by `sync`, `watch` and the MCP tool) is the one place the check lives, before the secret is resolved.
 - **`status`** shows it as `pipe-only` where an IMAP account shows its server and last sync (`config-screen.js`, `status.js`). **Every other command works on it** (`list`, `people`, `show`, `verify`, `replies`, `check`, `forget`, `prune`, `backup`, `export`, `stamp`, `config`, `mcp`, and the menu).
 - `config template` and the `config add-account` wizard are unchanged: they make IMAP accounts. A pipe-only account is written by hand (the guide shows it).
+
+**Build notes (2026-11-22).** (1) An absent `host` no longer defaults to `imap.gmail.com` anywhere in `config.js`: since an IMAP account is by definition one with a `host`, the default would never apply, so it is gone. A config that omitted `host` and relied on it (Gmail) is now a pipe-only account, and its `passCommand`, `passFile` or `accessTokenCommand` (and `port`, `folders`, `sent`) is refused with `only for an IMAP account (this account has no host)`: see the CHANGELOG upgrade note. (`mailproof-sync` keeps its own `MAILPROOF_HOST` default.) (2) The typedef keeps the absent fields as `null` (`host`, `port`, `folders`, `sent`, `secret`, and `user` when not given); `requireImap(account)` in `sync-op.js` returns the narrowed IMAP view or throws the one refusal, and `watch` and the wizard's login test call it too. The MCP `sync` tool maps that `UsageError` to `ERR_BAD_ARGUMENT`. (3) `status` shows `pipe-only` in the row that holds the last sync (labelled `mail`), and `config` shows `server  pipe-only`.
 
 ### B14.4 Maintenance on a pipe-only box
 
@@ -1898,6 +1900,8 @@ Sweep and lock
 18. the content sweep runs after `record` when due (the marker is missing or `sweepDays` old; inject the clock and a counting `deps` hook around `_autoSweep`) and does not run when the marker is fresh; a sweep that throws leaves exit 0 and one stderr line; the sweep runs after the commit (the record is there when it throws).
 19. `ERR_TRAIL_LOCKED` -> exit 75 with the trail lock held by a second process (a child that holds `withTrailLock`, as the existing lock tests do) and a short `lockTimeoutMs`; nothing written.
 20. a `stamp` job paused between steps (the `afterSnapshot` hook of `stamp.js`, holding the stamp lock) does not block `record`: the record commits within `lockTimeoutMs` (B14.5).
+
+**Reading, as built.** 13: `readBounded(source, cap)` returns `{ buf, held, maxHeld, size, sha256, over }` (`buf` is null once over the cap, `held` is the bytes in the returned buffer, `maxHeld` the most it ever held); the buffer is one `Buffer.allocUnsafeSlow(cap)` written in place (not zero-filled, so only the pages written are resident), never a `Buffer.concat` of more than the cap. 17: the wizard's login test refusal is a guard (the wizard only writes IMAP accounts) and is tested as `requireImap` on a pipe-only account. 20: the `stamp` job is paused in its `afterSnapshot` hook, holding the stamp lock, and a `record` through the CLI completes in it. Tests: `tests/integration/cli-record.test.js`.
 
 Always: the suite leaves nothing in `/tmp` (`makeTmpDir`), and `check:primitives`, `check:cli-help` and `check:mcp-tools` stay green.
 

@@ -645,3 +645,13 @@ Public DNS facts about the owner's own services, seen in the real walkthrough (F
   | Licence | commercial | Apache-2.0 |
 - **Conclusion:** adjacent, not the same product. Inbin answers "is it safe for my agent to read and act on this right now" and is broader on that (extraction, injection guard, send control). mailproof answers "can I prove later, to anyone, who sent this and what it said" and gates automation on cryptographic facts the owner keeps. Watch it: if it adds an exportable, offline-verifiable proof, the overlap grows. Positioning for mailproof: proof you own and can show anyone offline, and no third party sees your mail; do not present mailproof as an agent firewall or prompt-injection filter.
 - **Not named in public docs:** competitors are not named in the README or guides; describe the category ("hosted email-for-agents services") if a comparison is ever needed.
+
+## F41 — M5 `mailproof record` built, red first (2026-11-22)
+
+- **Date:** 2026-11-22, branch `feat/m5-record` (unreleased).
+- **What was built:** SPEC B14: `mailproof record` (`src/cli/record.js`: `readBounded`, `recordOptions`, `recordCmd`), the pipe-only account (`isPipeOnly`, `pipeOnlyMessage`, `ImapAccount` in `config.js`; `requireImap` in `sync-op.js`), `status` and `config` showing `pipe-only`, the `stdinTty` option and array `input` in `tests/helpers/cli.js`. No new dependency, export, primitive or MCP tool.
+- **Method:** the 20 B14.9 cases were written first (`tests/integration/cli-record.test.js`, 22 tests: the 20 cases plus B14.9-17b, the wizard-guard test, and B14.8) and run on the code before the build.
+- **Red first:** first run on the old code: 21 failed and 1 passed for the wrong reason (case 6: `record` was an unknown command, which is also exit 64); that test was tightened to assert the `--direction` and `stdin` messages and then failed too, so 22 of 22 red. Reds were assertion failures (exit 64 `unknown command "record"` against the expected 0, 1 or 75) except: case 13 and B14.8 (`Cannot find module src/cli/record.js`, loaded inside the test), 17b (`requireImap` not exported), 16 (`isPipeOnly` undefined; the old validator refused the hostless config).
+- **Green:** 22 of 22 on the new code, three runs in a row. Full-suite and check results are in the branch report, not repeated here.
+- **Finding while building:** B14.3 says the `imap.gmail.com` default applies only to an IMAP account; an IMAP account is one with a `host`, so the default can never apply and was removed from `config.js`. That refuses a formerly accepted config (a hostless Gmail account), covered by a CHANGELOG upgrade note.
+- **Not done:** nothing was run on a mail server; the box tests of the signing guide stay UNVERIFIED.
