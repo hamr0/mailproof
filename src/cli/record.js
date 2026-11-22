@@ -88,7 +88,7 @@ async function inputOf(file, ctx) {
 /** @param {Args} a @param {Ctx} ctx @returns {Promise<number>} */
 export async function recordCmd(a, ctx) {
   const direction = a.values.direction;
-  if (direction !== 'in' && direction !== 'out') throw new UsageError('record: --direction in or out is required');
+  if (direction !== 'in' && direction !== 'out') throw new UsageError(direction === undefined ? 'record: --direction in or out is required' : `record: --direction must be in or out (got "${p(String(direction))}")`);
   const source = a.values.source === undefined || a.values.source === '' ? 'pipe' : String(a.values.source);
   const input = await inputOf(a.positionals[0], ctx);
   const { config } = await loadCtxConfig(a, ctx);

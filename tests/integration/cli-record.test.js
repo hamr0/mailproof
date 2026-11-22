@@ -339,6 +339,45 @@ test('4.0.0 compat: a hostless account with passCommand validates and is a Gmail
   assert.equal(configModule.isPipeOnly(a), false);
 });
 
+test('status: the never-run seal hint names a command that exists: stamp, and a timer on a pipe-only account', async () => {
+  const p = pipeWorld({ ots: '/usr/bin/true' });
+  assert.equal((await p.rec(['--direction', 'in'], { input: mail(31) })).code, 0);
+  const pipe = await p.w.run(['status']);
+  assert.match(pipe.stdout, /never run \(run `mailproof stamp` from a timer, see the signing guide\)/);
+  assert.doesNotMatch(pipe.stdout, /mailproof seal/);
+  const trailDir = makeTmpDir('mp-rec-imap-');
+  const w = makeWorld({ accounts: { me: { user: 'me@owner.invalid', host: 'imap.example.com', passCommand: 'echo x', trailDir, ots: '/usr/bin/true' } } });
+  const mp = new Mailproof({ trailDir, worker: { size: 0 }, resolver, otsBin: null, lockTimeoutMs: 5000 });
+  await mp.record(mail(32), { direction: 'in', source: 'api' });
+  const imap = await w.run(['status']);
+  assert.match(imap.stdout, /never run \(due at the next sync or `mailproof stamp`\)/);
+  assert.doesNotMatch(imap.stdout, /mailproof seal/);
+});
+
+test('record: a given but invalid --direction names the value (through printable); the missing flag keeps its message', async () => {
+  const p = pipeWorld();
+  for (const argv of [['--direction', 'sideways'], ['--direction=sideways']]) {
+    const r = await p.rec(argv, { input: mail() });
+    assert.equal(r.code, 64);
+    assert.match(r.stderr, /--direction must be in or out \(got "sideways"\)/, argv.join(' '));
+  }
+  const esc = await p.rec(['--direction=\u001b[31mx'], { input: mail() });
+  assert.equal(esc.code, 64);
+  assert.doesNotMatch(esc.stderr, /\u001b/);
+  assert.match((await p.rec([], { input: mail() })).stderr, /--direction in or out is required/);
+});
+
+test('B14.7: an over-cap --json result is exactly { id, duplicate, commit, ots } with sealing on, and no content', async () => {
+  const bytes = Buffer.alloc(MAX_TOTAL_BYTES + 1, 0x66);
+  const p = pipeWorld({ ots: '/usr/bin/true' });
+  const mk = () => new Mailproof({ ...mailproofOptions(/** @type {any} */ ({ trailDir: p.trailDir, trail: 'default', otsBin: '/usr/bin/true', stamp: {}, content: {} })), worker: { size: 0 }, resolver, lockTimeoutMs: 5000 });
+  const r = await p.w.run(['record', '--direction', 'in', '--json'], { input: chunks(bytes), deps: { makeMailproof: mk } });
+  assert.equal(r.code, 0, r.stderr);
+  const j = JSON.parse(r.stdout);
+  assert.deepEqual(Object.keys(j).sort(), ['commit', 'duplicate', 'id', 'ots']);
+  assert.equal(j.ots, 'queued');
+});
+
 test('B14.9-17b: the wizard login test is refused for a pipe-only account (one definition)', async () => {
   const { requireImap } = await import('../../src/cli/sync-op.js');
   const p = pipeWorld();

@@ -81,11 +81,11 @@ async function statusOf(account, ctx, configFile) {
  * @param {Date} now
  * @returns {string}
  */
-function sealText(z, now) {
+function sealText(z, now, pipeOnly = false) {
   if (!z) return 'unknown';
   if (!z.enabled) return 'off (ots: false)';
   if (z.chain !== 'ok') return `chain broken at seq ${z.chain.brokenAt}: ${p(z.chain.why)}`;
-  const when = z.last ? `last run ${clock(z.last, now)} (${rel(z.last, now)}), next due ${clock(z.nextDue, now)} (${rel(z.nextDue, now)})` : 'never run (due at the next sync or `mailproof seal`)';
+  const when = z.last ? `last run ${clock(z.last, now)} (${rel(z.last, now)}), next due ${clock(z.nextDue, now)} (${rel(z.nextDue, now)})` : (pipeOnly ? 'never run (run `mailproof stamp` from a timer, see the signing guide)' : 'never run (due at the next sync or `mailproof stamp`)');
   const parts = [`${z.mode === 'batch' ? 'one batch' : 'one per record'} every ${z.everyHours} h`, when];
   if (z.mode === 'batch') parts.push(`${count(z.manifests, 'manifest')}${z.unstamped ? ` (${z.unstamped} not stamped yet)` : ''}`);
   if (z.pending) parts.push(`${z.pending} waiting for ${z.pending === 1 ? 'its' : 'their'} Bitcoin anchor`);
@@ -121,7 +121,7 @@ function statusText(name, s, st, now, env, pipeOnly = false) {
     row(pipeOnly ? 'mail' : 'last sync', pipeOnly ? `pipe-only ${st.dim('(arrives through mailproof record)')}` : sync),
     row('content', c),
     row('index', s.index === 'present' ? st.green(s.index) : st.yellow(s.index)),
-    row('seal', sealWord(sealText(s.seal, now))),
+    row('seal', sealWord(sealText(s.seal, now, pipeOnly))),
     row('last backup', bk ? `${st.link(p(tilde(String(bk.path), env)), fileUrl(String(bk.path)))} ${st.dim(`(${clock(bk.at, now)}, ${rel(bk.at, now)})`)}` : st.dim('never')),
     row('watch', s.watch.running ? st.green(`running (pid ${s.watch.pid})`) : st.dim('not running')),
   ].join('\n');
