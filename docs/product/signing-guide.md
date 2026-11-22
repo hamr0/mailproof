@@ -27,12 +27,12 @@ Be honest about the cost. A mail server is a thing you keep running: patches, DN
 - A **domain** you control, with DNS you can edit.
 - The provider's control panel for the **PTR** (reverse DNS) record. You cannot set PTR in your own DNS zone.
 - A dedicated IP if you can. A shared IP shares its reputation (section 14).
-- Node.js 22.19 or newer, git, and `mailproof` installed (`npm install -g mailproof`, or `npm i --prefix /var/lib/mailproof/npm mailproof` as the `mailproof` user: a global install is not required, but the wrapper's binary path must then point at that prefix's `bin/mailproof`, LIVE).
+- Node.js 22.19 or newer, git, and `mailproof` installed (`npm install -g mailproof`, or `npm i --prefix /var/lib/mailproof/npm mailproof` as the `mailproof` user: a global install is not required, but the wrapper's binary path must then point at the installed command. LIVE, Fedora 44: a non-global `npm i --prefix /var/lib/mailproof/npm mailproof` puts it at `/var/lib/mailproof/npm/node_modules/.bin/mailproof`, not `<prefix>/bin/mailproof`; only `npm i -g --prefix <dir>` makes `<dir>/bin/mailproof`. The wrapper, the systemd unit and the cron line below use `/usr/bin/mailproof`: change them to your path).
 - **Linux glibc 2.34 or newer** (EL9, Debian 12, Ubuntu 22.04 or newer). The trail index (`list`, `show`, `copies`, `counterparties`, and the commands built on them) needs `better-sqlite3`'s Linux prebuilt binary, which needs glibc 2.34. On older systems (EL8, Debian 11, Ubuntu 20.04) `npm install` finishes without a warning, but every index command then fails with `ERR_INDEX_UNAVAILABLE`; `record`, `verify` and `stamp` still work. On EL8 (or any glibc below 2.34) build the add-on once from source:
 
 ```bash
 sudo dnf install -y gcc-toolset-12-gcc-c++ make python39
-npm i --prefix /var/lib/mailproof/npm mailproof        # or -g; the prebuild installs and fails to load, that is expected
+npm i --prefix /var/lib/mailproof/npm mailproof        # command: /var/lib/mailproof/npm/node_modules/.bin/mailproof; or -g; the prebuild installs and fails to load, that is expected
 cd /var/lib/mailproof/npm/node_modules/better-sqlite3  # with -g: $(npm root -g)/mailproof/node_modules/better-sqlite3
 scl enable gcc-toolset-12 -- env PYTHON=/usr/bin/python3.9 \
   node /usr/lib/node_modules/npm/node_modules/node-gyp/bin/node-gyp.js rebuild --release --force_build=1
@@ -53,6 +53,19 @@ sudo dnf install -y postfix opendkim opendkim-tools certbot git s-nail nmap-ncat
 - **Node.js 22.19 or newer from NodeSource** (LIVE; the distro Node is too old). Follow NodeSource's setup script for your release, then `sudo dnf install -y nodejs`.
 - **OpenTimestamps (optional, for M4 seals):** `sudo pip install opentimestamps-client` installs `ots` in `/usr/local/bin` (LIVE). Make sure that directory is on the pipe's `PATH` (section 9).
 - `s-nail` gives you the `mail` command and `nmap-ncat` gives `nc`; section 13 uses both.
+
+**Debian / Ubuntu (CONTAINER: checked in podman containers of debian:12, ubuntu:22.04 and ubuntu:24.04, 2026-11-22; not a mail box).** These differ from the RHEL names:
+
+```bash
+sudo apt-get install -y postfix opendkim opendkim-tools certbot git ncat python3-pip bsd-mailx dovecot-core
+```
+
+- `nmap-ncat` does not exist: the package is `ncat` (it installs `ncat` and `nc`).
+- `s-nail` installs only `/usr/bin/s-nail`, with no `mail` or `mailx`. Use `bsd-mailx` for the `mail` command (that name was **not run** in the container), or call `s-nail` directly.
+- `opendkim-tools` provides `opendkim-genkey` and `opendkim-testmsg`; `opendkim-genkey -b 2048 -d example.com -s test -D dir` works. The package names above, the config paths (`/etc/opendkim.conf`, `master.cf`, Dovecot `conf.d/10-master.conf` and `10-auth.conf`) and the service names were checked.
+- **Node.js:** the distro `nodejs` is too old (18 on Debian 12, 12 on Ubuntu 20.04, 18 on Ubuntu 22.04). Run NodeSource's `setup_22.x` script (it needs `curl`, `ca-certificates`, `gnupg`), then `sudo apt-get install -y nodejs`.
+- **`ots`:** on Debian 12 and Ubuntu 24.04 a plain `sudo pip install opentimestamps-client` is refused (PEP 668, externally-managed-environment). Either `sudo pip install --break-system-packages opentimestamps-client` (CONTAINER) or `sudo PIPX_BIN_DIR=/usr/local/bin pipx install opentimestamps-client` (**not run**). On Ubuntu 22.04 a plain `sudo pip install opentimestamps-client` works (CONTAINER); the `--break-system-packages` flag does not exist in its pip 22.0.
+- glibc is 2.36 (Debian 12), 2.35 (Ubuntu 22.04) and 2.39 (Ubuntu 24.04), all above the 2.34 floor; the published mailproof 4.0.0's `better-sqlite3` prebuild loads on all three (CONTAINER).
 
 gitdone also installs nginx because it serves a website. You do not need a web server: use `certbot certonly --standalone` (section 11). **UNVERIFIED:** Debian/Ubuntu names (the same packages with `apt-get`, no EPEL step).
 
@@ -115,7 +128,7 @@ The ownership and modes are what the live box uses (LIVE): `/etc/opendkim/keys` 
 
 Use the multi-domain form, even for one domain. It is what runs on a production Postfix box (the gitdone operators, 2026-11-11, LIVE). It lets the same box sign more domains later without a rewrite. (gitdone's wiki still shows a single-key config; that page is stale, do not copy it.)
 
-`/etc/opendkim.conf`:
+`/etc/opendkim.conf`. On Debian and Ubuntu the packaged file ships an active `Socket local:/run/opendkim/opendkim.sock` line: **replace** it with the `Socket inet:8891@127.0.0.1` line below, do not add a second one (CONTAINER). Postfix runs chrooted there, which is why a TCP socket is simpler than a Unix one.
 
 ```
 Mode                 sv
@@ -336,6 +349,8 @@ case "$rc" in
 esac
 ```
 
+The binary path above (`/usr/bin/mailproof`) must match where you installed it (section 2: a `--prefix` install without `-g` is `<prefix>/node_modules/.bin/mailproof`).
+
 `/etc/default/mailproof` (owner root, group mailproof, mode 0640):
 
 ```
@@ -454,6 +469,7 @@ smtp_tls_security_level = may
 **Renewal must reload whatever serves the certificate.** certbot writes the new certificate to disk, but a running daemon keeps the old one in memory until it reloads. gitdone's served nginx certificate went stale this way, with a fresh one on disk; its fix is a `renew_hook = systemctl reload nginx` in the renewal conf (LIVE, for nginx). For Postfix, the equivalent is a deploy hook (not proven):
 
 ```bash
+sudo install -d /etc/letsencrypt/renewal-hooks/deploy   # absent until certbot has run once (CONTAINER)
 sudo tee /etc/letsencrypt/renewal-hooks/deploy/reload-postfix.sh >/dev/null <<'HOOK'
 #!/bin/sh
 systemctl reload postfix
@@ -624,14 +640,15 @@ Every row of Part 2 is **UNVERIFIED (not run on a real box)**; the rows are adde
 
 ## 21. Verified and unverified (both parts)
 
-Tags: **LIVE** = read or run on a real production Postfix box by the gitdone operators (gitdone repo records, hamr0/gitdone `docs/wiki/deployment.md` §5/§6; the author of this guide did not re-run it). **PDOCS** = from the Postfix documentation, not run. **UNVERIFIED** = neither. **A real-box test passed steps 1-7 of section 13** (AlmaLinux 8.10, Postfix, OpenDKIM, 2026-11-22; [F42](findings.md)); rows marked LIVE in the table were run there. Everything else stays UNVERIFIED: the `SignHeaders` values, ownsub specifics, a null `--sender`, spoof and recipient restrictions, submission on 587, SELinux (disabled on that box), and all of Part 2. **Part 2 (mail client) is entirely UNVERIFIED.**
+Tags: **LIVE** = read or run on a real production Postfix box by the gitdone operators (gitdone repo records, hamr0/gitdone `docs/wiki/deployment.md` §5/§6; the author of this guide did not re-run it). **CONTAINER** = checked inside a podman container of debian:12, ubuntu:22.04 or ubuntu:24.04 (packages, paths, install commands; not a running mail box). **PDOCS** = from the Postfix documentation, not run. **UNVERIFIED** = neither. **A real-box test passed steps 1-7 of section 13** (AlmaLinux 8.10, Postfix, OpenDKIM, 2026-11-22; [F42](findings.md)); rows marked LIVE in the table were run there. Everything else stays UNVERIFIED: the `SignHeaders` values, ownsub specifics, a null `--sender`, spoof and recipient restrictions, submission on 587, SELinux (disabled on that box), and all of Part 2. **Part 2 (mail client) is entirely UNVERIFIED.**
 
 | Step | Status | Source / note |
 |---|---|---|
 | Packages on Alma/RHEL: EPEL, postfix, opendkim, certbot, git, s-nail, nmap-ncat | LIVE | operators |
 | Node 22.19+ from NodeSource | LIVE | operators |
 | `ots` via `pip install opentimestamps-client` (`/usr/local/bin`) | LIVE | operators |
-| Debian/Ubuntu package names | UNVERIFIED | |
+| Debian/Ubuntu package names (`ncat`, `opendkim-tools`, `certbot`, `git`, `dovecot-core`, `python3-pip`), config paths, service names, `opendkim-genkey`, NodeSource Node, `pip --break-system-packages`, glibc and the better-sqlite3 prebuild | **CONTAINER** (2026-11-22) | section 3 |
+| Debian/Ubuntu: `bsd-mailx` for `mail`, `pipx install opentimestamps-client` | not run | section 3 |
 | 1 vCPU / 1 GB RAM sizing | LIVE (the box's size, not a mailproof measurement) | |
 | System user with `/sbin/nologin`, root-owned code | LIVE | gitdone §3-4 |
 | DNS: A, MX, SPF, DMARC, dated DKIM TXT | LIVE | gitdone §1 |

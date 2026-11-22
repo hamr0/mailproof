@@ -24,7 +24,7 @@ Requirements: Node >= 22.19 and `git` on your PATH. Optional, for the seal: the 
 
 ```bash
 sudo dnf install -y gcc-toolset-12-gcc-c++ make python39
-npm i --prefix /var/lib/mailproof/npm mailproof        # or -g; the prebuild installs and fails to load, that is expected
+npm i --prefix /var/lib/mailproof/npm mailproof        # command: /var/lib/mailproof/npm/node_modules/.bin/mailproof; or -g; the prebuild installs and fails to load, that is expected
 cd /var/lib/mailproof/npm/node_modules/better-sqlite3  # with -g: $(npm root -g)/mailproof/node_modules/better-sqlite3
 scl enable gcc-toolset-12 -- env PYTHON=/usr/bin/python3.9 \
   node /usr/lib/node_modules/npm/node_modules/node-gyp/bin/node-gyp.js rebuild --release --force_build=1
