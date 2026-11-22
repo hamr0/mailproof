@@ -279,12 +279,18 @@ test('B14.9-16: a pipe-only account validates; user is optional there; IMAP-only
   const noUser = cfg({ trailDir: '/var/lib/mp' });
   assert.deepEqual(noUser.problems, []);
   assert.equal(configModule.isPipeOnly(noUser.config.accounts.me), true);
-  const bad = { port: 993, folders: ['INBOX'], sent: true, passCommand: 'echo x', passFile: '/x', accessTokenCommand: 'y' };
-  for (const [k, v] of Object.entries(bad)) {
-    const r = cfg({ trailDir: '/var/lib/mp', [k]: v });
-    assert.ok(r.problems.some((p) => p.includes(`accounts.me.${k}`) && p.includes('only for an IMAP account')), `${k}: ${r.problems.join(' | ')}`);
+  // lenient rule (owner, 2026-11-22): no host plus any IMAP-only key is an IMAP account on imap.gmail.com, as in 4.0.0; nothing 4.0.0 accepted is refused
+  const imapKeys = { port: 993, folders: ['INBOX'], sent: true, passCommand: 'echo x', passFile: '/x', accessTokenCommand: 'y' };
+  for (const [k, v] of Object.entries(imapKeys)) {
+    const extra = k === 'passCommand' || k === 'passFile' || k === 'accessTokenCommand' ? {} : { passCommand: 'echo x' };
+    const r = cfg({ user: 'me@example.com', trailDir: '/var/lib/mp', ...extra, [k]: v });
+    assert.deepEqual(r.problems, [], `${k}: ${r.problems.join(' | ')}`);
+    assert.equal(configModule.isPipeOnly(r.config.accounts.me), false, k);
+    assert.equal(r.config.accounts.me.host, 'imap.gmail.com', k);
   }
-  assert.ok(cfg({ trailDir: '/var/lib/mp', port: 1 }).problems.some((p) => p === 'accounts.me.port: only for an IMAP account (this account has no host)'));
+  const fileOnly = cfg({ user: 'me@example.com', trailDir: '/var/lib/mp', passFile: '/x' });
+  assert.equal(fileOnly.config.accounts.me.port, 993);
+  assert.deepEqual(fileOnly.config.accounts.me.secret, { passFile: '/x' });
   // an IMAP account: host present
   const imap = cfg({ host: 'imap.example.com', trailDir: '/var/lib/mp', passCommand: 'echo x', user: 'me@example.com' });
   assert.deepEqual(imap.problems, []);
@@ -322,6 +328,15 @@ test('B14.9-17: sync, watch, the MCP sync tool refuse a pipe-only account; statu
   assert.equal(stamp.code, 0, stamp.stderr);
   // the config screen and the validator do not trip on it either
   assert.equal((await p.w.run(['config', 'validate'])).code, 0);
+});
+
+test('4.0.0 compat: a hostless account with passCommand validates and is a Gmail IMAP account on port 993', () => {
+  const r = validateConfig({ v: 1, accounts: { personal: { user: 'a@b.example', trailDir: '/t/one', passCommand: 'pass show x' } } }, { HOME: '/home/x' });
+  assert.deepEqual(r.problems, []);
+  const a = r.config.accounts.personal;
+  assert.equal(a.host, 'imap.gmail.com');
+  assert.equal(a.port, 993);
+  assert.equal(configModule.isPipeOnly(a), false);
 });
 
 test('B14.9-17b: the wizard login test is refused for a pipe-only account (one definition)', async () => {

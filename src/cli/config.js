@@ -13,7 +13,7 @@ import { STAMP_EVERY_HOURS_MIN, STAMP_EVERY_HOURS_MAX } from '../proof/limits.js
  * @typedef {Object} Account
  * @property {string} name
  * @property {string | null} user  Required for an IMAP account; optional (null) on a pipe-only one (SPEC B14.3).
- * @property {string | null} host  null: a pipe-only account (no `host` in the file): mail arrives through `mailproof record`, there is no mailbox (SPEC B14.3). `isPipeOnly` is the one test.
+ * @property {string | null} host  null: a pipe-only account (no `host` and no IMAP-only key in the file; with one, a missing host means imap.gmail.com): mail arrives through `mailproof record`, there is no mailbox (SPEC B14.3). `isPipeOnly` is the one test.
  * @property {number | null} port  null on a pipe-only account.
  * @property {string[] | null} folders  null on a pipe-only account.
  * @property {boolean | string | null} sent  null on a pipe-only account.
@@ -44,15 +44,17 @@ const CONTENT_KEYS = new Set(['store', 'attachments', 'days', 'sweepDays']);
 const MCP_KEYS = new Set(['inputDirs', 'outputDir', 'maxResponseBytes', 'maxBinaryBytes']);
 export const MCP_DEFAULTS = Object.freeze({ maxResponseBytes: 524288, maxBinaryBytes: 1048576 });
 const SECRET_KEYS = ['passCommand', 'passFile', 'accessTokenCommand'];
-/** The keys only an IMAP account (one with a `host`) may carry (SPEC B14.3). */
+/** The keys that make an account an IMAP account when present (SPEC B14.3); the one list. */
 const IMAP_ONLY_KEYS = ['port', 'folders', 'sent', ...SECRET_KEYS];
 
 /**
- * Is this a pipe-only account (SPEC B14.3): no `host`, so no mailbox to log in to; its mail arrives through `mailproof record`. The one definition.
- * @param {Account} account
+ * Is this a pipe-only account (SPEC B14.3): no `host` AND none of the IMAP-only keys, so no mailbox to log in to; its mail arrives through `mailproof record`.
+ * An account with no `host` but any IMAP-only key is an IMAP account on imap.gmail.com, as in 4.0.0 (the lenient rule: no 4.0.0 config is refused).
+ * The one definition: takes the raw config entry (validator) or the validated Account (host null, IMAP fields null).
+ * @param {Record<string, any>} account
  * @returns {boolean}
  */
-export const isPipeOnly = (account) => account.host === null;
+export const isPipeOnly = (account) => (account.host === undefined || account.host === null) && IMAP_ONLY_KEYS.every((k) => account[k] === undefined || account[k] === null);
 
 /**
  * The one line every refusal of a pipe-only account says (`sync`, `watch`, the MCP `sync` tool, the wizard's login test).
@@ -221,10 +223,9 @@ export function validateConfig(json, env) {
       if (typeof raw[k] !== type || (type === 'string' && !(/** @type {string} */ (raw[k])).trim())) { problems.push(`${at}.${k}: must be a ${type === 'string' ? 'non-empty string' : type}`); return false; }
       return true;
     };
-    const pipeOnly = raw.host === undefined;   // no host: a pipe-only account (SPEC B14.3)
+    const pipeOnly = isPipeOnly(raw);   // no host and no IMAP-only key (SPEC B14.3); a hostless account with one is IMAP on imap.gmail.com
     const userOk = raw.user === undefined ? (pipeOnly || (problems.push(`${at}.user: required`), false)) : typed('user', 'string');
-    const hostOk = pipeOnly || typed('host', 'string');
-    if (pipeOnly) for (const k of IMAP_ONLY_KEYS) if (raw[k] !== undefined) problems.push(`${at}.${k}: only for an IMAP account (this account has no host)`);
+    const hostOk = pipeOnly || raw.host === undefined || typed('host', 'string');
     let port = 993;
     if (!pipeOnly && raw.port !== undefined) {
       if (!Number.isInteger(raw.port) || /** @type {number} */ (raw.port) < 1 || /** @type {number} */ (raw.port) > 65535) problems.push(`${at}.port: must be an integer 1-65535`);
@@ -320,7 +321,7 @@ export function validateConfig(json, env) {
     if (problems.length === before && userOk && hostOk) {
       accounts[name] = pipeOnly
         ? { name, user: typeof raw.user === 'string' ? raw.user : null, host: null, port: null, folders: null, sent: null, trailDir, trail, secret: null, content, otsBin, stamp, backupRemote }
-        : { name, user: /** @type {string} */ (raw.user), host: /** @type {string} */ (raw.host), port, folders, sent, trailDir, trail, secret, content, otsBin, stamp, backupRemote };
+        : { name, user: /** @type {string} */ (raw.user), host: /** @type {string} */ (raw.host ?? 'imap.gmail.com'), port, folders, sent, trailDir, trail, secret, content, otsBin, stamp, backupRemote };
     }
   }
   if (Object.keys(json.accounts).length === 0) problems.push('accounts: at least one account is required');
