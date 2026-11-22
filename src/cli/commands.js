@@ -122,6 +122,18 @@ export const COMMANDS = {
       'delete-backup': { type: 'boolean', help: 'remove the <trail>.pre-prune-<date> backup after the swap (the removal is only final then)' },
     },
   },
+  record: {
+    summary: 'record one email from a file or stdin (for a mail server pipe)', account: true, positional: '[file]', pathPositional: true, min: 0, max: 1,
+    when: 'Use from a mail server that pipes each message to mailproof (Postfix pipe(8)): it reads one raw email from <file> or from stdin and records its proof in the trail, exactly as sync does for a mailbox. --direction is required: in for mail you received, out for mail you sent. It never prompts and is not in the menu; with no file and a terminal on stdin it exits 64. A message over the size limit (25 MiB) is hashed as it streams in, never held in memory, and recorded unverified as over limit: total_bytes with its true id. The same bytes again are a success (already recorded). After the record it runs the content-expiry sweep when it is due (a failure there is one stderr line, never the exit code); it does not seal: run `mailproof stamp` from a timer. An account with no host (pipe-only) is made for this: see the signing guide.',
+    fails: 'Exit 0 when recorded, or already recorded, or recorded unverified because over the limit; 64 for a missing or other --direction, an unknown flag, no --account when several are configured, a directory as <file>, or no file with a terminal on stdin; 75 when the trail is locked (ERR_TRAIL_LOCKED: the mail server should retry); 77 when the config is not private; 1 for anything else (an empty message, an unreadable file, a stream error, a git failure).',
+    flags: {
+      direction: { type: 'string', arg: '<in|out>', help: 'required: in for mail you received, out for mail you sent' },
+      source: { type: 'string', arg: '<text>', help: 'where the email came from, recorded with it (default pipe; the guide passes pipe:postfix)' },
+      'client-ip': { type: 'string', arg: '<ip>', help: 'the connecting client\'s IP (Postfix ${client_address}), for the SPF check; empty = none' },
+      'client-helo': { type: 'string', arg: '<name>', help: 'the client\'s HELO name (Postfix ${client_helo}); empty = none' },
+      sender: { type: 'string', arg: '<addr>', help: 'the envelope sender (Postfix ${sender}), for SPF; empty = the null sender' },
+    },
+  },
   backup: {
     summary: 'git bundle of the trail', account: true, positional: '', min: 0, max: 0,
     when: 'Use to keep a copy of the proofs somewhere else. It writes a git bundle of the whole trail (records, keys, replies, stamps; never message bodies) to ~/mailproof/backups/, and prints the path: restore with `git clone <file>.bundle <dir>`. --with-content adds a separate, unencrypted <file>.content.tar of the stored raw emails (other people\'s mail: encrypt it or the disk yourself). --push also pushes the trail to the account\'s backupRemote, never with force: after a prune the remote keeps the history from before it as an archive and the push is refused.',

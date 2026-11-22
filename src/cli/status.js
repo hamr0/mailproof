@@ -4,7 +4,7 @@
 import path from 'node:path';
 import { Mailproof } from '../index.js';
 import { EX_OK } from './errors.js';
-import { selectAccount, mailproofOptions, loadConfig } from './config.js';
+import { selectAccount, mailproofOptions, loadConfig, isPipeOnly } from './config.js';
 import { print, printJson, loadCtxConfig } from './session.js';
 import { printable as p } from './printable.js';
 import { styleOf, fileUrl, rel } from './style.js';
@@ -27,7 +27,7 @@ import { indexOverview } from '../proof/index-db.js';
  * @param {import('../index.js').Mailproof} mp
  * @param {string} state  The state directory.
  * @param {{ refresh?: boolean | 'bounded', onProgress?: (p: import('../proof/index-db.js').IndexProgress) => void }} [opts]  `refresh`: the library catches the trail index up first: fully for the CLI (`true`, with `onProgress` for its progress line), bounded for the MCP tool (`'bounded'`: it never builds a cold index, the answer carries a `hint`).
- * @returns {Promise<{ user: string, trail: string, records: import('../proof/status.js').TrailStatus['records'], lastSync: import('./state.js').AccountState['lastSync'], content: import('../proof/status.js').TrailStatus['content'], index: import('../proof/status.js').TrailStatus['index'], pendingStamps: number | null, seal: import('../proof/status.js').TrailStatus['seal'], lastBackup: import('./state.js').AccountState['lastBackup'], watch: { running: boolean, pid?: number }, hint?: string }>}
+ * @returns {Promise<{ user: string | null, trail: string, records: import('../proof/status.js').TrailStatus['records'], lastSync: import('./state.js').AccountState['lastSync'], content: import('../proof/status.js').TrailStatus['content'], index: import('../proof/status.js').TrailStatus['index'], pendingStamps: number | null, seal: import('../proof/status.js').TrailStatus['seal'], lastBackup: import('./state.js').AccountState['lastBackup'], watch: { running: boolean, pid?: number }, hint?: string }>}
  */
 export async function accountStatus(account, mp, state, opts = {}) {
   const [lib, st] = await Promise.all([mp.status(opts.refresh ? { refresh: opts.refresh, ...(opts.onProgress ? { onProgress: opts.onProgress } : {}) } : undefined), readState(state, account.name)]);
@@ -94,10 +94,10 @@ function sealText(z, now) {
 }
 
 /**
- * @param {string} name @param {Record<string, any>} s @param {import('./style.js').Style} st @param {Date} now @param {Record<string, string | undefined>} env
+ * @param {string} name @param {Record<string, any>} s @param {import('./style.js').Style} st @param {Date} now @param {Record<string, string | undefined>} env @param {boolean} [pipeOnly]  A pipe-only account (SPEC B14.3): no IMAP server, so the last-sync row says so.
  * @returns {string}
  */
-function statusText(name, s, st, now, env) {
+function statusText(name, s, st, now, env, pipeOnly = false) {
   const r = s.records;
   const hint = s.index === 'unreadable' ? 'the index cannot be opened: check permissions on the trail directory'
     : s.index === 'unknown' ? 'the SQLite add-on (better-sqlite3) cannot load, so `mailproof list` fails too: reinstall or rebuild it (npm rebuild better-sqlite3)'
@@ -115,10 +115,10 @@ function statusText(name, s, st, now, env) {
   const row = (label, v) => `  ${st.bold(label.padEnd(12))} ${v}`;
   const bk = s.lastBackup;
   return [
-    `${st.bold(p(name))} ${st.sym.dot} ${p(s.user)}`,
+    `${st.bold(p(name))} ${st.sym.dot} ${s.user === null ? st.dim('no user') : p(s.user)}`,
     row('trail', st.link(p(tilde(s.trail, env)), fileUrl(s.trail))),
     row('records', rec),
-    row('last sync', sync),
+    row(pipeOnly ? 'mail' : 'last sync', pipeOnly ? `pipe-only ${st.dim('(arrives through mailproof record)')}` : sync),
     row('content', c),
     row('index', s.index === 'present' ? st.green(s.index) : st.yellow(s.index)),
     row('seal', sealWord(sealText(s.seal, now))),
@@ -140,7 +140,7 @@ export async function statusCmd(a, ctx) {
   }
   const st = styleOf(ctx);
   const now = (ctx.deps.now ?? (() => new Date()))();
-  for (const n of names) print(ctx, statusText(n, all[n], st, now, ctx.env));
+  for (const n of names) print(ctx, statusText(n, all[n], st, now, ctx.env, isPipeOnly(config.accounts[n])));
   return EX_OK;
 }
 
@@ -150,7 +150,7 @@ export async function statusCmd(a, ctx) {
  * no content-store walk, no index build.
  * @param {import('./config.js').Account} account
  * @param {import('./session.js').Ctx} ctx
- * @returns {Promise<{ user: string, trailOk: boolean, lastSync: { at: string, complete: boolean, error: string | null } | null, records: { total: number, verified: number | null, unverified: number | null, out: number | null } | null, seal: { state: 'off' | 'never' | 'pending' | 'sealed' | 'broken', nextDue: string | null }, watch: boolean }>}
+ * @returns {Promise<{ user: string | null, trailOk: boolean, lastSync: { at: string, complete: boolean, error: string | null } | null, records: { total: number, verified: number | null, unverified: number | null, out: number | null } | null, seal: { state: 'off' | 'never' | 'pending' | 'sealed' | 'broken', nextDue: string | null }, watch: boolean }>}
  */
 export async function headerFacts(account, ctx) {
   const mp = ctx.deps.makeMailproof ? ctx.deps.makeMailproof(account) : new Mailproof(mailproofOptions(account));

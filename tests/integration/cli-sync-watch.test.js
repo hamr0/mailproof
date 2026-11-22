@@ -52,7 +52,7 @@ test('sync: the account becomes the sync options; the secret comes from the comm
 });
 
 test('sync: an access-token command is re-run every time (a fresh token); text output lists each folder', async () => {
-  const w = makeWorld({ accounts: { acme: { user: 'u@x.test', trailDir: makeTmpDir('mp-cli-sw-trail-'), accessTokenCommand: `${process.execPath} ${tokenScript}` } } });
+  const w = makeWorld({ accounts: { acme: { user: 'u@x.test', host: 'imap.gmail.com', trailDir: makeTmpDir('mp-cli-sw-trail-'), accessTokenCommand: `${process.execPath} ${tokenScript}` } } });
   const toks = [];
   const deps = { sync: async (mp, opts) => { toks.push(opts.auth.accessToken); return result(); } };
   const a = await w.run(['sync'], { deps });

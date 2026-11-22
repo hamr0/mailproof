@@ -18,6 +18,7 @@ import { updateState } from '../cli/state.js';
 import { stamp as isoStamp } from '../cli/session.js';
 import { PUSH_WARNING } from '../proof/backup.js';
 import { ToolError, badArgument } from './errors.js';
+import { UsageError } from '../cli/errors.js';
 
 /** Messages read per folder in one `sync` call unless the caller lowers it (SPEC B12.12: about 8 s for 100 signed 40 KB messages, F30). */
 export const SYNC_MAX_MESSAGES_DEFAULT = 100;
@@ -199,7 +200,11 @@ export const HANDLERS = {
     };
     /** @type {import('../cli/session.js').Ctx} */
     const cliCtx = { stdout: { write: () => true }, stderr: { write: () => true }, stdin: null, interactive: false, env: c.env, signal: new AbortController().signal, deps: c.deps };
-    const r = await syncOnce({ account, mp: c.mp(), state: c.state, configFile: c.configFile, close: async () => {} }, cliCtx, over);
+    const sess = { account, mp: c.mp(), state: c.state, configFile: c.configFile, close: async () => {} };
+    /** @type {Awaited<ReturnType<typeof syncOnce>>} */
+    let r;
+    try { r = await syncOnce(sess, cliCtx, over); }
+    catch (e) { if (e instanceof UsageError) throw badArgument(e.message); throw e; }   // a pipe-only account (SPEC B14.3): the CLI's exit 64 is ERR_BAD_ARGUMENT here
     await indexAfterSync({ account, mp: c.mp(), state: c.state, configFile: c.configFile, close: async () => {} }, cliCtx);   // the index is what the status tool leaves to sync
     const recorded = r.result.folders.reduce((n, f) => n + f.recorded, 0);
     return json({ ...r.result, ots: r.ots }, `ok recorded ${recorded}${r.result.complete ? '' : ' (not complete)'}`);

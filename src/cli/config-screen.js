@@ -56,28 +56,31 @@ export async function configSummary(file, ctx, st) {
   lines.push(row('Valid', st.green(`${st.sym.ok} valid`)));
   for (const a of Object.values(config.accounts)) {
     lines.push('');
-    lines.push(`${st.bold(p(a.name))} ${st.dim(st.sym.dot)} ${p(a.user)}`);
-    lines.push(row('  server', `${p(a.host)}:${a.port}`));
-    lines.push(row('  folders', `${a.folders.map((f) => p(f)).join(', ')}${a.sent === false ? '' : `; sent: ${a.sent === true ? 'automatic' : p(String(a.sent))}`}`));
+    lines.push(`${st.bold(p(a.name))} ${st.dim(st.sym.dot)} ${a.user === null ? st.dim('no user') : p(a.user)}`);
+    if (a.host === null || a.port === null || a.folders === null || a.secret === null) lines.push(row('  server', `pipe-only ${st.dim('(no IMAP server: mail arrives through mailproof record)')}`));
+    else {
+      lines.push(row('  server', `${p(a.host)}:${a.port}`));
+      lines.push(row('  folders', `${a.folders.map((f) => p(f)).join(', ')}${a.sent === false ? '' : `; sent: ${a.sent === true ? 'automatic' : p(String(a.sent))}`}`));
+    }
     lines.push(row('  trail', `${t(a.trailDir)} (${p(a.trail)})`));
-    lines.push(row('  password', await secretLine(a, ctx.env, st)));
+    if (a.secret !== null) lines.push(row('  password', await secretLine(a, a.secret, ctx.env, st)));
     lines.push(row('  seal', a.otsBin === null ? st.dim('off') : `every ${a.stamp.everyHours ?? STAMP_EVERY_HOURS} h`));
     lines.push(row('  backup', a.backupRemote ? p(redactUrl(a.backupRemote)) : st.dim('no remote (a file only)')));
   }
   return { lines, valid: true };
 }
 
-/** Where the password comes from, never what it is. @param {import('./config.js').Account} a @param {Record<string, string | undefined>} env @param {import('./style.js').Style} st @returns {Promise<string>} */
-async function secretLine(a, env, st) {
-  if (a.secret.passFile) {
-    const f = a.secret.passFile;
+/** Where the password comes from, never what it is. @param {import('./config.js').Account} a @param {NonNullable<import('./config.js').Account['secret']>} secret @param {Record<string, string | undefined>} env @param {import('./style.js').Style} st @returns {Promise<string>} */
+async function secretLine(a, secret, env, st) {
+  if (secret.passFile) {
+    const f = secret.passFile;
     try {
       const mode = (await fsp.stat(f)).mode & 0o777;
       const m = mode.toString(8).padStart(4, '0');
       return `file ${p(tilde(f, env))} ${mode & 0o077 ? st.red(`mode ${m} ${st.sym.bad} must be 0600`) : st.green(`mode ${m} ${st.sym.ok}`)}`;
     } catch { return `file ${p(tilde(f, env))} ${st.red(`${st.sym.bad} cannot be read`)}`; }
   }
-  return a.secret.accessTokenCommand ? 'an access-token command (not shown)' : 'a command (not shown)';
+  return secret.accessTokenCommand ? 'an access-token command (not shown)' : 'a command (not shown)';
 }
 
 /**

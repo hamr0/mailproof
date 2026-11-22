@@ -13,7 +13,7 @@ import { makeTmpDir } from '../helpers/tmp.js';
 import { resolveAuth } from '../../src/cli/secrets.js';
 
 const env = { HOME: '/home/ana', XDG_CONFIG_HOME: undefined };
-const acct = (extra = {}) => ({ user: 'a@b.example', trailDir: '/t/one', passCommand: 'pass show x', ...extra });
+const acct = (extra = {}) => ({ user: 'a@b.example', host: 'imap.gmail.com', trailDir: '/t/one', passCommand: 'pass show x', ...extra });   // a host is what makes it an IMAP account (SPEC B14.3): no host, no password key
 const cfg = (accounts) => ({ v: 1, accounts });
 const problems = (json) => validateConfig(json, env).problems;
 
@@ -61,13 +61,13 @@ test('strict: unknown keys at every level, wrong types, bad names, a missing v, 
   assert.ok(problems(cfg({ a: acct({ content: { store: 'yes' } }) })).includes('accounts.a.content.store: must be true or false'));
   assert.ok(problems(cfg({ a: acct({ ots: 'ots' }) })).some((p) => p.startsWith('accounts.a.ots:')), 'a string must be an absolute path');
   assert.equal(validateConfig(cfg({ a: acct({ ots: '/usr/local/bin/ots' }) }), env).config.accounts.a.otsBin, '/usr/local/bin/ots');
-  assert.ok(problems(cfg({ a: { trailDir: '/t', passCommand: 'x' } })).includes('accounts.a.user: required'));
+  assert.ok(problems(cfg({ a: { host: 'h.example', trailDir: '/t', passCommand: 'x' } })).includes('accounts.a.user: required'));
   assert.ok(problems(cfg({ a: { user: 'u', passCommand: 'x' } })).includes('accounts.a.trailDir: required'));
   assert.ok(problems(null).length && problems([]).length && problems('x').length);
 });
 
 test('exactly one secret source; a plaintext password key anywhere is refused with the advice', () => {
-  assert.ok(problems(cfg({ a: { user: 'u', trailDir: '/t' } })).some((p) => /exactly one of passCommand, passFile, accessTokenCommand/.test(p)));
+  assert.ok(problems(cfg({ a: { user: 'u', host: 'h.example', trailDir: '/t' } })).some((p) => /exactly one of passCommand, passFile, accessTokenCommand/.test(p)));
   assert.ok(problems(cfg({ a: acct({ passFile: '/x' }) })).some((p) => /exactly one of .*found passCommand, passFile/.test(p)));
   for (const key of ['pass', 'password', 'secret', 'Password']) {
     const p = problems(cfg({ a: acct({ [key]: 'hunter2' }) }));

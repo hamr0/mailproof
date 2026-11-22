@@ -301,12 +301,12 @@ class Mailproof {
   }
 
   /**
-   * INTERNAL (used by sync, not an export, not a primitive): record an over-size message that was streamed
+   * INTERNAL (used by sync and by `mailproof record`, not an export, not a primitive): record an over-size message that was streamed
    * through a hash and never held. Builds exactly the over-limit record `record()` writes for the same bytes
    * (`over limit: total_bytes`, same id), so a later pipe capture of that message is a duplicate. Nothing is parsed.
    * @param {{ raw_sha256: string, size: number }} digest  `raw_sha256` in the `sha256:<hex>` form of hashDocument.
    * @param {{ direction: 'in' | 'out', source: string }} ctx
-   * @returns {Promise<{ id: string, duplicate: boolean, commit: string, record?: MpRecord }>}
+   * @returns {Promise<{ id: string, duplicate: boolean, commit: string, record?: MpRecord, ots?: 'off' | 'queued' | 'pending' | { error: string }, content?: ContentResult }>}
    */
   async _recordDigest(digest, ctx) {
     const captured = this.now().toISOString();

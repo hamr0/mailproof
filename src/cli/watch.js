@@ -3,7 +3,7 @@
 import { EX_OK, EX_ERR, EX_NOPERM, exitFor, EX_TEMPFAIL } from './errors.js';
 import { parseDuration, MIN_INTERVAL_MS } from './parse.js';
 import { openAccount, print, warn, printJson, stamp } from './session.js';
-import { syncOnce, folderLines, indexAfterSync } from './sync-op.js';
+import { syncOnce, folderLines, indexAfterSync, requireImap } from './sync-op.js';
 import { indexProgressLine } from './progress.js';
 import { styleOf } from './style.js';
 import { printable as p } from './printable.js';
@@ -44,6 +44,7 @@ export async function watchCmd(a, ctx) {
   const sleep = ctx.deps.sleep ?? sleepUntil;
   const s = await openAccount(a, ctx);
   const name = s.account.name;
+  try { requireImap(s.account); } catch (e) { await s.close(); throw e; }   // a pipe-only account is refused (64) before anything is marked running
   try {
     await truncateWatchLog(s.state, name);
     await updateState(s.state, name, { lastWatch: { at: stamp(now()), pid: process.pid, state: 'running' } });

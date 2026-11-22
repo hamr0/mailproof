@@ -12,14 +12,14 @@ import { STAMP_EVERY_HOURS_MIN, STAMP_EVERY_HOURS_MAX } from '../proof/limits.js
 /**
  * @typedef {Object} Account
  * @property {string} name
- * @property {string} user
- * @property {string} host
- * @property {number} port
- * @property {string[]} folders
- * @property {boolean | string} sent
+ * @property {string | null} user  Required for an IMAP account; optional (null) on a pipe-only one (SPEC B14.3).
+ * @property {string | null} host  null: a pipe-only account (no `host` in the file): mail arrives through `mailproof record`, there is no mailbox (SPEC B14.3). `isPipeOnly` is the one test.
+ * @property {number | null} port  null on a pipe-only account.
+ * @property {string[] | null} folders  null on a pipe-only account.
+ * @property {boolean | string | null} sent  null on a pipe-only account.
  * @property {string} trailDir  Absolute.
  * @property {string} trail
- * @property {{ passCommand?: string, passFile?: string, accessTokenCommand?: string }} secret  Exactly one key.
+ * @property {{ passCommand?: string, passFile?: string, accessTokenCommand?: string } | null} secret  Exactly one key on an IMAP account; null on a pipe-only one.
  * @property {{ store?: boolean, attachments?: boolean, days?: number, sweepDays?: number }} content
  * @property {string | null} otsBin  `ots` (the default: OpenTimestamps on), an absolute path, or null (`ots: false`: the seal is off).
  * @property {{ mode?: 'batch' | 'record', everyHours?: number }} stamp  The seal options (SPEC B13.1.1); empty: the library defaults.
@@ -34,6 +34,7 @@ import { STAMP_EVERY_HOURS_MIN, STAMP_EVERY_HOURS_MAX } from '../proof/limits.js
  * @property {number} maxBinaryBytes  Cap on a returned raw email or attachment.
  */
 /** @typedef {{ v: 1, accounts: Record<string, Account>, mcp?: McpConfig }} Config */
+/** An IMAP account with its mailbox fields narrowed (what `requireImap` returns). @typedef {Account & { user: string, host: string, port: number, folders: string[], sent: boolean | string, secret: NonNullable<Account['secret']> }} ImapAccount */
 
 export const ACCOUNT_NAME_RE = /^[a-z0-9][a-z0-9_-]{0,31}$/;
 const PLAINTEXT_KEYS = new Set(['pass', 'password', 'secret']);
@@ -43,6 +44,22 @@ const CONTENT_KEYS = new Set(['store', 'attachments', 'days', 'sweepDays']);
 const MCP_KEYS = new Set(['inputDirs', 'outputDir', 'maxResponseBytes', 'maxBinaryBytes']);
 export const MCP_DEFAULTS = Object.freeze({ maxResponseBytes: 524288, maxBinaryBytes: 1048576 });
 const SECRET_KEYS = ['passCommand', 'passFile', 'accessTokenCommand'];
+/** The keys only an IMAP account (one with a `host`) may carry (SPEC B14.3). */
+const IMAP_ONLY_KEYS = ['port', 'folders', 'sent', ...SECRET_KEYS];
+
+/**
+ * Is this a pipe-only account (SPEC B14.3): no `host`, so no mailbox to log in to; its mail arrives through `mailproof record`. The one definition.
+ * @param {Account} account
+ * @returns {boolean}
+ */
+export const isPipeOnly = (account) => account.host === null;
+
+/**
+ * The one line every refusal of a pipe-only account says (`sync`, `watch`, the MCP `sync` tool, the wizard's login test).
+ * @param {string} name
+ * @returns {string}
+ */
+export const pipeOnlyMessage = (name) => `${name} has no IMAP server (a pipe-only account): mail arrives through mailproof record`;
 
 /** The text `mailproof config template` prints (it validates, see the tests). */
 export const TEMPLATE = {
@@ -204,22 +221,24 @@ export function validateConfig(json, env) {
       if (typeof raw[k] !== type || (type === 'string' && !(/** @type {string} */ (raw[k])).trim())) { problems.push(`${at}.${k}: must be a ${type === 'string' ? 'non-empty string' : type}`); return false; }
       return true;
     };
-    const userOk = raw.user === undefined ? (problems.push(`${at}.user: required`), false) : typed('user', 'string');
-    const hostOk = raw.host === undefined || typed('host', 'string');
+    const pipeOnly = raw.host === undefined;   // no host: a pipe-only account (SPEC B14.3)
+    const userOk = raw.user === undefined ? (pipeOnly || (problems.push(`${at}.user: required`), false)) : typed('user', 'string');
+    const hostOk = pipeOnly || typed('host', 'string');
+    if (pipeOnly) for (const k of IMAP_ONLY_KEYS) if (raw[k] !== undefined) problems.push(`${at}.${k}: only for an IMAP account (this account has no host)`);
     let port = 993;
-    if (raw.port !== undefined) {
+    if (!pipeOnly && raw.port !== undefined) {
       if (!Number.isInteger(raw.port) || /** @type {number} */ (raw.port) < 1 || /** @type {number} */ (raw.port) > 65535) problems.push(`${at}.port: must be an integer 1-65535`);
       else port = /** @type {number} */ (raw.port);
     }
     /** @type {string[]} */
     let folders = ['INBOX'];
-    if (raw.folders !== undefined) {
+    if (!pipeOnly && raw.folders !== undefined) {
       if (!Array.isArray(raw.folders) || raw.folders.length === 0 || raw.folders.some((f) => typeof f !== 'string' || !f.trim())) problems.push(`${at}.folders: must be a non-empty array of folder names`);
       else folders = /** @type {string[]} */ (raw.folders);
     }
     /** @type {boolean | string} */
     let sent = true;
-    if (raw.sent !== undefined) {
+    if (!pipeOnly && raw.sent !== undefined) {
       if (typeof raw.sent === 'boolean' || (typeof raw.sent === 'string' && raw.sent.trim())) sent = /** @type {boolean | string} */ (raw.sent);
       else problems.push(`${at}.sent: must be true, false or a folder path`);
     }
@@ -234,15 +253,15 @@ export function validateConfig(json, env) {
       if (typeof raw.trail !== 'string' || !TRAIL_NAME_RE.test(raw.trail)) problems.push(`${at}.trail: must match [a-z0-9][a-z0-9_-]{0,63}`);
       else trail = raw.trail;
     }
-    /** @type {Account['secret']} */
+    /** @type {NonNullable<Account['secret']>} */
     const secret = {};
-    const named = SECRET_KEYS.filter((k) => raw[k] !== undefined);
-    if (named.length !== 1) problems.push(`${at}: give exactly one of ${SECRET_KEYS.join(', ')}${named.length ? ` (found ${named.join(', ')})` : ''}`);
+    const named = pipeOnly ? [] : SECRET_KEYS.filter((k) => raw[k] !== undefined);   // the one-secret rule is for an IMAP account only
+    if (!pipeOnly && named.length !== 1) problems.push(`${at}: give exactly one of ${SECRET_KEYS.join(', ')}${named.length ? ` (found ${named.join(', ')})` : ''}`);
     for (const k of named) {
       if (!typed(k, 'string')) continue;
       const v = /** @type {string} */ (raw[k]);
       // passFile is the only path-valued secret source; the two commands are argv, never a path (no shell, no ~)
-      secret[/** @type {keyof Account['secret']} */ (k)] = k === 'passFile' ? expandHome(v, env) : v;
+      secret[/** @type {keyof NonNullable<Account['secret']>} */ (k)] = k === 'passFile' ? expandHome(v, env) : v;
     }
     /** @type {Account['content']} */
     const content = {};
@@ -299,7 +318,9 @@ export function validateConfig(json, env) {
       else trails.set(key, name);
     }
     if (problems.length === before && userOk && hostOk) {
-      accounts[name] = { name, user: /** @type {string} */ (raw.user), host: /** @type {string} */ (raw.host ?? 'imap.gmail.com'), port, folders, sent, trailDir, trail, secret, content, otsBin, stamp, backupRemote };
+      accounts[name] = pipeOnly
+        ? { name, user: typeof raw.user === 'string' ? raw.user : null, host: null, port: null, folders: null, sent: null, trailDir, trail, secret: null, content, otsBin, stamp, backupRemote }
+        : { name, user: /** @type {string} */ (raw.user), host: /** @type {string} */ (raw.host), port, folders, sent, trailDir, trail, secret, content, otsBin, stamp, backupRemote };
     }
   }
   if (Object.keys(json.accounts).length === 0) problems.push('accounts: at least one account is required');
