@@ -25,6 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Docs
 
+- The M5 guide is renamed from the self-hosting guide to `docs/product/signing-guide.md`, retitled "Sign your own mail: OpenDKIM and your mail client", and split into two parts: Part 1 OpenDKIM (the existing content), Part 2 your mail client (submission on 587, SASL login, `reject_sender_login_mismatch`, client settings; every step marked UNVERIFIED, not run on a real box). README, docs map, PRD, SPEC and CLAUDE.md links follow. `mailproof record` is still specified (SPEC B14), not built.
+- PRD status cleanup: M3 and M4 headings read "shipped", M5 is "Sign your own mail and record it", the status line and date are current, and each still-open question in §12 says it is open and not scheduled.
 - README rewritten: sections by audience (the `mailproof` command and its menu, the MCP server, the library), one table of every primitive, what is checked and captured (DKIM, DMARC, SPF/ARC, the seal, threading), guarding a workflow step with a signed reply through bareguard, and links to the usage, setup and self-hosting guides. Links are absolute so they also work on npmjs.com.
 - `mailproof.context.md`: `export` is an MCP tool (the context said it was not); internal dates removed from the bareguard rule and the MCP parity note.
 - Usage guide: the `ots` binary is needed for the seal, which is on by default since 4.0.0 (the guide said only if turned on).

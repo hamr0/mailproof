@@ -1,14 +1,16 @@
-# Hosting your own mail server for signed copies (M5 guide)
+# Sign your own mail: OpenDKIM and your mail client
 
-> **Status: a guide, not a product.** It is written from the gitdone operators' records (a production Postfix box) and the Postfix documentation, **not from a fresh box run for mailproof**. Every step is marked in the table at the end. Source tags: **LIVE** = read or run on a real box by the gitdone operators; **PDOCS** = from the Postfix documentation, not run; **UNVERIFIED** = neither. The command `mailproof record` that this guide pipes mail into is **specified, not built yet** (SPEC B14, PRD §7 M5). Until it ships, the pipe steps cannot be run as written.
+> **Status: a guide, not a product.** It is written from the gitdone operators' records (a production Postfix box) and the Postfix documentation, **not from a fresh box run for mailproof**. Every step is marked in the table at the end. Source tags: **LIVE** = read or run on a real box by the gitdone operators; **PDOCS** = from the Postfix documentation, not run; **UNVERIFIED** = neither. This guide has two parts: **Part 1** (sections 1-14) is OpenDKIM, your domain signs your outbound mail; **Part 2** (sections 15-20) is your mail client, sending from Thunderbird, Apple Mail or any client through your server so the mail is signed and recorded. **Every step of Part 2 is UNVERIFIED (not run on a real box).** The command `mailproof record` that this guide pipes mail into is **specified, not built yet** (SPEC B14, PRD §7 M5). Until it ships, the pipe steps cannot be run as written.
 >
 > All names here are placeholders: `example.com`, `mail.example.com`, `203.0.113.10`. Use your own. Never paste real keys or addresses into a shared place.
+
+# Part 1: OpenDKIM, your domain signs your outbound mail
 
 ## 1. Who this is for, and when you need it
 
 mailproof proves an email from the **signed headers** of that email. Mail you send has a problem: the copy in your Sent folder is **unsigned** (Gmail and Outlook sign it later, on the way out, and the Sent copy never gets the signature). So for "I sent you this", mailproof alone holds only an unsigned, self-recorded copy. See PRD §5.
 
-If you run your own mail server, your server signs each outbound mail with your own DKIM key. A copy of that signed mail can be recorded. Then "I sent you this" has the same proof as mail you receive.
+If you run your own mail server (Postfix with OpenDKIM), your server signs each outbound mail with your own DKIM key. A copy of that signed mail can be recorded. Then "I sent you this" has the same proof as mail you receive.
 
 You need this guide only if you want **signed copies of what you send**. If you do not:
 
@@ -217,7 +219,7 @@ mailproof unix - n n - 1 pipe
 
 > **Status.** TESTED (LIVE, production Postfix box, 2026-11-11): a message handed to `sendmail(8)` and delivered locally on the same box carries OpenDKIM's `DKIM-Signature`, added in `cleanup` on the one queue file before any delivery (maillog: "DKIM-Signature field added"), and it verifies (`opendkim-testmsg` exit 0). Headers added at delivery (`Return-Path`, `X-Original-To`, `Delivered-To`, `Received`) come after signing and are unsigned, which is harmless. **Strongly implied by the mechanism, NOT tested:** that the `sender_bcc_maps` copy carries the signature too (it is the same queue file). **Still open:** the end-to-end check with `mailproof record` and `mailproof verify` (section 13 step 5). If the BCC copy turns out unsigned, the design must change (for example, record at the milter step, or re-inject through a content filter). Do not rely on the outbound copy until step 5 has passed on your box.
 >
-> **Scope: local `sendmail(8)` submission only.** That is what the live box proves. Sending from a mail client is not covered yet (end of this section).
+> **Scope: local `sendmail(8)` submission only.** That is what the live box proves. Sending from a mail client is Part 2 of this guide (sections 15-20), written but unverified.
 
 The idea. Postfix adds a recipient to a mail in `cleanup`, with `always_bcc` or `sender_bcc_maps`. The milter's edits (the `DKIM-Signature` header) are applied to that one queue file, so the BCC recipient should receive the same message, signature included. A `content_filter` or a re-injection step could break this.
 
@@ -289,15 +291,9 @@ Notes:
 
    (Keep the rest of your existing `smtpd_recipient_restrictions`; the point is only the order: the `check_recipient_access` line comes first.) Recipients added by `sender_bcc_maps` in `cleanup` bypass the smtpd restrictions, so the BCC copy still lands. Both restrictions are from the Postfix documentation and are **untested** (PDOCS).
 
-#### Not covered yet: sending from your mail client
+#### Sending from your mail client
 
-This guide covers mail handed to `sendmail(8)` on the box. It does **not** cover sending from a mail client on your laptop or phone. That needs more than is proven here:
-
-- a submission service (port 587, or 465) with SASL authentication, in `master.cf`;
-- `smtpd_sender_login_maps` and `reject_sender_login_mismatch`, so that signing and the BCC copy apply only to mail from an authenticated sender who owns that address;
-- the TLS settings of section 11, required for submission.
-
-Until that is written and run on a real box, nothing sent from a mail client passes through this server, and so none of it is recorded as signed. (Decided by the owner, 2026-11-11; on the PRD M5 open list.)
+This section covers mail handed to `sendmail(8)` on the box. Sending from a mail client on your laptop or phone is **Part 2** (sections 15-20). It is written but **UNVERIFIED**: until it is run on a real box, treat nothing sent from a client as recorded as signed.
 
 ## 9. The pipe wrapper
 
@@ -466,9 +462,108 @@ All of these are from the gitdone and knowless records. None were re-tested for 
 - **Back up the DKIM key offline**, and the trail (`mailproof backup`).
 - **The trail holds other people's addresses and subjects**, in a git repo on an internet-facing box. Keep the data directory mode 0700 and the box patched.
 
-## 15. Verified and unverified
+# Part 2: Your mail client
 
-Tags: **LIVE** = read or run on a real production Postfix box by the gitdone operators (gitdone repo records, hamr0/gitdone `docs/wiki/deployment.md` §5/§6; the author of this guide did not re-run it). **PDOCS** = from the Postfix documentation, not run. **UNVERIFIED** = neither. **No step has been run for mailproof itself**, because `mailproof record` does not exist yet.
+> **Status: every step in Part 2 is UNVERIFIED (not run on a real box).** It is written from the Postfix and Dovecot documentation and from the mechanism in Part 1. Nobody has run it end to end, and the signed, recorded copy of a client-submitted mail has not been tested. Do not read any line here as a result. Section 20 lists each step as unverified.
+
+## 15. What this part does, and what it needs
+
+Part 1 signs and records mail handed to `sendmail(8)` on the box. Most people send from a mail client (Thunderbird, Apple Mail, a phone app). For that mail to be signed by your domain and recorded, the client must **send through your server**, not through Gmail or another provider. The route:
+
+```
+client --(587, STARTTLS, login)--> Postfix submission --> OpenDKIM signs --> delivery + recorded copy
+```
+
+You need everything from Part 1 working first: DNS, the OpenDKIM key and milter, TLS (section 11) and the `sender_bcc_maps` copy (section 8.3). Part 2 adds a login-protected submission port in front of that.
+
+Two warnings. (1) Your Sent folder in the client still holds an unsigned copy; the proof is the signed copy recorded on the server. (2) If you also send from a client that goes through another provider, that mail is not signed by your domain and is not covered.
+
+## 16. A submission service on port 587 (and 465)
+
+Port 25 is for server-to-server mail. Clients use **submission**: port 587 with STARTTLS, or 465 with implicit TLS. In `/etc/postfix/master.cf` (UNVERIFIED):
+
+```
+submission inet n       -       n       -       -       smtpd
+  -o syslog_name=postfix/submission
+  -o smtpd_tls_security_level=encrypt
+  -o smtpd_tls_auth_only=yes
+  -o smtpd_sasl_auth_enable=yes
+  -o smtpd_sasl_type=dovecot
+  -o smtpd_sasl_path=private/auth
+  -o smtpd_sender_login_maps=hash:/etc/postfix/sender_logins
+  -o smtpd_client_restrictions=permit_sasl_authenticated,reject
+  -o smtpd_relay_restrictions=permit_sasl_authenticated,reject
+  -o smtpd_recipient_restrictions=reject_sender_login_mismatch,permit_sasl_authenticated,reject
+  -o milter_macro_daemon_name=ORIGINATING
+
+# optional: implicit TLS on 465
+smtps     inet  n       -       n       -       -       smtpd
+  -o syslog_name=postfix/smtps
+  -o smtpd_tls_wrappermode=yes
+  -o smtpd_sasl_auth_enable=yes
+  -o smtpd_sasl_type=dovecot
+  -o smtpd_sasl_path=private/auth
+  -o smtpd_sender_login_maps=hash:/etc/postfix/sender_logins
+  -o smtpd_client_restrictions=permit_sasl_authenticated,reject
+  -o smtpd_relay_restrictions=permit_sasl_authenticated,reject
+  -o smtpd_recipient_restrictions=reject_sender_login_mismatch,permit_sasl_authenticated,reject
+  -o milter_macro_daemon_name=ORIGINATING
+```
+
+`smtpd_tls_auth_only=yes` means a password is never accepted without TLS. `smtpd_tls_security_level=encrypt` on 587 makes STARTTLS mandatory. The certificate settings are the ones from section 11. `milter_macro_daemon_name=ORIGINATING` marks the mail as outbound for OpenDKIM (its `InternalHosts` / signing tables must match; see section 7).
+
+## 17. Login: Dovecot SASL
+
+A client must prove who it is before Postfix accepts mail from it. Dovecot SASL is the common choice (UNVERIFIED here). Packages: `dovecot-core` (and your distro's auth packages). In Dovecot, expose an auth socket Postfix can reach (`/etc/dovecot/conf.d/10-master.conf`):
+
+```
+service auth {
+  unix_listener /var/spool/postfix/private/auth {
+    mode = 0660
+    user = postfix
+    group = postfix
+  }
+}
+```
+
+and allow plain login only over TLS (`/etc/dovecot/conf.d/10-auth.conf`): `disable_plaintext_auth = yes`, `auth_mechanisms = plain login`. "Plain" here is the login mechanism, carried inside the TLS session; it is the normal setup. Create the users and their passwords with whatever your Dovecot user database is (system users or a passwd-file); use a long, unique password per user. Restart Dovecot and reload Postfix.
+
+## 18. Only your own addresses: `smtpd_sender_login_maps`
+
+Without a check, any logged-in user could send as any address on your domain. Map each login to the addresses it may use (`/etc/postfix/sender_logins`, then `postmap /etc/postfix/sender_logins`):
+
+```
+alice@example.com   alice@example.com
+```
+
+Left side: the address; right side: the login name that owns it. `reject_sender_login_mismatch` (in the `submission` entry above) refuses mail whose `MAIL FROM` is not owned by the authenticated login. With this in place, the OpenDKIM signing and the `sender_bcc_maps` copy (section 8.3) apply to mail from an authenticated owner of the address. This also closes the spoofed-sender hole of section 8.3 for the submission port. Check that signing still happens for submitted mail: the milter must be set for `smtpd` (`smtpd_milters`, section 8), and the signing table must list your domain and key (section 7).
+
+## 19. Client settings, DNS and firewall
+
+In the client (Thunderbird, Apple Mail, a phone app), outgoing mail (SMTP):
+
+| Setting | Value |
+|---|---|
+| Server | `mail.example.com` |
+| Port | 587 (or 465) |
+| Security | STARTTLS on 587 (SSL/TLS on 465) |
+| Authentication | normal password |
+| Username | the login from section 17 (for example `alice`, or your Dovecot login form) |
+| Password | the login's password |
+
+The client keeps its own account for **receiving**. This guide does not set up IMAP for the client; you can keep reading mail where you do now.
+
+DNS: the A record for `mail.example.com` and the certificate (section 11) must match the server name the client uses. No new DNS record is needed for submission itself (the SRV records some clients auto-discover are optional). Firewall: open the submission port (`sudo firewall-cmd --add-service=smtp-submission --permanent`, and `smtps` for 465; then `--reload`), as you opened `smtp` in section 8. Some home and mobile networks block 25 but allow 587, which is why clients use it.
+
+Test it: send a mail from the client to an address you can read at a provider that shows full headers (Gmail "Show original"). Look for `dkim=pass header.d=example.com`. Then run the recording checks from section 13 (testing step 5): the recorded `out` copy must verify with `mailproof verify`. **None of this has been run.**
+
+## 20. Part 2: verified and unverified
+
+Every row of Part 2 is **UNVERIFIED (not run on a real box)**; the rows are added to the table in section 21.
+
+## 21. Verified and unverified (both parts)
+
+Tags: **LIVE** = read or run on a real production Postfix box by the gitdone operators (gitdone repo records, hamr0/gitdone `docs/wiki/deployment.md` §5/§6; the author of this guide did not re-run it). **PDOCS** = from the Postfix documentation, not run. **UNVERIFIED** = neither. **No step has been run for mailproof itself**, because `mailproof record` does not exist yet. **Part 2 (mail client) is entirely UNVERIFIED.**
 
 | Step | Status | Source / note |
 |---|---|---|
@@ -513,7 +608,14 @@ Tags: **LIVE** = read or run on a real production Postfix box by the gitdone ope
 | `smtpd_sender_restrictions` against spoofed own-domain senders | PDOCS, untested | |
 | `check_recipient_access` protecting the record address | PDOCS, untested | |
 | An `out` record without your own aligned `d=` is `unverified` | mailproof behaviour (verdicts); not tested with a spoofed copy | |
-| Sending from a mail client (port 587, SASL, `reject_sender_login_mismatch`) | Not covered yet | owner scope decision |
+| Sending from a mail client: see the Part 2 rows at the end of this table | UNVERIFIED | Part 2 |
 | Key rotation with KeyTable and SigningTable | LIVE (the multi-domain form) | not run with mailproof |
 | Old proofs survive after the old TXT is removed | Covered by the key-archive design and tests | not tied to a rotation on a real box |
 | Shared-IP blocklist risk, queue alert, `postdrop` group | LIVE (gitdone operations) | |
+| **Part 2: submission service** (`submission` on 587 with `smtpd_tls_security_level=encrypt`, `smtpd_tls_auth_only`; optional `smtps` on 465), section 16 | **UNVERIFIED (not run on a real box)** | Postfix docs |
+| Part 2: Dovecot SASL (`smtpd_sasl_type=dovecot`, auth socket in the Postfix queue dir, `disable_plaintext_auth = yes`), section 17 | **UNVERIFIED (not run on a real box)** | Postfix and Dovecot docs |
+| Part 2: `smtpd_sender_login_maps` with `reject_sender_login_mismatch`, section 18 | **UNVERIFIED (not run on a real box)** | Postfix docs |
+| Part 2: OpenDKIM signs mail received on the submission port (`milter_macro_daemon_name=ORIGINATING`) | **UNVERIFIED (not run on a real box)** | mechanism of Part 1 |
+| Part 2: the `sender_bcc_maps` copy of client-submitted mail is recorded and verifies | **UNVERIFIED (not run on a real box)** | same open evidence task as section 8.3 |
+| Part 2: client settings (server, port 587, STARTTLS, normal password, username), section 19 | **UNVERIFIED (not run on a real box)** | |
+| Part 2: DNS and firewall (`smtp-submission` / `smtps` services; no new DNS record) | **UNVERIFIED (not run on a real box)** | firewalld docs |

@@ -542,7 +542,7 @@ POC script: [`poc/m0-header-recheck.js`](../../poc/m0-header-recheck.js) (throwa
 - **Evidence.** The maillog shows OpenDKIM adding the signature in `cleanup`. The delivered copy carries the `DKIM-Signature` and verifies with `opendkim-testmsg` (exit 0). Delivery-time headers (Received, Return-Path) are added after signing, are unsigned and are harmless. `h=` was `From:To:Subject:Date:From` (OpenDKIM's `OversignHeaders From` on top of the default list): **Message-ID, MIME-Version and Content-Type were not signed** with that box's defaults. The live config is multi-domain (`KeyTable` / `SigningTable`). gitdone's own wiki was stale and was fixed on its branch `docs/deployment-live-mail-config`.
 - **Not tested.** The `sender_bcc_maps` copy. It is strongly implied (the same queue file is copied after signing) but not proven; it stays the one open evidence task of M5.
 - **Result.** Local signing is proven; the default `h=` leaves Message-ID unsigned, so the guide sets an explicit `SignHeaders` (Message-ID, In-Reply-To, References, ...). That line is recommended and not yet tested.
-- **Affects:** PRD §7 M5, [self-hosting.md](self-hosting.md), SPEC B14.
+- **Affects:** PRD §7 M5, [signing-guide.md](signing-guide.md), SPEC B14.
 
 ## F33 — M5: the gitdone operators' review of the self-hosting guide; knowless declined (2026-11-11)
 
@@ -550,7 +550,7 @@ POC script: [`poc/m0-header-recheck.js`](../../poc/m0-header-recheck.js) (throwa
 - **Evidence.** The gitdone operators reviewed the guide against their live box and returned 17 points, now folded into the guide. In summary: `virtual_mailbox_maps` set to `static:nothing` for the pipe domain; EPEL needed on the RHEL family; `ots` installed through pip; rotation steps written for the multi-domain `KeyTable`; the pipe(8) transport maps exit codes (sysexits such as 64 and 77 become bounces, and output starting with a `5.x.x` status is read as an enhanced status code), so the wrapper maps every non-zero exit to 75 and sends mailproof output to a log; inbound spoofing through `sender_bcc_maps` must be considered; that box uses its own TLS certificate, not Let's Encrypt; SELinux is disabled there; IPv4-only is proven; the firewall steps are proven; sizing 1 vCPU / 1 GB works.
 - **knowless.** Asked on 2026-11-11 and declined: it has no MTA and no DKIM signer, is auth-mail-only and is frozen at v1.0.0.
 - **Result.** The guide marks each step proven or UNVERIFIED (generic naming, no production box names).
-- **Affects:** [self-hosting.md](self-hosting.md), decisions-log "M5".
+- **Affects:** [signing-guide.md](signing-guide.md), decisions-log "M5".
 
 ## F34 — M4/M3 CLI: the first real walkthrough on a real Gmail account, bugs found (2026-11-11)
 
@@ -573,7 +573,7 @@ Public DNS facts about the owner's own services, seen in the real walkthrough (F
 - addypin.com, ownsub.com and signedreply.com verify: DKIM pass, aligned, DMARC `p=none` pass, ARC by google.com.
 - late.fyi signs (`d=late.fyi`, `s=latefyi2026`, body matched) but publishes **no DKIM key** (DNS ENODATA at capture), no DMARC and no SPF: DKIM is neutral and the capture stays unverified forever, because the key cannot be archived.
 - The owner's boxes sign `h=Date:From:To:Subject:From` only, so Message-ID is unsigned and a reply cannot be provably linked. This matches F32; the guide's `SignHeaders` fixes it.
-- **Affects:** [self-hosting.md](self-hosting.md), usage guide.
+- **Affects:** [signing-guide.md](signing-guide.md), usage guide.
 
 ## F36 — M3 MCP: a walkthrough in Claude Code on a real trail (2026-11-11)
 

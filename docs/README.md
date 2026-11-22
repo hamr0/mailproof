@@ -30,8 +30,8 @@ Further tiers (process, ops) and docs (GUIDE) appear as they earn their place.
    [`product/setup-guide.md`](product/setup-guide.md).
 2. **How do I use mailproof (surfaces, reading a reply, capture, running on a timer, operations)?** →
    [`product/usage-guide.md`](product/usage-guide.md).
-3. **How do I run my own mail server so my outbound mail is signed (M5)?** →
-   [`product/self-hosting.md`](product/self-hosting.md).
+3. **How do I get my own outbound mail signed by my domain and recorded (M5: OpenDKIM, and sending from my mail client)?** →
+   [`product/signing-guide.md`](product/signing-guide.md).
 4. **What is mailproof v2, and what does it refuse to do?** →
    [`product/PRD.md`](product/PRD.md) — see §1 (problem), §3 (trust rule),
    §7 (modules), and §10 (out of scope).
