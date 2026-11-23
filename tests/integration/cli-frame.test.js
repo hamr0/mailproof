@@ -85,6 +85,16 @@ test('the status block after a state-changing action has the rules above and bel
   await m.done;
 });
 
+test('the header of a pipe-only account says pipe-only, never "last sync never"', () => {
+  const st = makeStyle({ env: { LANG: 'en_US.UTF-8' } });
+  const base = { version: '4.1.0', user: 'me@x.example', account: 'p', trailOk: true, lastSync: null, records: null, seal: { state: 'off', nextDue: null }, watch: false, manyAccounts: false };
+  const imap = stripStyle(mainHeader(st, { ...base, pipeOnly: false }, new Date('2026-11-12T10:00:00Z'))[1]);
+  assert.match(imap, /last sync never/);
+  const pipe = stripStyle(mainHeader(st, { ...base, pipeOnly: true }, new Date('2026-11-12T10:00:00Z'))[1]);
+  assert.doesNotMatch(pipe, /last sync/);
+  assert.match(pipe, /trail \S+ \S pipe-only$/);
+});
+
 test('a prompt backs out: an empty answer or q goes back, a required value never loops; the label says how', async () => {
   const w = world();
   const e = await menu(w, keys('5', '', 'q'));

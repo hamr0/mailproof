@@ -150,7 +150,7 @@ export async function statusCmd(a, ctx) {
  * no content-store walk, no index build.
  * @param {import('./config.js').Account} account
  * @param {import('./session.js').Ctx} ctx
- * @returns {Promise<{ user: string | null, trailOk: boolean, lastSync: { at: string, complete: boolean, error: string | null } | null, records: { total: number, verified: number | null, unverified: number | null, out: number | null } | null, seal: { state: 'off' | 'never' | 'pending' | 'sealed' | 'broken', nextDue: string | null }, watch: boolean }>}
+ * @returns {Promise<{ user: string | null, trailOk: boolean, lastSync: { at: string, complete: boolean, error: string | null } | null, records: { total: number, verified: number | null, unverified: number | null, out: number | null } | null, seal: { state: 'off' | 'never' | 'pending' | 'sealed' | 'broken', nextDue: string | null }, watch: boolean, pipeOnly: boolean }>}
  */
 export async function headerFacts(account, ctx) {
   const mp = ctx.deps.makeMailproof ? ctx.deps.makeMailproof(account) : new Mailproof(mailproofOptions(account));
@@ -165,7 +165,7 @@ export async function headerFacts(account, ctx) {
       : null;
     const sealState = account.otsBin === null ? 'off' : !z ? 'never' : z.chain !== 'ok' ? 'broken' : z.last === null ? 'never' : z.pending + z.unstamped > 0 ? 'pending' : 'sealed';
     return {
-      user: account.user, trailOk: head !== null,
+      user: account.user, trailOk: head !== null, pipeOnly: isPipeOnly(account),
       lastSync: st.lastSync ? { at: st.lastSync.at, complete: st.lastSync.complete, error: st.lastSync.error } : null,
       records: ov ? { total: ov.total, verified: ov.verified, unverified: ov.unverified, out: ov.out } : null,
       seal: { state: sealState, nextDue: z?.nextDue ?? null },

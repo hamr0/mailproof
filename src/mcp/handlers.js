@@ -12,11 +12,10 @@ import { statusFacts } from '../cli/status.js';
 import { resolveProfile, listProfiles, profilesDir } from '../cli/profiles.js';
 import { tilde, tildeText, ensureUserDir } from '../cli/paths.js';
 import { bundleName } from '../cli/bundle.js';
-import { backupName } from '../cli/backup.js';
 import { otsOptionFromEnv } from '../cli/secrets.js';
 import { updateState } from '../cli/state.js';
 import { stamp as isoStamp } from '../cli/session.js';
-import { PUSH_WARNING } from '../proof/backup.js';
+import { PUSH_WARNING, bundleFileName } from '../proof/backup.js';
 import { ToolError, badArgument } from './errors.js';
 import { UsageError } from '../cli/errors.js';
 
@@ -254,7 +253,7 @@ export const HANDLERS = {
     const account = /** @type {import('../cli/config.js').Account} */ (c.account);
     const now = (c.deps.now ?? (() => new Date()))();
     if (a.push === true && !account.backupRemote) throw badArgument('this account has no backupRemote in the config: push needs one');
-    let name = a.out ?? backupName(account.name, now);
+    let name = a.out ?? bundleFileName(account.name, now);
     const folder = await outFolder(c, 'backups');
     await outputPath(name, folder, 'out');   // the name as given must be plain, whatever suffix follows
     if (!name.endsWith('.bundle')) name += '.bundle';

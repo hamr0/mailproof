@@ -74,13 +74,14 @@ test('a tampered file inside the tar fails the same checks as in a folder', asyn
 
 test('hostile tars are refused with a reason, never extracted, nothing left behind', async () => {
   const before = leftovers();
+  const escapePath = path.join(makeTmpDir('mp-vbt-esc-'), 'escape');
   const cases = [
     ['symlink', tarOf(entry('b/', '', { type: '5' }), entry('b/evil', '', { type: '2', linkname: '/etc/passwd' })), /not a plain file/],
     ['hard link', tarOf(entry('b/', '', { type: '5' }), entry('b/h', '', { type: '1', linkname: 'b/x' })), /not a plain file/],
     ['device', tarOf(entry('b/', '', { type: '5' }), entry('b/dev', '', { type: '3' })), /not a plain file/],
     ['fifo', tarOf(entry('b/', '', { type: '5' }), entry('b/f', '', { type: '6' })), /not a plain file/],
     ['dotdot', tarOf(entry('b/', '', { type: '5' }), entry('b/../../escape', 'x')), /\.\./],
-    ['absolute', tarOf(entry('/tmp/escape', 'x')), /absolute/],
+    ['absolute', tarOf(entry(escapePath, 'x')), /absolute/],
     ['two tops', tarOf(entry('a/x', 'x'), entry('b/y', 'y')), /one top-level folder/],
     ['file at top', tarOf(entry('x', 'x')), /top-level folder/],
     ['size lies', tarOf(header('b/f', { size: 10_000_000 })), /cut short/],
@@ -94,7 +95,7 @@ test('hostile tars are refused with a reason, never extracted, nothing left behi
     assert.match(why(v), re, name);
   }
   assert.deepEqual(leftovers(), before);
-  assert.ok(!fs.existsSync('/tmp/escape'));
+  assert.ok(!fs.existsSync(escapePath));
 });
 
 test('the bounds of a bundle folder hold for a tar: entry count and total bytes', async () => {

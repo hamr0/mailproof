@@ -107,6 +107,7 @@ export function actionLine(st, items) {
  * @property {{ total: number, verified: number | null, unverified: number | null, out: number | null } | null} records
  * @property {{ state: 'off' | 'never' | 'pending' | 'sealed' | 'broken', nextDue: string | null }} seal
  * @property {boolean} watch
+ * @property {boolean} [pipeOnly]  a pipe-only account has no mailbox, so no last sync: the header says `pipe-only` instead.
  * @property {boolean} manyAccounts
  */
 
@@ -126,7 +127,7 @@ export function mainHeader(st, h, now) {
   const trail = h.trailOk ? st.green(sym.ok) : st.yellow(`${sym.warn} none yet`);
   // the first line is the status bar: bold (each plain stretch; the coloured parts keep their own colour)
   const b = st.bold;
-  const id = `${b('mailproof')} ${b(p(h.version))}${b(sep)}${b(p(h.user ?? 'pipe-only'))} ${st.dim(`(${p(h.account)})`)}${b(sep)}${b('trail')} ${trail}${b(sep)}${b('last sync')} ${sync}`;
+  const id = `${b('mailproof')} ${b(p(h.version))}${b(sep)}${b(p(h.user ?? 'pipe-only'))} ${st.dim(`(${p(h.account)})`)}${b(sep)}${b('trail')} ${trail}${b(sep)}${h.pipeOnly ? st.dim('pipe-only') : `${b('last sync')} ${sync}`}`;
 
   /** @type {string[]} */
   const parts = [];
