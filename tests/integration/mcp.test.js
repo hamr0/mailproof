@@ -272,6 +272,15 @@ test('reads leave no audit line; a path outside ~/mailproof is refused; with inp
   s.end(); await s.exited;
 });
 
+test('with outputDir null, export and backup refuse with ERR_PATH_NOT_ALLOWED even as a preview', async (tc) => {
+  const { world } = await oneAccountNoMcp();
+  const s = spawnMcp(world, { t: tc });
+  await s.init();
+  assert.equal((await s.call('export', { with: ['a@example.com'] })).error.code, 'ERR_PATH_NOT_ALLOWED');
+  assert.equal((await s.call('backup', {})).error.code, 'ERR_PATH_NOT_ALLOWED');
+  s.end(); await s.exited;
+});
+
 async function oneAccountNoMcp() {
   const t = await buildThread(); await t.mp.close();
   return { t, world: makeWorld({ config: { v: 1, accounts: { personal: account(t.dir) }, mcp: { inputDirs: [], outputDir: null } } }) };
