@@ -52,9 +52,9 @@ npm install -g mailproof        # Node >= 22.19, Linux glibc >= 2.34 (EL9, Debia
 mailproof                       # no arguments on a terminal: the menu
 ```
 
-On older Linux (EL8, Debian 11, Ubuntu 20.04) npm installs without a warning but the trail index cannot load (`list`, `show`, `copies`, ... fail with `ERR_INDEX_UNAVAILABLE`); `record`, `verify` and `stamp` still work. See the [setup guide](docs/product/setup-guide.md#2-install).
+On older Linux (EL8, Debian 11, Ubuntu 20.04) npm installs without a warning but the trail index cannot load (`list`, `show`, `copies`, ... fail with `ERR_INDEX_UNAVAILABLE`); `record`, `verify` and `stamp` still work. See the [setup guide](https://github.com/hamr0/mailproof/blob/main/docs/product/setup-guide.md#2-install).
 
-First run walks you through adding an account (provider first, login tested before anything is written; the password is kept in an owner-only file or a command you name, never in the config). The menu header shows records, verified, last sync (`pipe-only` for an account with no mailbox, see `record` below) and seal state. Each item is a number (or its name) and runs the same code as the subcommand:
+First run walks you through adding an account (provider first, login tested before anything is written; the password is kept in an owner-only file or a command you name, never in the config). The menu header shows records, verified, last sync (or `pipe-only`) and seal state. Each item is a number (or its name) and runs the same code as the subcommand:
 
 | Group | Items | What they do |
 |---|---|---|
@@ -76,7 +76,7 @@ mailproof stamp && mailproof export --with bob@example.org --after 2026-01-01 --
 mailproof verify-bundle <bundle> --expect <sha256>     # the recipient's side, no account
 ```
 
-Running your own mail server? Pipe each message to `mailproof record` (a Postfix pipe) and no IMAP is needed: an account with no `host` and no IMAP settings is pipe-only, fed by `record` alone (`sync` and `watch` refuse it). Add `--client-ip`, `--client-helo` and `--sender` from the envelope so SPF can run. The [signing guide](https://github.com/hamr0/mailproof/blob/main/docs/product/signing-guide.md) covers OpenDKIM signing of your outbound mail, the pipe and your mail client.
+Running your own mail server? Pipe each message to `mailproof record` (a Postfix pipe) and no IMAP is needed: an account with no `host` and no IMAP settings is pipe-only, fed by `record` alone (`sync` and `watch` refuse it). For inbound mail, add `--client-ip`, `--client-helo` and `--sender` from the envelope so SPF can run. The [signing guide](https://github.com/hamr0/mailproof/blob/main/docs/product/signing-guide.md) covers OpenDKIM signing of your outbound mail, the pipe and your mail client.
 
 `mailproof help` lists everything. Exit codes, systemd and cron examples, restoring a backup: [usage guide](https://github.com/hamr0/mailproof/blob/main/docs/product/usage-guide.md#the-mailproof-command).
 
