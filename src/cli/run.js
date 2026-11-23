@@ -14,6 +14,7 @@ import { exportCmd, verifyBundleCmd } from './bundle.js';
 import { watchCmd } from './watch.js';
 import { backupCmd } from './backup.js';
 import { statusCmd } from './status.js';
+import { recordCmd } from './record.js';
 import { runMenu } from './menu.js';
 import { ID_HINT } from './target.js';
 import { styleOf } from './style.js';
@@ -44,7 +45,7 @@ async function helpCmd(a, ctx) {
 /** @type {Record<string, (a: Args, ctx: Ctx) => Promise<number>>} */
 const HANDLERS = {
   sync: syncCmd, watch: watchCmd, list: listCmd, people: peopleCmd, show: showCmd, verify: verifyCmd, replies: repliesCmd, check: checkCmd, forget: forgetCmd, prune: pruneCmd,
-  backup: backupCmd, stamp: stampCmd, status: statusCmd, update: updateCmd, config: configCmd, export: exportCmd, 'verify-bundle': verifyBundleCmd, mcp: mcpCmd, help: helpCmd,
+  record: recordCmd, backup: backupCmd, stamp: stampCmd, status: statusCmd, update: updateCmd, config: configCmd, export: exportCmd, 'verify-bundle': verifyBundleCmd, mcp: mcpCmd, help: helpCmd,
 };
 
 /** The commands that have a handler (a test checks the table and the handlers name the same ones). */

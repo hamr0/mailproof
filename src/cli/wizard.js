@@ -16,6 +16,7 @@ import { styleOf } from './style.js';
 import { tilde } from './paths.js';
 import { resolveAuth } from './secrets.js';
 import { testLogin } from './login-test.js';
+import { requireImap } from './sync-op.js';
 import { TRAIL_NAME_RE } from '../proof/trail.js';
 
 /** @param {string} s @returns {string} */
@@ -193,8 +194,8 @@ export async function addAccountWizard(a, ctx, file) {
     // test the login before writing: one login, a folder status, never a record
     print(ctx, st.rule());
     if (await askYes(`${L('Test login now?')}`, true)) {
-      const account = checked.accounts[name];
       try {
+        const account = requireImap(checked.accounts[name]);   // a pipe-only account has no login to test (the wizard writes IMAP accounts, so this is a guard)
         const auth = await resolveAuth(account.secret);
         const r = await (ctx.deps.testLogin ?? testLogin)({ host: account.host, port: account.port, user: account.user, auth, folders: account.folders, sent: account.sent });
         if (r.ok) print(ctx, `${st.green(`${sym.ok} IMAP login ok`)} ${st.dim(`${sym.dot} ${r.folders.map((f) => `${printable(f.folder.split('/').pop())} up to ${f.count.toLocaleString('en-US')}`).join(` ${sym.dot} `)}`)}`);

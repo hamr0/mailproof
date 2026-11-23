@@ -170,7 +170,7 @@ test('installFacts: one detection (installInfo) for update and status; the path 
 
 test('mcpSettings: no block or no keys = the ~/mailproof defaults; outputDir null and inputDirs [] turn them off; explicit values win', () => {
   const env = { HOME: '/home/ana' };
-  const cfg = (mcp) => validateConfig({ v: 1, accounts: { a: { user: 'a@b.example', trailDir: '/t', passCommand: 'x' } }, ...(mcp === undefined ? {} : { mcp }) }, env);
+  const cfg = (mcp) => validateConfig({ v: 1, accounts: { a: { user: 'a@b.example', host: 'imap.gmail.com', trailDir: '/t', passCommand: 'x' } }, ...(mcp === undefined ? {} : { mcp }) }, env);
   const dflt = { inputDirs: ['/home/ana/mailproof'], outputDir: undefined };
   for (const mcp of [undefined, {}, { maxResponseBytes: 2048 }]) {
     const { config, problems } = cfg(mcp);
@@ -258,7 +258,7 @@ test('the mcp screen shows the effective folders: the defaults, an explicit pair
   const env = { HOME: '/home/ana' };
   const st = styleOf({ stdout: {}, env });
   const lines = (mcp) => {
-    const { config } = validateConfig({ v: 1, accounts: { a: { user: 'a@b.example', trailDir: '/t', passCommand: 'x' } }, ...(mcp ? { mcp } : {}) }, env);
+    const { config } = validateConfig({ v: 1, accounts: { a: { user: 'a@b.example', host: 'imap.gmail.com', trailDir: '/t', passCommand: 'x' } }, ...(mcp ? { mcp } : {}) }, env);
     return mcpFacts({ env, deps: { claude: async () => null } }, config).then((f) => mcpStatusLines(f, st, env, '/home/ana/c.json').join('\n'));
   };
   assert.match(await lines(), /^Input dirs +~\/mailproof \(default\)$/m);

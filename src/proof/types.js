@@ -16,7 +16,7 @@
 /**
  * Postfix pipe-transport envelope (the `parseEnvelope` shape + `ingest` input).
  * @typedef {Object} Envelope
- * @property {string | null} [clientIp]   Connecting client IP (mailauth SPF).
+ * @property {string | null} [clientIp]   Connecting client IP. SPF is checked only for direction `in` with this set; otherwise `spf` is `null`.
  * @property {string | null} [clientHelo] Client HELO/EHLO name.
  * @property {string | null} [sender]     Envelope MAIL FROM.
  * @property {string | null} [recipient]  Envelope (original) RCPT TO — the plus-tag.

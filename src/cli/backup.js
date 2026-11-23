@@ -15,12 +15,6 @@ import { PUSH_WARNING, redactUrl, classifyPush, bundleFileName } from '../proof/
 export { PUSH_WARNING, redactUrl, classifyPush };
 
 /**
- * The name of a default backup: `<account>-<UTC timestamp>.bundle`.
- * @param {string} account @param {Date} now @returns {string}
- */
-export const backupName = bundleFileName;
-
-/**
  * The default bundle path (SPEC B11.2a): `~/mailproof/backups/<account>-<UTC timestamp>.bundle`, absolute under $HOME.
  * @param {Record<string, string | undefined>} env
  * @param {string} account
@@ -28,7 +22,7 @@ export const backupName = bundleFileName;
  * @returns {string}
  */
 export function defaultBundlePath(env, account, now) {
-  return path.join(userDir(env, 'backups'), backupName(account, now));
+  return path.join(userDir(env, 'backups'), bundleFileName(account, now));
 }
 
 /**

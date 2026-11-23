@@ -277,6 +277,45 @@ export const HELP = Object.freeze({
         }
       ]
     },
+    "record": {
+      "usage": "mailproof record [file] [flags]",
+      "summary": "record one email from a file or stdin (for a mail server pipe)",
+      "when": "Use from a mail server that pipes each message to mailproof (Postfix pipe(8)): it reads one raw email from <file> or from stdin and records its proof in the trail, exactly as sync does for a mailbox. --direction is required: in for mail you received, out for mail you sent. It never prompts and is not in the menu; with no file and a terminal on stdin it exits 64. A message over the size limit (25 MiB) is hashed as it streams in, never held in memory, and recorded unverified as over limit: total_bytes with its true id. The same bytes again are a success (already recorded). After the record it runs the content-expiry sweep when it is due (a failure there is one stderr line, never the exit code); it does not seal: run `mailproof stamp` from a timer. An account with no host (pipe-only) is made for this: see the signing guide.",
+      "fails": "Exit 0 when recorded, or already recorded, or recorded unverified because over the limit; 64 for a missing or other --direction, an unknown flag, no --account when several are configured, a directory as <file>, or no file with a terminal on stdin; 75 when the trail is locked (ERR_TRAIL_LOCKED: the mail server should retry); 77 when the config is not private; 1 for anything else (an empty message, an unreadable file, a stream error, a git failure).",
+      "account": true,
+      "flags": [
+        {
+          "name": "direction",
+          "type": "string",
+          "arg": "<in|out>",
+          "help": "required: in for mail you received, out for mail you sent"
+        },
+        {
+          "name": "source",
+          "type": "string",
+          "arg": "<text>",
+          "help": "where the email came from, recorded with it (default pipe; the guide passes pipe:postfix)"
+        },
+        {
+          "name": "client-ip",
+          "type": "string",
+          "arg": "<ip>",
+          "help": "the connecting client's IP (Postfix ${client_address}), for the SPF check on `in` mail (ignored for `out`); empty = none"
+        },
+        {
+          "name": "client-helo",
+          "type": "string",
+          "arg": "<name>",
+          "help": "the client's HELO name (Postfix ${client_helo}); empty = none"
+        },
+        {
+          "name": "sender",
+          "type": "string",
+          "arg": "<addr>",
+          "help": "the envelope sender (Postfix ${sender}), for SPF; empty = the null sender"
+        }
+      ]
+    },
     "backup": {
       "usage": "mailproof backup [flags]",
       "summary": "git bundle of the trail",

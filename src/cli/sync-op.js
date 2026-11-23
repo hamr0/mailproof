@@ -2,7 +2,8 @@
 // the mailbox, record, run the content sweep (the library does), then upgrade pending OpenTimestamps stamps.
 
 import { resolveAuth } from './secrets.js';
-import { exitFor } from './errors.js';
+import { exitFor, UsageError } from './errors.js';
+import { isPipeOnly, pipeOnlyMessage } from './config.js';
 import { updateState } from './state.js';
 import { stamp } from './session.js';
 import { printable as p } from './printable.js';
@@ -21,13 +22,26 @@ import { STAMP_EVERY_HOURS } from '../proof/limits.js';
  */
 
 /**
+ * The IMAP view of an account, or the one refusal of a pipe-only account (SPEC B14.3): `sync`, `watch`, the MCP `sync` tool and the wizard's login
+ * test all come through here, so the line and the exit code (64) are defined once.
+ * @param {import('./config.js').Account} account
+ * @returns {import('./config.js').ImapAccount}
+ */
+export function requireImap(account) {
+  const { user, host, port, folders, sent, secret } = account;
+  if (isPipeOnly(account) || user === null || host === null || port === null || folders === null || sent === null || secret === null) throw new UsageError(pipeOnlyMessage(account.name));
+  return { ...account, user, host, port, folders, sent, secret };
+}
+
+/**
  * @param {import('./session.js').Session} s
  * @param {import('./session.js').Ctx} ctx
  * @param {{ folders?: string[], sent?: boolean | string, maxMessages?: number, onProgress?: (p: import('../proof/sync.js').SyncProgress) => void }} [over]  Flags that override the account for this run (`maxMessages`: the MCP server's per-call bound, B12.12; `onProgress`: the library's progress hook, used for the terminal progress line).
  * @returns {Promise<SyncOnce>}  Throws what `sync()` throws (`ERR_IMAP_AUTH`, `ERR_SYNC_LOCKED`, ...), after noting it in state.json.
  */
 export async function syncOnce(s, ctx, over = {}) {
-  const { account, mp } = s;
+  const { mp } = s;
+  const account = requireImap(s.account);   // a pipe-only account has no mailbox: refused before the secret is resolved
   const now = ctx.deps.now ?? (() => new Date());
   try {
     const auth = await resolveAuth(account.secret);   // re-resolved every run: a fresh token, the command re-run

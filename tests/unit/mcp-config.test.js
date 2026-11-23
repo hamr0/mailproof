@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { validateConfig, mcpSettings, MCP_DEFAULTS } from '../../src/cli/config.js';
 
 const env = { HOME: '/home/ana' };
-const acct = { user: 'a@b.example', trailDir: '/t', passCommand: 'x' };
+const acct = { user: 'a@b.example', host: 'imap.gmail.com', trailDir: '/t', passCommand: 'x' };
 const check = (mcp) => validateConfig({ v: 1, accounts: { a: acct }, ...(mcp === undefined ? {} : { mcp }) }, env);
 
 test('no mcp block: the defaults (read under ~/mailproof, write into its folders, 512 KiB / 1 MiB)', () => {

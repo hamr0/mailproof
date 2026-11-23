@@ -37,18 +37,21 @@ export function makeWorld({ accounts, config } = {}) {
     root, home, cfgDir, state, env, configFile, write,
     stateDir: path.join(state, 'mailproof'),
     /** In-process: no IMAP, streams captured. `input`: scripted stdin lines; `tty`/`columns`/`stderrTty`: what the output streams claim to be (style.js reads them). */
-    async run(argv, { input, interactive = false, deps = {}, euid, env: extra, signal, tty = false, columns, stderrTty = false, rows } = {}) {
+    async run(argv, { input, interactive = false, deps = {}, euid, env: extra, signal, tty = false, columns, stderrTty = false, rows, stdinTty = false } = {}) {
       const out = []; const err = [];
+      // `input`: a string or Buffer is one chunk; an array is the chunks (a big message streamed in 64 KiB pieces). `stdinTty`: the stream claims to be a terminal.
+      const stdin = input === undefined ? null : Readable.from(Array.isArray(input) ? input : [input]);
+      if (stdin && stdinTty) stdin.isTTY = true;
       const ctx = {
         stdout: { write: (s) => { out.push(Buffer.from(s)); return true; }, isTTY: tty, ...(columns ? { columns } : {}), ...(rows ? { rows } : {}) },
         stderr: { write: (s) => { err.push(Buffer.from(s)); return true; }, isTTY: stderrTty },
-        stdin: input === undefined ? null : Readable.from([input]),
+        stdin,
         interactive, env: { ...env, ...extra }, euid, signal: signal ?? new AbortController().signal,
         // the network is never reached from a test: a wizard login test and a menu "check a .eml" fail loudly unless the test injects its own
         deps: { testLogin: async () => { throw new Error('IMAP must not be contacted from a test'); }, check: async () => { throw new Error('DNS must not be asked from a test'); }, ...deps },
       };
       const code = await run(argv, ctx);
-      return { code, stdout: Buffer.concat(out).toString(), stdoutBytes: Buffer.concat(out), stderr: Buffer.concat(err).toString() };
+      return { code, stdout: Buffer.concat(out).toString(), stdoutBytes: Buffer.concat(out), stderr: Buffer.concat(err).toString(), stdinRead: stdin ? stdin.readableDidRead : false };
     },
     /** A spawned `bin/mailproof.js`. */
     spawn(argv, { input = '', env: extra = {} } = {}) {

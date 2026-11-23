@@ -21,11 +21,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > the first free clean minor, `1.3.0`.) See
 > [`archive/v1/docs/DESIGN.md`](archive/v1/docs/DESIGN.md) for the phasing.
 
-## [Unreleased]
+## [4.1.0] - 2026-11-23
+
+This is a **minor** release (4.1.0): new command, new config shape, and a changed SPF result in the library (see below).
+
+### Upgrading from 4.0.x
+
+`Mailproof#record()` now records `verdicts.live.spf: null` (SPF not checked) where 4.0.0 ran a check, in two cases:
+
+- an envelope with a `sender` but no `clientIp` (4.0.0 checked SPF and gave `temperror` or similar; an envelope with only a `clientHelo` was already `null`);
+- direction `out` with a `clientIp`, whatever the SPF result was before (`pass`, `fail`, `none`, ...). An `out` envelope with only a `sender` falls under the first case.
+
+SPF is now checked only for direction `in` with a `clientIp`. If you filter on `verdicts.live.spf`, for example keeping out copies with `result === 'pass'`, those records now carry `null`. Stored records are not changed.
+
+### Added
+
+- **`mailproof record --direction in|out [<file>]`** (SPEC B14, M5): one raw email from a file or stdin into the trail, for a mail server that pipes each message to mailproof (Postfix pipe(8)). The bytes are hashed as they stream in and held only up to the 25 MiB cap, so a huge message never fills memory: over the cap it is recorded `unverified` as `over limit: total_bytes` with its true id (a later capture of the same bytes is `duplicate`). Flags `--source`, `--client-ip`, `--client-helo`, `--sender` (`--name=value` and empty values accepted), `--json`. After the record it runs the content-expiry sweep when due (a failure is one stderr line, never the exit code); it never seals, so a pipe-only box runs `mailproof stamp` from a timer. Not in the menu, not an MCP tool, not a library export.
+- **Pipe-only accounts:** an account with no `host` and no IMAP settings (`passCommand`, `passFile`, `accessTokenCommand`, `port`, `folders`, `sent`) is pipe-only; one with no host but a password setting still means imap.gmail.com, as in 4.0.0, so no 4.0.0 config is refused. A pipe-only account has no mailbox; mail arrives through `record`. `user` is optional there. `sync`, `watch`, the MCP `sync` tool and the wizard's login test refuse it with one line (CLI exit 64, MCP `ERR_BAD_ARGUMENT`); `status` and `config` show `pipe-only`; every other command works on it.
+
+### Fixed
+
+- **`record`: an outbound copy never gets an SPF check, and an empty or missing `--client-ip` means none for received mail.** SPF is checked only for direction `in` with a client IP; `out` records `spf: null` whatever envelope is passed (a client-submitted copy was recorded `spf=fail`, checked against the owner's own domain from the owner's own machine).
+  - Detail of the empty-IP case: On local submission Postfix passes an empty client IP with a HELO and sender, and the out-copy was recorded with `spf: temperror`; now SPF is `null` unless a client IP is given. This applies to the library too: `Mailproof#record()` with an envelope that has a `sender` but no `clientIp` now records `spf: null` (it was a temperror).
+- **`status`: the "never run" seal hint** named a `mailproof seal` command that does not exist; it now says `mailproof stamp` (and, on a pipe-only account, to run it from a timer).
+- **Menu header on a pipe-only account** says `pipe-only` instead of `last sync never` (the menu keys are unchanged).
+- **`record --direction sideways`** now says `--direction must be in or out (got "sideways")` instead of "required" (exit 64 as before).
 
 ### Docs
 
-- The M5 guide is renamed from the self-hosting guide to `docs/product/signing-guide.md`, retitled "Sign your own mail: OpenDKIM and your mail client", and split into two parts: Part 1 OpenDKIM (the existing content), Part 2 your mail client (submission on 587, SASL login, `reject_sender_login_mismatch`, client settings; every step marked UNVERIFIED, not run on a real box). README, docs map, PRD, SPEC and CLAUDE.md links follow. `mailproof record` is still specified (SPEC B14), not built.
+- **Linux glibc 2.34 or newer** (EL9, Debian 12, Ubuntu 22.04+) is documented as a requirement of the trail index (`better-sqlite3`'s prebuilt binary). On older systems npm installs without a warning and every index command fails with `ERR_INDEX_UNAVAILABLE`; `record`, `verify` and `stamp` still work. The guides document the proven EL8 workaround (build the add-on from source with gcc-toolset-12 and python3.9). Replacing `better-sqlite3` with `node:sqlite` is parked for a later release.
+- The signing guide marks Part 2 sections 16 to 18 (submission, Dovecot SASL, sender login maps), the `SignHeaders` block, the stamp timer and the deploy hook as LIVE (AlmaLinux 8.10, 2026-11-22), with the Dovecot-on-EL8 steps, `null_sender=` on both pipe lines, and the `InternalHosts` warning; the client settings and the submission-port firewall stay UNVERIFIED.
+- The signing guide documents running `mailproof record` under SELinux enforcing (code in `/usr/local`, a small local policy module; proven on Fedora 44, [F42](docs/product/findings.md)).
+- The M5 guide is renamed from the self-hosting guide to `docs/product/signing-guide.md`, retitled "Sign your own mail: OpenDKIM and your mail client", and split into two parts: Part 1 OpenDKIM (the existing content), Part 2 your mail client (submission on 587, SASL login, `reject_sender_login_mismatch`, client settings; every step marked UNVERIFIED, not run on a real box (sections 16 to 18 later box-tested, see above)). README, docs map, PRD, SPEC and CLAUDE.md links follow. `mailproof record` is built (SPEC B14).
 - PRD status cleanup: M3 and M4 headings read "shipped", M5 is "Sign your own mail and record it", the status line and date are current, and each still-open question in §12 says it is open and not scheduled.
 - README rewritten: sections by audience (the `mailproof` command and its menu, the MCP server, the library), one table of every primitive, what is checked and captured (DKIM, DMARC, SPF/ARC, the seal, threading), guarding a workflow step with a signed reply through bareguard, and links to the usage, setup and self-hosting guides. Links are absolute so they also work on npmjs.com.
 - `mailproof.context.md`: `export` is an MCP tool (the context said it was not); internal dates removed from the bareguard rule and the MCP parity note.

@@ -25,3 +25,10 @@
 ## [2026-11-11] index-flat | 7 row(s) (7 product, 0 logs, 0 archive)
 ## [2026-11-12] index-flat | 7 row(s) (7 product, 0 logs, 0 archive)
 ## [2026-11-12] index-flat | 7 row(s) (7 product, 0 logs, 0 archive)
+## [2026-11-22] reorg | discover only — 5 of 8 row(s) await the classification interview
+## [2026-11-22] index-flat | 7 row(s) (7 product, 0 logs, 0 archive)
+## [2026-11-22] apply-reorg | moved 0, skipped 0, 0 oversized split candidate(s), 0 link(s) rewritten, 0 sync failure(s), 0 empty dir(s) removed, CLAUDE.md updated: true
+## [2026-11-22] reorg | discover+apply-reorg+lint over 7 doc(s), due reported
+## [2026-11-23] reorg | discover only — 8 of 8 row(s) await the classification interview
+## [2026-11-23] index-flat | 7 row(s) (7 product, 0 logs, 0 archive)
+## [2026-11-23] apply-reorg | moved 0, skipped 0, 0 oversized split candidate(s), 0 link(s) rewritten, 0 sync failure(s), 0 empty dir(s) removed, CLAUDE.md updated: true

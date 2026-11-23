@@ -272,6 +272,30 @@ test('reads leave no audit line; a path outside ~/mailproof is refused; with inp
   s.end(); await s.exited;
 });
 
+test('with outputDir null, export and backup refuse with ERR_PATH_NOT_ALLOWED even as a preview', async (tc) => {
+  const { world } = await oneAccountNoMcp();
+  const s = spawnMcp(world, { t: tc });
+  await s.init();
+  assert.equal((await s.call('export', { with: ['a@example.com'] })).error.code, 'ERR_PATH_NOT_ALLOWED');
+  assert.equal((await s.call('backup', {})).error.code, 'ERR_PATH_NOT_ALLOWED');
+  s.end(); await s.exited;
+});
+
+test('with outputDir set to a missing folder, export and backup refuse with ERR_PATH_NOT_ALLOWED', async (tc) => {
+  const t = await buildThread(); await t.mp.close();
+  const missing = path.join(makeTmpDir('mp-mcp-missing-out-'), 'no-such-folder');
+  const world = makeWorld({ config: { v: 1, accounts: { personal: account(t.dir) }, mcp: { inputDirs: [], outputDir: missing } } });
+  const s = spawnMcp(world, { t: tc });
+  await s.init();
+  for (const [tool, args] of [['export', { with: ['a@example.com'] }], ['backup', {}]]) {
+    const r = await s.call(tool, args);
+    assert.equal(r.error?.code, 'ERR_PATH_NOT_ALLOWED', tool);
+    assert.match(r.error.message, /mcp\.outputDir is not a folder that exists/, tool);
+  }
+  assert.equal(fs.existsSync(missing), false, 'nothing is created');
+  s.end(); await s.exited;
+});
+
 async function oneAccountNoMcp() {
   const t = await buildThread(); await t.mp.close();
   return { t, world: makeWorld({ config: { v: 1, accounts: { personal: account(t.dir) }, mcp: { inputDirs: [], outputDir: null } } }) };
