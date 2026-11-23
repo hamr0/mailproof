@@ -1,6 +1,6 @@
 # Sign your own mail: OpenDKIM and your mail client
 
-> **Status: a guide, not a product.** It is written from the gitdone operators' records (a production Postfix box) and the Postfix documentation, and then run for mailproof on a real box (AlmaLinux 8.10, 2026-11-22, [F42](findings.md)). Every step is marked in the table at the end. Source tags: **LIVE** = read or run on a real box by the gitdone operators; **PDOCS** = from the Postfix documentation, not run; **UNVERIFIED** = neither. This guide has two parts: **Part 1** (sections 1-14) is OpenDKIM, your domain signs your outbound mail; **Part 2** (sections 15-20) is your mail client, sending from Thunderbird, Apple Mail or any client through your server so the mail is signed and recorded. **Part 2 sections 16 to 18 (submission, Dovecot SASL, sender login maps) were run on a real box (AlmaLinux 8.10, 2026-11-22, submission bound to 127.0.0.1); the client settings (section 19) and the firewall are UNVERIFIED.** The command `mailproof record` that this guide pipes mail into is **built** (branch `feat/m5-record`, not yet released; SPEC B14). Most Part 1 steps and the `record` pipe were also run on that box ([F42](findings.md)); every step is tagged LIVE, PDOCS or UNVERIFIED in the table at the end, and anything not tagged LIVE is not proven.
+> **Status: a guide, not a product.** It is written from the gitdone operators' records (a production Postfix box) and the Postfix documentation, and then run for mailproof on a real box (AlmaLinux 8.10, 2026-11-22, [F42](findings.md)). Every step is marked in the table at the end. Source tags: **LIVE** = read or run on a real box by the gitdone operators; **PDOCS** = from the Postfix documentation, not run; **UNVERIFIED** = neither. This guide has two parts: **Part 1** (sections 1-14) is OpenDKIM, your domain signs your outbound mail; **Part 2** (sections 15-20) is your mail client, sending from Thunderbird, Apple Mail or any client through your server so the mail is signed and recorded. **Part 2 sections 16 to 18 (submission, Dovecot SASL, sender login maps) were run on a real box (AlmaLinux 8.10, 2026-11-22, submission bound to 127.0.0.1); the client settings (section 19) and the submission-port firewall are UNVERIFIED.** The command `mailproof record` that this guide pipes mail into is **built** (branch `feat/m5-record`, not yet released; SPEC B14). Most Part 1 steps and the `record` pipe were also run on that box ([F42](findings.md)); every step is tagged LIVE, PDOCS or UNVERIFIED in the table at the end, and anything not tagged LIVE is not proven.
 >
 > All names here are placeholders: `example.com`, `mail.example.com`, `203.0.113.10`. Use your own. Never paste real keys or addresses into a shared place.
 
@@ -319,7 +319,7 @@ Notes:
 
 #### Sending from your mail client
 
-This section covers mail handed to `sendmail(8)` on the box. Sending from a mail client on your laptop or phone is **Part 2** (sections 15-20). Sections 16 to 18 are LIVE (a client-submitted message was signed and its `sender_bcc_maps` copy recorded as `out`, verified); the client settings (section 19) and the firewall are UNVERIFIED.
+This section covers mail handed to `sendmail(8)` on the box. Sending from a mail client on your laptop or phone is **Part 2** (sections 15-20). Sections 16 to 18 are LIVE (a client-submitted message was signed and its `sender_bcc_maps` copy recorded as `out`, verified); the client settings (section 19) and the submission-port firewall are UNVERIFIED.
 
 ## 9. The pipe wrapper
 
@@ -593,7 +593,7 @@ sudo restorecon -R /var/lib/mailproof
 
 # Part 2: Your mail client
 
-> **Status: Part 2 was run on a real box (AlmaLinux 8.10, 2026-11-22), with submission bound to 127.0.0.1 for isolation, except the real client settings of section 19 (no Thunderbird or phone run) and the firewall.** Sections 16 to 18 are LIVE; section 20 lists what is and is not proven.
+> **Status: Part 2 was run on a real box (AlmaLinux 8.10, 2026-11-22), with submission bound to 127.0.0.1 for isolation, except the real client settings of section 19 (no Thunderbird or phone run) and the submission-port firewall.** Sections 16 to 18 are LIVE; section 20 lists what is and is not proven.
 
 ## 15. What this part does, and what it needs
 
@@ -704,7 +704,7 @@ Test it: send a mail from the client to an address you can read at a provider th
 
 ## 20. Part 2: verified and unverified
 
-Part 2 sections 16 to 18 are **LIVE** (AlmaLinux 8.10, 2026-11-22); the client settings and firewall (section 19) are **UNVERIFIED**. The rows are in the table in section 21.
+Part 2 sections 16 to 18 are **LIVE** (AlmaLinux 8.10, 2026-11-22); the client settings and submission-port firewall (section 19) are **UNVERIFIED**. The rows are in the table in section 21.
 
 ## 21. Verified and unverified (both parts)
 
