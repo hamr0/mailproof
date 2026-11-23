@@ -37,8 +37,8 @@ Not a mail client, not a sender, not spam filtering, not proof of delivery. It n
 |---|---|
 | **DKIM** | The proof. The signed headers, the signature and the sender's key (archived at capture) are stored, so the check repeats offline at any time. |
 | **DMARC** | Must pass when the domain publishes a policy, or the email is not `verified`. |
-| **SPF, ARC** | Checked and recorded at capture. They cannot be re-checked offline, so the offline verdict is DKIM only. |
-| **OpenTimestamps** | On by default. New records are sealed in batches (one hash per run, about every 6 hours) by `sync`, `watch` or `stamp`. Needs the optional `ots` binary; without it nothing is sealed and nothing breaks. |
+| **SPF, ARC** | Recorded at capture; they cannot be re-checked offline, so the offline verdict is DKIM only. SPF needs the sending server's IP, which a mail-server pipe has and IMAP does not: received mail without it is recorded as not checked, as is every outbound copy. |
+| **OpenTimestamps** | On by default. New records are sealed in batches by `sync`, `watch` or `stamp`. Needs the optional `ots` binary; without it nothing is sealed and nothing breaks. |
 | **Threading** | In-Reply-To and References are stored. A reply's link to your message is graded `signed`, `unsigned` or `none`; Microsoft does not sign these headers. `replyText` and `replyFacts` read the thread. |
 
 The body is never in the proof or the trail. The raw email and attachments are kept in a local store beside the trail (outside git, owner-only, removed after 730 days or by `forget`; `content: { store: false }` turns it off). Every email is recorded, even unsigned, unverifiable or over a size limit, and flagged with the reason.
@@ -48,13 +48,13 @@ The body is never in the proof or the trail. The raw email and attachments are k
 ### Humans: the `mailproof` command
 
 ```bash
-npm install -g mailproof        # Node >= 22.19, Linux glibc >= 2.34 (EL9, Debian 12, Ubuntu 22.04+); optional: the `ots` binary for sealing
+npm install -g mailproof        # Node >= 22.19, Linux glibc >= 2.34 (EL9, Debian 12, Ubuntu 22.04+); optional: the `ots` binary
 mailproof                       # no arguments on a terminal: the menu
 ```
 
 On older Linux (EL8, Debian 11, Ubuntu 20.04) npm installs without a warning but the trail index cannot load (`list`, `show`, `copies`, ... fail with `ERR_INDEX_UNAVAILABLE`); `record`, `verify` and `stamp` still work. See the [setup guide](docs/product/setup-guide.md#2-install).
 
-First run walks you through adding an account (provider first, login tested before anything is written; the password is kept in an owner-only file or a command you name, never in the config). The menu header shows records, verified, last sync and seal state. Each item is a number (or its name) and runs the same code as the subcommand:
+First run walks you through adding an account (provider first, login tested before anything is written; the password is kept in an owner-only file or a command you name, never in the config). The menu header shows records, verified, last sync (`pipe-only` for an account with no mailbox, see `record` below) and seal state. Each item is a number (or its name) and runs the same code as the subcommand:
 
 | Group | Items | What they do |
 |---|---|---|
@@ -71,11 +71,14 @@ The same things as subcommands, for scripts:
 mailproof sync --account personal
 mailproof show bob@example.org        # every email with that address, and what its signature proves
 mailproof verify bob@example.org      # re-check offline; exit 2 if a received email does not verify
+mailproof record --direction in < message.eml   # one raw email from a file or stdin
 mailproof stamp && mailproof export --with bob@example.org --after 2026-01-01 --tar
 mailproof verify-bundle <bundle> --expect <sha256>     # the recipient's side, no account
 ```
 
-`mailproof help` lists everything. Exit codes, systemd and cron examples, restoring a backup: [usage guide](https://github.com/hamr0/mailproof/blob/main/docs/product/usage-guide.md#the-mailproof-command). First time: the [setup guide](https://github.com/hamr0/mailproof/blob/main/docs/product/setup-guide.md). Want your own outbound mail DKIM-signed too: [signing guide (OpenDKIM and your mail client)](https://github.com/hamr0/mailproof/blob/main/docs/product/signing-guide.md).
+Running your own mail server? Pipe each message to `mailproof record` (a Postfix pipe) and no IMAP is needed: an account with no `host` and no IMAP settings is pipe-only, fed by `record` alone (`sync` and `watch` refuse it). Add `--client-ip`, `--client-helo` and `--sender` from the envelope so SPF can run. The [signing guide](https://github.com/hamr0/mailproof/blob/main/docs/product/signing-guide.md) covers OpenDKIM signing of your outbound mail, the pipe and your mail client.
+
+`mailproof help` lists everything. Exit codes, systemd and cron examples, restoring a backup: [usage guide](https://github.com/hamr0/mailproof/blob/main/docs/product/usage-guide.md#the-mailproof-command).
 
 ### Agents: the MCP server
 
@@ -102,7 +105,7 @@ await mp.verify(id);                                             // later, offli
 const reply = await mp.replyText(rawEmail);                      // the sender's new words, and reply.proven
 ```
 
-Pure ESM, types generated from JSDoc. Good for a Postfix pipe or your own pipeline.
+Pure ESM, types generated from JSDoc.
 
 ### The primitives
 
@@ -153,19 +156,17 @@ mailproof reads mail and writes proofs locally. Everything that uses the network
 | When | What is sent | To whom | Off switch |
 |---|---|---|---|
 | **IMAP** (`sync`, `watch`) | Your login, and read-only requests for new mail. Nothing is marked, moved or deleted. | Your mail provider, over TLS. | Do not run `sync`; capture by pipe needs no IMAP. |
-| **DNS** (`check`, `record`) | Lookups of the sender's DKIM key, DMARC and SPF records. | Your DNS resolver. | None at capture; `verify` and every read use no network. |
+| **DNS** (`check`, `record`) | Lookups of the sender's DKIM key and DMARC record, and SPF when the sending IP is known. | Your DNS resolver. | None at capture; `verify` and every read use no network. |
 | **OpenTimestamps** (`sync`, `watch`, `stamp`) | One 32-byte hash of a manifest per run, at most every 6 hours. Never content, subjects or addresses. The calendars see your IP and the timing. | Public calendar servers, through `ots`. | `otsBin: null` (library), `"ots": false` (config), `MAILPROOF_OTS=off` (`mailproof-sync`). |
 
 `record()`, `check()`, `verify()` and every read never contact the calendars.
 
 ## What you can rely on
 
-- **Received at Gmail:** the reply's words are provable, whoever sent it.
+- **Received at Gmail:** the reply's words are provable, whoever sent it. Put approvals there.
 - **Received at Outlook or msn from outside:** Microsoft alters the body, so the words are unproven. The sender and signed headers still verify. `proven` tells you which case you are in.
-- **Unsigned mail and your own Sent copies** are recorded but `unverified`. The proof is the other side's signed copy.
+- **Unsigned mail and your own Sent copies** are recorded but `unverified`; the proof is the other side's signed copy. Your own outbound mail verifies if your server signs it (OpenDKIM) and you record it with `record --direction out`.
 - **An export proves** that a domain signed those headers, and (once anchored) that the record existed by a time. It does not prove completeness: nothing shows that no other email exists.
-
-Replies whose words matter, such as approvals, belong in a Gmail inbox.
 
 ## More
 
