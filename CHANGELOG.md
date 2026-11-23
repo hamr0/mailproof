@@ -21,7 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > the first free clean minor, `1.3.0`.) See
 > [`archive/v1/docs/DESIGN.md`](archive/v1/docs/DESIGN.md) for the phasing.
 
-## [Unreleased]
+## [4.1.0] - 2026-11-23
 
 This is a **minor** release (4.1.0): new command, new config shape, and a changed SPF result in the library (see below).
 
