@@ -23,6 +23,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+This is a **minor** release (4.1.0): new command, new config shape, and a changed SPF result in the library (see below).
+
+### Upgrading from 4.0.x
+
+`Mailproof#record()` now records `verdicts.live.spf: null` (SPF not checked) instead of `temperror` or `fail` in two cases:
+
+- an envelope with a `sender` or `clientHelo` but no `clientIp`;
+- any envelope with direction `out`, whatever it contains.
+
+SPF is checked only for direction `in` with a `clientIp`. If you read `verdicts.live.spf` for these records, handle `null`. Stored records are not changed.
+
 ### Added
 
 - **`mailproof record --direction in|out [<file>]`** (SPEC B14, M5): one raw email from a file or stdin into the trail, for a mail server that pipes each message to mailproof (Postfix pipe(8)). The bytes are hashed as they stream in and held only up to the 25 MiB cap, so a huge message never fills memory: over the cap it is recorded `unverified` as `over limit: total_bytes` with its true id (a later capture of the same bytes is `duplicate`). Flags `--source`, `--client-ip`, `--client-helo`, `--sender` (`--name=value` and empty values accepted), `--json`. After the record it runs the content-expiry sweep when due (a failure is one stderr line, never the exit code); it never seals, so a pipe-only box runs `mailproof stamp` from a timer. Not in the menu, not an MCP tool, not a library export.
@@ -41,7 +52,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The signing guide marks Part 2 sections 16 to 18 (submission, Dovecot SASL, sender login maps), the `SignHeaders` block, the stamp timer and the deploy hook as LIVE (AlmaLinux 8.10, 2026-11-22), with the Dovecot-on-EL8 steps, `null_sender=` on both pipe lines, and the `InternalHosts` warning; the client settings and firewall stay UNVERIFIED.
 - The signing guide documents running `mailproof record` under SELinux enforcing (code in `/usr/local`, a small local policy module; proven on Fedora 44, [F42](docs/product/findings.md)).
 - The signing guide marks the steps run on a real box (AlmaLinux 8.10, 2026-11-22) as LIVE ([F42](docs/product/findings.md)).
-- The M5 guide is renamed from the self-hosting guide to `docs/product/signing-guide.md`, retitled "Sign your own mail: OpenDKIM and your mail client", and split into two parts: Part 1 OpenDKIM (the existing content), Part 2 your mail client (submission on 587, SASL login, `reject_sender_login_mismatch`, client settings; every step marked UNVERIFIED, not run on a real box). README, docs map, PRD, SPEC and CLAUDE.md links follow. `mailproof record` is still specified (SPEC B14), not built.
+- The M5 guide is renamed from the self-hosting guide to `docs/product/signing-guide.md`, retitled "Sign your own mail: OpenDKIM and your mail client", and split into two parts: Part 1 OpenDKIM (the existing content), Part 2 your mail client (submission on 587, SASL login, `reject_sender_login_mismatch`, client settings; every step marked UNVERIFIED, not run on a real box). README, docs map, PRD, SPEC and CLAUDE.md links follow. `mailproof record` is built (SPEC B14).
 - PRD status cleanup: M3 and M4 headings read "shipped", M5 is "Sign your own mail and record it", the status line and date are current, and each still-open question in §12 says it is open and not scheduled.
 - README rewritten: sections by audience (the `mailproof` command and its menu, the MCP server, the library), one table of every primitive, what is checked and captured (DKIM, DMARC, SPF/ARC, the seal, threading), guarding a workflow step with a signed reply through bareguard, and links to the usage, setup and self-hosting guides. Links are absolute so they also work on npmjs.com.
 - `mailproof.context.md`: `export` is an MCP tool (the context said it was not); internal dates removed from the bareguard rule and the MCP parity note.

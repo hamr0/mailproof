@@ -1,6 +1,6 @@
 # mailproof v2 — PRD
 
-> **Status:** v2 is released through 4.0.0 (2026-11-13, PR #23, the latest). M0-M4 are shipped: M3 steps 1-3 in 3.0.0, `replyFacts` and the `mailproof` CLI in 3.1.0, the MCP server (`mailproof mcp`, SPEC B12) in 3.3.0, and **M4 (seal and pair export: batch seal, `export`, `verify-bundle`, the address-first CLI with `people`, MCP parity at 30 tools; major because OTS is on by default in the library) in 4.0.0**. M5 (sign your own mail and record it: a guide in two parts, OpenDKIM and your mail client, plus the `mailproof record` command) is in progress: the `record` command and the pipe-only account are built on `feat/m5-record` (2026-11-22, unreleased, [F41](findings.md)); the guide is written (Part 1 partly proven by the gitdone operators, Part 2 unverified) and the box tests are pending. M6 is parked. 1.x is frozen at tag `v1.4.0` (v1 code archived in `archive/v1/`; no `v1` branch).
+> **Status:** v2 is released through 4.0.0 (2026-11-13, PR #23, the latest). M0-M4 are shipped: M3 steps 1-3 in 3.0.0, `replyFacts` and the `mailproof` CLI in 3.1.0, the MCP server (`mailproof mcp`, SPEC B12) in 3.3.0, and **M4 (seal and pair export: batch seal, `export`, `verify-bundle`, the address-first CLI with `people`, MCP parity at 30 tools; major because OTS is on by default in the library) in 4.0.0**. M5 (sign your own mail and record it: a guide in two parts, OpenDKIM and your mail client, plus the `mailproof record` command) is in progress: the `record` command and the pipe-only account are built on `feat/m5-record` (2026-11-22, unreleased, [F41](findings.md)); the guide is written and was box-tested on 2026-11-22 ([F42](findings.md)): Part 1 and Part 2 sections 16 to 18 are LIVE; the client settings (section 19) and the firewall stay unverified. M6 is parked. 1.x is frozen at tag `v1.4.0` (v1 code archived in `archive/v1/`; no `v1` branch).
 > **Owner:** hamr0 · **Last updated:** 2026-11-22
 >
 > **For future Claude:** this PRD wins on intent and scope. The *why* behind each choice is in
@@ -389,7 +389,7 @@ Calendar or iTIP handling; an agreement ceremony; raw email or attachment copies
 
 With M4 shipped (4.0.0) the v2 promise of §1 and §2 is met. "I sent you this" without a reply stays partial until signed own sends exist (M5, specified, next).
 
-### M5 — Sign your own mail and record it (record command built, box tests pending)
+### M5 — Sign your own mail and record it (record command built, box-tested 2026-11-22)
 
 **Status:** re-scoped 2026-11-11 and again 2026-11-22 by the owner. Reasons and options: [decisions-log](decisions-log.md) entries "M5: a record command and a self-hosting guide, not a Docker image" and "M5: OpenDKIM and mail-client guide plus the record command (2026-11-22)". The product is signing your own mail and recording it, not running a mail-server product. Two deliverables:
 
@@ -398,9 +398,9 @@ With M4 shipped (4.0.0) the v2 promise of §1 and §2 is met. "I sent you this" 
 
 **No Docker image.** The hard parts (DNS, PTR, port 25, IP reputation) cannot be containerised, and an image would make mailproof a mail-server product to patch. In-library signing (mailauth's `dkimSign`) stays an option, not the default: the key stays in the MTA. Prior art: the gitdone operators' records and knowless `OPS.md` §5 (knowless declined to host anything, 2026-11-11).
 
-**Evidence so far (gitdone operators, real box, 2026-11-11; [F32](findings.md), review [F33](findings.md)):** a locally submitted, locally delivered copy of an outbound message carries OpenDKIM's `DKIM-Signature` and verifies. The OpenDKIM default `h=` lists only `From:To:Subject:Date:From`, so the guide sets `SignHeaders` (Message-ID, In-Reply-To, References, ...) explicitly; that line is recommended, not yet tested. **One open evidence task:** prove on a real box, end to end with `mailproof record` and `mailproof verify`, that the `sender_bcc_maps` copy carries the DKIM-Signature (strongly implied by the mechanism: the same queue file; not tested). The guide's "verified and unverified" table tracks every other step.
+**Evidence so far (gitdone operators, real box, 2026-11-11, then box tests 2026-11-22, [F42](findings.md); [F32](findings.md), review [F33](findings.md)):** a locally submitted, locally delivered copy of an outbound message carries OpenDKIM's `DKIM-Signature` and verifies. The OpenDKIM default `h=` lists only `From:To:Subject:Date:From`, so the guide sets `SignHeaders` (Message-ID, In-Reply-To, References, ...) explicitly; that line was tested on a real box (F42, LIVE). The `sender_bcc_maps` copy carrying the DKIM-Signature was proven end to end with `mailproof record` and `mailproof verify` (F42, LIVE). The guide's "verified and unverified" table tracks every other step.
 
-**Guide choices:** decisions-log "M5 guide choices". **Sending from a mail client** moved from "open, not covered" to **Part 2 of the guide, written, unverified**: every step is marked UNVERIFIED (not run on a real box) until a box test runs it.
+**Guide choices:** decisions-log "M5 guide choices". **Sending from a mail client** moved from "open, not covered" to **Part 2 of the guide**: sections 16 to 18 (submission, Dovecot SASL, sender login maps) ran on a real box (F42, LIVE); the client settings (section 19) and the firewall are still UNVERIFIED.
 
 **Out of scope:** an image, a mail-server product, sending (mailproof never sends mail), multi-user hosting.
 

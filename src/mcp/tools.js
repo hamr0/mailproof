@@ -68,7 +68,7 @@ const LIMIT = (max, what) => ({ type: 'integer', minimum: 1, maximum: max, descr
 export const TOOLS = {
   accounts: {
     cls: 'read', title: 'List the configured accounts', annotations: READ, params: {}, required: [], noAccount: true, primitive: null,
-    description: 'List the mailproof accounts this server can use, as { name, user, host, trailDir, trail, records?, content: { store, attachments, days }, ots }. Names and local paths only: no secrets. Use a name as the `account` argument of the other tools. Opens no trail.',
+    description: 'List the mailproof accounts this server can use, as { name, user, host, trailDir, trail, records?, content: { store, attachments, days }, ots } (host is null for a pipe-only account, and so is user when none is set). Names and local paths only: no secrets. Use a name as the `account` argument of the other tools. Opens no trail.',
   },
   list: {
     cls: 'read', title: 'List recorded emails', annotations: READ, required: [],

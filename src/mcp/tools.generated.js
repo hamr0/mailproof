@@ -13,7 +13,7 @@ export const GENERATED_TOOLS = Object.freeze(/** @type {GeneratedTool[]} */ (/**
       "idempotentHint": true,
       "openWorldHint": false
     },
-    "description": "List the mailproof accounts this server can use, as { name, user, host, trailDir, trail, records?, content: { store, attachments, days }, ots }. Names and local paths only: no secrets. Use a name as the `account` argument of the other tools. Opens no trail.",
+    "description": "List the mailproof accounts this server can use, as { name, user, host, trailDir, trail, records?, content: { store, attachments, days }, ots } (host is null for a pipe-only account, and so is user when none is set). Names and local paths only: no secrets. Use a name as the `account` argument of the other tools. Opens no trail.",
     "noAccount": true,
     "required": [],
     "properties": {}
